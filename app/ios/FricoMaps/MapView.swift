@@ -15,6 +15,9 @@ struct MapView: UIViewRepresentable {
             zoomLevel: 7,
             animated: false
         )
+        // Dlaždice končia na zoome Config.maxTileZoom (limit Planetileru);
+        // vyššie priblíženie dopočíta MapLibre overzoomom.
+        mapView.maximumZoomLevel = Config.maxDisplayZoom
         mapView.showsUserLocation = true
         mapView.logoView.isHidden = true
         return mapView
