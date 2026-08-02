@@ -31,11 +31,12 @@ Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
 
 - **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov – PBF sa
   sťahuje **iba pre daný región** z regionálnych exportov
-  [osm.fr](https://download.openstreetmap.fr/extracts/europe/) (rezané po
-  skutočných administratívnych hraniciach). Kandidátske názvy súborov sú vo
-  [workers/regions.json](workers/regions.json) (`osmfr.slugs`); ak žiadny
-  nesedí, build vypíše do logu reálny obsah osm.fr adresára a použije
-  fallback release `osm-extracts`.
+  [osm.fr](https://download.openstreetmap.fr/extracts/europe/slovakia/)
+  (rezané po skutočných administratívnych hraniciach, denne aktualizované):
+  `europe/slovakia/{kraj}-latest.osm.pbf` (36–63 MB na kraj), celé Slovensko
+  `europe/slovakia-latest.osm.pbf` (~380 MB). Mapovanie a presné bboxy z
+  osm.fr rezacích polygónov sú vo [workers/regions.json](workers/regions.json);
+  pri výpadku osm.fr sa použije fallback release `osm-extracts`.
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
