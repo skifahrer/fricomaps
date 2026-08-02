@@ -22,6 +22,17 @@
       border: 1px solid #ccc; border-radius: 6px; background: #fff;
     }
     #meta { font-size: 11px; color: #777; margin-top: 10px; line-height: 1.5; }
+    #zoom {
+      font-size: 12px; color: #444; margin-top: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+    #warn {
+      display: none; margin-top: 10px; padding: 8px 10px;
+      background: #fff4e5; border: 1px solid #f0c07a; border-radius: 6px;
+      font-size: 11px; color: #7a4a10; max-height: 160px; overflow: auto;
+    }
+    #warn ul { margin: 4px 0 0; padding-left: 16px; }
+    #warn li { margin-bottom: 3px; word-break: break-word; }
     #error {
       display: none; position: absolute; inset: 0; z-index: 20;
       background: #fff; padding: 40px; font-size: 15px; line-height: 1.6;
@@ -30,6 +41,8 @@
     body.dark #panel { background: rgba(24, 24, 36, 0.92); color: #ddd; }
     body.dark #panel label { color: #aaa; }
     body.dark #panel select { background: #222; color: #ddd; border-color: #444; }
+    body.dark #zoom { color: #bbb; }
+    body.dark #warn { background: #3a2a12; border-color: #7a5a20; color: #f0c890; }
   </style>
 </head>
 <body>
@@ -41,7 +54,9 @@
     <select id="theme"></select>
     <label for="region">Región</label>
     <select id="region"></select>
+    <div id="zoom">zoom –</div>
     <div id="meta"></div>
+    <div id="warn"><b>Problém s načítaním:</b><ul></ul></div>
   </div>
 
   <div id="error">
