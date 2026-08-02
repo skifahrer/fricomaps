@@ -3,54 +3,63 @@
     "name": "Slovensko",
     "osm_name": "Slovensko",
     "admin_level": 2,
-    "bbox": [16.8332, 47.7314, 22.5661, 49.6138]
+    "bbox": [16.815, 47.71, 22.585, 49.635],
+    "osmfr": { "dir": "europe", "slugs": ["slovakia-latest"] }
   },
   "bratislavsky": {
     "name": "Bratislavský kraj",
     "osm_name": "Bratislavský kraj",
     "admin_level": 4,
-    "bbox": [16.83, 47.98, 17.80, 48.65]
+    "bbox": [16.829, 48.003, 17.533, 48.658],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["bratislavsky-latest"] }
   },
   "trnavsky": {
     "name": "Trnavský kraj",
     "osm_name": "Trnavský kraj",
     "admin_level": 4,
-    "bbox": [16.97, 47.72, 17.98, 48.78]
+    "bbox": [16.915, 47.74, 18.005, 48.9],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["trnavsky-latest"] }
   },
   "trenciansky": {
     "name": "Trenčiansky kraj",
     "osm_name": "Trenčiansky kraj",
     "admin_level": 4,
-    "bbox": [17.50, 48.50, 18.90, 49.25]
+    "bbox": [17.335, 48.465, 18.845, 49.34],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["trenciansky-latest"] }
   },
   "nitriansky": {
     "name": "Nitriansky kraj",
     "osm_name": "Nitriansky kraj",
     "admin_level": 4,
-    "bbox": [17.68, 47.74, 18.90, 48.78]
+    "bbox": [17.685, 47.71, 19.09, 48.735],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["nitriansky-latest"] }
   },
   "zilinsky": {
     "name": "Žilinský kraj",
     "osm_name": "Žilinský kraj",
     "admin_level": 4,
-    "bbox": [18.30, 48.85, 20.10, 49.62]
+    "bbox": [18.305, 48.72, 20.08, 49.635],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["zilinsky-latest"] }
   },
   "banskobystricky": {
     "name": "Banskobystrický kraj",
     "osm_name": "Banskobystrický kraj",
     "admin_level": 4,
-    "bbox": [18.45, 47.90, 20.55, 49.12]
+    "bbox": [18.46, 48.035, 20.49, 48.965],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["banskobystricky-latest"] }
   },
   "presovsky": {
     "name": "Prešovský kraj",
     "osm_name": "Prešovský kraj",
     "admin_level": 4,
-    "bbox": [19.90, 48.83, 22.58, 49.45]
+    "bbox": [19.865, 48.745, 22.585, 49.48],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["presovsky-latest"] }
   },
   "kosicky": {
     "name": "Košický kraj",
     "osm_name": "Košický kraj",
     "admin_level": 4,
-    "bbox": [20.15, 48.30, 22.58, 49.05]
+    "bbox": [20.16, 48.315, 22.41, 49.04],
+    "osmfr": { "dir": "europe/slovakia", "slugs": ["kosicky-latest"] }
   }
 }
