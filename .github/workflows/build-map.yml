@@ -48,6 +48,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # GITHUB_TOKEN nemá admin práva na vytvorenie Pages site, preto sa
+      # Pages musí zapnúť raz ručne: Settings → Pages → Source: GitHub Actions.
+      # Kontrola hneď na začiatku, aby build nezlyhal až po konverzii dlaždíc.
+      - name: Over, že GitHub Pages je zapnuté
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/pages" >/dev/null 2>&1; then
+            echo "::error::GitHub Pages nie je zapnuté. Zapni ho ručne: Settings → Pages → Build and deployment → Source: 'GitHub Actions' a spusti workflow znova."
+            exit 1
+          fi
+          echo "Pages je zapnuté ✓"
+
       - name: Stiahni PBF iba daného regiónu (release osm-extracts)
         id: region
         env:
@@ -137,8 +150,6 @@ jobs:
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Vygeneruj statické style.json (web + iOS)
         run: |
