@@ -1,0 +1,38 @@
+{
+  "slovensko": {
+    "name": "Slovensko",
+    "bbox": [16.83, 47.72, 22.58, 49.62]
+  },
+  "bratislavsky": {
+    "name": "Bratislavský kraj",
+    "bbox": [16.83, 47.98, 17.80, 48.65]
+  },
+  "trnavsky": {
+    "name": "Trnavský kraj",
+    "bbox": [16.97, 47.72, 17.98, 48.78]
+  },
+  "trenciansky": {
+    "name": "Trenčiansky kraj",
+    "bbox": [17.50, 48.50, 18.90, 49.25]
+  },
+  "nitriansky": {
+    "name": "Nitriansky kraj",
+    "bbox": [17.68, 47.74, 18.90, 48.78]
+  },
+  "zilinsky": {
+    "name": "Žilinský kraj",
+    "bbox": [18.30, 48.85, 20.10, 49.62]
+  },
+  "banskobystricky": {
+    "name": "Banskobystrický kraj",
+    "bbox": [18.45, 47.90, 20.55, 49.12]
+  },
+  "presovsky": {
+    "name": "Prešovský kraj",
+    "bbox": [19.90, 48.83, 22.58, 49.45]
+  },
+  "kosicky": {
+    "name": "Košický kraj",
+    "bbox": [20.15, 48.30, 22.58, 49.05]
+  }
+}

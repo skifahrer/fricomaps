@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FricoMaps – vektorová mapa Slovenska</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+    #panel {
+      position: absolute; top: 10px; left: 10px; z-index: 10;
+      background: rgba(255, 255, 255, 0.92); color: #222;
+      border-radius: 10px; padding: 12px 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.25);
+      min-width: 220px;
+    }
+    #panel h1 { font-size: 16px; margin: 0 0 8px; }
+    #panel label { display: block; font-size: 12px; margin: 8px 0 3px; color: #555; }
+    #panel select {
+      width: 100%; padding: 5px 6px; font-size: 14px;
+      border: 1px solid #ccc; border-radius: 6px; background: #fff;
+    }
+    #meta { font-size: 11px; color: #777; margin-top: 10px; line-height: 1.5; }
+    #error {
+      display: none; position: absolute; inset: 0; z-index: 20;
+      background: #fff; padding: 40px; font-size: 15px; line-height: 1.6;
+    }
+    #error code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
+    body.dark #panel { background: rgba(24, 24, 36, 0.92); color: #ddd; }
+    body.dark #panel label { color: #aaa; }
+    body.dark #panel select { background: #222; color: #ddd; border-color: #444; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <div id="panel">
+    <h1>🗺️ FricoMaps</h1>
+    <label for="theme">Farebná téma</label>
+    <select id="theme"></select>
+    <label for="region">Región</label>
+    <select id="region"></select>
+    <div id="meta"></div>
+  </div>
+
+  <div id="error">
+    <h2>Dlaždice sa nepodarilo načítať</h2>
+    <p>Pravdepodobne ešte nebola spustená pipeline, ktorá vygeneruje PMTiles.</p>
+    <p>Spusti workflow <b>„Build map (PBF → PMTiles) &amp; deploy Pages"</b> na GitHube
+       (Actions → Run workflow), vyber región a počkaj na nasadenie.</p>
+    <p id="error-detail"></p>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/pmtiles@3/dist/pmtiles.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
