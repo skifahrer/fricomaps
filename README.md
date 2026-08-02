@@ -15,8 +15,12 @@ Geofabrik PBF ─► osmium extract (kraj) ─► Planetiler ─► PMTiles ─�
   – GitHub Actions workflow konvertuje OSM PBF na PMTiles (OpenMapTiles schéma,
   Planetiler) a nasadí web na GitHub Pages.
 - **Výber regiónu:** pri spustení workflowu si vyberieš celé Slovensko alebo
-  konkrétny kraj (bboxy v [pipeline/regions.json](pipeline/regions.json),
-  výrez robí `osmium extract`).
+  konkrétny kraj. Výrez sa robí rovnako, ako sa robia oficiálne OSM PBF
+  exporty (Geofabrik) – podľa **skutočnej administratívnej hranice** regiónu:
+  pipeline si z OSM dát vytiahne polygón relácie kraja
+  (`boundary=administrative`, `admin_level=4`) a `osmium extract --polygon`
+  vyreže presne územie kraja, nie obdĺžnik. Zoznam regiónov a ich OSM mená sú
+  v [pipeline/regions.json](pipeline/regions.json).
 - **Web viewer:** [web/](web/) – MapLibre GL JS + pmtiles protokol, beží čisto
   staticky (GitHub Pages podporuje HTTP range requesty, netreba tile server).
 - **Témy a štýlovanie:** [web/themes.js](web/themes.js) – 4 farebné témy

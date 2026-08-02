@@ -49,11 +49,15 @@ jobs:
         run: |
           REGION='${{ inputs.region }}'
           NAME=$(jq -r --arg r "$REGION" '.[$r].name' pipeline/regions.json)
+          OSM_NAME=$(jq -r --arg r "$REGION" '.[$r].osm_name' pipeline/regions.json)
+          ADMIN_LEVEL=$(jq -r --arg r "$REGION" '.[$r].admin_level' pipeline/regions.json)
           BBOX=$(jq -r --arg r "$REGION" '.[$r].bbox | join(",")' pipeline/regions.json)
           if [ "$NAME" = "null" ]; then echo "Neznámy región: $REGION"; exit 1; fi
-          echo "name=$NAME"  >> "$GITHUB_OUTPUT"
-          echo "bbox=$BBOX"  >> "$GITHUB_OUTPUT"
-          echo "Región: $NAME ($BBOX)"
+          echo "name=$NAME"                >> "$GITHUB_OUTPUT"
+          echo "osm_name=$OSM_NAME"        >> "$GITHUB_OUTPUT"
+          echo "admin_level=$ADMIN_LEVEL"  >> "$GITHUB_OUTPUT"
+          echo "bbox=$BBOX"                >> "$GITHUB_OUTPUT"
+          echo "Región: $NAME (OSM: $OSM_NAME, admin_level=$ADMIN_LEVEL)"
 
       - name: Cache – OSM PBF Slovenska (Geofabrik, týždenný)
         id: cache-pbf
@@ -73,14 +77,40 @@ jobs:
           fi
           ls -lh data/slovakia-latest.osm.pbf
 
-      - name: Vyrež región (osmium extract)
+      # Výrez sa robí rovnako ako oficiálne OSM PBF exporty (Geofabrik):
+      # podľa skutočnej administratívnej hranice regiónu (polygón relácie
+      # z OSM), nie podľa obdĺžnikového bboxu. Polygón kraja si vytiahneme
+      # priamo z OSM dát (boundary=administrative, admin_level=4).
+      - name: Vyrež región podľa OSM hranice (osmium extract --polygon)
+        id: extract
         run: |
           if [ "${{ inputs.region }}" = "slovensko" ]; then
             cp data/slovakia-latest.osm.pbf data/region.osm.pbf
+            echo "bbox=${{ steps.region.outputs.bbox }}" >> "$GITHUB_OUTPUT"
           else
             sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+            # 1) len administratívne hranice úrovne krajov
+            osmium tags-filter data/slovakia-latest.osm.pbf \
+              r/admin_level=${{ steps.region.outputs.admin_level }} \
+              -o data/admin.osm.pbf --overwrite
+
+            # 2) zlož z relácií polygóny
+            osmium export data/admin.osm.pbf \
+              --geometry-types=polygon \
+              -o data/admin.geojson --overwrite
+
+            # 3) vyber hranicu kraja podľa OSM mena + spočítaj bbox
+            BBOX=$(node tools/extract-boundary.mjs data/admin.geojson \
+              '${{ steps.region.outputs.osm_name }}' \
+              '${{ steps.region.outputs.admin_level }}' \
+              data/kraj.geojson)
+            echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
+            echo "Hranica: ${{ steps.region.outputs.osm_name }}, bbox=$BBOX"
+
+            # 4) výrez po hranici polygónu
             osmium extract \
-              --bbox '${{ steps.region.outputs.bbox }}' \
+              --polygon data/kraj.geojson \
               --set-bounds --strategy complete_ways \
               -o data/region.osm.pbf --overwrite \
               data/slovakia-latest.osm.pbf
@@ -123,7 +153,7 @@ jobs:
           jq -n \
             --arg region '${{ inputs.region }}' \
             --arg name '${{ steps.region.outputs.name }}' \
-            --arg bbox '${{ steps.region.outputs.bbox }}' \
+            --arg bbox '${{ steps.extract.outputs.bbox }}' \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{
               default_region: $region,

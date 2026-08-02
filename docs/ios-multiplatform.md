@@ -8,8 +8,8 @@ z OSM dát až do iOS aplikácie – a čo z toho už rieši naša pipeline.
 ```
 OSM (Geofabrik)          GitHub Actions pipeline                 Klienti
 ─────────────────        ─────────────────────────────────       ─────────────────
-slovakia-latest  ──►  osmium extract (výber kraja / bbox)
-   .osm.pbf           │
+slovakia-latest  ──►  osmium extract --polygon (výber kraja
+   .osm.pbf           │ podľa OSM administratívnej hranice)
                       ▼
                  Planetiler (OpenMapTiles schéma)
                       │
