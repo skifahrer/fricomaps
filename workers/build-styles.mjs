@@ -5,13 +5,13 @@
  * načítať style.json priamo z URL GitHub Pages).
  *
  * Použitie:
- *   node tools/build-styles.mjs --base-url=https://user.github.io/fricomaps \
+ *   node workers/build-styles.mjs --base-url=https://user.github.io/fricomaps \
  *        --region=slovensko --out=_site/styles
  */
 import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { THEMES, buildStyle } from "../web/themes.js";
+import { THEMES, buildStyle } from "../poc/web/themes.js";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -29,9 +29,8 @@ if (!baseUrl) {
   process.exit(1);
 }
 
-const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const regions = JSON.parse(
-  readFileSync(join(repoRoot, "pipeline", "regions.json"), "utf8")
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "regions.json"), "utf8")
 );
 if (!regions[region]) {
   console.error(`Neznámy región: ${region}`);
