@@ -1,4 +1,11 @@
-import { THEMES, buildStyle, CLICKABLE_LAYERS, MAX_DISPLAY_Z, MAX_TILE_Z } from "./themes.js";
+import {
+  THEMES,
+  buildStyle,
+  CLICKABLE_LAYERS,
+  MAX_DISPLAY_Z,
+  MAX_TILE_Z,
+  DEFAULT_DEM_TILES
+} from "./themes.js";
 
 // Základná URL stránky (funguje na GitHub Pages aj lokálne).
 const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
@@ -6,30 +13,50 @@ const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
 const protocol = new pmtiles.Protocol();
 maplibregl.addProtocol("pmtiles", protocol.tile);
 
-const themeSelect = document.getElementById("theme");
-const regionSelect = document.getElementById("region");
-const metaEl = document.getElementById("meta");
-const zoomEl = document.getElementById("zoom");
-const warnEl = document.getElementById("warn");
+const $ = (id) => document.getElementById(id);
+const themeSelect = $("theme");
+const regionSelect = $("region");
+const contoursCheck = $("contours");
+const terrainCheck = $("terrain");
+const metaEl = $("meta");
+const zoomEl = $("zoom");
+const warnEl = $("warn");
+const panelEl = $("panel");
+const toggleEl = $("toggle");
 
 for (const [key, t] of Object.entries(THEMES)) {
   themeSelect.add(new Option(t.label, key));
 }
 
+// ---------- zbalené ovládanie ----------
+function setPanel(open) {
+  panelEl.hidden = !open;
+  toggleEl.setAttribute("aria-expanded", String(open));
+  toggleEl.textContent = open ? "✕" : "⚙";
+  try {
+    localStorage.setItem("fricomaps.panel", open ? "1" : "0");
+  } catch {
+    /* súkromný režim – stav si jednoducho nezapamätáme */
+  }
+}
+toggleEl.addEventListener("click", () => setPanel(panelEl.hidden));
+setPanel(localStorage.getItem?.("fricomaps.panel") === "1");
+
 function showError(detail) {
-  document.getElementById("error").style.display = "block";
-  document.getElementById("error-detail").textContent = detail || "";
+  $("error").style.display = "block";
+  $("error-detail").textContent = detail || "";
 }
 
 /**
  * Chyby pri načítaní dlaždíc, spritu alebo glyfov sa inak prejavia len ako
- * prázdna (biela) mapa – preto ich zbierame a zobrazíme priamo v paneli.
+ * prázdna (biela) mapa – preto ich zbierame a zobrazíme v paneli.
  */
 const seenWarnings = new Set();
 function warn(message) {
   if (seenWarnings.has(message)) return;
   seenWarnings.add(message);
   warnEl.style.display = "block";
+  toggleEl.classList.add("has-warning");
   const li = document.createElement("li");
   li.textContent = message;
   warnEl.querySelector("ul").appendChild(li);
@@ -51,9 +78,10 @@ async function loadJson(url, { optional = false } = {}) {
 let map;
 
 function applyStyle(manifest, icons) {
-  const regionKey = regionSelect.value;
+  const region = manifest.regions[regionSelect.value];
   const themeKey = themeSelect.value;
-  const region = manifest.regions[regionKey];
+  const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
+  const demTiles = manifest.dem === null ? null : manifest.dem || DEFAULT_DEM_TILES;
 
   const style = buildStyle({
     theme: themeKey,
@@ -63,16 +91,22 @@ function applyStyle(manifest, icons) {
       manifest.glyphs || "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
     icons,
     fonts: manifest.fonts,
-    maxzoom: region.maxzoom || manifest.maxzoom || MAX_TILE_Z,
+    maxzoom: tileZ,
+    contoursUrl:
+      region.contours && contoursCheck.checked
+        ? `pmtiles://${baseUrl}/${region.contours}`
+        : null,
+    contoursMaxzoom: region.contours_maxzoom || 14,
+    demTiles,
     name: `FricoMaps – ${region.name}`
   });
 
   document.body.classList.toggle("dark", themeKey === "tmava");
 
-  const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
+    (region.contours ? `Vrstevnice po ${region.contour_interval || 10} m<br>` : "") +
     `Vygenerované: ${new Date(manifest.built_at).toLocaleString("sk-SK")}<br>` +
     `© OpenStreetMap prispievatelia`;
 
@@ -84,7 +118,7 @@ function applyStyle(manifest, icons) {
       bounds: [[w, s], [e, n]],
       fitBoundsOptions: { padding: 20 },
       maxZoom: MAX_DISPLAY_Z,
-      maxPitch: 60,
+      maxPitch: 75,
       attributionControl: { compact: true }
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
@@ -106,10 +140,11 @@ function applyStyle(manifest, icons) {
     const updateZoom = () => {
       const z = map.getZoom();
       zoomEl.textContent =
-        `zoom ${z.toFixed(1)}` + (z > tileZ ? ` (overzoom z${tileZ})` : "");
+        `zoom ${z.toFixed(1)}` + (z > tileZ ? ` · overzoom z${tileZ}` : "");
     };
     map.on("zoom", updateZoom);
     map.on("load", updateZoom);
+    map.on("style.load", applyTerrain);
 
     // Klik na POI / vrchol / letisko zobrazí popup s detailom.
     map.on("click", (ev) => {
@@ -135,6 +170,13 @@ function applyStyle(manifest, icons) {
   }
 }
 
+/** 3D terén používa ten istý raster-dem zdroj ako tieňovanie reliéfu. */
+function applyTerrain() {
+  if (!map) return;
+  const on = terrainCheck.checked && map.getSource("dem");
+  map.setTerrain(on ? { source: "dem", exaggeration: 1.3 } : null);
+}
+
 async function main() {
   let manifest;
   try {
@@ -154,8 +196,18 @@ async function main() {
   }
   regionSelect.value = manifest.default_region;
 
+  const syncControls = () => {
+    const region = manifest.regions[regionSelect.value];
+    $("row-contours").hidden = !region.contours;
+    $("row-terrain").hidden = manifest.dem === null;
+  };
+  syncControls();
+
   themeSelect.addEventListener("change", () => applyStyle(manifest, icons));
+  contoursCheck.addEventListener("change", () => applyStyle(manifest, icons));
+  terrainCheck.addEventListener("change", applyTerrain);
   regionSelect.addEventListener("change", () => {
+    syncControls();
     applyStyle(manifest, icons);
     const [w, s, e, n] = manifest.regions[regionSelect.value].bbox;
     map.fitBounds([[w, s], [e, n]], { padding: 20 });

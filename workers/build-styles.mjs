@@ -17,7 +17,7 @@
 import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, statSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { THEMES, buildStyle, MAX_TILE_Z } from "../poc/web/themes.js";
+import { THEMES, buildStyle, MAX_TILE_Z, DEFAULT_DEM_TILES } from "../poc/web/themes.js";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -30,6 +30,12 @@ const baseUrl = (args["base-url"] || "").replace(/\/$/, "");
 const region = args.region || "slovensko";
 const outDir = args.out || "_site/styles";
 const maxzoom = Number(args.maxzoom || MAX_TILE_Z);
+// Vrstevnice sú voliteľné – štýl ich zapne, len ak pipeline vyrobila .pmtiles.
+const contoursMaxzoom = Number(args["contours-maxzoom"] || 14);
+const hasContours = args.contours === "true" || args.contours === "1";
+// Tieňovanie reliéfu sa dá vypnúť (--dem-tiles=none).
+const demTiles =
+  args["dem-tiles"] === "none" ? null : args["dem-tiles"] || DEFAULT_DEM_TILES;
 
 if (!baseUrl) {
   console.error("Chýba --base-url (URL GitHub Pages stránky)");
@@ -107,9 +113,19 @@ for (const themeKey of Object.keys(THEMES)) {
     icons,
     fonts,
     maxzoom,
+    contoursUrl: hasContours
+      ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
+      : null,
+    contoursMaxzoom,
+    demTiles,
     name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
   });
   const file = join(outDir, `${region}-${themeKey}.json`);
   writeFileSync(file, JSON.stringify(style, null, 2));
   console.log(`✓ ${file} (${style.layers.length} vrstiev)`);
 }
+
+console.log(
+  `Vrstevnice: ${hasContours ? `áno (do z${contoursMaxzoom})` : "nie"}, ` +
+    `tieňovanie reliéfu: ${demTiles ? "áno" : "nie"}`
+);
