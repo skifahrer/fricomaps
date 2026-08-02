@@ -1,0 +1,199 @@
+name: Build map (PBF → PMTiles) & deploy Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Región z OSM (výrez zo Slovenska)"
+        required: true
+        default: slovensko
+        type: choice
+        options:
+          - slovensko
+          - bratislavsky
+          - trnavsky
+          - trenciansky
+          - nitriansky
+          - zilinsky
+          - banskobystricky
+          - presovsky
+          - kosicky
+      maxzoom:
+        description: "Maximálny zoom dlaždíc (14 = štandard, menej = menší súbor)"
+        required: false
+        default: "14"
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Načítaj definíciu regiónu
+        id: region
+        run: |
+          REGION='${{ inputs.region }}'
+          NAME=$(jq -r --arg r "$REGION" '.[$r].name' pipeline/regions.json)
+          OSM_NAME=$(jq -r --arg r "$REGION" '.[$r].osm_name' pipeline/regions.json)
+          ADMIN_LEVEL=$(jq -r --arg r "$REGION" '.[$r].admin_level' pipeline/regions.json)
+          BBOX=$(jq -r --arg r "$REGION" '.[$r].bbox | join(",")' pipeline/regions.json)
+          if [ "$NAME" = "null" ]; then echo "Neznámy región: $REGION"; exit 1; fi
+          echo "name=$NAME"                >> "$GITHUB_OUTPUT"
+          echo "osm_name=$OSM_NAME"        >> "$GITHUB_OUTPUT"
+          echo "admin_level=$ADMIN_LEVEL"  >> "$GITHUB_OUTPUT"
+          echo "bbox=$BBOX"                >> "$GITHUB_OUTPUT"
+          echo "Región: $NAME (OSM: $OSM_NAME, admin_level=$ADMIN_LEVEL)"
+
+      - name: Cache – OSM PBF Slovenska (Geofabrik, týždenný)
+        id: cache-pbf
+        uses: actions/cache@v4
+        with:
+          path: data/slovakia-latest.osm.pbf
+          key: geofabrik-slovakia-${{ github.run_id }}
+          restore-keys: geofabrik-slovakia-
+
+      - name: Stiahni OSM PBF Slovenska (ak nie je v cache)
+        run: |
+          mkdir -p data
+          if [ ! -s data/slovakia-latest.osm.pbf ] || [ -n "$(find data/slovakia-latest.osm.pbf -mtime +7 2>/dev/null)" ]; then
+            curl -fL --retry 4 --retry-delay 5 \
+              -o data/slovakia-latest.osm.pbf \
+              https://download.geofabrik.de/europe/slovakia-latest.osm.pbf
+          fi
+          ls -lh data/slovakia-latest.osm.pbf
+
+      # Výrez sa robí rovnako ako oficiálne OSM PBF exporty (Geofabrik):
+      # podľa skutočnej administratívnej hranice regiónu (polygón relácie
+      # z OSM), nie podľa obdĺžnikového bboxu. Polygón kraja si vytiahneme
+      # priamo z OSM dát (boundary=administrative, admin_level=4).
+      - name: Vyrež región podľa OSM hranice (osmium extract --polygon)
+        id: extract
+        run: |
+          if [ "${{ inputs.region }}" = "slovensko" ]; then
+            cp data/slovakia-latest.osm.pbf data/region.osm.pbf
+            echo "bbox=${{ steps.region.outputs.bbox }}" >> "$GITHUB_OUTPUT"
+          else
+            sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+            # 1) len administratívne hranice úrovne krajov
+            osmium tags-filter data/slovakia-latest.osm.pbf \
+              r/admin_level=${{ steps.region.outputs.admin_level }} \
+              -o data/admin.osm.pbf --overwrite
+
+            # 2) zlož z relácií polygóny
+            osmium export data/admin.osm.pbf \
+              --geometry-types=polygon \
+              -o data/admin.geojson --overwrite
+
+            # 3) vyber hranicu kraja podľa OSM mena + spočítaj bbox
+            BBOX=$(node tools/extract-boundary.mjs data/admin.geojson \
+              '${{ steps.region.outputs.osm_name }}' \
+              '${{ steps.region.outputs.admin_level }}' \
+              data/kraj.geojson)
+            echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
+            echo "Hranica: ${{ steps.region.outputs.osm_name }}, bbox=$BBOX"
+
+            # 4) výrez po hranici polygónu
+            osmium extract \
+              --polygon data/kraj.geojson \
+              --set-bounds --strategy complete_ways \
+              -o data/region.osm.pbf --overwrite \
+              data/slovakia-latest.osm.pbf
+          fi
+          ls -lh data/region.osm.pbf
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache – zdrojové dáta Planetileru (water polygons, Natural Earth)
+        uses: actions/cache@v4
+        with:
+          path: data/sources
+          key: planetiler-sources-v1
+
+      - name: Stiahni Planetiler
+        run: |
+          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
+            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
+        run: |
+          mkdir -p _site/tiles
+          java -Xmx5g -jar planetiler.jar \
+            --osm-path=data/region.osm.pbf \
+            --output=_site/tiles/${{ inputs.region }}.pmtiles \
+            --download --download-dir=data/sources \
+            --maxzoom=${{ inputs.maxzoom }} \
+            --languages=sk,en \
+            --force
+          ls -lh _site/tiles/
+
+      - name: Poskladaj web (viewer + manifest + sprity)
+        run: |
+          cp web/index.html web/app.js web/themes.js _site/
+
+          jq -n \
+            --arg region '${{ inputs.region }}' \
+            --arg name '${{ steps.region.outputs.name }}' \
+            --arg bbox '${{ steps.extract.outputs.bbox }}' \
+            --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              default_region: $region,
+              built_at: $built,
+              regions: {
+                ($region): {
+                  name: $name,
+                  bbox: ($bbox | split(",") | map(tonumber)),
+                  pmtiles: ("tiles/" + $region + ".pmtiles")
+                }
+              }
+            }' > _site/tiles/manifest.json
+          cat _site/tiles/manifest.json
+
+          # Ikonky (maki) zo spritu osm-liberty – nakopírujeme k sebe,
+          # aby web aj iOS mali stabilnú URL na našich Pages.
+          mkdir -p _site/sprites
+          BASE=https://maputnik.github.io/osm-liberty/sprites
+          for f in osm-liberty.json osm-liberty.png osm-liberty@2x.json osm-liberty@2x.png; do
+            curl -fL --retry 4 --retry-delay 5 -o "_site/sprites/$f" "$BASE/$f"
+          done
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Vygeneruj statické style.json (web + iOS)
+        run: |
+          node tools/build-styles.mjs \
+            --base-url='${{ steps.pages.outputs.base_url }}' \
+            --region='${{ inputs.region }}' \
+            --out=_site/styles
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy na GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
