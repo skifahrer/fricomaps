@@ -1,0 +1,67 @@
+name: Update OSM extracts (PBF exporty regiónov)
+
+# Vyrobí PBF exporty všetkých regiónov (kraje SR po skutočných OSM
+# administratívnych hraniciach + celé Slovensko) a publikuje ich ako
+# assety releasu `osm-extracts`. Workflow "Build map" si potom stiahne
+# už len PBF konkrétneho regiónu – nie celé Slovensko.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1" # raz týždenne (pondelok ráno UTC) – čerstvé OSM dáta
+
+permissions:
+  contents: write
+
+jobs:
+  extracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Stiahni OSM PBF Slovenska (Geofabrik)
+        run: |
+          mkdir -p data
+          curl -fL --retry 4 --retry-delay 5 \
+            -o data/slovakia-latest.osm.pbf \
+            https://download.geofabrik.de/europe/slovakia-latest.osm.pbf
+          ls -lh data/slovakia-latest.osm.pbf
+
+      - name: Nainštaluj osmium-tool
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+
+      - name: Zlož administratívne hranice krajov z OSM dát
+        run: |
+          osmium tags-filter data/slovakia-latest.osm.pbf \
+            r/admin_level=4 \
+            -o data/admin.osm.pbf --overwrite
+          osmium export data/admin.osm.pbf \
+            --geometry-types=polygon \
+            -o data/admin.geojson --overwrite
+
+      - name: Priprav polygóny a konfig extraktov
+        run: node workers/prepare-extracts.mjs --admin=data/admin.geojson --out=data/extracts
+
+      - name: Vyrež všetky kraje jedným prechodom (osmium extract)
+        run: |
+          osmium extract -c data/extracts/config.json \
+            --strategy complete_ways --set-bounds --overwrite \
+            data/slovakia-latest.osm.pbf
+          cp data/slovakia-latest.osm.pbf data/extracts/out/slovensko.osm.pbf
+          ls -lh data/extracts/out/
+
+      - name: Publikuj ako release assety (osm-extracts)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view osm-extracts --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create osm-extracts \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "OSM PBF exporty regiónov SR" \
+              --notes "Automaticky generované PBF exporty (kraje po OSM administratívnych hraniciach). Zdroj: Geofabrik / OpenStreetMap prispievatelia (ODbL)."
+          gh release upload osm-extracts \
+            data/extracts/out/*.osm.pbf data/extracts/meta.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Hotovo – assety releasu osm-extracts aktualizované."

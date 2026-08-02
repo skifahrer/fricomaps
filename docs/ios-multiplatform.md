@@ -8,8 +8,11 @@ z OSM dát až do iOS aplikácie – a čo z toho už rieši naša pipeline.
 ```
 OSM (Geofabrik)          GitHub Actions pipeline                 Klienti
 ─────────────────        ─────────────────────────────────       ─────────────────
-slovakia-latest  ──►  osmium extract --polygon (výber kraja
-   .osm.pbf           │ podľa OSM administratívnej hranice)
+slovakia-latest  ──►  1) worker: osmium extract -c (všetky kraje po
+   .osm.pbf           │  OSM admin. hraniciach) ─► release osm-extracts
+                      ▼
+                 2) build: stiahne iba {región}.osm.pbf
+                      │
                       ▼
                  Planetiler (OpenMapTiles schéma)
                       │
@@ -76,7 +79,8 @@ konverzia `pmtiles → mbtiles` v pipeline.
 
 **Prepínanie tém** = iba zmena `styleURL` (dáta sa nesťahujú znova, dlaždice
 zostávajú v cache). Presne tie isté 4 témy ako na webe, lebo JSON generuje
-jeden zdroj pravdy: `web/themes.js` → `tools/build-styles.mjs`.
+jeden zdroj pravdy: `poc/web/themes.js` → `workers/build-styles.mjs`.
+Hotové SwiftUI zdrojáky sú v [`app/ios`](../app/ios).
 
 ### B) Multiplatform (iOS + Android z jednej codebase)
 
