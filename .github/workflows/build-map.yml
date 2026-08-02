@@ -1,14 +1,21 @@
 name: Build map (PBF → PMTiles) & deploy Pages
 
-# Stiahne PBF export IBA zvoleného regiónu (asset releasu `osm-extracts`,
-# ktorý vyrába workflow "Update OSM extracts"), skonvertuje ho Planetilerom
-# na PMTiles a nasadí web viewer na GitHub Pages.
+# Stiahne PBF export IBA zvoleného regiónu:
+#   1. primárne z osm.fr regionálnych exportov
+#      (https://download.openstreetmap.fr/extracts/ – Európa aj svet,
+#      rezané po administratívnych hraniciach, denne aktualizované),
+#   2. fallback: asset releasu `osm-extracts` (vyrába workflow
+#      "Update OSM extracts").
+# Potom Planetiler → PMTiles → GitHub Pages.
+#
+# Ľubovoľný iný región Európy/sveta: vyplň input `custom_pbf_url`
+# (URL na .osm.pbf z download.openstreetmap.fr/extracts/...) + `custom_name`.
 
 on:
   workflow_dispatch:
     inputs:
       region:
-        description: "Región (PBF export z releasu osm-extracts)"
+        description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
         required: true
         default: slovensko
         type: choice
@@ -27,6 +34,21 @@ on:
         required: false
         default: "14"
         type: string
+      custom_pbf_url:
+        description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
+        required: false
+        default: ""
+        type: string
+      custom_name:
+        description: "Vlastný región – zobrazované meno (napr. Rakúsko)"
+        required: false
+        default: ""
+        type: string
+      custom_bbox:
+        description: "Vlastný región – bbox west,south,east,north (voliteľné, inak sa prečíta z PBF hlavičky)"
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -36,6 +58,9 @@ permissions:
 concurrency:
   group: pages
   cancel-in-progress: false
+
+env:
+  OSMFR_BASE: https://download.openstreetmap.fr/extracts
 
 jobs:
   build:
@@ -61,31 +86,68 @@ jobs:
           fi
           echo "Pages je zapnuté ✓"
 
-      - name: Stiahni PBF iba daného regiónu (release osm-extracts)
+      - name: Stiahni PBF iba daného regiónu
         id: region
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          REGION='${{ inputs.region }}'
           mkdir -p data
-          if ! gh release download osm-extracts \
-                --repo "$GITHUB_REPOSITORY" \
-                --pattern "$REGION.osm.pbf" \
-                --output data/region.osm.pbf; then
-            echo "::error::Release 'osm-extracts' alebo asset '$REGION.osm.pbf' neexistuje. Najprv spusti workflow 'Update OSM extracts (PBF exporty regiónov)'."
-            exit 1
-          fi
-          gh release download osm-extracts \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern meta.json \
-            --output data/meta.json
+          CUSTOM_URL='${{ inputs.custom_pbf_url }}'
 
-          NAME=$(jq -r --arg r "$REGION" '.regions[$r].name' data/meta.json)
-          BBOX=$(jq -r --arg r "$REGION" '.regions[$r].bbox | join(",")' data/meta.json)
-          if [ "$NAME" = "null" ]; then echo "::error::Región $REGION nie je v meta.json"; exit 1; fi
+          download() { # $1 = URL
+            echo "Skúšam: $1"
+            curl -fL --retry 3 --retry-delay 5 -o data/region.osm.pbf "$1"
+          }
+
+          if [ -n "$CUSTOM_URL" ]; then
+            # ----- vlastný región (Európa / svet) -----
+            NAME='${{ inputs.custom_name }}'
+            [ -n "$NAME" ] || NAME=$(basename "$CUSTOM_URL" .osm.pbf)
+            KEY=$(echo "$NAME" | LC_ALL=C.UTF-8 iconv -f utf8 -t ascii//TRANSLIT | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//;s/_*$//')
+            download "$CUSTOM_URL" || { echo "::error::Nepodarilo sa stiahnuť $CUSTOM_URL"; exit 1; }
+
+            BBOX='${{ inputs.custom_bbox }}'
+            if [ -z "$BBOX" ]; then
+              sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+              BBOX=$(osmium fileinfo -g header.boxes data/region.osm.pbf | head -1 | tr -d '() ')
+            fi
+            if [ -z "$BBOX" ]; then
+              echo "::error::PBF nemá bbox v hlavičke – vyplň input custom_bbox (west,south,east,north)."
+              exit 1
+            fi
+          else
+            # ----- prednastavený región z workers/regions.json -----
+            KEY='${{ inputs.region }}'
+            NAME=$(jq -r --arg r "$KEY" '.[$r].name' workers/regions.json)
+            BBOX=$(jq -r --arg r "$KEY" '.[$r].bbox | join(",")' workers/regions.json)
+            DIR=$(jq -r --arg r "$KEY" '.[$r].osmfr.dir' workers/regions.json)
+            if [ "$NAME" = "null" ]; then echo "::error::Neznámy región: $KEY"; exit 1; fi
+
+            OK=""
+            # 1) osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
+            for SLUG in $(jq -r --arg r "$KEY" '.[$r].osmfr.slugs[]' workers/regions.json); do
+              if download "$OSMFR_BASE/$DIR/$SLUG.osm.pbf"; then OK=1; break; fi
+            done
+            # 2) fallback: náš release osm-extracts
+            if [ -z "$OK" ]; then
+              echo "::warning::osm.fr export sa nenašiel, skúšam release osm-extracts…"
+              if gh release download osm-extracts --repo "$GITHUB_REPOSITORY" \
+                   --pattern "$KEY.osm.pbf" --output data/region.osm.pbf; then
+                OK=1
+              fi
+            fi
+            if [ -z "$OK" ]; then
+              echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/regions.json):"
+              curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
+              echo "…alebo spusti workflow 'Update OSM extracts' (release fallback)."
+              exit 1
+            fi
+          fi
+
+          echo "key=$KEY"   >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
-          echo "Región: $NAME ($BBOX)"
+          echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
           ls -lh data/region.osm.pbf
 
       - name: Setup Java 21
@@ -110,7 +172,7 @@ jobs:
           mkdir -p _site/tiles
           java -Xmx5g -jar planetiler.jar \
             --osm-path=data/region.osm.pbf \
-            --output=_site/tiles/${{ inputs.region }}.pmtiles \
+            --output=_site/tiles/${{ steps.region.outputs.key }}.pmtiles \
             --download --download-dir=data/sources \
             --maxzoom=${{ inputs.maxzoom }} \
             --languages=sk,en \
@@ -122,7 +184,7 @@ jobs:
           cp poc/web/index.html poc/web/app.js poc/web/themes.js _site/
 
           jq -n \
-            --arg region '${{ inputs.region }}' \
+            --arg region '${{ steps.region.outputs.key }}' \
             --arg name '${{ steps.region.outputs.name }}' \
             --arg bbox '${{ steps.region.outputs.bbox }}' \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -155,7 +217,8 @@ jobs:
         run: |
           node workers/build-styles.mjs \
             --base-url='${{ steps.pages.outputs.base_url }}' \
-            --region='${{ inputs.region }}' \
+            --region='${{ steps.region.outputs.key }}' \
+            --name='${{ steps.region.outputs.name }}' \
             --out=_site/styles
 
       - name: Upload Pages artifact

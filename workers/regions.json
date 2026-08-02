@@ -3,54 +3,87 @@
     "name": "Slovensko",
     "osm_name": "Slovensko",
     "admin_level": 2,
-    "bbox": [16.8332, 47.7314, 22.5661, 49.6138]
+    "bbox": [16.8332, 47.7314, 22.5661, 49.6138],
+    "osmfr": { "dir": "europe", "slugs": ["slovakia"] }
   },
   "bratislavsky": {
     "name": "Bratislavský kraj",
     "osm_name": "Bratislavský kraj",
     "admin_level": 4,
-    "bbox": [16.83, 47.98, 17.80, 48.65]
+    "bbox": [16.83, 47.98, 17.80, 48.65],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["bratislavsky", "bratislavsky_kraj", "bratislava", "bratislava_region"]
+    }
   },
   "trnavsky": {
     "name": "Trnavský kraj",
     "osm_name": "Trnavský kraj",
     "admin_level": 4,
-    "bbox": [16.97, 47.72, 17.98, 48.78]
+    "bbox": [16.97, 47.72, 17.98, 48.78],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["trnavsky", "trnavsky_kraj", "trnava", "trnava_region"]
+    }
   },
   "trenciansky": {
     "name": "Trenčiansky kraj",
     "osm_name": "Trenčiansky kraj",
     "admin_level": 4,
-    "bbox": [17.50, 48.50, 18.90, 49.25]
+    "bbox": [17.50, 48.50, 18.90, 49.25],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["trenciansky", "trenciansky_kraj", "trencin", "trencin_region"]
+    }
   },
   "nitriansky": {
     "name": "Nitriansky kraj",
     "osm_name": "Nitriansky kraj",
     "admin_level": 4,
-    "bbox": [17.68, 47.74, 18.90, 48.78]
+    "bbox": [17.68, 47.74, 18.90, 48.78],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["nitriansky", "nitriansky_kraj", "nitra", "nitra_region"]
+    }
   },
   "zilinsky": {
     "name": "Žilinský kraj",
     "osm_name": "Žilinský kraj",
     "admin_level": 4,
-    "bbox": [18.30, 48.85, 20.10, 49.62]
+    "bbox": [18.30, 48.85, 20.10, 49.62],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["zilinsky", "zilinsky_kraj", "zilina", "zilina_region"]
+    }
   },
   "banskobystricky": {
     "name": "Banskobystrický kraj",
     "osm_name": "Banskobystrický kraj",
     "admin_level": 4,
-    "bbox": [18.45, 47.90, 20.55, 49.12]
+    "bbox": [18.45, 47.90, 20.55, 49.12],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["banskobystricky", "banskobystricky_kraj", "banska_bystrica", "banska_bystrica_region"]
+    }
   },
   "presovsky": {
     "name": "Prešovský kraj",
     "osm_name": "Prešovský kraj",
     "admin_level": 4,
-    "bbox": [19.90, 48.83, 22.58, 49.45]
+    "bbox": [19.90, 48.83, 22.58, 49.45],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["presovsky", "presovsky_kraj", "presov", "presov_region"]
+    }
   },
   "kosicky": {
     "name": "Košický kraj",
     "osm_name": "Košický kraj",
     "admin_level": 4,
-    "bbox": [20.15, 48.30, 22.58, 49.05]
+    "bbox": [20.15, 48.30, 22.58, 49.05],
+    "osmfr": {
+      "dir": "europe/slovakia",
+      "slugs": ["kosicky", "kosicky_kraj", "kosice", "kosice_region"]
+    }
   }
 }

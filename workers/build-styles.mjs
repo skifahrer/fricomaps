@@ -32,10 +32,9 @@ if (!baseUrl) {
 const regions = JSON.parse(
   readFileSync(join(dirname(fileURLToPath(import.meta.url)), "regions.json"), "utf8")
 );
-if (!regions[region]) {
-  console.error(`Neznámy región: ${region}`);
-  process.exit(1);
-}
+// Región nemusí byť v regions.json (custom región z osm.fr – Európa/svet);
+// vtedy sa meno berie z --name, prípadne z kľúča regiónu.
+const regionName = regions[region]?.name || args.name || region;
 
 mkdirSync(outDir, { recursive: true });
 
@@ -45,7 +44,7 @@ for (const themeKey of Object.keys(THEMES)) {
     tilesUrl: `pmtiles://${baseUrl}/tiles/${region}.pmtiles`,
     spriteUrl: `${baseUrl}/sprites/osm-liberty`,
     glyphsUrl: "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
-    name: `FricoMaps ${regions[region].name} – ${THEMES[themeKey].label}`
+    name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
   });
   const file = join(outDir, `${region}-${themeKey}.json`);
   writeFileSync(file, JSON.stringify(style, null, 2));

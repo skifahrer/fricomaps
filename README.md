@@ -14,23 +14,32 @@ docs/          návrhy (iOS / multiplatform)
 .github/workflows/  CI pipeline (extrakty + build mapy + deploy Pages)
 ```
 
-## Ako funguje pipeline (2 workflowy)
+## Ako funguje pipeline
 
 ```
-1) Update OSM extracts        Geofabrik slovakia.pbf ─► osmium extract -c
-   (raz týždenne / manuálne)  (všetky kraje po OSM admin. hraniciach naraz)
-                              ─► release `osm-extracts`: {kraj}.osm.pbf + meta.json
+Build map                    stiahne IBA {región}.osm.pbf:
+(manuálne, výber regiónu)      1. osm.fr exporty (download.openstreetmap.fr/extracts –
+                                  Európa aj svet, rezané po admin. hraniciach, denné)
+                               2. fallback: release `osm-extracts` (vlastné exporty)
+                             ─► Planetiler ─► {región}.pmtiles
+                             ─► GitHub Pages (viewer + dlaždice + style.json)
 
-2) Build map                  stiahne IBA {región}.osm.pbf z releasu
-   (manuálne, výber regiónu)  ─► Planetiler ─► {región}.pmtiles
-                              ─► GitHub Pages (viewer + dlaždice + style.json)
+Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
+(fallback, raz týždenne)     (všetky kraje po OSM admin. hraniciach naraz)
+                             ─► release `osm-extracts`: {kraj}.osm.pbf + meta.json
 ```
 
-- **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov. Exporty
-  krajov sa robia rovnako ako oficiálne OSM PBF exporty – po **skutočnej
-  administratívnej hranici** (polygón relácie `boundary=administrative`,
-  `admin_level=4` z OSM dát), nie po obdĺžniku. Build mapy potom sťahuje
-  **len PBF daného regiónu**, nie celé Slovensko.
+- **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov – PBF sa
+  sťahuje **iba pre daný región** z regionálnych exportov
+  [osm.fr](https://download.openstreetmap.fr/extracts/europe/) (rezané po
+  skutočných administratívnych hraniciach). Kandidátske názvy súborov sú vo
+  [workers/regions.json](workers/regions.json) (`osmfr.slugs`); ak žiadny
+  nesedí, build vypíše do logu reálny obsah osm.fr adresára a použije
+  fallback release `osm-extracts`.
+- **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
+  `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
+  `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
+  a `custom_name`. Bbox sa prečíta z PBF hlavičky (alebo zadaj `custom_bbox`).
 - **Témy a štýlovanie:** [poc/web/themes.js](poc/web/themes.js) – 4 farebné
   témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), farbenie ciest/vôd/lesov/budov
   podľa OpenMapTiles schémy + POI ikonky zo spritu osm-liberty (maki).
