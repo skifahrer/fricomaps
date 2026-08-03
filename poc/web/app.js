@@ -10,7 +10,7 @@ import {
   MAX_TILE_Z,
   DEFAULT_DEM_TILES
 } from "./themes.js";
-import { initDevMode, loadOverrides } from "./devmode.js";
+import { initDevMode, loadOverrides, saveOverrides } from "./devmode.js";
 import { parsePatternName, renderPattern } from "./patterns.js";
 import { ICON_SOURCES, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
 
@@ -25,6 +25,7 @@ const themeSelect = $("theme");
 const regionSelect = $("region");
 const contoursCheck = $("contours");
 const terrainCheck = $("terrain");
+const hillshadeCheck = $("hillshade");
 const devCheck = $("devmode");
 const metaEl = $("meta");
 const zoomEl = $("zoom");
@@ -139,6 +140,7 @@ function applyStyle(manifest) {
   currentStyle = style;
 
   document.body.classList.toggle("dark", themeKey === "tmava");
+  hillshadeCheck.checked = overrides.hillshade === true;
 
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
@@ -308,6 +310,7 @@ async function main() {
     const region = manifest.regions[regionSelect.value];
     $("row-contours").hidden = !region.contours;
     $("row-terrain").hidden = manifest.dem === null;
+    $("row-hillshade").hidden = manifest.dem === null;
   };
   syncControls();
 
@@ -320,6 +323,19 @@ async function main() {
     dev?.refresh();
   });
   terrainCheck.addEventListener("change", applyTerrain);
+  // Tieňovanie reliéfu je súčasť štýlu (nie len prepínač viewra), aby sa
+  // rovnaké nastavenie zapieklo aj do statického štýlu pre iOS.
+  hillshadeCheck.addEventListener("change", () => {
+    const next = { ...overrides, hillshade: hillshadeCheck.checked };
+    if (dev) {
+      // Developer mode si drží vlastnú kópiu – nech o zmene vie a uloží ju.
+      dev.setOverrides(next);
+    } else {
+      overrides = next;
+      saveOverrides(overrides);
+      applyStyle(manifest);
+    }
+  });
   regionSelect.addEventListener("change", () => {
     syncControls();
     applyStyle(manifest);

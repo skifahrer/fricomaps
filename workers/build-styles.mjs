@@ -219,5 +219,6 @@ for (const themeKey of Object.keys(THEMES)) {
 
 console.log(
   `Vrstevnice: ${hasContours ? `áno (do z${contoursMaxzoom})` : "nie"}, ` +
-    `tieňovanie reliéfu: ${demTiles ? "áno" : "nie"}`
+    `výškové dáta (3D terén): ${demTiles ? "áno" : "nie"}, ` +
+    `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`
 );

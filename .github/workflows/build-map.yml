@@ -70,6 +70,11 @@ on:
         required: false
         default: "14"
         type: string
+      contour_smoothing:
+        description: "Zjemnenie DEM pred vrstevnicami v oblúkových sekundách (0 = vypnuté, plné rozlíšenie; 2 = pôvodné hladenie)"
+        required: false
+        default: "0"
+        type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
         required: false
@@ -241,7 +246,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v1-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v2-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-${{ hashFiles('workers/contours.yml') }}
 
       - name: Vrstevnice z Copernicus DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -283,10 +288,22 @@ jobs:
           echo "Stiahnutých ${#tifs[@]} DEM dlaždíc."
 
           gdalbuildvrt -q dem/all.vrt "${tifs[@]}"
-          # Orežeme na bbox a zjemníme na ~2″ (≈60 m). Priame vrstevnice
-          # z 1″ dát sú zubaté; priemerovanie ich vyhladí bez straty tvaru.
-          gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
-            -tr 0.00055556 0.00055556 -r average dem/all.vrt dem/clip.tif
+
+          # Zjemnenie DEM pred trasovaním vrstevníc. Copernicus GLO-30 je v
+          # 1″ (~30 m); priemerovanie na hrubšiu mriežku vyhladí šum, ale
+          # zároveň zje detail terénu. Default 0 = žiadne zjemnenie, len orez
+          # na bbox v plnom rozlíšení.
+          SMOOTH='${{ inputs.contour_smoothing }}'
+          case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
+          if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
+            RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
+            echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
+            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
+              -tr "$RES" "$RES" -r average dem/all.vrt dem/clip.tif
+          else
+            echo "Zjemnenie DEM: vypnuté – vrstevnice sa trasujú z plného rozlíšenia."
+            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" dem/all.vrt dem/clip.tif
+          fi
 
           gdal_contour -q -a ele -i "$INTERVAL" -f GPKG -nln contours \
             dem/clip.tif dem/raw.gpkg
