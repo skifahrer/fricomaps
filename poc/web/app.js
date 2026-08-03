@@ -9,6 +9,7 @@ import {
   MAX_DISPLAY_Z,
   MAX_TILE_Z,
   DEFAULT_DEM_TILES,
+  DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
   DEM_SOURCES
 } from "./themes.js";
@@ -129,6 +130,7 @@ function styleFor(manifest) {
     contoursMaxzoom: region.contours_maxzoom || 14,
     demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
+    demMaxzoom: manifest.dem_maxzoom || DEFAULT_DEM_MAXZOOM,
     overrides,
     name: `FricoMaps – ${region.name}`
   });
