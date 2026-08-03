@@ -10,6 +10,7 @@ import {
   DEFAULT_DEM_TILES
 } from "./themes.js";
 import { initDevMode, loadOverrides } from "./devmode.js";
+import { parsePatternName, renderPattern } from "./patterns.js";
 
 // Základná URL stránky (funguje na GitHub Pages aj lokálne).
 const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
@@ -154,6 +155,15 @@ function applyStyle(manifest, icons) {
       }),
       "top-right"
     );
+
+    // Vzory plôch a čiar sú generované – názov obrázka je zároveň jeho
+    // predpis, takže sa dokreslí presne vtedy, keď ho štýl použije.
+    // (Pipeline tie isté obrázky dopečie do spritu pre iOS.)
+    map.on("styleimagemissing", (ev) => {
+      const spec = parsePatternName(ev.id);
+      if (!spec || map.hasImage(ev.id)) return;
+      map.addImage(ev.id, renderPattern(spec, 2), { pixelRatio: 2 });
+    });
 
     map.on("error", (ev) => {
       const err = ev?.error;

@@ -72,9 +72,21 @@ const recolored = Object.entries(overrides.layers).filter(([, o]) => o.paint);
 const rezoomed = Object.entries(overrides.layers).filter(
   ([, o]) => o.minzoom != null || o.maxzoom != null
 );
+const patterned = Object.entries(overrides.layers).filter(([, o]) => o.pattern);
+const outlined = Object.entries(overrides.layers).filter(([, o]) => o.outline);
+const dashed = Object.entries(overrides.layers).filter(([, o]) => o.dash);
 if (hidden.length) summary.push(`  skryté vrstvy: ${hidden.map(([id]) => id).join(", ")}`);
 if (recolored.length) summary.push(`  prefarbené vrstvy: ${recolored.length}`);
 if (rezoomed.length) summary.push(`  zmenený rozsah zoomu: ${rezoomed.length}`);
+if (patterned.length) {
+  summary.push(
+    `  vzory: ${patterned.map(([id, o]) => `${id} → ${o.pattern.id}`).join(", ")}`
+  );
+}
+if (outlined.length) summary.push(`  okraje: ${outlined.map(([id]) => id).join(", ")}`);
+if (dashed.length) {
+  summary.push(`  prerušenie čiar: ${dashed.map(([id, o]) => `${id} → ${o.dash}`).join(", ")}`);
+}
 if (overrides.poi.hidden.length) {
   summary.push(`  skryté POI triedy: ${overrides.poi.hidden.join(", ")}`);
 }

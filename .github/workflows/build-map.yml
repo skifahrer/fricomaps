@@ -471,11 +471,20 @@ jobs:
             --fonts-dir=_site/fonts \
             --out=_site/styles
 
+      - name: Dopeč vzory plôch a čiar do spritu
+        run: |
+          # Vzory z developer módu sú generované z predpisu v názve obrázka.
+          # Web si ich dokreslí sám, statický štýl pre iOS ich potrebuje
+          # priamo v sprite.
+          node workers/add-sprite-patterns.mjs \
+            --sprite=_site/sprites/${{ steps.sprite.outputs.name }} \
+            --styles=_site/styles
+
       - name: Poskladaj web (viewer + manifest)
         run: |
           set -euo pipefail
           cp poc/web/index.html poc/web/app.js poc/web/themes.js \
-             poc/web/devmode.js poc/web/style-overrides.json _site/
+             poc/web/devmode.js poc/web/patterns.js poc/web/style-overrides.json _site/
 
           BASE='${{ steps.pages.outputs.base_url }}'
           BASE="${BASE%/}"
@@ -556,6 +565,13 @@ jobs:
             jq -e --arg i "$icon" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
               || { echo "::error::štýl odkazuje na ikonu '$icon', ktorá v sprite nie je"; fail=1; }
           done < <(jq -r '[.layers[].layout["icon-image"]? | strings] | unique | .[]' "$STYLE")
+
+          # vzory plôch a čiar musia byť v sprite (inak sa plocha nevykreslí)
+          while IFS= read -r img; do
+            [ -n "$img" ] || continue
+            jq -e --arg i "$img" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
+              || { echo "::error::štýl používa vzor '$img', ktorý v sprite nie je"; fail=1; }
+          done < <(jq -r '[.layers[].paint["fill-pattern"]?, .layers[].paint["line-pattern"]? | strings] | unique | .[]' "$STYLE")
 
           # dlaždice
           PM="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"

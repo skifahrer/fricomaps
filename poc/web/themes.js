@@ -20,6 +20,14 @@
  *   ho použije aj pipeline pre statické štýly pre iOS.
  */
 
+import {
+  PATTERN_IDS,
+  DASH_IDS,
+  dashArray,
+  patternSpec,
+  patternImageName
+} from "./patterns.js";
+
 /** Zoom, od ktorého je mapa plne detailná (nižšie sa orezáva). */
 export const DETAIL_Z = 14;
 
@@ -673,6 +681,53 @@ export function normalizeOverrides(raw) {
       }
     }
     if (Object.keys(paint).length) clean.paint = paint;
+
+    // ---- prerušovanie čiary ----
+    if (def.dash != null) {
+      if (!DASH_IDS.includes(def.dash)) {
+        problems.push(`Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
+      } else if (def.dash !== "solid") {
+        clean.dash = def.dash;
+      }
+    }
+
+    // ---- opakujúci sa vzor ----
+    if (def.pattern) {
+      if (!PATTERN_IDS.includes(def.pattern.id)) {
+        problems.push(`Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
+      } else if (!isColor(def.pattern.color)) {
+        problems.push(`Vrstva "${id}": farba vzoru nie je hex (${def.pattern.color}).`);
+      } else {
+        const spec = patternSpec(def.pattern);
+        const opacity = Number(def.pattern.opacity);
+        clean.pattern = {
+          ...spec,
+          opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
+        };
+      }
+    }
+
+    // ---- okraj (plocha) / obrys pod čiarou ----
+    if (def.outline) {
+      const width = Number(def.outline.width);
+      if (!isColor(def.outline.color)) {
+        problems.push(`Vrstva "${id}": farba okraja nie je hex (${def.outline.color}).`);
+      } else if (!Number.isFinite(width) || width <= 0 || width > 40) {
+        problems.push(`Vrstva "${id}": šírka okraja musí byť medzi 0 a 40.`);
+      } else if (def.outline.dash != null && !DASH_IDS.includes(def.outline.dash)) {
+        problems.push(`Vrstva "${id}": neznámy vzor okraja "${def.outline.dash}".`);
+      } else {
+        const opacity = Number(def.outline.opacity);
+        clean.outline = {
+          color: String(def.outline.color).toLowerCase(),
+          width: Math.round(width * 10) / 10,
+          dash: def.outline.dash && def.outline.dash !== "solid" ? def.outline.dash : undefined,
+          opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
+        };
+        if (!clean.outline.dash) delete clean.outline.dash;
+      }
+    }
+
     if (Object.keys(clean).length) out.layers[id] = clean;
   }
 
@@ -702,12 +757,121 @@ export function mergedPalette(themeKey, overrides) {
   return { ...base, ...(overrides?.palette?.[themeKey] || {}) };
 }
 
-/** Aplikuje úpravy vrstiev na hotový štýl (viditeľnosť, zoom, farby). */
+/**
+ * Rozšíri šírku čiary o konštantu aj vtedy, keď je zadaná interpoláciou
+ * podľa zoomu – `["+", …]` by MapLibre nad `["zoom"]` neprijal.
+ */
+function widenExpr(expr, extra) {
+  if (typeof expr === "number") return expr + extra;
+  if (Array.isArray(expr) && expr[0] === "interpolate") {
+    const out = expr.slice(0, 3);
+    for (let i = 3; i < expr.length; i += 2) {
+      out.push(expr[i], typeof expr[i + 1] === "number" ? expr[i + 1] + extra : expr[i + 1]);
+    }
+    return out;
+  }
+  return expr;
+}
+
+/**
+ * Spoločné vlastnosti, ktoré odvodená vrstva preberá od svojej predlohy.
+ * Prípona je s dvoma podčiarkovníkmi, aby sa netrafila do už existujúcej
+ * vrstvy – `park` + „okraj" by inak prepísalo `park-outline`.
+ */
+function derived(layer, suffix, label) {
+  const out = {
+    id: `${layer.id}__${suffix}`,
+    source: layer.source,
+    metadata: {
+      ...(layer.metadata || {}),
+      "frico:label": `${(layer.metadata || {})["frico:label"] || layer.id} – ${label}`,
+      "frico:derived": layer.id
+    }
+  };
+  for (const key of ["source-layer", "filter", "minzoom", "maxzoom"]) {
+    if (layer[key] !== undefined) out[key] = layer[key];
+  }
+  if ((layer.layout || {}).visibility === "none") out.layout = { visibility: "none" };
+  return out;
+}
+
+/** Vrstva s opakujúcim sa vzorom nad plochou / pozdĺž čiary. */
+function patternLayer(layer, pattern) {
+  const name = patternImageName(pattern);
+  const opacity = pattern.opacity ?? 1;
+  if (layer.type === "fill" || layer.type === "fill-extrusion") {
+    return {
+      ...derived(layer, "pattern", "vzor"),
+      type: "fill",
+      paint: { "fill-pattern": name, "fill-opacity": opacity }
+    };
+  }
+  if (layer.type === "line") {
+    const base = derived(layer, "pattern", "vzor");
+    return {
+      ...base,
+      type: "line",
+      layout: { ...(layer.layout || {}), ...(base.layout || {}) },
+      paint: {
+        "line-pattern": name,
+        "line-width": layer.paint["line-width"],
+        "line-opacity": opacity
+      }
+    };
+  }
+  return null;
+}
+
+/**
+ * Okraj. Pri ploche je to obrysová čiara nad ňou, pri čiare širšia čiara
+ * pod ňou (klasický casing) – v oboch prípadoch „to, čo prvok ohraničuje".
+ */
+function outlineLayer(layer, outline) {
+  const dash = outline.dash ? { "line-dasharray": dashArray(outline.dash) } : {};
+  if (layer.type === "fill" || layer.type === "fill-extrusion") {
+    return {
+      ...derived(layer, "outline", "okraj"),
+      type: "line",
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": outline.color,
+        "line-width": outline.width,
+        "line-opacity": outline.opacity ?? 1,
+        ...dash
+      }
+    };
+  }
+  if (layer.type === "line") {
+    return {
+      ...derived(layer, "outline", "okraj"),
+      type: "line",
+      layout: layer.layout || {},
+      paint: {
+        "line-color": outline.color,
+        "line-width": widenExpr(layer.paint["line-width"], outline.width * 2),
+        "line-opacity": outline.opacity ?? 1,
+        ...dash
+      }
+    };
+  }
+  return null;
+}
+
+/**
+ * Aplikuje úpravy vrstiev na hotový štýl: viditeľnosť, rozsah zoomu, farby,
+ * prerušovanie čiary a odvodené vrstvy (vzor, okraj).
+ */
 function applyLayerOverrides(style, layerOverrides) {
   if (!layerOverrides) return style;
+  const out = [];
+
   for (const layer of style.layers) {
     const o = layerOverrides[layer.id];
-    if (!o) continue;
+    if (!o) {
+      out.push(layer);
+      continue;
+    }
+
     if (o.visible === false) {
       layer.layout = { ...(layer.layout || {}), visibility: "none" };
     }
@@ -719,7 +883,26 @@ function applyLayerOverrides(style, layerOverrides) {
       delete layer.maxzoom;
     }
     if (o.paint) layer.paint = { ...(layer.paint || {}), ...o.paint };
+    if (o.dash && layer.type === "line") {
+      layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
+    }
+
+    // Okraj čiary ide pod ňu, okraj plochy a vzor nad ňu.
+    const outline = o.outline ? outlineLayer(layer, o.outline) : null;
+    if (outline && layer.type === "line") out.push(outline);
+    out.push(layer);
+    if (outline && layer.type !== "line") out.push(outline);
+    const pattern = o.pattern ? patternLayer(layer, o.pattern) : null;
+    if (pattern) out.push(pattern);
   }
+
+  // Poistka proti duplicitnému id – MapLibre by taký štýl odmietol.
+  const seen = new Set();
+  style.layers = out.filter((l) => {
+    if (seen.has(l.id)) return false;
+    seen.add(l.id);
+    return true;
+  });
   return style;
 }
 
