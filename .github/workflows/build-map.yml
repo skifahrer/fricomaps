@@ -397,6 +397,23 @@ jobs:
           done
           jq -r 'keys | length as $n | "Sprite obsahuje \($n) ikon"' _site/sprites/osm-liberty.json
 
+      - name: Vyrob SDF sprite (ikony bez kolieska, farbiteľné)
+        id: sprite
+        run: |
+          set -uo pipefail
+          # Ikony osm-liberty sú kreslené v bielom koliesku a nedajú sa farbiť.
+          # Skript z nich vytiahne samotný symbol a prepočíta ho na SDF, čím
+          # sa im dá nastaviť `icon-color`. Keby to zlyhalo, mapa zostane na
+          # pôvodnom sprite – radšej kolieska než žiadne ikonky.
+          if node workers/build-sdf-sprite.mjs \
+               --in=_site/sprites/osm-liberty \
+               --out=_site/sprites/osm-liberty-sdf; then
+            echo "name=osm-liberty-sdf" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::SDF sprite sa nepodarilo vyrobiť – ikony zostanú v kolieskach a bez možnosti zmeny farby."
+            echo "name=osm-liberty" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Stiahni glyfy (fonty) k sebe na Pages
         run: |
           set -euo pipefail
@@ -448,14 +465,17 @@ jobs:
             --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
-            --sprite=_site/sprites/osm-liberty.json \
+            --sprite=_site/sprites/${{ steps.sprite.outputs.name }}.json \
+            --sprite-url='${{ steps.pages.outputs.base_url }}/sprites/${{ steps.sprite.outputs.name }}' \
+            --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
             --out=_site/styles
 
       - name: Poskladaj web (viewer + manifest)
         run: |
           set -euo pipefail
-          cp poc/web/index.html poc/web/app.js poc/web/themes.js _site/
+          cp poc/web/index.html poc/web/app.js poc/web/themes.js \
+             poc/web/devmode.js poc/web/style-overrides.json _site/
 
           BASE='${{ steps.pages.outputs.base_url }}'
           BASE="${BASE%/}"
@@ -471,7 +491,7 @@ jobs:
             --arg bbox '${{ steps.region.outputs.bbox }}' \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg glyphs "$GLYPHS" \
-            --arg sprite "$BASE/sprites/osm-liberty" \
+            --arg sprite "$BASE/sprites/${{ steps.sprite.outputs.name }}" \
             --argjson maxzoom '${{ steps.tiles.outputs.maxzoom }}' \
             --argjson size_mb '${{ steps.tiles.outputs.size_mb }}' \
             --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
@@ -512,9 +532,10 @@ jobs:
           STYLE="${styles[0]}"
           echo "Kontrolujem $STYLE"
 
-          # sprite
+          # sprite (ten, na ktorý štýl naozaj odkazuje)
+          SPRITE='${{ steps.sprite.outputs.name }}'
           for ext in .json .png; do
-            [ -s "_site/sprites/osm-liberty$ext" ] || { echo "::error::chýba sprites/osm-liberty$ext"; fail=1; }
+            [ -s "_site/sprites/$SPRITE$ext" ] || { echo "::error::chýba sprites/$SPRITE$ext"; fail=1; }
           done
 
           # glyfy – iba ak si ich hostíme sami.
@@ -531,7 +552,8 @@ jobs:
           # ikonky – pevne zadané mená ikon musia byť v sprite (mená skladané
           # výrazom sa generujú priamo zo sprite indexu, tie kontrolovať netreba)
           while IFS= read -r icon; do
-            jq -e --arg i "$icon" 'has($i)' _site/sprites/osm-liberty.json >/dev/null \
+            [ -n "$icon" ] || continue
+            jq -e --arg i "$icon" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
               || { echo "::error::štýl odkazuje na ikonu '$icon', ktorá v sprite nie je"; fail=1; }
           done < <(jq -r '[.layers[].layout["icon-image"]? | strings] | unique | .[]' "$STYLE")
 
@@ -588,9 +610,11 @@ jobs:
 
           echo "Kontrolujem $BASE"
           check "$BASE/tiles/manifest.json" 200 "manifest.json"
-          check "$BASE/sprites/osm-liberty.json" 200 "sprite index"
-          check "$BASE/sprites/osm-liberty.png" 200 "sprite bitmapa"
+          SPRITE='${{ steps.sprite.outputs.name }}'
+          check "$BASE/sprites/$SPRITE.json" 200 "sprite index"
+          check "$BASE/sprites/$SPRITE.png" 200 "sprite bitmapa"
           check "$BASE/styles/$REGION-svetla.json" 200 "style.json"
+          check "$BASE/style-overrides.json" 200 "úpravy štýlu z developer módu"
 
           GLYPHS=$(curl -s "$BASE/tiles/manifest.json" | jq -r '.glyphs')
           case "$GLYPHS" in

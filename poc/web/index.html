@@ -65,12 +65,147 @@
     }
     #error code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
 
+    /* ===================== developer mode ===================== */
+    #dev {
+      position: absolute; top: 10px; right: 10px; bottom: 10px; z-index: 13;
+      width: min(420px, calc(100% - 20px));
+      display: flex; flex-direction: column;
+      background: rgba(252, 252, 253, 0.97); color: #222;
+      border-radius: 10px; box-shadow: 0 2px 14px rgba(0,0,0,.3);
+      font-size: 12px; overflow: hidden;
+    }
+    #dev[hidden] { display: none; }
+    .dev-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; border-bottom: 1px solid #e2e2e6; font-size: 13px;
+    }
+    .dev-x {
+      border: none; background: none; cursor: pointer;
+      font-size: 15px; color: #888; padding: 0 2px;
+    }
+    .dev-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #e2e2e6; }
+    .dev-tab {
+      border: none; background: none; cursor: pointer; padding: 6px 11px;
+      font-size: 12px; color: #666; border-radius: 6px 6px 0 0;
+    }
+    .dev-tab.on { background: #eceef2; color: #111; font-weight: 600; }
+    .dev-body { flex: 1; overflow: auto; padding: 8px 10px 14px; }
+    .dev-status {
+      padding: 6px 12px; border-top: 1px solid #e2e2e6;
+      font-size: 11px; color: #777;
+    }
+    .dev-hint { margin: 2px 0 8px; color: #666; line-height: 1.45; }
+    .dev-hint code { background: #eceef2; padding: 1px 4px; border-radius: 3px; }
+
+    .dev-search {
+      width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px;
+      border: 1px solid #ccc; border-radius: 6px; margin-bottom: 6px;
+    }
+    .dev-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 7px; }
+    .dev-chip {
+      border: 1px solid #d5d5db; background: #fff; color: #555;
+      border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+    }
+    .dev-chip.on { background: #3a6ea5; border-color: #3a6ea5; color: #fff; }
+
+    .dev-bulk {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      padding: 7px; border-radius: 7px; background: #f0f1f4;
+      margin-bottom: 8px; opacity: .55;
+    }
+    .dev-bulk.on { opacity: 1; }
+    .dev-bulklabel { font-size: 11px; color: #555; margin-right: 3px; }
+    .dev-btn {
+      border: 1px solid #cfcfd6; background: #fff; color: #333;
+      border-radius: 5px; padding: 3px 8px; font-size: 11px; cursor: pointer;
+    }
+    .dev-btn:hover { background: #f6f6f8; }
+    .dev-btn.danger { color: #a03020; border-color: #e0b0a8; }
+
+    .dev-list { display: flex; flex-direction: column; }
+    .dev-group {
+      display: flex; align-items: center; gap: 4px;
+      margin: 9px 0 2px; padding-bottom: 3px; border-bottom: 1px solid #e6e6ea;
+    }
+    .dev-groupname {
+      flex: 1; text-align: left; border: none; background: none; cursor: pointer;
+      font-weight: 600; font-size: 12px; color: #333; padding: 0;
+    }
+    .dev-item { border-bottom: 1px solid #f0f0f3; padding: 3px 0; }
+    .dev-row, .dev-prow { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    .dev-row.off .dev-name, .dev-prow.off .dev-name { opacity: .45; text-decoration: line-through; }
+    .dev-row.changed > .dev-name > span:first-child,
+    .dev-prow.changed .dev-name > span:first-child { color: #b06000; font-weight: 600; }
+    .dev-check { margin: 0; }
+    .dev-name { flex: 1; display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+    .dev-name small { color: #999; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+    .dev-kind {
+      font-size: 10px; padding: 1px 5px; border-radius: 4px;
+      background: #e6e8ee; color: #556; white-space: nowrap;
+    }
+    .dev-kind.k-area { background: #dff0dc; color: #3a5a34; }
+    .dev-kind.k-line { background: #dde6f5; color: #33507a; }
+    .dev-kind.k-point { background: #f5e6dd; color: #7a4a33; }
+    .dev-kind.k-text { background: #eee2f2; color: #5a3a6a; }
+    .dev-kind.k-3d { background: #f2eedd; color: #6a5a20; }
+    .dev-kind.k-raster { background: #e2eef2; color: #35606a; }
+
+    .dev-details { padding: 2px 0 4px 24px; }
+    .dev-prop { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .dev-propname { font-size: 10px; color: #888; width: 96px; flex: none; }
+    .dev-colorrow { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+    .dev-colorrow.changed .dev-hex { border-color: #d09030; background: #fffaf0; }
+    .dev-color {
+      width: 26px; height: 22px; padding: 0; border: 1px solid #ccc;
+      border-radius: 4px; background: none; cursor: pointer; flex: none;
+    }
+    .dev-hex {
+      width: 78px; padding: 2px 5px; font-size: 11px; font-family: ui-monospace, monospace;
+      border: 1px solid #ccc; border-radius: 4px; flex: none;
+    }
+    .dev-mini {
+      border: none; background: none; cursor: pointer; font-size: 12px;
+      color: #777; padding: 1px 3px; line-height: 1;
+    }
+    .dev-mini:hover { color: #222; }
+    .dev-note { font-size: 10px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dev-zooms { display: flex; gap: 10px; margin: 2px 0 4px; }
+    .dev-zooms.changed .dev-num { border-color: #d09030; background: #fffaf0; }
+    .dev-zoom { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
+    .dev-num { width: 52px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; }
+    .dev-json {
+      width: 100%; box-sizing: border-box; height: 220px; margin-top: 8px;
+      font-family: ui-monospace, monospace; font-size: 11px;
+      border: 1px solid #ccc; border-radius: 6px; padding: 6px;
+    }
+    .dev-file { display: block; margin: 4px 0 6px; font-size: 11px; }
+    .dev-clip { position: fixed; left: -9999px; top: 0; }
+
     body.dark #toggle { background: rgba(24,24,36,.94); color: #ddd; }
     body.dark #panel { background: rgba(24, 24, 36, 0.94); color: #ddd; }
     body.dark #panel label, body.dark #panel .row { color: #aaa; }
     body.dark #panel select { background: #222; color: #ddd; border-color: #444; }
     body.dark #zoom { background: rgba(24,24,36,.8); color: #bbb; }
     body.dark #warn { background: #3a2a12; border-color: #7a5a20; color: #f0c890; }
+
+    body.dark #dev { background: rgba(22, 22, 32, 0.97); color: #ddd; }
+    body.dark .dev-head, body.dark .dev-tabs, body.dark .dev-status { border-color: #33334a; }
+    body.dark .dev-status, body.dark .dev-hint, body.dark .dev-note,
+    body.dark .dev-bulklabel, body.dark .dev-propname { color: #999; }
+    body.dark .dev-tab { color: #aaa; }
+    body.dark .dev-tab.on { background: #2b2b40; color: #fff; }
+    body.dark .dev-bulk { background: #26263a; }
+    body.dark .dev-btn, body.dark .dev-chip,
+    body.dark .dev-search, body.dark .dev-hex, body.dark .dev-num, body.dark .dev-json {
+      background: #1e1e2c; color: #ddd; border-color: #3a3a52;
+    }
+    body.dark .dev-chip.on { background: #3a6ea5; border-color: #3a6ea5; color: #fff; }
+    body.dark .dev-groupname { color: #ddd; }
+    body.dark .dev-group { border-color: #33334a; }
+    body.dark .dev-item { border-color: #2a2a3c; }
+    body.dark .dev-hint code { background: #2b2b40; }
+    body.dark .dev-row.changed > .dev-name > span:first-child,
+    body.dark .dev-prow.changed .dev-name > span:first-child { color: #e0a850; }
   </style>
 </head>
 <body>
@@ -92,9 +227,15 @@
       <input type="checkbox" id="terrain" />
       <label for="terrain" style="margin:0">3D terén</label>
     </div>
+    <div class="row">
+      <input type="checkbox" id="devmode" />
+      <label for="devmode" style="margin:0">🛠 Developer mode</label>
+    </div>
     <div id="meta"></div>
     <div id="warn"><b>Problém s načítaním:</b><ul></ul></div>
   </div>
+
+  <div id="dev" hidden></div>
 
   <div id="zoom">zoom –</div>
 

@@ -1,11 +1,15 @@
 import {
   THEMES,
   buildStyle,
+  normalizeOverrides,
+  hasOverrides,
+  emptyOverrides,
   CLICKABLE_LAYERS,
   MAX_DISPLAY_Z,
   MAX_TILE_Z,
   DEFAULT_DEM_TILES
 } from "./themes.js";
+import { initDevMode, loadOverrides } from "./devmode.js";
 
 // Základná URL stránky (funguje na GitHub Pages aj lokálne).
 const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
@@ -18,11 +22,13 @@ const themeSelect = $("theme");
 const regionSelect = $("region");
 const contoursCheck = $("contours");
 const terrainCheck = $("terrain");
+const devCheck = $("devmode");
 const metaEl = $("meta");
 const zoomEl = $("zoom");
 const warnEl = $("warn");
 const panelEl = $("panel");
 const toggleEl = $("toggle");
+const devEl = $("dev");
 
 for (const [key, t] of Object.entries(THEMES)) {
   themeSelect.add(new Option(t.label, key));
@@ -76,15 +82,21 @@ async function loadJson(url, { optional = false } = {}) {
 }
 
 let map;
+let dev = null;
+/** Úpravy štýlu z developer módu (prehliadač > zdroják > žiadne). */
+let overrides = emptyOverrides();
+/** Posledný vygenerovaný štýl – developer mode z neho číta zoznam vrstiev. */
+let currentStyle = null;
+/** Sprite je SDF (ikony sa dajú prefarbiť) – zistí sa zo sprite indexu. */
+let sdfIcons = false;
 
-function applyStyle(manifest, icons) {
+function styleFor(manifest, icons) {
   const region = manifest.regions[regionSelect.value];
-  const themeKey = themeSelect.value;
   const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
   const demTiles = manifest.dem === null ? null : manifest.dem || DEFAULT_DEM_TILES;
 
-  const style = buildStyle({
-    theme: themeKey,
+  return buildStyle({
+    theme: themeSelect.value,
     tilesUrl: `pmtiles://${baseUrl}/${region.pmtiles}`,
     spriteUrl: manifest.sprite || `${baseUrl}/sprites/osm-liberty`,
     glyphsUrl:
@@ -98,8 +110,19 @@ function applyStyle(manifest, icons) {
         : null,
     contoursMaxzoom: region.contours_maxzoom || 14,
     demTiles,
+    sdfIcons,
+    overrides,
     name: `FricoMaps – ${region.name}`
   });
+}
+
+function applyStyle(manifest, icons) {
+  const region = manifest.regions[regionSelect.value];
+  const themeKey = themeSelect.value;
+  const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
+
+  const style = styleFor(manifest, icons);
+  currentStyle = style;
 
   document.body.classList.toggle("dark", themeKey === "tmava");
 
@@ -107,6 +130,7 @@ function applyStyle(manifest, icons) {
     `Región: <b>${region.name}</b><br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
     (region.contours ? `Vrstevnice po ${region.contour_interval || 10} m<br>` : "") +
+    (hasOverrides(overrides) ? "Štýl s vlastnými úpravami (developer mode)<br>" : "") +
     `Vygenerované: ${new Date(manifest.built_at).toLocaleString("sk-SK")}<br>` +
     `© OpenStreetMap prispievatelia`;
 
@@ -166,6 +190,8 @@ function applyStyle(manifest, icons) {
       map.getCanvas().style.cursor = hit ? "pointer" : "";
     });
   } else {
+    // `diff: true` (default) prekreslí len to, čo sa naozaj zmenilo – vďaka
+    // tomu je ladenie farieb v developer móde plynulé.
     map.setStyle(style);
   }
 }
@@ -175,6 +201,30 @@ function applyTerrain() {
   if (!map) return;
   const on = terrainCheck.checked && map.getSource("dem");
   map.setTerrain(on ? { source: "dem", exaggeration: 1.3 } : null);
+}
+
+// ---------- developer mode ----------
+function setDevMode(on, manifest, icons) {
+  devEl.hidden = !on;
+  devCheck.checked = on;
+  try {
+    localStorage.setItem("fricomaps.dev", on ? "1" : "0");
+  } catch {
+    /* súkromný režim */
+  }
+  if (!on || dev) return;
+
+  dev = initDevMode({
+    root: devEl,
+    getStyle: () => currentStyle,
+    getTheme: () => themeSelect.value,
+    getMap: () => map,
+    onChange: (next) => {
+      overrides = next;
+      applyStyle(manifest, icons);
+    }
+  });
+  devEl.addEventListener("dev-close", () => setDevMode(false, manifest, icons));
 }
 
 async function main() {
@@ -187,9 +237,25 @@ async function main() {
   }
 
   // Zoznam ikon zo spritu – aby štýl odkazoval len na ikony, ktoré existujú.
+  // Z indexu sa zároveň zistí, či je sprite SDF (vtedy sa dajú ikony farbiť).
   const spriteUrl = manifest.sprite || `${baseUrl}/sprites/osm-liberty`;
   const spriteJson = await loadJson(`${spriteUrl}.json`, { optional: true });
   const icons = spriteJson ? Object.keys(spriteJson) : [];
+  sdfIcons = spriteJson ? Object.values(spriteJson).some((e) => e && e.sdf) : false;
+
+  // Úpravy štýlu: čo je uložené v prehliadači má prednosť, inak sa vezme to,
+  // čo je zapečené v zdrojáku (workflow „Uložiť úpravy štýlu do zdrojáku").
+  const stored = loadOverrides();
+  if (hasOverrides(stored)) {
+    overrides = stored;
+  } else {
+    const committed = await loadJson(`${baseUrl}/style-overrides.json`, { optional: true });
+    if (committed) {
+      const { overrides: clean, problems } = normalizeOverrides(committed);
+      overrides = clean;
+      for (const p of problems) warn(`style-overrides.json: ${p}`);
+    }
+  }
 
   for (const [key, r] of Object.entries(manifest.regions)) {
     regionSelect.add(new Option(r.name, key));
@@ -203,8 +269,14 @@ async function main() {
   };
   syncControls();
 
-  themeSelect.addEventListener("change", () => applyStyle(manifest, icons));
-  contoursCheck.addEventListener("change", () => applyStyle(manifest, icons));
+  themeSelect.addEventListener("change", () => {
+    applyStyle(manifest, icons);
+    dev?.refresh();
+  });
+  contoursCheck.addEventListener("change", () => {
+    applyStyle(manifest, icons);
+    dev?.refresh();
+  });
   terrainCheck.addEventListener("change", applyTerrain);
   regionSelect.addEventListener("change", () => {
     syncControls();
@@ -212,8 +284,17 @@ async function main() {
     const [w, s, e, n] = manifest.regions[regionSelect.value].bbox;
     map.fitBounds([[w, s], [e, n]], { padding: 20 });
   });
+  devCheck.addEventListener("change", () =>
+    setDevMode(devCheck.checked, manifest, icons)
+  );
 
   applyStyle(manifest, icons);
+
+  // Developer mode sa zapína prepínačom v paneli alebo cez ?dev=1.
+  const wantDev =
+    new URLSearchParams(location.search).get("dev") === "1" ||
+    localStorage.getItem?.("fricomaps.dev") === "1";
+  if (wantDev) setDevMode(true, manifest, icons);
 }
 
 main();

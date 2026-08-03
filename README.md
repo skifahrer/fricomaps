@@ -9,7 +9,9 @@ pipeline, jeden formát (PMTiles), spoločné štýly pre web aj mobil.
 app/ios/       iOS aplikácia (SwiftUI + MapLibre Native)
 backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
-workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov
+               + developer mode na ladenie štýlu priamo v prehliadači
+workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov,
+               SDF sprite, zápis úprav štýlu do zdrojáku
 docs/          návrhy (iOS / multiplatform)
 .github/workflows/  CI pipeline (extrakty + build mapy + deploy Pages)
 ```
@@ -27,6 +29,10 @@ Build map                    stiahne IBA {región}.osm.pbf:
 Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
 (fallback, raz týždenne)     (všetky kraje po OSM admin. hraniciach naraz)
                              ─► release `osm-extracts`: {kraj}.osm.pbf + meta.json
+
+Uložiť úpravy štýlu          style-overrides.json z developer módu
+(po doladení mapy)           ─► kontrola + prečistenie
+                             ─► poc/web/style-overrides.json v repozitári
 ```
 
 - **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov – PBF sa
@@ -48,6 +54,11 @@ Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
   letiská a POI s ikonkami zo spritu osm-liberty (maki).
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
+- **Ikonky bez koliesok, s farbou:** sprite osm-liberty kreslí každý symbol
+  v bielom koliesku a farbu mu meniť nejde. Pipeline z neho preto vyrobí
+  vlastný **SDF sprite** ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)),
+  kde je len samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
+- **Developer mode:** ladenie mapy priamo v prehliadači – viď nižšie.
 
 ## Nadmorská výška a vrstevnice
 
@@ -89,6 +100,67 @@ Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m)
 > [ÚGKK DMR 5.0](https://www.geoportal.sk/) (1 m LiDAR, voľný aj komerčne pri
 > uvedení zdroja) — ani jeden sa však nedá sťahovať priamo v CI, museli by sa
 > nacacheovať do releasu.
+
+## Developer mode – ladenie mapy v prehliadači
+
+Mapa sa dá doladiť priamo vo viewri, bez čakania na pipeline. Zapína sa
+prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
+
+| záložka | čo sa v nej dá |
+|---|---|
+| **Vrstvy** | všetkých ~115 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`) a farby všetkých jej `*-color` vlastností |
+| **Paleta** | ~67 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
+| **Súbor** | stiahnutie, nahratie a vymazanie úprav |
+
+**Hromadné úpravy a kopírovanie.** V oboch zoznamoch sa dajú položky
+zaškrtnúť (aj celá skupina naraz alebo „Vybrať zobrazené" podľa filtra)
+a potom ich naraz zobraziť, skryť, zafarbiť jednou farbou, skopírovať ako
+JSON alebo resetovať. Každá farba má vedľa seba hex pole aj tlačidlo na
+skopírovanie; v palete sa dá aj vložiť JSON s farbami.
+
+Zmeny sa priebežne ukladajú **do prehliadača** (`localStorage`) a hneď sa
+prejavia v mape.
+
+### Cesta úprav do zdrojáku
+
+```
+mapa na Pages ─► 🛠 developer mode ─► „Stiahnuť style-overrides.json"
+                                       │
+                                       ▼
+              Actions ─► „Uložiť úpravy štýlu do zdrojáku" (vlož obsah súboru)
+                                       │
+                       workers/apply-overrides.mjs – kontrola a prečistenie
+                                       │
+                       poc/web/style-overrides.json v repozitári
+                                       │
+                       ďalší „Build map" ─► mapa pre web aj iOS s úpravami
+```
+
+Workflow **Uložiť úpravy štýlu do zdrojáku** berie obsah súboru ako vstup
+(prípadne `overrides_url` pri väčšom súbore), overí ho tou istou funkciou ako
+prehliadač – neznáma farba, neplatný hex, neprepísateľná vlastnosť či
+prehodený rozsah zoomu skončia varovaním a vyhodia sa – a až potom ho
+commitne (voliteľne cez pull request). `reset` vráti pôvodný štýl.
+
+Formát súboru:
+
+```json
+{
+  "version": 1,
+  "palette": { "outdoor": { "forest": "#a8cc8e" } },
+  "layers": {
+    "landcover-wood": { "paint": { "fill-color": "#a8cc8e" } },
+    "housenumber":    { "visible": false },
+    "road-motorway":  { "minzoom": 6, "maxzoom": 20 }
+  },
+  "poi": { "hidden": ["fast_food"] }
+}
+```
+
+Prehliadač uprednostní to, čo má uložené v `localStorage`; ak tam nič nie je,
+použije `style-overrides.json` zo stránky. Tlačidlo **Vymazať všetky zmeny**
+vráti mapu na to, čo je v zdrojáku.
 
 ## Zoom a detail
 
@@ -146,7 +218,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
 4. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
-   témy, regiónu, vrstevníc a 3D terénu.
+   témy, regiónu, vrstevníc, 3D terénu a developer módu.
 
 Pipeline si po nasadení sama overí, že mapa naozaj funguje (**smoke test**):
 `manifest.json`, `style.json`, sprite, glyfy a `Range` request na `.pmtiles`
