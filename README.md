@@ -11,7 +11,7 @@ backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
 workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov,
-               SDF sprite, zápis úprav štýlu do zdrojáku
+               SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
 docs/          návrhy (iOS / multiplatform)
 .github/workflows/  CI pipeline (extrakty + build mapy + deploy Pages)
 ```
@@ -54,10 +54,13 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
   letiská a POI s ikonkami zo spritu osm-liberty (maki).
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
-- **Ikonky bez koliesok, s farbou:** sprite osm-liberty kreslí každý symbol
-  v bielom koliesku a farbu mu meniť nejde. Pipeline z neho preto vyrobí
-  vlastný **SDF sprite** ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)),
-  kde je len samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
+- **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
+  podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
+  farbu im meniť nejde. Pipeline z každého zdroja vyrobí vlastný **SDF sprite**
+  ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)), kde je len
+  samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
+- **Tri sady ikoniek** ([poc/web/icon-sources.js](poc/web/icon-sources.js)) sa
+  nasadzujú všetky naraz, takže sa dajú v developer móde prepínať naživo.
 - **Developer mode:** ladenie mapy priamo v prehliadači – viď nižšie.
 
 ## Nadmorská výška a vrstevnice
@@ -108,10 +111,47 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 
 | záložka | čo sa v nej dá |
 |---|---|
-| **Vrstvy** | všetkých ~115 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`) a farby všetkých jej `*-color` vlastností |
+| **Vrstvy** | všetkých ~115 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
 | **Paleta** | ~67 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
+
+**Prehliadanie po zoomoch.** Nad zoznamom je posuvník zoomu: nastavíš zoom
+(mapa tam skočí) a zoznam ukáže, čo je na ňom naozaj povolené – hlavička
+skupiny má počítadlo `aktívne/všetky`, každý riadok svoj rozsah (`z13–16`,
+`z9+`, `vždy`) a vrstvy, ktoré sa na danom zoome neorežú, ostávajú výrazné.
+Prepínač **len aktívne** schová zvyšok. Posuvník sleduje aj bežné zoomovanie
+myšou, takže sa dá ísť zoom po zoome a hneď vidieť, čo pribudlo.
+
+**Vzory, okraje a prerušovanie.** Ploche aj čiare sa dá dať opakujúci sa vzor
+(18 predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, tehly,
+krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou ťahu
+a krytím. Okraj je pri ploche obrysová čiara, pri čiare širší obrys pod ňou
+(casing) – oboje s farbou, šírkou, prerušovaním a krytím. Samotná čiara má
+navyše 9 predvolieb prerušovania (čiarkovaná, bodkovaná, šrafovanie
+železnice, priečky, rebrík lanovky…).
+
+Vzory nie sú hotové obrázky: **názov obrázka je jeho predpis**
+(`pat:trees:2f5a28:22:12`), takže si ho prehliadač dokreslí sám cez
+`styleimagemissing`, a pipeline tie isté názvy nájde v hotovom štýle a
+dopečie ich do spritu ([workers/add-sprite-patterns.mjs](workers/add-sprite-patterns.mjs)),
+aby fungovali aj v statickom `style.json` pre iOS.
+
+**Sady ikoniek.** Schéma OpenMapTiles pomenúva POI cez `class`/`subclass`
+(`restaurant`, `cafe`, `fuel`, …) a štýl z toho skladá meno ikony – zdroj je
+teda použiteľný len vtedy, keď jeho ikony nesú rovnaké mená. Nasadené sú tri:
+
+| sada | obrázkov | pokrytie bežných tried | poznámka |
+|---|---|---|---|
+| **OSM Liberty (maki)** – predvolená | 244 | 44/50 | jediná so šípkou jednosmeriek; symboly sú v bielom koliesku |
+| **OSM Liberty Topo** | 242 | 42/50 | turistická odvodenina s outdoorovými symbolmi |
+| **OSM Bright (OpenMapTiles)** | 101 | 42/50 | bez koliesok, len svetlé halo; menej tried, čistejšia kresba |
+
+Preverené a zamietnuté: sprity ostatných štýlov OpenMapTiles (positron,
+dark-matter, klokantech, maptiler-basic, fiord) obsahujú 1–4 obrázky, teda
+žiadne POI ikony; sprite Protomaps v4 má vlastné pomenovanie a z bežných tried
+OSM pokryje asi tretinu, navyše s rámčekom okolo symbolu.
 
 **Hromadné úpravy a kopírovanie.** V oboch zoznamoch sa dajú položky
 zaškrtnúť (aj celá skupina naraz alebo „Vybrať zobrazené" podľa filtra)
@@ -137,6 +177,10 @@ mapa na Pages ─► 🛠 developer mode ─► „Stiahnuť style-overrides.jso
                        ďalší „Build map" ─► mapa pre web aj iOS s úpravami
 ```
 
+`pattern` a `outline` sa nezapisujú do pôvodnej vrstvy – pipeline z nich
+vyrobí odvodené vrstvy `<id>__pattern` a `<id>__outline` (okraj plochy nad
+ňou, obrys čiary pod ňou), takže sa dajú kedykoľvek odobrať bez stopy.
+
 Workflow **Uložiť úpravy štýlu do zdrojáku** berie obsah súboru ako vstup
 (prípadne `overrides_url` pri väčšom súbore), overí ho tou istou funkciou ako
 prehliadač – neznáma farba, neplatný hex, neprepísateľná vlastnosť či
@@ -148,9 +192,15 @@ Formát súboru:
 ```json
 {
   "version": 1,
+  "icons": "osm-bright",
   "palette": { "outdoor": { "forest": "#a8cc8e" } },
   "layers": {
-    "landcover-wood": { "paint": { "fill-color": "#a8cc8e" } },
+    "landcover-wood": {
+      "paint":   { "fill-color": "#a8cc8e" },
+      "pattern": { "id": "trees", "color": "#2f5a28", "size": 22, "weight": 1.2, "opacity": 0.7 },
+      "outline": { "color": "#2f5a28", "width": 1, "dash": "dashed", "opacity": 1 }
+    },
+    "rail-bg":        { "dash": "ties", "outline": { "color": "#5a5a5a", "width": 1 } },
     "housenumber":    { "visible": false },
     "road-motorway":  { "minzoom": 6, "maxzoom": 20 }
   },

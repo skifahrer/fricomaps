@@ -4,12 +4,15 @@ import {
   normalizeOverrides,
   hasOverrides,
   emptyOverrides,
+  selectedIconSource,
   CLICKABLE_LAYERS,
   MAX_DISPLAY_Z,
   MAX_TILE_Z,
   DEFAULT_DEM_TILES
 } from "./themes.js";
 import { initDevMode, loadOverrides } from "./devmode.js";
+import { parsePatternName, renderPattern } from "./patterns.js";
+import { ICON_SOURCES, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
 
 // Základná URL stránky (funguje na GitHub Pages aj lokálne).
 const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
@@ -87,21 +90,33 @@ let dev = null;
 let overrides = emptyOverrides();
 /** Posledný vygenerovaný štýl – developer mode z neho číta zoznam vrstiev. */
 let currentStyle = null;
-/** Sprite je SDF (ikony sa dajú prefarbiť) – zistí sa zo sprite indexu. */
-let sdfIcons = false;
+/**
+ * Nasadené sady ikoniek. Pipeline vyrobí SDF sprite z každého zdroja, takže
+ * sa dajú v developer móde prepínať naživo bez ďalšieho buildu.
+ */
+let iconSets = [];
 
-function styleFor(manifest, icons) {
+/** Sada, ktorú má štýl použiť (z úprav, inak prvá dostupná). */
+function currentIconSet() {
+  const id = selectedIconSource(overrides);
+  return iconSets.find((s) => s.id === id) || iconSets[0] || null;
+}
+
+function styleFor(manifest) {
   const region = manifest.regions[regionSelect.value];
   const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
   const demTiles = manifest.dem === null ? null : manifest.dem || DEFAULT_DEM_TILES;
+  const set = currentIconSet();
 
   return buildStyle({
     theme: themeSelect.value,
     tilesUrl: `pmtiles://${baseUrl}/${region.pmtiles}`,
-    spriteUrl: manifest.sprite || `${baseUrl}/sprites/osm-liberty`,
+    spriteUrl: set ? set.spriteUrl : `${baseUrl}/sprites/osm-liberty`,
     glyphsUrl:
       manifest.glyphs || "https://fonts.openmaptiles.org/{fontstack}/{range}.pbf",
-    icons,
+    icons: set ? set.icons : [],
+    iconSet: set ? set.id : DEFAULT_ICON_SOURCE,
+    sdfIcons: set ? set.sdf : false,
     fonts: manifest.fonts,
     maxzoom: tileZ,
     contoursUrl:
@@ -110,18 +125,17 @@ function styleFor(manifest, icons) {
         : null,
     contoursMaxzoom: region.contours_maxzoom || 14,
     demTiles,
-    sdfIcons,
     overrides,
     name: `FricoMaps – ${region.name}`
   });
 }
 
-function applyStyle(manifest, icons) {
+function applyStyle(manifest) {
   const region = manifest.regions[regionSelect.value];
   const themeKey = themeSelect.value;
   const tileZ = region.maxzoom || manifest.maxzoom || MAX_TILE_Z;
 
-  const style = styleFor(manifest, icons);
+  const style = styleFor(manifest);
   currentStyle = style;
 
   document.body.classList.toggle("dark", themeKey === "tmava");
@@ -154,6 +168,15 @@ function applyStyle(manifest, icons) {
       }),
       "top-right"
     );
+
+    // Vzory plôch a čiar sú generované – názov obrázka je zároveň jeho
+    // predpis, takže sa dokreslí presne vtedy, keď ho štýl použije.
+    // (Pipeline tie isté obrázky dopečie do spritu pre iOS.)
+    map.on("styleimagemissing", (ev) => {
+      const spec = parsePatternName(ev.id);
+      if (!spec || map.hasImage(ev.id)) return;
+      map.addImage(ev.id, renderPattern(spec, 2), { pixelRatio: 2 });
+    });
 
     map.on("error", (ev) => {
       const err = ev?.error;
@@ -204,7 +227,7 @@ function applyTerrain() {
 }
 
 // ---------- developer mode ----------
-function setDevMode(on, manifest, icons) {
+function setDevMode(on, manifest) {
   devEl.hidden = !on;
   devCheck.checked = on;
   try {
@@ -219,12 +242,13 @@ function setDevMode(on, manifest, icons) {
     getStyle: () => currentStyle,
     getTheme: () => themeSelect.value,
     getMap: () => map,
+    getIconSets: () => iconSets,
     onChange: (next) => {
       overrides = next;
-      applyStyle(manifest, icons);
+      applyStyle(manifest);
     }
   });
-  devEl.addEventListener("dev-close", () => setDevMode(false, manifest, icons));
+  devEl.addEventListener("dev-close", () => setDevMode(false, manifest));
 }
 
 async function main() {
@@ -236,12 +260,30 @@ async function main() {
     return;
   }
 
-  // Zoznam ikon zo spritu – aby štýl odkazoval len na ikony, ktoré existujú.
-  // Z indexu sa zároveň zistí, či je sprite SDF (vtedy sa dajú ikony farbiť).
-  const spriteUrl = manifest.sprite || `${baseUrl}/sprites/osm-liberty`;
-  const spriteJson = await loadJson(`${spriteUrl}.json`, { optional: true });
-  const icons = spriteJson ? Object.keys(spriteJson) : [];
-  sdfIcons = spriteJson ? Object.values(spriteJson).some((e) => e && e.sdf) : false;
+  // Sady ikoniek. Z indexu každej sa berie zoznam mien (aby štýl neodkazoval
+  // na ikonu, ktorá v sprite nie je) aj to, či je sprite SDF – vtedy sa dajú
+  // ikonám nastaviť farby.
+  const declared = manifest.icon_sources?.length
+    ? manifest.icon_sources
+    : [{ id: DEFAULT_ICON_SOURCE, sprite: manifest.sprite || "sprites/osm-liberty" }];
+  for (const entry of declared) {
+    const meta = ICON_SOURCES.find((s) => s.id === entry.id) || {};
+    const url = /^https?:/.test(entry.sprite) ? entry.sprite : `${baseUrl}/${entry.sprite}`;
+    const index = await loadJson(`${url}.json`, { optional: true });
+    if (!index) continue;
+    const names = Object.keys(index);
+    iconSets.push({
+      ...meta,
+      id: entry.id,
+      label: meta.label || entry.id,
+      spriteUrl: url,
+      index,
+      icons: names,
+      count: names.length,
+      sdf: Object.values(index).some((e) => e && e.sdf)
+    });
+  }
+  if (!iconSets.length) warn("Nenašla sa žiadna sada ikoniek – mapa bude bez ikon.");
 
   // Úpravy štýlu: čo je uložené v prehliadači má prednosť, inak sa vezme to,
   // čo je zapečené v zdrojáku (workflow „Uložiť úpravy štýlu do zdrojáku").
@@ -270,31 +312,31 @@ async function main() {
   syncControls();
 
   themeSelect.addEventListener("change", () => {
-    applyStyle(manifest, icons);
+    applyStyle(manifest);
     dev?.refresh();
   });
   contoursCheck.addEventListener("change", () => {
-    applyStyle(manifest, icons);
+    applyStyle(manifest);
     dev?.refresh();
   });
   terrainCheck.addEventListener("change", applyTerrain);
   regionSelect.addEventListener("change", () => {
     syncControls();
-    applyStyle(manifest, icons);
+    applyStyle(manifest);
     const [w, s, e, n] = manifest.regions[regionSelect.value].bbox;
     map.fitBounds([[w, s], [e, n]], { padding: 20 });
   });
   devCheck.addEventListener("change", () =>
-    setDevMode(devCheck.checked, manifest, icons)
+    setDevMode(devCheck.checked, manifest)
   );
 
-  applyStyle(manifest, icons);
+  applyStyle(manifest);
 
   // Developer mode sa zapína prepínačom v paneli alebo cez ?dev=1.
   const wantDev =
     new URLSearchParams(location.search).get("dev") === "1" ||
     localStorage.getItem?.("fricomaps.dev") === "1";
-  if (wantDev) setDevMode(true, manifest, icons);
+  if (wantDev) setDevMode(true, manifest);
 }
 
 main();

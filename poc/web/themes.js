@@ -20,6 +20,20 @@
  *   ho použije aj pipeline pre statické štýly pre iOS.
  */
 
+import {
+  ICON_SOURCE_IDS,
+  DEFAULT_ICON_SOURCE,
+  iconSource,
+  specialIcons
+} from "./icon-sources.js";
+import {
+  PATTERN_IDS,
+  DASH_IDS,
+  dashArray,
+  patternSpec,
+  patternImageName
+} from "./patterns.js";
+
 /** Zoom, od ktorého je mapa plne detailná (nižšie sa orezáva). */
 export const DETAIL_Z = 14;
 
@@ -543,11 +557,6 @@ const SHAPE_ICONS = new Set([
   "default_1", "default_2", "default_3", "default_4", "default_5", "default_6"
 ]);
 
-/** Ikony, ktoré má sprite osm-liberty pre `mountain_peak` a `aerodrome_label`. */
-const PEAK_ICON = "mountain_11";
-const VOLCANO_ICON = "volcano_11";
-const AIRPORT_ICON = "airport_11";
-
 const DEFAULT_FONTS = {
   regular: "Noto Sans Regular",
   bold: "Noto Sans Bold",
@@ -586,7 +595,7 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
 
 /** Prázdna sada úprav z developer módu. */
 export function emptyOverrides() {
-  return { version: 1, palette: {}, layers: {}, poi: { hidden: [] } };
+  return { version: 1, icons: DEFAULT_ICON_SOURCE, palette: {}, layers: {}, poi: { hidden: [] } };
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -612,6 +621,12 @@ export function normalizeOverrides(raw) {
   if (!raw || typeof raw !== "object") {
     problems.push("Súbor s úpravami nie je objekt JSON.");
     return { overrides: out, problems };
+  }
+
+  // ---- sada ikoniek ----
+  if (raw.icons != null) {
+    if (ICON_SOURCE_IDS.includes(raw.icons)) out.icons = raw.icons;
+    else problems.push(`Neznáma sada ikoniek "${raw.icons}" – použije sa predvolená.`);
   }
 
   // ---- paleta ----
@@ -673,6 +688,53 @@ export function normalizeOverrides(raw) {
       }
     }
     if (Object.keys(paint).length) clean.paint = paint;
+
+    // ---- prerušovanie čiary ----
+    if (def.dash != null) {
+      if (!DASH_IDS.includes(def.dash)) {
+        problems.push(`Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
+      } else if (def.dash !== "solid") {
+        clean.dash = def.dash;
+      }
+    }
+
+    // ---- opakujúci sa vzor ----
+    if (def.pattern) {
+      if (!PATTERN_IDS.includes(def.pattern.id)) {
+        problems.push(`Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
+      } else if (!isColor(def.pattern.color)) {
+        problems.push(`Vrstva "${id}": farba vzoru nie je hex (${def.pattern.color}).`);
+      } else {
+        const spec = patternSpec(def.pattern);
+        const opacity = Number(def.pattern.opacity);
+        clean.pattern = {
+          ...spec,
+          opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
+        };
+      }
+    }
+
+    // ---- okraj (plocha) / obrys pod čiarou ----
+    if (def.outline) {
+      const width = Number(def.outline.width);
+      if (!isColor(def.outline.color)) {
+        problems.push(`Vrstva "${id}": farba okraja nie je hex (${def.outline.color}).`);
+      } else if (!Number.isFinite(width) || width <= 0 || width > 40) {
+        problems.push(`Vrstva "${id}": šírka okraja musí byť medzi 0 a 40.`);
+      } else if (def.outline.dash != null && !DASH_IDS.includes(def.outline.dash)) {
+        problems.push(`Vrstva "${id}": neznámy vzor okraja "${def.outline.dash}".`);
+      } else {
+        const opacity = Number(def.outline.opacity);
+        clean.outline = {
+          color: String(def.outline.color).toLowerCase(),
+          width: Math.round(width * 10) / 10,
+          dash: def.outline.dash && def.outline.dash !== "solid" ? def.outline.dash : undefined,
+          opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
+        };
+        if (!clean.outline.dash) delete clean.outline.dash;
+      }
+    }
+
     if (Object.keys(clean).length) out.layers[id] = clean;
   }
 
@@ -689,10 +751,19 @@ export function normalizeOverrides(raw) {
 export function hasOverrides(o) {
   if (!o) return false;
   return (
+    (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
     (o.poi?.hidden || []).length > 0
   );
+}
+
+export { ICON_SOURCES, ICON_SOURCE_IDS, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
+
+/** Vybraná sada ikoniek (z úprav, inak predvolená). */
+export function selectedIconSource(overrides) {
+  const id = overrides?.icons;
+  return ICON_SOURCE_IDS.includes(id) ? id : DEFAULT_ICON_SOURCE;
 }
 
 /** Farby témy po aplikovaní úprav z developer módu. */
@@ -702,12 +773,121 @@ export function mergedPalette(themeKey, overrides) {
   return { ...base, ...(overrides?.palette?.[themeKey] || {}) };
 }
 
-/** Aplikuje úpravy vrstiev na hotový štýl (viditeľnosť, zoom, farby). */
+/**
+ * Rozšíri šírku čiary o konštantu aj vtedy, keď je zadaná interpoláciou
+ * podľa zoomu – `["+", …]` by MapLibre nad `["zoom"]` neprijal.
+ */
+function widenExpr(expr, extra) {
+  if (typeof expr === "number") return expr + extra;
+  if (Array.isArray(expr) && expr[0] === "interpolate") {
+    const out = expr.slice(0, 3);
+    for (let i = 3; i < expr.length; i += 2) {
+      out.push(expr[i], typeof expr[i + 1] === "number" ? expr[i + 1] + extra : expr[i + 1]);
+    }
+    return out;
+  }
+  return expr;
+}
+
+/**
+ * Spoločné vlastnosti, ktoré odvodená vrstva preberá od svojej predlohy.
+ * Prípona je s dvoma podčiarkovníkmi, aby sa netrafila do už existujúcej
+ * vrstvy – `park` + „okraj" by inak prepísalo `park-outline`.
+ */
+function derived(layer, suffix, label) {
+  const out = {
+    id: `${layer.id}__${suffix}`,
+    source: layer.source,
+    metadata: {
+      ...(layer.metadata || {}),
+      "frico:label": `${(layer.metadata || {})["frico:label"] || layer.id} – ${label}`,
+      "frico:derived": layer.id
+    }
+  };
+  for (const key of ["source-layer", "filter", "minzoom", "maxzoom"]) {
+    if (layer[key] !== undefined) out[key] = layer[key];
+  }
+  if ((layer.layout || {}).visibility === "none") out.layout = { visibility: "none" };
+  return out;
+}
+
+/** Vrstva s opakujúcim sa vzorom nad plochou / pozdĺž čiary. */
+function patternLayer(layer, pattern) {
+  const name = patternImageName(pattern);
+  const opacity = pattern.opacity ?? 1;
+  if (layer.type === "fill" || layer.type === "fill-extrusion") {
+    return {
+      ...derived(layer, "pattern", "vzor"),
+      type: "fill",
+      paint: { "fill-pattern": name, "fill-opacity": opacity }
+    };
+  }
+  if (layer.type === "line") {
+    const base = derived(layer, "pattern", "vzor");
+    return {
+      ...base,
+      type: "line",
+      layout: { ...(layer.layout || {}), ...(base.layout || {}) },
+      paint: {
+        "line-pattern": name,
+        "line-width": layer.paint["line-width"],
+        "line-opacity": opacity
+      }
+    };
+  }
+  return null;
+}
+
+/**
+ * Okraj. Pri ploche je to obrysová čiara nad ňou, pri čiare širšia čiara
+ * pod ňou (klasický casing) – v oboch prípadoch „to, čo prvok ohraničuje".
+ */
+function outlineLayer(layer, outline) {
+  const dash = outline.dash ? { "line-dasharray": dashArray(outline.dash) } : {};
+  if (layer.type === "fill" || layer.type === "fill-extrusion") {
+    return {
+      ...derived(layer, "outline", "okraj"),
+      type: "line",
+      layout: { "line-join": "round" },
+      paint: {
+        "line-color": outline.color,
+        "line-width": outline.width,
+        "line-opacity": outline.opacity ?? 1,
+        ...dash
+      }
+    };
+  }
+  if (layer.type === "line") {
+    return {
+      ...derived(layer, "outline", "okraj"),
+      type: "line",
+      layout: layer.layout || {},
+      paint: {
+        "line-color": outline.color,
+        "line-width": widenExpr(layer.paint["line-width"], outline.width * 2),
+        "line-opacity": outline.opacity ?? 1,
+        ...dash
+      }
+    };
+  }
+  return null;
+}
+
+/**
+ * Aplikuje úpravy vrstiev na hotový štýl: viditeľnosť, rozsah zoomu, farby,
+ * prerušovanie čiary a odvodené vrstvy (vzor, okraj).
+ */
 function applyLayerOverrides(style, layerOverrides) {
   if (!layerOverrides) return style;
+  const out = [];
+
   for (const layer of style.layers) {
     const o = layerOverrides[layer.id];
-    if (!o) continue;
+    if (!o) {
+      out.push(layer);
+      continue;
+    }
+
     if (o.visible === false) {
       layer.layout = { ...(layer.layout || {}), visibility: "none" };
     }
@@ -719,7 +899,26 @@ function applyLayerOverrides(style, layerOverrides) {
       delete layer.maxzoom;
     }
     if (o.paint) layer.paint = { ...(layer.paint || {}), ...o.paint };
+    if (o.dash && layer.type === "line") {
+      layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
+    }
+
+    // Okraj čiary ide pod ňu, okraj plochy a vzor nad ňu.
+    const outline = o.outline ? outlineLayer(layer, o.outline) : null;
+    if (outline && layer.type === "line") out.push(outline);
+    out.push(layer);
+    if (outline && layer.type !== "line") out.push(outline);
+    const pattern = o.pattern ? patternLayer(layer, o.pattern) : null;
+    if (pattern) out.push(pattern);
   }
+
+  // Poistka proti duplicitnému id – MapLibre by taký štýl odmietol.
+  const seen = new Set();
+  style.layers = out.filter((l) => {
+    if (seen.has(l.id)) return false;
+    seen.add(l.id);
+    return true;
+  });
   return style;
 }
 
@@ -732,7 +931,8 @@ function applyLayerOverrides(style, layerOverrides) {
  * @param {string} opts.spriteUrl   absolútna URL spritu (bez prípony)
  * @param {string} opts.glyphsUrl   URL šablóna glyfov {fontstack}/{range}
  * @param {string} [opts.name]      názov štýlu
- * @param {string[]} [opts.icons]   mená ikon dostupných v sprite (s `_11` aj bez)
+ * @param {string[]} [opts.icons]   mená ikon dostupných v sprite
+ * @param {string} [opts.iconSet]   id sady ikoniek (určuje príponu mien)
  * @param {object} [opts.fonts]     {regular, bold, italic} – názvy fontstackov
  * @param {number} [opts.maxzoom]   najvyšší zoom dlaždíc (default MAX_TILE_Z)
  * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
@@ -755,21 +955,33 @@ export function buildStyle({
   contoursMaxzoom = 14,
   demTiles = DEFAULT_DEM_TILES,
   sdfIcons = false,
+  iconSet = null,
   overrides = null
 }) {
   const c = mergedPalette(theme, overrides);
+  // Sada ikoniek určuje, ako sa mená skladajú (osm-liberty používa `_11`).
+  const iconSetId = iconSet || selectedIconSource(overrides);
+  const { suffix } = iconSource(iconSetId);
+  const SPECIAL = specialIcons(iconSetId);
 
   const f = { ...DEFAULT_FONTS, ...(fonts || {}) };
   const REG = [f.regular];
   const BOLD = [f.bold];
   const ITAL = [f.italic];
 
-  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona `<trieda>_11`.
-  // Čisto geometrické tvary (kruh, štvorec…) sa vynechávajú – POI bez vlastnej
-  // ikony nemá dostať kruh, ale zostať len s popiskom.
+  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona
+  // `<trieda><prípona>`. Čisto geometrické tvary (kruh, štvorec…) sa
+  // vynechávajú – POI bez vlastnej ikony nemá dostať kruh, ale zostať
+  // len s popiskom.
   const iconClasses = (
     icons && icons.length
-      ? [...new Set(icons.filter((n) => n.endsWith("_11")).map((n) => n.slice(0, -3)))]
+      ? [
+          ...new Set(
+            icons
+              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
+              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
+          )
+        ]
       : FALLBACK_ICONS
   ).filter((n) => !SHAPE_ICONS.has(n));
   const hasIcon = (n) => (icons && icons.length ? icons.includes(n) : true);
@@ -787,6 +999,7 @@ export function buildStyle({
     name: name || `FricoMaps – ${c.label}`,
     metadata: {
       "frico:theme": theme,
+      "frico:icons": iconSetId,
       "frico:overrides": hasOverrides(overrides)
     },
     sources: {
@@ -1347,7 +1560,7 @@ export function buildStyle({
   );
 
   // --- jednosmerky (len na veľkom detaile) ---
-  if (hasIcon("arrow")) {
+  if (hasIcon(SPECIAL.arrow)) {
     add(
       {
         id: "road-oneway",
@@ -1358,7 +1571,7 @@ export function buildStyle({
         layout: {
           "symbol-placement": "line",
           "symbol-spacing": 120,
-          "icon-image": "arrow",
+          "icon-image": SPECIAL.arrow,
           "icon-size": zl([[16, 0.6], [20, 1.2]]),
           "icon-rotate": ["case", ["==", num("oneway", 0), -1], 180, 0],
           "icon-rotation-alignment": "map",
@@ -1576,9 +1789,9 @@ export function buildStyle({
   const iconExpr = [
     "case",
     ["in", str("subclass"), ["literal", iconClasses]],
-    ["concat", str("subclass"), "_11"],
+    ["concat", str("subclass"), suffix],
     ["in", str("class"), ["literal", iconClasses]],
-    ["concat", str("class"), "_11"],
+    ["concat", str("class"), suffix],
     ""
   ];
 
@@ -1671,8 +1884,8 @@ export function buildStyle({
         "icon-image": [
           "case",
           ["==", ["get", "class"], "volcano"],
-          hasIcon(VOLCANO_ICON) ? VOLCANO_ICON : PEAK_ICON,
-          PEAK_ICON
+          hasIcon(SPECIAL.volcano) ? SPECIAL.volcano : SPECIAL.peak,
+          SPECIAL.peak
         ],
         "icon-size": 0.9 * iconScale,
         "icon-optional": true,
@@ -1721,8 +1934,8 @@ export function buildStyle({
       "source-layer": "aerodrome_label",
       minzoom: 10,
       layout: {
-        ...(hasIcon(AIRPORT_ICON)
-          ? { "icon-image": AIRPORT_ICON, "icon-size": iconScale }
+        ...(hasIcon(SPECIAL.airport)
+          ? { "icon-image": SPECIAL.airport, "icon-size": iconScale }
           : {}),
         "icon-optional": true,
         "text-field": nameExpr,
@@ -1736,7 +1949,7 @@ export function buildStyle({
         "text-color": c.poiText,
         "text-halo-color": c.poiHalo,
         "text-halo-width": 1.2,
-        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+        ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? {
               "icon-color": c.aerodromeIcon,
               "icon-halo-color": c.poiIconHalo,
@@ -1752,7 +1965,7 @@ export function buildStyle({
       {
         "text-color": "poiText",
         "text-halo-color": "poiHalo",
-        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+        ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? { "icon-color": "aerodromeIcon", "icon-halo-color": "poiIconHalo" }
           : {})
       }

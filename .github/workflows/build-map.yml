@@ -99,8 +99,8 @@ env:
   OSMFR_BASE: https://download.openstreetmap.fr/extracts
   # Glyfy (fonty) si hostíme sami – verejná služba fonts.openmaptiles.org je
   # jediný bod zlyhania, pri ktorom sa mapa vykreslí bez akýchkoľvek nápisov.
+  # (Zdroje ikoniek sú v poc/web/icon-sources.js.)
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
-  SPRITE_BASE: https://raw.githubusercontent.com/maputnik/osm-liberty/gh-pages/sprites
 
 jobs:
   build:
@@ -385,34 +385,66 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
 
-      - name: Stiahni sprite (ikonky) k sebe na Pages
-        run: |
-          set -euo pipefail
-          mkdir -p _site/sprites
-          for f in osm-liberty.json osm-liberty.png 'osm-liberty@2x.json' 'osm-liberty@2x.png'; do
-            if ! curl -fL --retry 4 --retry-delay 5 -o "_site/sprites/$f" "$SPRITE_BASE/$f"; then
-              echo "::error::Nepodarilo sa stiahnuť sprite $f – bez neho mapa nezobrazí žiadne ikonky."
-              exit 1
-            fi
-          done
-          jq -r 'keys | length as $n | "Sprite obsahuje \($n) ikon"' _site/sprites/osm-liberty.json
-
-      - name: Vyrob SDF sprite (ikony bez kolieska, farbiteľné)
+      - name: Stiahni a priprav sady ikoniek
         id: sprite
         run: |
           set -uo pipefail
-          # Ikony osm-liberty sú kreslené v bielom koliesku a nedajú sa farbiť.
-          # Skript z nich vytiahne samotný symbol a prepočíta ho na SDF, čím
-          # sa im dá nastaviť `icon-color`. Keby to zlyhalo, mapa zostane na
-          # pôvodnom sprite – radšej kolieska než žiadne ikonky.
-          if node workers/build-sdf-sprite.mjs \
-               --in=_site/sprites/osm-liberty \
-               --out=_site/sprites/osm-liberty-sdf; then
-            echo "name=osm-liberty-sdf" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::SDF sprite sa nepodarilo vyrobiť – ikony zostanú v kolieskach a bez možnosti zmeny farby."
-            echo "name=osm-liberty" >> "$GITHUB_OUTPUT"
+          mkdir -p _site/sprites /tmp/icons
+
+          # Zoznam zdrojov je v poc/web/icon-sources.js – jedno miesto pre web
+          # aj pipeline. Z každého sa vyrobí SDF sprite: symboly bez koliesok
+          # a podkladov, ktorým sa dá nastaviť farba.
+          node -e "
+            import('./poc/web/icon-sources.js').then((m) => {
+              for (const s of m.ICON_SOURCES) console.log(s.id + ' ' + s.sprite);
+            });
+          " > /tmp/icons/list.txt
+          cat /tmp/icons/list.txt
+
+          ok=""
+          while read -r id url; do
+            [ -n "$id" ] || continue
+            echo "── $id"
+            got=1
+            for ext in .json .png; do
+              curl -fL --retry 4 --retry-delay 5 -o "/tmp/icons/$id$ext" "$url$ext" || got=0
+            done
+            # @2x je voliteľné – bez neho mapa funguje, len je na retine mäkšia.
+            for ext in '@2x.json' '@2x.png'; do
+              curl -fL --retry 2 --retry-delay 3 -o "/tmp/icons/$id$ext" "$url$ext" \
+                || rm -f "/tmp/icons/$id$ext"
+            done
+            if [ "$got" != 1 ]; then
+              echo "::warning::Sadu ikoniek $id sa nepodarilo stiahnuť – preskakujem."
+              continue
+            fi
+            if node workers/build-sdf-sprite.mjs --in="/tmp/icons/$id" --out="_site/sprites/$id"; then
+              ok="$ok $id"
+            else
+              echo "::warning::Sadu ikoniek $id sa nepodarilo prerobiť na SDF – preskakujem."
+            fi
+          done < /tmp/icons/list.txt
+
+          if [ -z "$ok" ]; then
+            echo "::error::Nepodarilo sa pripraviť ani jednu sadu ikoniek – mapa by bola bez ikon."
+            exit 1
           fi
+
+          # Ktorú sadu má použiť štýl, hovoria úpravy z developer módu.
+          WANT=$(node -e "
+            Promise.all([import('./poc/web/themes.js'), import('node:fs')]).then(([m, fs]) => {
+              let raw = {};
+              try { raw = JSON.parse(fs.readFileSync('poc/web/style-overrides.json', 'utf8')); } catch {}
+              console.log(m.selectedIconSource(m.normalizeOverrides(raw).overrides));
+            });
+          ")
+          if [ ! -s "_site/sprites/$WANT.json" ]; then
+            WANT=$(echo $ok | awk '{print $1}')
+            echo "::warning::Zvolená sada ikoniek nie je k dispozícii – používam $WANT."
+          fi
+          echo "name=$WANT" >> "$GITHUB_OUTPUT"
+          echo "available=$(echo $ok | xargs)" >> "$GITHUB_OUTPUT"
+          echo "Nasadené sady:$ok, štýl použije $WANT"
 
       - name: Stiahni glyfy (fonty) k sebe na Pages
         run: |
@@ -465,17 +497,27 @@ jobs:
             --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
-            --sprite=_site/sprites/${{ steps.sprite.outputs.name }}.json \
-            --sprite-url='${{ steps.pages.outputs.base_url }}/sprites/${{ steps.sprite.outputs.name }}' \
+            --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
             --out=_site/styles
+
+      - name: Dopeč vzory plôch a čiar do spritu
+        run: |
+          # Vzory z developer módu sú generované z predpisu v názve obrázka.
+          # Web si ich dokreslí sám, statický štýl pre iOS ich potrebuje
+          # priamo v sprite.
+          for id in ${{ steps.sprite.outputs.available }}; do
+            node workers/add-sprite-patterns.mjs \
+              --sprite="_site/sprites/$id" --styles=_site/styles
+          done
 
       - name: Poskladaj web (viewer + manifest)
         run: |
           set -euo pipefail
           cp poc/web/index.html poc/web/app.js poc/web/themes.js \
-             poc/web/devmode.js poc/web/style-overrides.json _site/
+             poc/web/devmode.js poc/web/patterns.js poc/web/icon-sources.js \
+             poc/web/style-overrides.json _site/
 
           BASE='${{ steps.pages.outputs.base_url }}'
           BASE="${BASE%/}"
@@ -492,6 +534,14 @@ jobs:
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg glyphs "$GLYPHS" \
             --arg sprite "$BASE/sprites/${{ steps.sprite.outputs.name }}" \
+            --argjson icon_sources "$(node -e "
+              import('./poc/web/icon-sources.js').then((m) => {
+                const ok = '${{ steps.sprite.outputs.available }}'.split(/\s+/).filter(Boolean);
+                console.log(JSON.stringify(m.ICON_SOURCES.filter((s) => ok.includes(s.id))
+                  .map((s) => ({ id: s.id, label: s.label, sprite: 'sprites/' + s.id,
+                                 license: s.license, source: s.source, suffix: s.suffix, note: s.note }))));
+              });
+            ")" \
             --argjson maxzoom '${{ steps.tiles.outputs.maxzoom }}' \
             --argjson size_mb '${{ steps.tiles.outputs.size_mb }}' \
             --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
@@ -503,6 +553,8 @@ jobs:
               maxzoom: $maxzoom,
               glyphs: $glyphs,
               sprite: $sprite,
+              icon_sources: $icon_sources,
+              default_icons: "${{ steps.sprite.outputs.name }}",
               regions: {
                 ($region): ({
                   name: $name,
@@ -556,6 +608,13 @@ jobs:
             jq -e --arg i "$icon" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
               || { echo "::error::štýl odkazuje na ikonu '$icon', ktorá v sprite nie je"; fail=1; }
           done < <(jq -r '[.layers[].layout["icon-image"]? | strings] | unique | .[]' "$STYLE")
+
+          # vzory plôch a čiar musia byť v sprite (inak sa plocha nevykreslí)
+          while IFS= read -r img; do
+            [ -n "$img" ] || continue
+            jq -e --arg i "$img" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
+              || { echo "::error::štýl používa vzor '$img', ktorý v sprite nie je"; fail=1; }
+          done < <(jq -r '[.layers[].paint["fill-pattern"]?, .layers[].paint["line-pattern"]? | strings] | unique | .[]' "$STYLE")
 
           # dlaždice
           PM="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"

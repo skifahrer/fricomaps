@@ -10,6 +10,7 @@
  *                  ak je sprite SDF, štýl navyše nastaví farby ikon
  *   --fonts-dir  … adresár s glyfmi na Pages – z neho sa vyberú fontstacky
  *   --overrides  … úpravy z developer módu (poc/web/style-overrides.json)
+ *   --sprites-dir… adresár s nasadenými spritmi; sada sa vyberie podľa úprav
  *
  * Použitie:
  *   node workers/build-styles.mjs --base-url=https://user.github.io/fricomaps \
@@ -26,9 +27,11 @@ import {
   normalizeOverrides,
   hasOverrides,
   paletteCoverage,
+  selectedIconSource,
   MAX_TILE_Z,
   DEFAULT_DEM_TILES
 } from "../poc/web/themes.js";
+import { ICON_SOURCES } from "../poc/web/icon-sources.js";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -60,26 +63,31 @@ const regions = JSON.parse(
 // vtedy sa meno berie z --name, prípadne z kľúča regiónu.
 const regionName = regions[region]?.name || args.name || region;
 
+// ---------- sada ikoniek ----------
+// Ktorú sadu použiť, hovoria úpravy z developer módu; sprite k nej hľadáme
+// medzi nasadenými. Ak chýba (napr. sa nestiahla), vezme sa prvá dostupná.
+const spritesDir = args["sprites-dir"] || "";
+let iconSetId = null;
+let spriteJsonPath = args.sprite || "";
+
 // ---------- ikony zo spritu ----------
 // Zo sprite indexu sa berie nielen zoznam ikon, ale aj to, či je sprite SDF.
 // SDF sprite (workers/build-sdf-sprite.mjs) je bez koliesok pod ikonami a dá
 // sa mu nastaviť farba – štýl na to potom pridá `icon-color`.
 let icons = [];
 let sdfIcons = false;
-if (args.sprite && existsSync(args.sprite)) {
+function readSprite(path) {
+  if (!path || !existsSync(path)) return;
   try {
-    const index = JSON.parse(readFileSync(args.sprite, "utf8"));
+    const index = JSON.parse(readFileSync(path, "utf8"));
     icons = Object.keys(index);
     sdfIcons = Object.values(index).some((e) => e && e.sdf);
     console.log(
-      `Sprite: ${args.sprite} – ${icons.length} ikon${sdfIcons ? " (SDF, farbiteľné)" : ""}`
+      `Sprite: ${path} – ${icons.length} ikon${sdfIcons ? " (SDF, farbiteľné)" : ""}`
     );
   } catch (err) {
-    console.warn(`⚠ Sprite ${args.sprite} sa nepodarilo prečítať: ${err.message}`);
+    console.warn(`⚠ Sprite ${path} sa nepodarilo prečítať: ${err.message}`);
   }
-}
-if (!icons.length) {
-  console.warn("⚠ Sprite index nie je k dispozícii – použije sa záložný zoznam ikon.");
 }
 
 // ---------- úpravy z developer módu ----------
@@ -104,6 +112,30 @@ console.log(
         `${Object.values(overrides.palette).reduce((n, c) => n + Object.keys(c).length, 0)} farieb`
     : "Úpravy štýlu z developer módu: žiadne"
 );
+
+// Sadu ikoniek určujú úpravy; sprite k nej musí byť nasadený.
+iconSetId = selectedIconSource(overrides);
+if (spritesDir) {
+  const candidates = [
+    iconSetId,
+    ...ICON_SOURCES.map((s) => s.id).filter((id) => id !== iconSetId)
+  ];
+  const found = candidates.find((id) => existsSync(join(spritesDir, `${id}.json`)));
+  if (!found) {
+    console.warn(`⚠ V ${spritesDir} nie je žiadny sprite – štýl bude bez ikon.`);
+  } else {
+    if (found !== iconSetId) {
+      console.warn(`⚠ Sada ikoniek "${iconSetId}" nie je nasadená – používam "${found}".`);
+    }
+    iconSetId = found;
+    spriteJsonPath = join(spritesDir, `${iconSetId}.json`);
+  }
+}
+console.log(`Sada ikoniek: ${iconSetId}`);
+readSprite(spriteJsonPath);
+if (!icons.length) {
+  console.warn("⚠ Sprite index nie je k dispozícii – použije sa záložný zoznam ikon.");
+}
 
 // ---------- fontstacky ----------
 // Na Pages ležia glyfy v _site/fonts/<Fontstack>/<range>.pbf. Vyberieme
@@ -132,7 +164,9 @@ for (const [role, candidates] of Object.entries(PREFERRED)) {
 }
 
 // Sprite, na ktorý sa odkazuje výsledný štýl (bez prípony).
-const spriteUrl = (args["sprite-url"] || `${baseUrl}/sprites/osm-liberty`).replace(/\.json$/, "");
+const spriteUrl = (
+  args["sprite-url"] || `${baseUrl}/sprites/${iconSetId}`
+).replace(/\.json$/, "");
 
 const glyphsUrl =
   args["glyphs-url"] ||
@@ -169,6 +203,7 @@ for (const themeKey of Object.keys(THEMES)) {
     fonts,
     maxzoom,
     sdfIcons,
+    iconSet: iconSetId,
     overrides,
     contoursUrl: hasContours
       ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
