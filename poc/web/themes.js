@@ -21,6 +21,12 @@
  */
 
 import {
+  ICON_SOURCE_IDS,
+  DEFAULT_ICON_SOURCE,
+  iconSource,
+  specialIcons
+} from "./icon-sources.js";
+import {
   PATTERN_IDS,
   DASH_IDS,
   dashArray,
@@ -551,11 +557,6 @@ const SHAPE_ICONS = new Set([
   "default_1", "default_2", "default_3", "default_4", "default_5", "default_6"
 ]);
 
-/** Ikony, ktoré má sprite osm-liberty pre `mountain_peak` a `aerodrome_label`. */
-const PEAK_ICON = "mountain_11";
-const VOLCANO_ICON = "volcano_11";
-const AIRPORT_ICON = "airport_11";
-
 const DEFAULT_FONTS = {
   regular: "Noto Sans Regular",
   bold: "Noto Sans Bold",
@@ -594,7 +595,7 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
 
 /** Prázdna sada úprav z developer módu. */
 export function emptyOverrides() {
-  return { version: 1, palette: {}, layers: {}, poi: { hidden: [] } };
+  return { version: 1, icons: DEFAULT_ICON_SOURCE, palette: {}, layers: {}, poi: { hidden: [] } };
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -620,6 +621,12 @@ export function normalizeOverrides(raw) {
   if (!raw || typeof raw !== "object") {
     problems.push("Súbor s úpravami nie je objekt JSON.");
     return { overrides: out, problems };
+  }
+
+  // ---- sada ikoniek ----
+  if (raw.icons != null) {
+    if (ICON_SOURCE_IDS.includes(raw.icons)) out.icons = raw.icons;
+    else problems.push(`Neznáma sada ikoniek "${raw.icons}" – použije sa predvolená.`);
   }
 
   // ---- paleta ----
@@ -744,10 +751,19 @@ export function normalizeOverrides(raw) {
 export function hasOverrides(o) {
   if (!o) return false;
   return (
+    (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
     (o.poi?.hidden || []).length > 0
   );
+}
+
+export { ICON_SOURCES, ICON_SOURCE_IDS, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
+
+/** Vybraná sada ikoniek (z úprav, inak predvolená). */
+export function selectedIconSource(overrides) {
+  const id = overrides?.icons;
+  return ICON_SOURCE_IDS.includes(id) ? id : DEFAULT_ICON_SOURCE;
 }
 
 /** Farby témy po aplikovaní úprav z developer módu. */
@@ -915,7 +931,8 @@ function applyLayerOverrides(style, layerOverrides) {
  * @param {string} opts.spriteUrl   absolútna URL spritu (bez prípony)
  * @param {string} opts.glyphsUrl   URL šablóna glyfov {fontstack}/{range}
  * @param {string} [opts.name]      názov štýlu
- * @param {string[]} [opts.icons]   mená ikon dostupných v sprite (s `_11` aj bez)
+ * @param {string[]} [opts.icons]   mená ikon dostupných v sprite
+ * @param {string} [opts.iconSet]   id sady ikoniek (určuje príponu mien)
  * @param {object} [opts.fonts]     {regular, bold, italic} – názvy fontstackov
  * @param {number} [opts.maxzoom]   najvyšší zoom dlaždíc (default MAX_TILE_Z)
  * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
@@ -938,21 +955,33 @@ export function buildStyle({
   contoursMaxzoom = 14,
   demTiles = DEFAULT_DEM_TILES,
   sdfIcons = false,
+  iconSet = null,
   overrides = null
 }) {
   const c = mergedPalette(theme, overrides);
+  // Sada ikoniek určuje, ako sa mená skladajú (osm-liberty používa `_11`).
+  const iconSetId = iconSet || selectedIconSource(overrides);
+  const { suffix } = iconSource(iconSetId);
+  const SPECIAL = specialIcons(iconSetId);
 
   const f = { ...DEFAULT_FONTS, ...(fonts || {}) };
   const REG = [f.regular];
   const BOLD = [f.bold];
   const ITAL = [f.italic];
 
-  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona `<trieda>_11`.
-  // Čisto geometrické tvary (kruh, štvorec…) sa vynechávajú – POI bez vlastnej
-  // ikony nemá dostať kruh, ale zostať len s popiskom.
+  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona
+  // `<trieda><prípona>`. Čisto geometrické tvary (kruh, štvorec…) sa
+  // vynechávajú – POI bez vlastnej ikony nemá dostať kruh, ale zostať
+  // len s popiskom.
   const iconClasses = (
     icons && icons.length
-      ? [...new Set(icons.filter((n) => n.endsWith("_11")).map((n) => n.slice(0, -3)))]
+      ? [
+          ...new Set(
+            icons
+              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
+              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
+          )
+        ]
       : FALLBACK_ICONS
   ).filter((n) => !SHAPE_ICONS.has(n));
   const hasIcon = (n) => (icons && icons.length ? icons.includes(n) : true);
@@ -970,6 +999,7 @@ export function buildStyle({
     name: name || `FricoMaps – ${c.label}`,
     metadata: {
       "frico:theme": theme,
+      "frico:icons": iconSetId,
       "frico:overrides": hasOverrides(overrides)
     },
     sources: {
@@ -1530,7 +1560,7 @@ export function buildStyle({
   );
 
   // --- jednosmerky (len na veľkom detaile) ---
-  if (hasIcon("arrow")) {
+  if (hasIcon(SPECIAL.arrow)) {
     add(
       {
         id: "road-oneway",
@@ -1541,7 +1571,7 @@ export function buildStyle({
         layout: {
           "symbol-placement": "line",
           "symbol-spacing": 120,
-          "icon-image": "arrow",
+          "icon-image": SPECIAL.arrow,
           "icon-size": zl([[16, 0.6], [20, 1.2]]),
           "icon-rotate": ["case", ["==", num("oneway", 0), -1], 180, 0],
           "icon-rotation-alignment": "map",
@@ -1759,9 +1789,9 @@ export function buildStyle({
   const iconExpr = [
     "case",
     ["in", str("subclass"), ["literal", iconClasses]],
-    ["concat", str("subclass"), "_11"],
+    ["concat", str("subclass"), suffix],
     ["in", str("class"), ["literal", iconClasses]],
-    ["concat", str("class"), "_11"],
+    ["concat", str("class"), suffix],
     ""
   ];
 
@@ -1854,8 +1884,8 @@ export function buildStyle({
         "icon-image": [
           "case",
           ["==", ["get", "class"], "volcano"],
-          hasIcon(VOLCANO_ICON) ? VOLCANO_ICON : PEAK_ICON,
-          PEAK_ICON
+          hasIcon(SPECIAL.volcano) ? SPECIAL.volcano : SPECIAL.peak,
+          SPECIAL.peak
         ],
         "icon-size": 0.9 * iconScale,
         "icon-optional": true,
@@ -1904,8 +1934,8 @@ export function buildStyle({
       "source-layer": "aerodrome_label",
       minzoom: 10,
       layout: {
-        ...(hasIcon(AIRPORT_ICON)
-          ? { "icon-image": AIRPORT_ICON, "icon-size": iconScale }
+        ...(hasIcon(SPECIAL.airport)
+          ? { "icon-image": SPECIAL.airport, "icon-size": iconScale }
           : {}),
         "icon-optional": true,
         "text-field": nameExpr,
@@ -1919,7 +1949,7 @@ export function buildStyle({
         "text-color": c.poiText,
         "text-halo-color": c.poiHalo,
         "text-halo-width": 1.2,
-        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+        ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? {
               "icon-color": c.aerodromeIcon,
               "icon-halo-color": c.poiIconHalo,
@@ -1935,7 +1965,7 @@ export function buildStyle({
       {
         "text-color": "poiText",
         "text-halo-color": "poiHalo",
-        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+        ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? { "icon-color": "aerodromeIcon", "icon-halo-color": "poiIconHalo" }
           : {})
       }

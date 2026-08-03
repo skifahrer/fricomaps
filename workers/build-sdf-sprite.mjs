@@ -50,11 +50,17 @@ const TEMPLATE_MIN_CONTRAST = 24;
 /** Zostrenie masky symbolu okolo hrany (1 = bez zostrenia). */
 const GLYPH_CONTRAST = 1.8;
 /**
- * Jas, od ktorého sa podklad ikony považuje za biele koliesko. Tmavší
- * prevažujúci podklad znamená „odznak" (napr. biele „P" na modrom štvorci),
- * ktorý sa spracúva inak.
+ * Odznak = ikona na plnofarebnom podklade (biele „P" na modrom štvorci).
+ * Pozná sa podľa toho, že jej prevažujúca farba je sýta alebo tmavá –
+ * nevýrazné sivé podklady sú bežné pozadie a rieši ich šablóna skupiny.
  */
-const DISC_MIN_LUMA = 235;
+const BADGE_MIN_SATURATION = 0.25;
+const BADGE_MAX_LUMA = 120;
+/**
+ * Minimálny rozdiel jasu medzi symbolom a jeho svetlým halom, aby sa dali
+ * oddeliť (ikony bez kolieska, napr. osm-bright).
+ */
+const HALO_MIN_CONTRAST = 60;
 
 // ============================ SDF ============================
 
@@ -263,7 +269,10 @@ function isBadge(icon, w, h) {
   const base = dominantColor(icon, w, h);
   if (!base) return false;
   const luma = 0.299 * base[0] + 0.587 * base[1] + 0.114 * base[2];
-  return luma < DISC_MIN_LUMA;
+  const max = Math.max(base[0], base[1], base[2]);
+  const min = Math.min(base[0], base[1], base[2]);
+  const saturation = max ? (max - min) / max : 0;
+  return saturation >= BADGE_MIN_SATURATION || luma < BADGE_MAX_LUMA;
 }
 
 /**
@@ -339,7 +348,44 @@ function glyphCoverage(icon, template, w, h) {
   return toCoverage(shifted, icon, w, h, hi);
 }
 
-/** Alfa silueta ikony ako pokrytie 0–1 (pre ikony bez kolieska). */
+/**
+ * Symbol ikony, ktorá nemá koliesko, ale má okolo seba svetlé halo
+ * (tak sú kreslené ikony osm-bright). Šablóna skupiny tu neexistuje, lebo
+ * ikony nemajú spoločné pozadie – symbolom je jednoducho tmavá časť.
+ *
+ * Vracia `null` pre jednofarebné ikony (šípka, bodka), kde by sa nemalo
+ * čo oddeľovať a správne je vziať celú siluetu.
+ */
+function contrastCoverage(icon, w, h) {
+  const luma = new Float64Array(w * h);
+  const inside = [];
+  for (let p = 0; p < w * h; p++) {
+    const a = icon[p * 4 + 3];
+    if (a < 128) continue;
+    const f = a / 255;
+    const l =
+      (0.299 * icon[p * 4] + 0.587 * icon[p * 4 + 1] + 0.114 * icon[p * 4 + 2]) / f;
+    luma[p] = l;
+    inside.push(l);
+  }
+  if (inside.length < 9) return null;
+
+  const light = percentile(inside, 0.95);
+  const dark = percentile(inside, 0.05);
+  if (light - dark < HALO_MIN_CONTRAST) return null;
+
+  const cov = new Float64Array(w * h);
+  for (let p = 0; p < w * h; p++) {
+    const a = icon[p * 4 + 3];
+    if (a < 128) continue;
+    const ink = Math.max(0, Math.min(1, (light - luma[p]) / (light - dark)));
+    const sharp = Math.max(0, Math.min(1, (ink - 0.5) * GLYPH_CONTRAST + 0.5));
+    cov[p] = sharp * Math.min(1, a / 255);
+  }
+  return cov;
+}
+
+/** Alfa silueta ikony ako pokrytie 0–1 (pre jednofarebné ikony). */
 function alphaCoverage(icon, w, h) {
   const cov = new Float64Array(w * h);
   for (let p = 0; p < w * h; p++) cov[p] = icon[p * 4 + 3] / 255;
@@ -431,11 +477,15 @@ function convert(inBase, outBase, suffix) {
     const icon = pixels.get(name);
     const template = templates.get(`${e.width}x${e.height}`);
 
-    let coverage = badges.has(name)
-      ? badgeCoverage(icon, e.width, e.height)
-      : template
-      ? glyphCoverage(icon, template, e.width, e.height)
-      : null;
+    // Stratégie podľa toho, ako je ikona nakreslená, od najspoľahlivejšej:
+    // spoločné pozadie skupiny → vlastný farebný podklad → svetlé halo.
+    // Ak nesedí ani jedna, zostane celá silueta.
+    let coverage =
+      template && !badges.has(name)
+        ? glyphCoverage(icon, template, e.width, e.height)
+        : null;
+    if (!coverage) coverage = badgeCoverage(icon, e.width, e.height);
+    if (!coverage) coverage = contrastCoverage(icon, e.width, e.height);
     if (coverage) stripped++;
     else coverage = alphaCoverage(icon, e.width, e.height);
 
@@ -449,7 +499,7 @@ function convert(inBase, outBase, suffix) {
     );
     return { name, entry: e, sdf, width: sdf.width, height: sdf.height, ratio };
   });
-  console.log(`  symbol vytiahnutý spod kolieska: ${stripped}/${boxes.length} ikon`);
+  console.log(`  symbol oddelený od podkladu: ${stripped}/${boxes.length} ikon`);
 
   const maxWidth = suffix ? 1024 : 512;
   const atlas = packShelves(boxes, maxWidth);

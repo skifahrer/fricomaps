@@ -54,10 +54,13 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
   letiská a POI s ikonkami zo spritu osm-liberty (maki).
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
-- **Ikonky bez koliesok, s farbou:** sprite osm-liberty kreslí každý symbol
-  v bielom koliesku a farbu mu meniť nejde. Pipeline z neho preto vyrobí
-  vlastný **SDF sprite** ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)),
-  kde je len samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
+- **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
+  podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
+  farbu im meniť nejde. Pipeline z každého zdroja vyrobí vlastný **SDF sprite**
+  ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)), kde je len
+  samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
+- **Tri sady ikoniek** ([poc/web/icon-sources.js](poc/web/icon-sources.js)) sa
+  nasadzujú všetky naraz, takže sa dajú v developer móde prepínať naživo.
 - **Developer mode:** ladenie mapy priamo v prehliadači – viď nižšie.
 
 ## Nadmorská výška a vrstevnice
@@ -110,6 +113,7 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 |---|---|
 | **Vrstvy** | všetkých ~115 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
 | **Paleta** | ~67 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
 
@@ -133,6 +137,21 @@ Vzory nie sú hotové obrázky: **názov obrázka je jeho predpis**
 `styleimagemissing`, a pipeline tie isté názvy nájde v hotovom štýle a
 dopečie ich do spritu ([workers/add-sprite-patterns.mjs](workers/add-sprite-patterns.mjs)),
 aby fungovali aj v statickom `style.json` pre iOS.
+
+**Sady ikoniek.** Schéma OpenMapTiles pomenúva POI cez `class`/`subclass`
+(`restaurant`, `cafe`, `fuel`, …) a štýl z toho skladá meno ikony – zdroj je
+teda použiteľný len vtedy, keď jeho ikony nesú rovnaké mená. Nasadené sú tri:
+
+| sada | obrázkov | pokrytie bežných tried | poznámka |
+|---|---|---|---|
+| **OSM Liberty (maki)** – predvolená | 244 | 44/50 | jediná so šípkou jednosmeriek; symboly sú v bielom koliesku |
+| **OSM Liberty Topo** | 242 | 42/50 | turistická odvodenina s outdoorovými symbolmi |
+| **OSM Bright (OpenMapTiles)** | 101 | 42/50 | bez koliesok, len svetlé halo; menej tried, čistejšia kresba |
+
+Preverené a zamietnuté: sprity ostatných štýlov OpenMapTiles (positron,
+dark-matter, klokantech, maptiler-basic, fiord) obsahujú 1–4 obrázky, teda
+žiadne POI ikony; sprite Protomaps v4 má vlastné pomenovanie a z bežných tried
+OSM pokryje asi tretinu, navyše s rámčekom okolo symbolu.
 
 **Hromadné úpravy a kopírovanie.** V oboch zoznamoch sa dajú položky
 zaškrtnúť (aj celá skupina naraz alebo „Vybrať zobrazené" podľa filtra)
@@ -173,6 +192,7 @@ Formát súboru:
 ```json
 {
   "version": 1,
+  "icons": "osm-bright",
   "palette": { "outdoor": { "forest": "#a8cc8e" } },
   "layers": {
     "landcover-wood": {

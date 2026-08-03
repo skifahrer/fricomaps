@@ -214,6 +214,16 @@
     .dev-mini:hover { color: #222; }
     .dev-note { font-size: 10px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dev-num { width: 52px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; }
+    .dev-iconset {
+      display: block; border: 1px solid #e0e0e6; border-radius: 8px;
+      padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
+    }
+    .dev-iconset.on { border-color: #3a6ea5; background: #f4f8fd; }
+    .dev-iconset .dev-hint { margin: 4px 0 2px; }
+    .dev-iconset a { color: #3a6ea5; text-decoration: none; word-break: break-all; }
+    .dev-preview {
+      display: block; width: 100%; height: 26px; margin: 6px 0 2px;
+    }
     .dev-json {
       width: 100%; box-sizing: border-box; height: 220px; margin-top: 8px;
       font-family: ui-monospace, monospace; font-size: 11px;
@@ -236,6 +246,8 @@
     body.dark .dev-tab { color: #aaa; }
     body.dark .dev-tab.on { background: #2b2b40; color: #fff; }
     body.dark .dev-bulk { background: #26263a; }
+    body.dark .dev-iconset { border-color: #33334a; }
+    body.dark .dev-iconset.on { border-color: #3a6ea5; background: #1e2636; }
     body.dark .dev-zoombar { background: #24243a; }
     body.dark .dev-zoominfo { color: #999; }
     body.dark .dev-sub { background: #222232; }

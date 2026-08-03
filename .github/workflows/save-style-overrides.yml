@@ -38,7 +38,7 @@ on:
       branch:
         description: "Vetva, do ktorej sa úpravy zapíšu"
         required: false
-        default: main
+        default: master
         type: string
       open_pull_request:
         description: "Namiesto priameho commitu otvoriť pull request"

@@ -24,7 +24,8 @@ import {
   emptyOverrides,
   hasOverrides,
   THEMES,
-  PALETTE_LABELS
+  PALETTE_LABELS,
+  DEFAULT_ICON_SOURCE
 } from "../poc/web/themes.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -61,6 +62,9 @@ for (const p of problems) console.log(`::warning::${p}`);
 
 // ---------- prehľad, čo sa vlastne mení ----------
 const summary = [];
+if (overrides.icons && overrides.icons !== DEFAULT_ICON_SOURCE) {
+  summary.push(`  sada ikoniek: ${overrides.icons}`);
+}
 for (const [theme, colors] of Object.entries(overrides.palette)) {
   const names = Object.keys(colors)
     .map((k) => PALETTE_LABELS[k] || k)
@@ -105,6 +109,7 @@ if (args.check) {
 const payload = {
   version: 1,
   updated_at: new Date().toISOString(),
+  icons: overrides.icons,
   palette: overrides.palette,
   layers: overrides.layers,
   poi: overrides.poi

@@ -11,7 +11,7 @@
  *     naraz, vrátane hromadnej editácie výberu a kopírovania hodnôt,
  *   - dať ploche alebo čiare opakujúci sa **vzor** a ľubovoľný **okraj**,
  *     čiare aj prerušovanie,
- *   - skryť konkrétne triedy POI (ikonky bodov),
+ *   - skryť konkrétne triedy POI a prepnúť celú sadu ikoniek,
  *   - všetko priebežne ukladá do prehliadača (localStorage), vie to
  *     exportovať do `style-overrides.json` a znovu načítať.
  *
@@ -28,7 +28,8 @@ import {
   emptyOverrides,
   normalizeOverrides,
   hasOverrides,
-  mergedPalette
+  mergedPalette,
+  selectedIconSource
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS } from "./patterns.js";
 
@@ -149,9 +150,10 @@ const activeAt = (layer, z) => {
  * @param {() => object} opts.getStyle aktuálny (už upravený) MapLibre štýl
  * @param {() => string} opts.getTheme kľúč aktuálnej témy
  * @param {() => object} opts.getMap   inštancia mapy
+ * @param {() => object[]} [opts.getIconSets] nasadené sady ikoniek
  * @param {(overrides: object) => void} opts.onChange  prekresli mapu
  */
-export function initDevMode({ root, getStyle, getTheme, getMap, onChange }) {
+export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onChange }) {
   let overrides = loadOverrides();
   let tab = "layers";
   let search = "";
@@ -174,9 +176,13 @@ export function initDevMode({ root, getStyle, getTheme, getMap, onChange }) {
   const TABS = [
     ["layers", "Vrstvy"],
     ["palette", "Paleta"],
+    ["icons", "Ikony"],
     ["poi", "POI"],
     ["file", "Súbor"]
   ];
+
+  /** Bitmapy spritov pre náhľad ikoniek – načítajú sa raz. */
+  const spriteImages = new Map();
 
   root.appendChild(
     el("div", { class: "dev-head" }, [
@@ -245,7 +251,8 @@ export function initDevMode({ root, getStyle, getTheme, getMap, onChange }) {
     const nLayers = Object.keys(overrides.layers).length;
     const nPoi = overrides.poi.hidden.length;
     status.textContent = hasOverrides(overrides)
-      ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev · ${nPoi} skrytých POI · uložené v prehliadači`
+      ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev · ${nPoi} skrytých POI · ` +
+        `ikony ${selectedIconSource(overrides)} · uložené v prehliadači`
       : "Žiadne zmeny – mapa beží na pôvodnom štýle.";
   }
 
@@ -1047,6 +1054,131 @@ export function initDevMode({ root, getStyle, getTheme, getMap, onChange }) {
     ]);
   }
 
+  // ---------- tab: ikony ----------
+  /**
+   * Náhľad ikoniek: sprite je SDF, takže alfa nesie vzdialenostné pole a
+   * hrana symbolu leží na 0,75. Prekreslíme ho na plnú farbu, nech je vidieť,
+   * ako budú ikony na mape naozaj vyzerať.
+   */
+  function drawPreview(canvas, set, names, color) {
+    const image = spriteImages.get(set.id);
+    if (!image || !image.complete || !image.naturalWidth) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+    let x = 0;
+    for (const [, e] of names) {
+      const w = e.width;
+      const h = e.height;
+      const tmp = document.createElement("canvas");
+      tmp.width = w;
+      tmp.height = h;
+      const tctx = tmp.getContext("2d");
+      tctx.drawImage(image, e.x, e.y, w, h, 0, 0, w, h);
+      const data = tctx.getImageData(0, 0, w, h);
+      for (let i = 0; i < data.data.length; i += 4) {
+        const a = data.data[i + 3];
+        // 191 = hrana SDF; úzky prechod okolo nej dá vyhladený okraj.
+        const alpha = a >= 200 ? 255 : a >= 175 ? ((a - 175) * 255) / 25 : 0;
+        data.data[i] = r;
+        data.data[i + 1] = g;
+        data.data[i + 2] = b;
+        data.data[i + 3] = alpha;
+      }
+      tctx.putImageData(data, 0, 0);
+      const scale = Math.min(1, (canvas.height - 2) / h);
+      ctx.drawImage(tmp, x, (canvas.height - h * scale) / 2, w * scale, h * scale);
+      x += w * scale + 4;
+      if (x > canvas.width) break;
+    }
+  }
+
+  const PREVIEW_CLASSES = [
+    "restaurant", "cafe", "fuel", "hospital", "bank", "lodging", "museum",
+    "picnic_site", "campsite", "information", "shop", "bus", "railway",
+    "park", "pharmacy", "post", "swimming", "mountain"
+  ];
+
+  function renderIcons() {
+    const sets = getIconSets ? getIconSets() : [];
+    const current = selectedIconSource(overrides);
+    const color = mergedPalette(getTheme(), overrides).poiIcon || "#444444";
+
+    if (!sets.length) {
+      return el("p", {
+        class: "dev-hint",
+        text: "Nenašla sa žiadna nasadená sada ikoniek."
+      });
+    }
+
+    const cards = sets.map((set) => {
+      const radio = el("input", { type: "radio", name: "dev-iconset", class: "dev-check" });
+      radio.checked = set.id === current;
+      radio.addEventListener("change", () => {
+        overrides.icons = set.id;
+        apply({ immediate: true });
+      });
+
+      const canvas = el("canvas", { class: "dev-preview", width: "360", height: "26" });
+      // Ukážeme len ikony, ktoré sada naozaj má.
+      const index = set.index || null;
+      const names = PREVIEW_CLASSES.map((c) => `${c}${set.suffix || ""}`)
+        .filter((n) => set.icons.includes(n))
+        .slice(0, 14);
+      if (names.length) {
+        const load = () => {
+          const img = spriteImages.get(set.id);
+          if (!img) return;
+          drawPreview(
+            canvas,
+            set,
+            names.map((n) => [n, (index || {})[n]]).filter(([, e]) => e),
+            color
+          );
+        };
+        if (!spriteImages.has(set.id)) {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => renderBody();
+          img.src = `${set.spriteUrl}.png`;
+          spriteImages.set(set.id, img);
+        } else {
+          load();
+        }
+      }
+
+      return el("label", { class: `dev-iconset${set.id === current ? " on" : ""}` }, [
+        el("div", { class: "dev-row" }, [
+          radio,
+          el("span", { class: "dev-name" }, [
+            el("span", { text: set.label }),
+            el("small", { text: `${set.count} obrázkov · ${set.license || "?"}` })
+          ]),
+          set.sdf
+            ? el("span", { class: "dev-kind k-point", text: "farbiteľné" })
+            : el("span", { class: "dev-kind", text: "bez farby" })
+        ]),
+        names.length ? canvas : null,
+        set.note ? el("p", { class: "dev-hint", text: set.note }) : null,
+        set.source
+          ? el("a", { class: "dev-note", href: set.source, target: "_blank", rel: "noreferrer", text: set.source })
+          : null
+      ]);
+    });
+
+    return el("div", {}, [
+      el("p", {
+        class: "dev-hint",
+        text:
+          "Sada ikoniek pre POI, vrcholy a letiská. Pipeline z každého zdroja " +
+          "vyrobí SDF sprite bez podkladov, takže sa dajú prepínať naživo a " +
+          "vybraná sada sa zapečie do štýlu pre web aj iOS."
+      }),
+      ...cards
+    ]);
+  }
+
   // ---------- tab: POI ----------
   function scanPoiClasses() {
     const map2 = getMap();
@@ -1215,6 +1347,8 @@ export function initDevMode({ root, getStyle, getTheme, getMap, onChange }) {
         ? renderLayers()
         : tab === "palette"
         ? renderPalette()
+        : tab === "icons"
+        ? renderIcons()
         : tab === "poi"
         ? renderPoi()
         : renderFile();
