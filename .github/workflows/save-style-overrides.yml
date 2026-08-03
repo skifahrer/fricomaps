@@ -1,0 +1,173 @@
+name: Uložiť úpravy štýlu do zdrojáku
+
+# Protikus k developer módu vo viewri (tlačidlo 🛠 v paneli).
+#
+#   mapa na Pages ─► developer mode ─► „Stiahnuť style-overrides.json"
+#                                       │
+#                                       ▼
+#                        tento workflow (vlož obsah súboru)
+#                                       │
+#                     workers/apply-overrides.mjs (kontrola + prečistenie)
+#                                       │
+#                        poc/web/style-overrides.json v repozitári
+#                                       │
+#                     ďalší „Build map" ─► mapa (web aj iOS) s úpravami
+#
+# Vstup sa nepreberá naslepo: prejde tou istou validáciou ako v prehliadači,
+# takže do zdrojáku sa nedostane neznáma farba, neplatný hex, prepis
+# vlastnosti, ktorú štýl nepodporuje, ani nezmyselný rozsah zoomu.
+
+on:
+  workflow_dispatch:
+    inputs:
+      overrides_json:
+        description: "Obsah style-overrides.json (skopíruj z developer módu, tlačidlo „Kopírovať JSON“)"
+        required: false
+        default: ""
+        type: string
+      overrides_url:
+        description: "Alternatíva pre veľký súbor – URL na style-overrides.json (napr. raw gist)"
+        required: false
+        default: ""
+        type: string
+      reset:
+        description: "Zahodiť všetky úpravy a vrátiť pôvodný štýl"
+        required: false
+        default: false
+        type: boolean
+      branch:
+        description: "Vetva, do ktorej sa úpravy zapíšu"
+        required: false
+        default: main
+        type: string
+      open_pull_request:
+        description: "Namiesto priameho commitu otvoriť pull request"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: style-overrides
+  cancel-in-progress: false
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.branch }}
+          fetch-depth: 0
+
+      - name: Priprav vstup
+        id: input
+        env:
+          OVERRIDES_JSON: ${{ inputs.overrides_json }}
+          OVERRIDES_URL: ${{ inputs.overrides_url }}
+        run: |
+          set -euo pipefail
+          if [ '${{ inputs.reset }}' = 'true' ]; then
+            echo "mode=reset" >> "$GITHUB_OUTPUT"
+            echo "Režim: reset – štýl sa vráti na pôvodný."
+            exit 0
+          fi
+
+          if [ -n "$OVERRIDES_URL" ]; then
+            echo "Sťahujem $OVERRIDES_URL"
+            curl -fL --retry 3 --retry-delay 3 -o overrides-input.json "$OVERRIDES_URL"
+          elif [ -n "$OVERRIDES_JSON" ]; then
+            printf '%s' "$OVERRIDES_JSON" > overrides-input.json
+          else
+            echo "::error::Vyplň overrides_json alebo overrides_url (alebo zapni reset)."
+            exit 1
+          fi
+
+          # Zrozumiteľná chyba hneď tu, nech sa nehádže až v Node.
+          if ! jq empty overrides-input.json 2>/dev/null; then
+            echo "::error::Vstup nie je platný JSON. Skontroluj, či si vložil celý obsah súboru style-overrides.json."
+            exit 1
+          fi
+          echo "mode=file" >> "$GITHUB_OUTPUT"
+          echo "Vstup má $(wc -c < overrides-input.json) bajtov."
+
+      - name: Skontroluj a zapíš úpravy
+        run: |
+          set -euo pipefail
+          if [ '${{ steps.input.outputs.mode }}' = 'reset' ]; then
+            node workers/apply-overrides.mjs --reset
+          else
+            node workers/apply-overrides.mjs --file=overrides-input.json
+          fi
+
+      - name: Over, že sa štýl s úpravami vygeneruje
+        run: |
+          set -euo pipefail
+          # Bez base-url skript nebeží; použije sa fiktívna, ide len o to,
+          # či sa štýl so zapečenými úpravami dá zložiť.
+          node workers/build-styles.mjs \
+            --base-url=https://example.invalid/fricomaps \
+            --region=slovensko \
+            --overrides=poc/web/style-overrides.json \
+            --out=/tmp/style-check
+          for f in /tmp/style-check/*.json; do
+            jq -e '.version == 8 and (.layers | length > 0)' "$f" >/dev/null \
+              || { echo "::error::$f nie je platný MapLibre štýl"; exit 1; }
+          done
+          echo "Štýly sa vygenerovali ✓"
+
+      - name: Commit
+        id: commit
+        run: |
+          set -euo pipefail
+          rm -f overrides-input.json
+          if git diff --quiet -- poc/web/style-overrides.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Úpravy sú rovnaké ako v zdrojáku – niet čo commitovať."
+            exit 0
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add poc/web/style-overrides.json
+
+          if [ '${{ inputs.open_pull_request }}' = 'true' ]; then
+            BRANCH="style-overrides/$(date -u +%Y%m%d-%H%M%S)"
+            git checkout -b "$BRANCH"
+            git commit -m "Úpravy štýlu mapy z developer módu"
+            git push -u origin "$BRANCH"
+            echo "head=$BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            git commit -m "Úpravy štýlu mapy z developer módu"
+            git push origin HEAD:'${{ inputs.branch }}'
+          fi
+
+      - name: Otvor pull request
+        if: steps.commit.outputs.changed == 'true' && inputs.open_pull_request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base '${{ inputs.branch }}' \
+            --head '${{ steps.commit.outputs.head }}' \
+            --title "Úpravy štýlu mapy z developer módu" \
+            --body "Vygenerované workflowom **Uložiť úpravy štýlu do zdrojáku** z \`poc/web/style-overrides.json\`. Po zmergovaní spusti **Build map**, aby sa úpravy dostali do nasadenej mapy."
+
+      - name: Zhrnutie
+        run: |
+          {
+            echo "## Úpravy štýlu"
+            if [ '${{ steps.commit.outputs.changed }}' != 'true' ]; then
+              echo "Nič sa nezmenilo – zdroják už tieto úpravy obsahuje."
+            else
+              echo '```json'
+              cat poc/web/style-overrides.json
+              echo '```'
+              echo ""
+              echo "Aby sa dostali do nasadenej mapy, spusti workflow **Build map (PBF → PMTiles) & deploy Pages**."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

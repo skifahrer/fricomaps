@@ -10,6 +10,14 @@
  *     ktoré OpenMapTiles schéma obsahuje, sú viditeľné,
  *   - dlaždice končia na zoome 16 (tvrdý limit Planetileru), vyššie zoomy
  *     (až po MAX_DISPLAY_Z = 20) rieši MapLibre overzoomom.
+ *
+ * Developer mode:
+ *   Každá vrstva nesie `metadata` (`frico:group`, `frico:label`, `frico:kind`,
+ *   `frico:palette`), takže sa dá v prehliadači vypísať, zapnúť/vypnúť a
+ *   prefarbiť bez toho, aby sa zoznam vrstiev musel udržiavať dvakrát.
+ *   Úpravy z developer módu prichádzajú späť ako `overrides` – ten istý
+ *   objekt sa dá uložiť do zdrojáku (poc/web/style-overrides.json) a potom
+ *   ho použije aj pipeline pre statické štýly pre iOS.
  */
 
 /** Zoom, od ktorého je mapa plne detailná (nižšie sa orezáva). */
@@ -87,7 +95,12 @@ export const THEMES = {
     waterText: "#4a7bab",
     poiText: "#666655",
     poiHalo: "#ffffff",
+    poiIcon: "#5f6b52",
+    poiIconHalo: "#ffffff",
     peakText: "#6a5a3a",
+    peakIcon: "#7a5a30",
+    aerodromeIcon: "#6a6a80",
+    onewayIcon: "#8a7a6a",
     houseText: "#a09488",
     contour: "#b09070",
     contourMajor: "#96764e",
@@ -152,7 +165,12 @@ export const THEMES = {
     waterText: "#5a7bab",
     poiText: "#9a95a8",
     poiHalo: "#14141f",
+    poiIcon: "#9aa6b8",
+    poiIconHalo: "#14141f",
     peakText: "#a8a08a",
+    peakIcon: "#b09a70",
+    aerodromeIcon: "#8a8ab0",
+    onewayIcon: "#7a7a90",
     houseText: "#6a6678",
     contour: "#4a4436",
     contourMajor: "#6a6048",
@@ -217,7 +235,12 @@ export const THEMES = {
     waterText: "#33688a",
     poiText: "#4a5a3a",
     poiHalo: "#f4f1e4",
+    poiIcon: "#3f5a30",
+    poiIconHalo: "#f4f1e4",
     peakText: "#5a3a20",
+    peakIcon: "#8a3a10",
+    aerodromeIcon: "#4a5a7a",
+    onewayIcon: "#6a5a45",
     houseText: "#8a7a60",
     contour: "#b3835a",
     contourMajor: "#966034",
@@ -282,7 +305,12 @@ export const THEMES = {
     waterText: "#4a8a7a",
     poiText: "#8a7060",
     poiHalo: "#fdf6ec",
+    poiIcon: "#8a6a55",
+    poiIconHalo: "#fdf6ec",
     peakText: "#7a6250",
+    peakIcon: "#9a6a40",
+    aerodromeIcon: "#7a7a95",
+    onewayIcon: "#a89080",
     houseText: "#b0a294",
     contour: "#c8a488",
     contourMajor: "#b0846a",
@@ -292,6 +320,199 @@ export const THEMES = {
     hillAccent: "#c0a090"
   }
 };
+
+/**
+ * Rozdelenie farieb palety do skupín – slúži developer módu na to, aby sa
+ * dali farby hľadať a hromadne meniť. Musí pokrývať všetky kľúče témy
+ * (okrem `label`); kontroluje to `paletteCoverage()`.
+ */
+export const PALETTE_GROUPS = [
+  {
+    id: "zaklad",
+    label: "Základ a reliéf",
+    keys: [
+      ["background", "Pozadie mapy"],
+      ["hillShadow", "Tieň reliéfu"],
+      ["hillHighlight", "Osvetlená strana reliéfu"],
+      ["hillAccent", "Akcent reliéfu"]
+    ]
+  },
+  {
+    id: "voda",
+    label: "Voda",
+    keys: [
+      ["water", "Vodná plocha"],
+      ["waterOutline", "Obrys vodnej plochy"],
+      ["river", "Rieka / potok"],
+      ["waterText", "Popisok vody"]
+    ]
+  },
+  {
+    id: "krajina",
+    label: "Krajinná pokrývka",
+    keys: [
+      ["forest", "Les"],
+      ["grass", "Tráva / lúka / pole"],
+      ["park", "Park"],
+      ["parkOutline", "Obrys parku"],
+      ["sand", "Piesok"],
+      ["ice", "Ľadovec"],
+      ["wetland", "Mokraď"],
+      ["rock", "Skaly / suť"]
+    ]
+  },
+  {
+    id: "uzemie",
+    label: "Využitie územia",
+    keys: [
+      ["residential", "Obytná zóna"],
+      ["industrial", "Priemysel / obchod"],
+      ["cemetery", "Cintorín"],
+      ["hospital", "Nemocnica"],
+      ["school", "Školstvo"],
+      ["military", "Vojenský priestor"],
+      ["quarry", "Lom / skládka"],
+      ["garden", "Záhrada / sad"],
+      ["playground", "Ihrisko / zoo"],
+      ["pitch", "Športovisko"]
+    ]
+  },
+  {
+    id: "budovy",
+    label: "Budovy",
+    keys: [
+      ["building", "Budova (plochá)"],
+      ["buildingOutline", "Obrys budovy"],
+      ["buildingTop", "Budova 3D"],
+      ["houseText", "Súpisné číslo"]
+    ]
+  },
+  {
+    id: "cesty",
+    label: "Cesty",
+    keys: [
+      ["motorway", "Diaľnica"],
+      ["motorwayCasing", "Obrys diaľnice"],
+      ["trunk", "Rýchlostná cesta"],
+      ["primary", "Cesta I. triedy"],
+      ["secondary", "Cesta II./III. triedy"],
+      ["minor", "Miestna cesta"],
+      ["service", "Účelová cesta"],
+      ["pedestrian", "Pešia zóna"],
+      ["roadCasing", "Obrys ciest"],
+      ["roadText", "Popisok cesty"]
+    ]
+  },
+  {
+    id: "chodniky",
+    label: "Chodníky a cestičky",
+    keys: [
+      ["path", "Turistický chodník"],
+      ["footway", "Chodník / priechod"],
+      ["cycleway", "Cyklotrasa"],
+      ["steps", "Schody"],
+      ["track", "Poľná / lesná cesta"]
+    ]
+  },
+  {
+    id: "doprava",
+    label: "Železnica a ostatná doprava",
+    keys: [
+      ["rail", "Železnica"],
+      ["railHatch", "Šrafovanie železnice"],
+      ["ferry", "Kompa"],
+      ["aerialway", "Lanovka / vlek"],
+      ["pier", "Mólo"],
+      ["aeroway", "Letisková plocha"],
+      ["aerowayLine", "Dráha / rolovacia dráha"]
+    ]
+  },
+  {
+    id: "vrstevnice",
+    label: "Vrstevnice",
+    keys: [
+      ["contour", "Vrstevnica"],
+      ["contourMajor", "Hlavná vrstevnica"],
+      ["contourText", "Popisok výšky"]
+    ]
+  },
+  {
+    id: "hranice",
+    label: "Hranice",
+    keys: [
+      ["boundary", "Štátna / krajská hranica"],
+      ["boundaryLocal", "Okresná / obecná hranica"]
+    ]
+  },
+  {
+    id: "popisky",
+    label: "Popisky a ikony",
+    keys: [
+      ["placeText", "Názov sídla"],
+      ["placeHalo", "Obrys textu sídla"],
+      ["poiText", "Popisok POI"],
+      ["poiHalo", "Obrys popisku POI"],
+      ["poiIcon", "Ikona POI"],
+      ["poiIconHalo", "Obrys ikony POI"],
+      ["peakText", "Popisok vrcholu"],
+      ["peakIcon", "Ikona vrcholu"],
+      ["aerodromeIcon", "Ikona letiska"],
+      ["onewayIcon", "Šípka jednosmerky"]
+    ]
+  }
+];
+
+/** Všetky kľúče palety v poradí skupín. */
+export const PALETTE_KEYS = PALETTE_GROUPS.flatMap((g) => g.keys.map(([k]) => k));
+
+/** Ľudský popis kľúča palety. */
+export const PALETTE_LABELS = Object.fromEntries(
+  PALETTE_GROUPS.flatMap((g) => g.keys)
+);
+
+/**
+ * Kontrola, že skupiny palety pokrývajú presne kľúče témy. Vracia rozdiely –
+ * používa to test v pipeline, aby nová farba v téme nezostala v developer
+ * móde neviditeľná.
+ */
+export function paletteCoverage() {
+  const themeKeys = new Set(
+    Object.keys(THEMES.svetla).filter((k) => k !== "label")
+  );
+  const grouped = new Set(PALETTE_KEYS);
+  return {
+    missing: [...themeKeys].filter((k) => !grouped.has(k)),
+    extra: [...grouped].filter((k) => !themeKeys.has(k))
+  };
+}
+
+/** Skupiny vrstiev tak, ako ich vypisuje developer mode. */
+export const LAYER_GROUPS = [
+  { id: "zaklad", label: "Základ a reliéf" },
+  { id: "krajina", label: "Krajinná pokrývka" },
+  { id: "uzemie", label: "Využitie územia" },
+  { id: "voda", label: "Voda" },
+  { id: "vrstevnice", label: "Vrstevnice" },
+  { id: "letiska", label: "Letiská" },
+  { id: "budovy", label: "Budovy" },
+  { id: "cesty", label: "Cesty" },
+  { id: "chodniky", label: "Chodníky a cestičky" },
+  { id: "doprava", label: "Železnica a ostatná doprava" },
+  { id: "hranice", label: "Hranice" },
+  { id: "popisky", label: "Popisky" },
+  { id: "poi", label: "POI a body záujmu" },
+  { id: "sidla", label: "Sídla" }
+];
+
+/** Druhy vrstiev (pre filtre „body / línie / plochy" v developer móde). */
+export const LAYER_KINDS = [
+  { id: "area", label: "Plochy" },
+  { id: "line", label: "Línie" },
+  { id: "point", label: "Body" },
+  { id: "text", label: "Popisky" },
+  { id: "3d", label: "3D" },
+  { id: "raster", label: "Reliéf" }
+];
 
 /**
  * Záložný zoznam ikon (bez prípony `_11`) pre prípad, že sa nepodarí načítať
@@ -309,6 +530,18 @@ const FALLBACK_ICONS = [
   "playground", "police", "post", "railway", "restaurant", "school", "shop",
   "stadium", "swimming", "theatre", "toilets", "town_hall", "veterinary", "zoo"
 ];
+
+/**
+ * Ikony, ktoré sú samy o sebe len geometrický tvar (kruh, štvorec, …).
+ * Ako ikona POI nič nehovoria – mapa s nimi vyzerá ako pole bodiek, preto
+ * sa z výberu vylučujú a POI bez vlastnej ikony zostane len s popiskom.
+ */
+const SHAPE_ICONS = new Set([
+  "circle", "circle_stroked", "square", "square_stroked",
+  "triangle", "triangle_stroked", "star", "star_stroked",
+  "dot_9", "dot_10", "dot_11", "marker", "cross",
+  "default_1", "default_2", "default_3", "default_4", "default_5", "default_6"
+]);
 
 /** Ikony, ktoré má sprite osm-liberty pre `mountain_peak` a `aerodrome_label`. */
 const PEAK_ICON = "mountain_11";
@@ -349,6 +582,147 @@ const isTunnel = ["==", ["get", "brunnel"], "tunnel"];
 const isBridge = ["==", ["get", "brunnel"], "bridge"];
 const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "brunnel"], "bridge"]];
 
+// ===================== developer overrides =====================
+
+/** Prázdna sada úprav z developer módu. */
+export function emptyOverrides() {
+  return { version: 1, palette: {}, layers: {}, poi: { hidden: [] } };
+}
+
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+const isColor = (v) => typeof v === "string" && HEX.test(v.trim());
+
+const clampZoom = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(24, Math.max(0, Math.round(n * 10) / 10));
+};
+
+/**
+ * Prečistí (a skontroluje) objekt úprav – rovnaká funkcia beží v prehliadači
+ * pri importe súboru aj v pipeline pred zápisom do zdrojáku, takže do repa
+ * sa nikdy nedostane nezmysel.
+ *
+ * @returns {{overrides: object, problems: string[]}}
+ */
+export function normalizeOverrides(raw) {
+  const problems = [];
+  const out = emptyOverrides();
+  if (!raw || typeof raw !== "object") {
+    problems.push("Súbor s úpravami nie je objekt JSON.");
+    return { overrides: out, problems };
+  }
+
+  // ---- paleta ----
+  for (const [themeKey, colors] of Object.entries(raw.palette || {})) {
+    if (!THEMES[themeKey]) {
+      problems.push(`Neznáma téma "${themeKey}" – preskakujem.`);
+      continue;
+    }
+    const clean = {};
+    for (const [key, value] of Object.entries(colors || {})) {
+      if (!PALETTE_KEYS.includes(key)) {
+        problems.push(`Neznáma farba "${themeKey}.${key}" – preskakujem.`);
+        continue;
+      }
+      if (!isColor(value)) {
+        problems.push(`"${themeKey}.${key}" nie je hex farba (${value}).`);
+        continue;
+      }
+      // Rovnakú farbu ako má téma netreba do overrides zapisovať.
+      if (value.toLowerCase() === String(THEMES[themeKey][key]).toLowerCase()) continue;
+      clean[key] = value.toLowerCase();
+    }
+    if (Object.keys(clean).length) out.palette[themeKey] = clean;
+  }
+
+  // ---- vrstvy ----
+  for (const [id, def] of Object.entries(raw.layers || {})) {
+    if (!def || typeof def !== "object") {
+      problems.push(`Úprava vrstvy "${id}" nie je objekt – preskakujem.`);
+      continue;
+    }
+    const clean = {};
+    if (def.visible === false) clean.visible = false;
+    const mn = def.minzoom == null ? null : clampZoom(def.minzoom);
+    const mx = def.maxzoom == null ? null : clampZoom(def.maxzoom);
+    if (mn != null) clean.minzoom = mn;
+    if (mx != null) clean.maxzoom = mx;
+    if (mn != null && mx != null && mx <= mn) {
+      problems.push(`Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
+      delete clean.maxzoom;
+    }
+    const paint = {};
+    for (const [prop, value] of Object.entries(def.paint || {})) {
+      if (prop.endsWith("-color")) {
+        if (!isColor(value)) {
+          problems.push(`Vrstva "${id}": ${prop} nie je hex farba (${value}).`);
+          continue;
+        }
+        paint[prop] = String(value).toLowerCase();
+      } else if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
+        const n = Number(value);
+        if (!Number.isFinite(n) || n < 0) {
+          problems.push(`Vrstva "${id}": ${prop} musí byť nezáporné číslo.`);
+          continue;
+        }
+        paint[prop] = n;
+      } else {
+        problems.push(`Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
+      }
+    }
+    if (Object.keys(paint).length) clean.paint = paint;
+    if (Object.keys(clean).length) out.layers[id] = clean;
+  }
+
+  // ---- skryté POI triedy ----
+  const hidden = Array.isArray(raw.poi?.hidden) ? raw.poi.hidden : [];
+  out.poi.hidden = [
+    ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
+  ].sort();
+
+  return { overrides: out, problems };
+}
+
+/** `true`, ak sada úprav naozaj niečo mení. */
+export function hasOverrides(o) {
+  if (!o) return false;
+  return (
+    Object.keys(o.palette || {}).length > 0 ||
+    Object.keys(o.layers || {}).length > 0 ||
+    (o.poi?.hidden || []).length > 0
+  );
+}
+
+/** Farby témy po aplikovaní úprav z developer módu. */
+export function mergedPalette(themeKey, overrides) {
+  const base = THEMES[themeKey];
+  if (!base) throw new Error(`Neznáma téma: ${themeKey}`);
+  return { ...base, ...(overrides?.palette?.[themeKey] || {}) };
+}
+
+/** Aplikuje úpravy vrstiev na hotový štýl (viditeľnosť, zoom, farby). */
+function applyLayerOverrides(style, layerOverrides) {
+  if (!layerOverrides) return style;
+  for (const layer of style.layers) {
+    const o = layerOverrides[layer.id];
+    if (!o) continue;
+    if (o.visible === false) {
+      layer.layout = { ...(layer.layout || {}), visibility: "none" };
+    }
+    if (o.minzoom != null) layer.minzoom = o.minzoom;
+    if (o.maxzoom != null) layer.maxzoom = o.maxzoom;
+    // `background` nemá minzoom/maxzoom obmedzenia iné než štýl dovolí,
+    // ostatné vrstvy áno – MapLibre by neplatný rozsah odmietol.
+    if (layer.minzoom != null && layer.maxzoom != null && layer.maxzoom <= layer.minzoom) {
+      delete layer.maxzoom;
+    }
+    if (o.paint) layer.paint = { ...(layer.paint || {}), ...o.paint };
+  }
+  return style;
+}
+
 /**
  * Vygeneruje kompletný MapLibre GL štýl.
  *
@@ -365,6 +739,8 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
  * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
  *                                        (null = bez tieňovania reliéfu)
+ * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
+ * @param {object|null} [opts.overrides]  úpravy z developer módu
  */
 export function buildStyle({
   theme,
@@ -377,10 +753,11 @@ export function buildStyle({
   maxzoom = MAX_TILE_Z,
   contoursUrl = null,
   contoursMaxzoom = 14,
-  demTiles = DEFAULT_DEM_TILES
+  demTiles = DEFAULT_DEM_TILES,
+  sdfIcons = false,
+  overrides = null
 }) {
-  const c = THEMES[theme];
-  if (!c) throw new Error(`Neznáma téma: ${theme}`);
+  const c = mergedPalette(theme, overrides);
 
   const f = { ...DEFAULT_FONTS, ...(fonts || {}) };
   const REG = [f.regular];
@@ -388,9 +765,13 @@ export function buildStyle({
   const ITAL = [f.italic];
 
   // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona `<trieda>_11`.
-  const iconClasses = icons && icons.length
-    ? [...new Set(icons.filter((n) => n.endsWith("_11")).map((n) => n.slice(0, -3)))]
-    : FALLBACK_ICONS;
+  // Čisto geometrické tvary (kruh, štvorec…) sa vynechávajú – POI bez vlastnej
+  // ikony nemá dostať kruh, ale zostať len s popiskom.
+  const iconClasses = (
+    icons && icons.length
+      ? [...new Set(icons.filter((n) => n.endsWith("_11")).map((n) => n.slice(0, -3)))]
+      : FALLBACK_ICONS
+  ).filter((n) => !SHAPE_ICONS.has(n));
   const hasIcon = (n) => (icons && icons.length ? icons.includes(n) : true);
 
   const nameExpr = [
@@ -404,6 +785,10 @@ export function buildStyle({
   const style = {
     version: 8,
     name: name || `FricoMaps – ${c.label}`,
+    metadata: {
+      "frico:theme": theme,
+      "frico:overrides": hasOverrides(overrides)
+    },
     sources: {
       omt: {
         type: "vector",
@@ -445,276 +830,364 @@ export function buildStyle({
   }
 
   const L = style.layers;
-  const add = (layer) => L.push({ source: "omt", ...layer });
 
-  L.push({
-    id: "background",
-    type: "background",
-    paint: { "background-color": c.background }
-  });
+  /**
+   * Pridá vrstvu spolu s metadátami pre developer mode.
+   *
+   * @param {object} layer  vrstva podľa MapLibre style-spec
+   * @param {[string,string,string,object?]} meta [skupina, popis, druh, {paintProp: kľúč palety}]
+   */
+  const add = (layer, meta) => {
+    const [group, label, kind, palette] = meta;
+    const l = { ...layer };
+    if (l.type !== "background" && !l.source) l.source = "omt";
+    l.metadata = {
+      "frico:group": group,
+      "frico:label": label,
+      "frico:kind": kind,
+      "frico:palette": palette || {}
+    };
+    L.push(l);
+  };
+
+  add(
+    {
+      id: "background",
+      type: "background",
+      paint: { "background-color": c.background }
+    },
+    ["zaklad", "Pozadie mapy", "area", { "background-color": "background" }]
+  );
 
   // ================= krajinná pokrývka =================
   const landcover = [
-    ["wood", ["wood", "forest"], c.forest, 0.9],
-    ["grass", ["grass", "grassland", "meadow"], c.grass, 0.7],
-    ["farmland", ["farmland"], c.grass, 0.45],
-    ["wetland", ["wetland", "swamp", "marsh", "bog"], c.wetland, 0.8],
-    ["rock", ["rock", "scree", "bare_rock"], c.rock, 0.8],
-    ["sand", ["sand", "beach"], c.sand, 1],
-    ["ice", ["ice", "glacier"], c.ice, 1]
+    ["wood", "Les", ["wood", "forest"], "forest", 0.9],
+    ["grass", "Tráva a lúky", ["grass", "grassland", "meadow"], "grass", 0.7],
+    ["farmland", "Polia", ["farmland"], "grass", 0.45],
+    ["wetland", "Mokrade", ["wetland", "swamp", "marsh", "bog"], "wetland", 0.8],
+    ["rock", "Skaly a suť", ["rock", "scree", "bare_rock"], "rock", 0.8],
+    ["sand", "Piesok", ["sand", "beach"], "sand", 1],
+    ["ice", "Ľadovec", ["ice", "glacier"], "ice", 1]
   ];
-  for (const [id, classes, color, opacity] of landcover) {
-    add({
-      id: `landcover-${id}`,
-      type: "fill",
-      "source-layer": "landcover",
-      filter: [
-        "any",
-        ["in", str("class"), ["literal", classes]],
-        ["in", str("subclass"), ["literal", classes]]
-      ],
-      paint: { "fill-color": color, "fill-opacity": opacity }
-    });
+  for (const [id, label, classes, paletteKey, opacity] of landcover) {
+    add(
+      {
+        id: `landcover-${id}`,
+        type: "fill",
+        "source-layer": "landcover",
+        filter: [
+          "any",
+          ["in", str("class"), ["literal", classes]],
+          ["in", str("subclass"), ["literal", classes]]
+        ],
+        paint: { "fill-color": c[paletteKey], "fill-opacity": opacity }
+      },
+      ["krajina", label, "area", { "fill-color": paletteKey }]
+    );
   }
 
   // ================= využitie územia =================
   const landuse = [
-    ["residential", ["residential", "suburb", "neighbourhood", "quarter"], c.residential],
-    ["industrial", ["industrial", "commercial", "retail", "garages", "warehouse"], c.industrial],
-    ["railway", ["railway", "bus_station"], c.industrial],
-    ["cemetery", ["cemetery", "grave_yard"], c.cemetery],
-    ["hospital", ["hospital"], c.hospital],
-    ["school", ["school", "university", "college", "kindergarten", "library"], c.school],
-    ["military", ["military", "danger_area"], c.military],
-    ["quarry", ["quarry", "landfill"], c.quarry],
-    ["garden", ["garden", "allotments", "orchard", "vineyard"], c.garden],
-    ["playground", ["playground", "theme_park", "zoo"], c.playground],
-    ["pitch", ["pitch", "stadium", "track", "sports_centre", "golf_course"], c.pitch]
+    ["residential", "Obytná zóna", ["residential", "suburb", "neighbourhood", "quarter"], "residential"],
+    ["industrial", "Priemysel a obchod", ["industrial", "commercial", "retail", "garages", "warehouse"], "industrial"],
+    ["railway", "Železničný areál", ["railway", "bus_station"], "industrial"],
+    ["cemetery", "Cintorín", ["cemetery", "grave_yard"], "cemetery"],
+    ["hospital", "Nemocnica", ["hospital"], "hospital"],
+    ["school", "Školstvo", ["school", "university", "college", "kindergarten", "library"], "school"],
+    ["military", "Vojenský priestor", ["military", "danger_area"], "military"],
+    ["quarry", "Lom a skládka", ["quarry", "landfill"], "quarry"],
+    ["garden", "Záhrady a sady", ["garden", "allotments", "orchard", "vineyard"], "garden"],
+    ["playground", "Ihriská a zoo", ["playground", "theme_park", "zoo"], "playground"],
+    ["pitch", "Športoviská", ["pitch", "stadium", "track", "sports_centre", "golf_course"], "pitch"]
   ];
-  for (const [id, classes, color] of landuse) {
-    add({
-      id: `landuse-${id}`,
-      type: "fill",
-      "source-layer": "landuse",
-      filter: ["in", str("class"), ["literal", classes]],
-      paint: { "fill-color": color }
-    });
+  for (const [id, label, classes, paletteKey] of landuse) {
+    add(
+      {
+        id: `landuse-${id}`,
+        type: "fill",
+        "source-layer": "landuse",
+        filter: ["in", str("class"), ["literal", classes]],
+        paint: { "fill-color": c[paletteKey] }
+      },
+      ["uzemie", label, "area", { "fill-color": paletteKey }]
+    );
   }
 
-  add({
-    id: "park",
-    type: "fill",
-    "source-layer": "park",
-    paint: { "fill-color": c.park, "fill-opacity": 0.55 }
-  });
-  add({
-    id: "park-outline",
-    type: "line",
-    "source-layer": "park",
-    minzoom: 10,
-    paint: {
-      "line-color": c.parkOutline,
-      "line-width": zl([[10, 0.6], [16, 1.6], [20, 3]]),
-      "line-dasharray": [4, 2]
-    }
-  });
+  add(
+    {
+      id: "park",
+      type: "fill",
+      "source-layer": "park",
+      paint: { "fill-color": c.park, "fill-opacity": 0.55 }
+    },
+    ["uzemie", "Park (plocha)", "area", { "fill-color": "park" }]
+  );
+  add(
+    {
+      id: "park-outline",
+      type: "line",
+      "source-layer": "park",
+      minzoom: 10,
+      paint: {
+        "line-color": c.parkOutline,
+        "line-width": zl([[10, 0.6], [16, 1.6], [20, 3]]),
+        "line-dasharray": [4, 2]
+      }
+    },
+    ["uzemie", "Park (obrys)", "line", { "line-color": "parkOutline" }]
+  );
 
   // ================= tieňovanie reliéfu =================
   // Ide nad krajinnú pokrývku, ale pod vodu – tieňovaná vodná hladina
   // vyzerá nesprávne.
   if (demTiles) {
-    L.push({
-      id: "hillshade",
-      type: "hillshade",
-      source: "dem",
-      paint: {
-        "hillshade-exaggeration": zl([[6, 0.5], [12, 0.4], [16, 0.25]]),
-        "hillshade-shadow-color": c.hillShadow,
-        "hillshade-highlight-color": c.hillHighlight,
-        "hillshade-accent-color": c.hillAccent
-      }
-    });
+    add(
+      {
+        id: "hillshade",
+        type: "hillshade",
+        source: "dem",
+        paint: {
+          "hillshade-exaggeration": zl([[6, 0.5], [12, 0.4], [16, 0.25]]),
+          "hillshade-shadow-color": c.hillShadow,
+          "hillshade-highlight-color": c.hillHighlight,
+          "hillshade-accent-color": c.hillAccent
+        }
+      },
+      [
+        "zaklad",
+        "Tieňovanie reliéfu",
+        "raster",
+        {
+          "hillshade-shadow-color": "hillShadow",
+          "hillshade-highlight-color": "hillHighlight",
+          "hillshade-accent-color": "hillAccent"
+        }
+      ]
+    );
   }
 
   // ================= voda =================
-  add({
-    id: "water",
-    type: "fill",
-    "source-layer": "water",
-    filter: ["!=", ["get", "brunnel"], "tunnel"],
-    paint: {
-      "fill-color": c.water,
-      "fill-opacity": ["case", ["==", ["get", "intermittent"], 1], 0.6, 1]
-    }
-  });
-  add({
-    id: "water-outline",
-    type: "line",
-    "source-layer": "water",
-    minzoom: 12,
-    filter: ["!=", ["get", "brunnel"], "tunnel"],
-    paint: {
-      "line-color": c.waterOutline,
-      "line-width": zl([[12, 0.4], [16, 1.2], [20, 2.5]])
-    }
-  });
-  add({
-    id: "waterway-river",
-    type: "line",
-    "source-layer": "waterway",
-    filter: ["in", str("class"), ["literal", ["river", "canal"]]],
-    paint: {
-      "line-color": c.river,
-      "line-width": zw([[8, 0.6], [12, 1.6], [16, 5], [20, 18]])
-    }
-  });
-  add({
-    // Potoky, priekopy, odvodňovacie kanály – detail, ktorý sa objaví od z12.
-    id: "waterway-minor",
-    type: "line",
-    "source-layer": "waterway",
-    minzoom: 12,
-    filter: ["in", str("class"), ["literal", ["stream", "ditch", "drain"]]],
-    paint: {
-      "line-color": c.river,
-      "line-width": zw([[12, 0.5], [16, 2], [20, 7]]),
-      "line-opacity": 0.85
-    }
-  });
+  add(
+    {
+      id: "water",
+      type: "fill",
+      "source-layer": "water",
+      filter: ["!=", ["get", "brunnel"], "tunnel"],
+      paint: {
+        "fill-color": c.water,
+        "fill-opacity": ["case", ["==", ["get", "intermittent"], 1], 0.6, 1]
+      }
+    },
+    ["voda", "Vodné plochy", "area", { "fill-color": "water" }]
+  );
+  add(
+    {
+      id: "water-outline",
+      type: "line",
+      "source-layer": "water",
+      minzoom: 12,
+      filter: ["!=", ["get", "brunnel"], "tunnel"],
+      paint: {
+        "line-color": c.waterOutline,
+        "line-width": zl([[12, 0.4], [16, 1.2], [20, 2.5]])
+      }
+    },
+    ["voda", "Obrys vodných plôch", "line", { "line-color": "waterOutline" }]
+  );
+  add(
+    {
+      id: "waterway-river",
+      type: "line",
+      "source-layer": "waterway",
+      filter: ["in", str("class"), ["literal", ["river", "canal"]]],
+      paint: {
+        "line-color": c.river,
+        "line-width": zw([[8, 0.6], [12, 1.6], [16, 5], [20, 18]])
+      }
+    },
+    ["voda", "Rieky a kanály", "line", { "line-color": "river" }]
+  );
+  add(
+    {
+      // Potoky, priekopy, odvodňovacie kanály – detail, ktorý sa objaví od z12.
+      id: "waterway-minor",
+      type: "line",
+      "source-layer": "waterway",
+      minzoom: 12,
+      filter: ["in", str("class"), ["literal", ["stream", "ditch", "drain"]]],
+      paint: {
+        "line-color": c.river,
+        "line-width": zw([[12, 0.5], [16, 2], [20, 7]]),
+        "line-opacity": 0.85
+      }
+    },
+    ["voda", "Potoky a priekopy", "line", { "line-color": "river" }]
+  );
 
   // ================= vrstevnice =================
   // Kreslia sa nad vodou (pod hladinou nemajú čo robiť) a pod budovami
   // a cestami, aby neprekrývali dôležitejšie prvky.
   if (contoursUrl) {
-    const contourLine = (id, level, minzoom, width, color) =>
-      L.push({
-        id: `contour-${id}`,
-        type: "line",
-        source: "contours",
-        "source-layer": "contour",
-        minzoom,
-        filter: ["==", str("level"), level],
-        paint: {
-          "line-color": color,
-          "line-width": zl(width),
-          "line-opacity": zl([[minzoom, 0], [minzoom + 1, 0.55]])
-        }
-      });
+    const contourLine = (id, label, level, minzoom, width, paletteKey) =>
+      add(
+        {
+          id: `contour-${id}`,
+          type: "line",
+          source: "contours",
+          "source-layer": "contour",
+          minzoom,
+          filter: ["==", str("level"), level],
+          paint: {
+            "line-color": c[paletteKey],
+            "line-width": zl(width),
+            "line-opacity": zl([[minzoom, 0], [minzoom + 1, 0.55]])
+          }
+        },
+        ["vrstevnice", label, "line", { "line-color": paletteKey }]
+      );
 
-    contourLine("minor", "minor", 13, [[13, 0.4], [16, 0.7], [20, 1.4]], c.contour);
-    contourLine("mid", "mid", 12, [[12, 0.5], [16, 0.9], [20, 1.8]], c.contour);
-    contourLine("major", "major", 10, [[10, 0.7], [16, 1.4], [20, 2.6]], c.contourMajor);
+    contourLine("minor", "Vrstevnice po 10 m", "minor", 13, [[13, 0.4], [16, 0.7], [20, 1.4]], "contour");
+    contourLine("mid", "Vrstevnice po 50 m", "mid", 12, [[12, 0.5], [16, 0.9], [20, 1.8]], "contour");
+    contourLine("major", "Vrstevnice po 100 m", "major", 10, [[10, 0.7], [16, 1.4], [20, 2.6]], "contourMajor");
 
     // Popisky nadmorskej výšky pozdĺž hlavných vrstevníc.
-    L.push({
-      id: "contour-label",
-      type: "symbol",
-      source: "contours",
-      "source-layer": "contour",
-      minzoom: 13,
-      filter: ["in", str("level"), ["literal", ["major", "mid"]]],
-      layout: {
-        "symbol-placement": "line",
-        // `ele` môže z GDALu prísť ako desatinné číslo – zaokrúhlime v štýle,
-        // aby popisok nikdy nebol "810.0 m".
-        "text-field": ["concat", ["to-string", ["round", num("ele", 0)]], " m"],
-        "text-font": REG,
-        "text-size": zl([[13, 9], [16, 11], [20, 13]]),
-        "symbol-spacing": 320,
-        "text-max-angle": 25,
-        "text-padding": 8
+    add(
+      {
+        id: "contour-label",
+        type: "symbol",
+        source: "contours",
+        "source-layer": "contour",
+        minzoom: 13,
+        filter: ["in", str("level"), ["literal", ["major", "mid"]]],
+        layout: {
+          "symbol-placement": "line",
+          // `ele` môže z GDALu prísť ako desatinné číslo – zaokrúhlime v štýle,
+          // aby popisok nikdy nebol "810.0 m".
+          "text-field": ["concat", ["to-string", ["round", num("ele", 0)]], " m"],
+          "text-font": REG,
+          "text-size": zl([[13, 9], [16, 11], [20, 13]]),
+          "symbol-spacing": 320,
+          "text-max-angle": 25,
+          "text-padding": 8
+        },
+        paint: {
+          "text-color": c.contourText,
+          "text-halo-color": c.poiHalo,
+          "text-halo-width": 1.4
+        }
       },
-      paint: {
-        "text-color": c.contourText,
-        "text-halo-color": c.poiHalo,
-        "text-halo-width": 1.4
-      }
-    });
+      [
+        "vrstevnice",
+        "Popisky nadmorskej výšky",
+        "text",
+        { "text-color": "contourText", "text-halo-color": "poiHalo" }
+      ]
+    );
   }
 
   // ================= letiská =================
-  add({
-    id: "aeroway-area",
-    type: "fill",
-    "source-layer": "aeroway",
-    filter: ["in", str("class"), ["literal", ["apron", "aerodrome", "heliport"]]],
-    paint: { "fill-color": c.aeroway }
-  });
-  add({
-    id: "aeroway-runway",
-    type: "line",
-    "source-layer": "aeroway",
-    minzoom: 10,
-    filter: ["==", ["get", "class"], "runway"],
-    paint: {
-      "line-color": c.aeroway,
-      "line-width": zw([[10, 1], [14, 8], [16, 20], [20, 70]])
-    }
-  });
-  add({
-    id: "aeroway-taxiway",
-    type: "line",
-    "source-layer": "aeroway",
-    minzoom: 11,
-    filter: ["in", str("class"), ["literal", ["taxiway", "helipad"]]],
-    paint: {
-      "line-color": c.aeroway,
-      "line-width": zw([[11, 0.6], [14, 3], [16, 8], [20, 26]])
-    }
-  });
+  add(
+    {
+      id: "aeroway-area",
+      type: "fill",
+      "source-layer": "aeroway",
+      filter: ["in", str("class"), ["literal", ["apron", "aerodrome", "heliport"]]],
+      paint: { "fill-color": c.aeroway }
+    },
+    ["letiska", "Letiskové plochy", "area", { "fill-color": "aeroway" }]
+  );
+  add(
+    {
+      id: "aeroway-runway",
+      type: "line",
+      "source-layer": "aeroway",
+      minzoom: 10,
+      filter: ["==", ["get", "class"], "runway"],
+      paint: {
+        "line-color": c.aeroway,
+        "line-width": zw([[10, 1], [14, 8], [16, 20], [20, 70]])
+      }
+    },
+    ["letiska", "Vzletové dráhy", "line", { "line-color": "aeroway" }]
+  );
+  add(
+    {
+      id: "aeroway-taxiway",
+      type: "line",
+      "source-layer": "aeroway",
+      minzoom: 11,
+      filter: ["in", str("class"), ["literal", ["taxiway", "helipad"]]],
+      paint: {
+        "line-color": c.aeroway,
+        "line-width": zw([[11, 0.6], [14, 3], [16, 8], [20, 26]])
+      }
+    },
+    ["letiska", "Rolovacie dráhy", "line", { "line-color": "aeroway" }]
+  );
 
   // ================= budovy =================
-  // Do z15.5 ploché výplne, nad tým 3D bloky (render_height z OSM).
-  add({
-    id: "building",
-    type: "fill",
-    "source-layer": "building",
-    minzoom: 13,
-    maxzoom: 16,
-    paint: {
-      "fill-color": c.building,
-      "fill-outline-color": c.buildingOutline,
-      "fill-opacity": zl([[13, 0.5], [15, 1]])
-    }
-  });
-  add({
-    id: "building-3d",
-    type: "fill-extrusion",
-    "source-layer": "building",
-    minzoom: 16,
-    filter: ["!=", ["get", "hide_3d"], true],
-    paint: {
-      "fill-extrusion-color": c.buildingTop,
-      "fill-extrusion-opacity": 0.9,
-      "fill-extrusion-height": num("render_height", 5),
-      "fill-extrusion-base": num("render_min_height", 0)
-    }
-  });
+  // Do z16 ploché výplne, nad tým 3D bloky (render_height z OSM).
+  add(
+    {
+      id: "building",
+      type: "fill",
+      "source-layer": "building",
+      minzoom: 13,
+      maxzoom: 16,
+      paint: {
+        "fill-color": c.building,
+        "fill-outline-color": c.buildingOutline,
+        "fill-opacity": zl([[13, 0.5], [15, 1]])
+      }
+    },
+    [
+      "budovy",
+      "Budovy (ploché)",
+      "area",
+      { "fill-color": "building", "fill-outline-color": "buildingOutline" }
+    ]
+  );
+  add(
+    {
+      id: "building-3d",
+      type: "fill-extrusion",
+      "source-layer": "building",
+      minzoom: 16,
+      filter: ["!=", ["get", "hide_3d"], true],
+      paint: {
+        "fill-extrusion-color": c.buildingTop,
+        "fill-extrusion-opacity": 0.9,
+        "fill-extrusion-height": num("render_height", 5),
+        "fill-extrusion-base": num("render_min_height", 0)
+      }
+    },
+    ["budovy", "Budovy 3D", "3d", { "fill-extrusion-color": "buildingTop" }]
+  );
 
   // ================= doprava =================
   // Šírky sú definované až po z20, aby overzoomované dlaždice vyzerali správne.
-  // [id, triedy, farba výplne, farba obrysu, stopy šírky, prídavok obrysu, minzoom]
+  // [id, popis, triedy, farba výplne, farba obrysu, stopy šírky, prídavok obrysu, minzoom]
   const roadDefs = [
-    ["motorway", ["motorway"], c.motorway, c.motorwayCasing,
+    ["motorway", "Diaľnice", ["motorway"], "motorway", "motorwayCasing",
       [[5, 0.8], [10, 3], [14, 8], [16, 18], [20, 60]], 3, 4],
-    ["trunk", ["trunk"], c.trunk, c.roadCasing,
+    ["trunk", "Rýchlostné cesty", ["trunk"], "trunk", "roadCasing",
       [[6, 0.7], [10, 2.6], [14, 7], [16, 16], [20, 52]], 2.6, 6],
-    ["primary", ["primary"], c.primary, c.roadCasing,
+    ["primary", "Cesty I. triedy", ["primary"], "primary", "roadCasing",
       [[7, 0.7], [10, 2.2], [14, 6.5], [16, 15], [20, 48]], 2.4, 7],
-    ["secondary", ["secondary"], c.secondary, c.roadCasing,
+    ["secondary", "Cesty II. triedy", ["secondary"], "secondary", "roadCasing",
       [[9, 0.6], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 9],
-    ["tertiary", ["tertiary"], c.secondary, c.roadCasing,
+    ["tertiary", "Cesty III. triedy", ["tertiary"], "secondary", "roadCasing",
       [[10, 0.5], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 10],
-    ["minor", ["minor", "living_street", "raceway", "busway", "bus_guideway"], c.minor, c.roadCasing,
+    ["minor", "Miestne cesty", ["minor", "living_street", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
       [[12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 12],
-    ["service", ["service"], c.service, c.roadCasing,
+    ["service", "Účelové cesty", ["service"], "service", "roadCasing",
       [[13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 13],
-    ["pedestrian", ["pedestrian"], c.pedestrian, c.roadCasing,
+    ["pedestrian", "Pešie zóny", ["pedestrian"], "pedestrian", "roadCasing",
       [[13, 0.6], [14, 2.4], [16, 7], [20, 24]], 1.2, 13]
   ];
 
   /** Cesty sa kreslia v troch priechodoch: tunely → povrch → mosty. */
-  const roadPass = (suffix, extraFilter, opts = {}) => {
+  const roadPass = (suffix, passLabel, extraFilter, opts = {}) => {
     const layout = { "line-cap": opts.cap || "round", "line-join": "round" };
     const filterFor = (classes) => [
       "all",
@@ -722,309 +1195,401 @@ export function buildStyle({
       extraFilter
     ];
     // obrysy (casing) idú celé pod výplne, inak by ich prekrývali križovatky
-    for (const [id, classes, , casingColor, stops, extra, mz] of roadDefs) {
-      add({
-        id: `road-${id}-casing${suffix}`,
-        type: "line",
-        "source-layer": "transportation",
-        minzoom: mz,
-        filter: filterFor(classes),
-        layout,
-        paint: {
-          "line-color": casingColor,
-          "line-width": zw(widen(stops, extra)),
-          ...(opts.dash ? { "line-dasharray": opts.dash } : {})
-        }
-      });
+    for (const [id, label, classes, , casingKey, stops, extra, mz] of roadDefs) {
+      add(
+        {
+          id: `road-${id}-casing${suffix}`,
+          type: "line",
+          "source-layer": "transportation",
+          minzoom: mz,
+          filter: filterFor(classes),
+          layout,
+          paint: {
+            "line-color": c[casingKey],
+            "line-width": zw(widen(stops, extra)),
+            ...(opts.dash ? { "line-dasharray": opts.dash } : {})
+          }
+        },
+        ["cesty", `${label} – obrys${passLabel}`, "line", { "line-color": casingKey }]
+      );
     }
-    for (const [id, classes, color, , stops, , mz] of roadDefs) {
-      add({
-        id: `road-${id}${suffix}`,
-        type: "line",
-        "source-layer": "transportation",
-        minzoom: mz,
-        filter: filterFor(classes),
-        layout,
-        paint: { "line-color": color, "line-width": zw(stops) }
-      });
+    for (const [id, label, classes, colorKey, , stops, , mz] of roadDefs) {
+      add(
+        {
+          id: `road-${id}${suffix}`,
+          type: "line",
+          "source-layer": "transportation",
+          minzoom: mz,
+          filter: filterFor(classes),
+          layout,
+          paint: { "line-color": c[colorKey], "line-width": zw(stops) }
+        },
+        ["cesty", `${label}${passLabel}`, "line", { "line-color": colorKey }]
+      );
     }
   };
 
   // --- tunely (prerušované, pod povrchom) ---
-  roadPass("-tunnel", isTunnel, { cap: "butt", dash: [3, 2] });
+  roadPass("-tunnel", " (tunel)", isTunnel, { cap: "butt", dash: [3, 2] });
 
   // --- chodníky, cyklotrasy, schody, poľné cesty ---
   const pathDefs = [
-    ["track", ["==", str("class"), "track"], c.track, [[12, 0.7], [14, 1.6], [16, 3.5], [20, 12]], [4, 2], 12],
-    ["steps", ["==", str("subclass"), "steps"], c.steps, [[14, 1.2], [16, 3], [20, 10]], [1, 0.6], 14],
-    ["cycleway", ["==", str("subclass"), "cycleway"], c.cycleway, [[13, 0.7], [16, 2.2], [20, 8]], [3, 1.5], 13],
-    ["footway", ["in", str("subclass"), ["literal", ["footway", "sidewalk", "crossing"]]], c.footway, [[13, 0.6], [16, 2], [20, 7]], [2, 1.5], 13],
+    ["track", "Poľné a lesné cesty", ["==", str("class"), "track"], "track", [[12, 0.7], [14, 1.6], [16, 3.5], [20, 12]], [4, 2], 12],
+    ["steps", "Schody", ["==", str("subclass"), "steps"], "steps", [[14, 1.2], [16, 3], [20, 10]], [1, 0.6], 14],
+    ["cycleway", "Cyklotrasy", ["==", str("subclass"), "cycleway"], "cycleway", [[13, 0.7], [16, 2.2], [20, 8]], [3, 1.5], 13],
+    ["footway", "Chodníky a priechody", ["in", str("subclass"), ["literal", ["footway", "sidewalk", "crossing"]]], "footway", [[13, 0.6], [16, 2], [20, 7]], [2, 1.5], 13],
     // `path` bez subclass (alebo path/bridleway) – ale nie `track`, ten má vlastnú vrstvu
-    ["path", ["all", ["==", str("class"), "path"],
+    ["path", "Turistické chodníky", ["all", ["==", str("class"), "path"],
       ["in", str("subclass"), ["literal", ["path", "bridleway", ""]]]],
-      c.path, [[12, 0.7], [16, 2.2], [20, 8]], [2, 2], 12]
+      "path", [[12, 0.7], [16, 2.2], [20, 8]], [2, 2], 12]
   ];
-  for (const [id, filter, color, stops, dash, mz] of pathDefs) {
-    add({
-      id: `road-${id}`,
-      type: "line",
-      "source-layer": "transportation",
-      minzoom: mz,
-      filter: [
-        "all",
-        ["in", str("class"), ["literal", ["path", "track"]]],
-        filter,
-        ["!=", ["get", "brunnel"], "tunnel"]
-      ],
-      layout: { "line-cap": "butt", "line-join": "round" },
-      paint: { "line-color": color, "line-width": zw(stops), "line-dasharray": dash }
-    });
+  for (const [id, label, filter, paletteKey, stops, dash, mz] of pathDefs) {
+    add(
+      {
+        id: `road-${id}`,
+        type: "line",
+        "source-layer": "transportation",
+        minzoom: mz,
+        filter: [
+          "all",
+          ["in", str("class"), ["literal", ["path", "track"]]],
+          filter,
+          ["!=", ["get", "brunnel"], "tunnel"]
+        ],
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: { "line-color": c[paletteKey], "line-width": zw(stops), "line-dasharray": dash }
+      },
+      ["chodniky", label, "line", { "line-color": paletteKey }]
+    );
   }
 
   // --- povrchové cesty ---
-  roadPass("", isSurface);
+  roadPass("", "", isSurface);
 
   // --- železnica ---
-  add({
-    id: "rail-bg",
-    type: "line",
-    "source-layer": "transportation",
-    minzoom: 9,
-    filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
-    paint: {
-      "line-color": c.rail,
-      "line-width": zw([[9, 0.8], [14, 2.4], [16, 4], [20, 12]])
-    }
-  });
-  add({
-    id: "rail-hatch",
-    type: "line",
-    "source-layer": "transportation",
-    minzoom: 13,
-    filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
-    paint: {
-      "line-color": c.railHatch,
-      "line-width": zw([[13, 0.8], [16, 2], [20, 6]]),
-      "line-dasharray": [0.3, 2.5]
-    }
-  });
+  add(
+    {
+      id: "rail-bg",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 9,
+      filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
+      paint: {
+        "line-color": c.rail,
+        "line-width": zw([[9, 0.8], [14, 2.4], [16, 4], [20, 12]])
+      }
+    },
+    ["doprava", "Železnica", "line", { "line-color": "rail" }]
+  );
+  add(
+    {
+      id: "rail-hatch",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 13,
+      filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
+      paint: {
+        "line-color": c.railHatch,
+        "line-width": zw([[13, 0.8], [16, 2], [20, 6]]),
+        "line-dasharray": [0.3, 2.5]
+      }
+    },
+    ["doprava", "Železnica – šrafovanie", "line", { "line-color": "railHatch" }]
+  );
 
   // --- mosty (nad všetkým ostatným) ---
-  roadPass("-bridge", isBridge, { cap: "butt" });
+  roadPass("-bridge", " (most)", isBridge, { cap: "butt" });
 
   // --- lanovky, kompy, móla ---
-  add({
-    id: "aerialway",
-    type: "line",
-    "source-layer": "transportation",
-    minzoom: 11,
-    filter: ["==", ["get", "class"], "aerialway"],
-    paint: {
-      "line-color": c.aerialway,
-      "line-width": zl([[11, 0.6], [16, 1.6], [20, 3]]),
-      "line-dasharray": [6, 2]
-    }
-  });
-  add({
-    id: "ferry",
-    type: "line",
-    "source-layer": "transportation",
-    minzoom: 8,
-    filter: ["==", ["get", "class"], "ferry"],
-    paint: {
-      "line-color": c.ferry,
-      "line-width": zl([[8, 0.8], [16, 2], [20, 4]]),
-      "line-dasharray": [4, 3]
-    }
-  });
-  add({
-    id: "pier",
-    type: "line",
-    "source-layer": "transportation",
-    minzoom: 13,
-    filter: ["==", ["get", "class"], "pier"],
-    paint: {
-      "line-color": c.pier,
-      "line-width": zw([[13, 1], [16, 4], [20, 14]])
-    }
-  });
+  add(
+    {
+      id: "aerialway",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 11,
+      filter: ["==", ["get", "class"], "aerialway"],
+      paint: {
+        "line-color": c.aerialway,
+        "line-width": zl([[11, 0.6], [16, 1.6], [20, 3]]),
+        "line-dasharray": [6, 2]
+      }
+    },
+    ["doprava", "Lanovky a vleky", "line", { "line-color": "aerialway" }]
+  );
+  add(
+    {
+      id: "ferry",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 8,
+      filter: ["==", ["get", "class"], "ferry"],
+      paint: {
+        "line-color": c.ferry,
+        "line-width": zl([[8, 0.8], [16, 2], [20, 4]]),
+        "line-dasharray": [4, 3]
+      }
+    },
+    ["doprava", "Kompy", "line", { "line-color": "ferry" }]
+  );
+  add(
+    {
+      id: "pier",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 13,
+      filter: ["==", ["get", "class"], "pier"],
+      paint: {
+        "line-color": c.pier,
+        "line-width": zw([[13, 1], [16, 4], [20, 14]])
+      }
+    },
+    ["doprava", "Móla", "line", { "line-color": "pier" }]
+  );
 
   // --- jednosmerky (len na veľkom detaile) ---
   if (hasIcon("arrow")) {
-    add({
-      id: "road-oneway",
-      type: "symbol",
-      "source-layer": "transportation",
-      minzoom: 16,
-      filter: ["in", num("oneway", 0), ["literal", [1, -1]]],
-      layout: {
-        "symbol-placement": "line",
-        "symbol-spacing": 120,
-        "icon-image": "arrow",
-        "icon-size": zl([[16, 0.6], [20, 1.2]]),
-        "icon-rotate": ["case", ["==", num("oneway", 0), -1], 180, 0],
-        "icon-rotation-alignment": "map",
-        "icon-allow-overlap": true
+    add(
+      {
+        id: "road-oneway",
+        type: "symbol",
+        "source-layer": "transportation",
+        minzoom: 16,
+        filter: ["in", num("oneway", 0), ["literal", [1, -1]]],
+        layout: {
+          "symbol-placement": "line",
+          "symbol-spacing": 120,
+          "icon-image": "arrow",
+          "icon-size": zl([[16, 0.6], [20, 1.2]]),
+          "icon-rotate": ["case", ["==", num("oneway", 0), -1], 180, 0],
+          "icon-rotation-alignment": "map",
+          "icon-allow-overlap": true
+        },
+        paint: {
+          "icon-opacity": 0.5,
+          ...(sdfIcons ? { "icon-color": c.onewayIcon } : {})
+        }
       },
-      paint: { "icon-opacity": 0.5 }
-    });
+      [
+        "cesty",
+        "Šípky jednosmeriek",
+        "point",
+        sdfIcons ? { "icon-color": "onewayIcon" } : {}
+      ]
+    );
   }
 
   // ================= hranice =================
-  add({
-    id: "boundary-municipality",
-    type: "line",
-    "source-layer": "boundary",
-    minzoom: 11,
-    filter: [">=", num("admin_level", 99), 7],
-    paint: {
-      "line-color": c.boundaryLocal,
-      "line-width": zl([[11, 0.5], [16, 1.2], [20, 2]]),
-      "line-dasharray": [2, 2],
-      "line-opacity": 0.5
-    }
-  });
-  add({
-    id: "boundary-district",
-    type: "line",
-    "source-layer": "boundary",
-    minzoom: 8,
-    filter: ["all", [">=", num("admin_level", 99), 5], ["<=", num("admin_level", 99), 6]],
-    paint: {
-      "line-color": c.boundaryLocal,
-      "line-width": zl([[8, 0.6], [16, 1.6], [20, 3]]),
-      "line-dasharray": [3, 2],
-      "line-opacity": 0.6
-    }
-  });
-  add({
-    id: "boundary-region",
-    type: "line",
-    "source-layer": "boundary",
-    filter: ["all", [">=", num("admin_level", 99), 3], ["<=", num("admin_level", 99), 4]],
-    paint: {
-      "line-color": c.boundary,
-      "line-width": zl([[4, 0.8], [12, 2], [20, 4]]),
-      "line-dasharray": [3, 2],
-      "line-opacity": 0.7
-    }
-  });
-  add({
-    id: "boundary-country",
-    type: "line",
-    "source-layer": "boundary",
-    filter: ["<=", num("admin_level", 99), 2],
-    paint: {
-      "line-color": c.boundary,
-      "line-width": zl([[4, 1], [12, 3], [20, 6]])
-    }
-  });
+  add(
+    {
+      id: "boundary-municipality",
+      type: "line",
+      "source-layer": "boundary",
+      minzoom: 11,
+      filter: [">=", num("admin_level", 99), 7],
+      paint: {
+        "line-color": c.boundaryLocal,
+        "line-width": zl([[11, 0.5], [16, 1.2], [20, 2]]),
+        "line-dasharray": [2, 2],
+        "line-opacity": 0.5
+      }
+    },
+    ["hranice", "Hranice obcí", "line", { "line-color": "boundaryLocal" }]
+  );
+  add(
+    {
+      id: "boundary-district",
+      type: "line",
+      "source-layer": "boundary",
+      minzoom: 8,
+      filter: ["all", [">=", num("admin_level", 99), 5], ["<=", num("admin_level", 99), 6]],
+      paint: {
+        "line-color": c.boundaryLocal,
+        "line-width": zl([[8, 0.6], [16, 1.6], [20, 3]]),
+        "line-dasharray": [3, 2],
+        "line-opacity": 0.6
+      }
+    },
+    ["hranice", "Hranice okresov", "line", { "line-color": "boundaryLocal" }]
+  );
+  add(
+    {
+      id: "boundary-region",
+      type: "line",
+      "source-layer": "boundary",
+      filter: ["all", [">=", num("admin_level", 99), 3], ["<=", num("admin_level", 99), 4]],
+      paint: {
+        "line-color": c.boundary,
+        "line-width": zl([[4, 0.8], [12, 2], [20, 4]]),
+        "line-dasharray": [3, 2],
+        "line-opacity": 0.7
+      }
+    },
+    ["hranice", "Hranice krajov", "line", { "line-color": "boundary" }]
+  );
+  add(
+    {
+      id: "boundary-country",
+      type: "line",
+      "source-layer": "boundary",
+      filter: ["<=", num("admin_level", 99), 2],
+      paint: {
+        "line-color": c.boundary,
+        "line-width": zl([[4, 1], [12, 3], [20, 6]])
+      }
+    },
+    ["hranice", "Štátne hranice", "line", { "line-color": "boundary" }]
+  );
 
   // ================= popisky =================
-  add({
-    id: "waterway-name",
-    type: "symbol",
-    "source-layer": "waterway",
-    minzoom: 13,
-    layout: {
-      "symbol-placement": "line",
-      "text-field": nameExpr,
-      "text-font": ITAL,
-      "text-size": zl([[13, 10], [18, 13]])
+  add(
+    {
+      id: "waterway-name",
+      type: "symbol",
+      "source-layer": "waterway",
+      minzoom: 13,
+      layout: {
+        "symbol-placement": "line",
+        "text-field": nameExpr,
+        "text-font": ITAL,
+        "text-size": zl([[13, 10], [18, 13]])
+      },
+      paint: {
+        "text-color": c.waterText,
+        "text-halo-color": c.placeHalo,
+        "text-halo-width": 1
+      }
     },
-    paint: {
-      "text-color": c.waterText,
-      "text-halo-color": c.placeHalo,
-      "text-halo-width": 1
-    }
-  });
-  add({
-    id: "water-name",
-    type: "symbol",
-    "source-layer": "water_name",
-    layout: {
-      "text-field": nameExpr,
-      "text-font": ITAL,
-      "text-size": zl([[8, 10], [16, 14]]),
-      "text-max-width": 8
+    [
+      "popisky",
+      "Názvy vodných tokov",
+      "text",
+      { "text-color": "waterText", "text-halo-color": "placeHalo" }
+    ]
+  );
+  add(
+    {
+      id: "water-name",
+      type: "symbol",
+      "source-layer": "water_name",
+      layout: {
+        "text-field": nameExpr,
+        "text-font": ITAL,
+        "text-size": zl([[8, 10], [16, 14]]),
+        "text-max-width": 8
+      },
+      paint: {
+        "text-color": c.waterText,
+        "text-halo-color": c.placeHalo,
+        "text-halo-width": 1
+      }
     },
-    paint: {
-      "text-color": c.waterText,
-      "text-halo-color": c.placeHalo,
-      "text-halo-width": 1
-    }
-  });
+    [
+      "popisky",
+      "Názvy vodných plôch",
+      "text",
+      { "text-color": "waterText", "text-halo-color": "placeHalo" }
+    ]
+  );
 
-  add({
-    id: "park-name",
-    type: "symbol",
-    "source-layer": "park",
-    minzoom: 11,
-    layout: {
-      "text-field": nameExpr,
-      "text-font": REG,
-      "text-size": zl([[11, 10], [16, 13]]),
-      "text-max-width": 8
+  add(
+    {
+      id: "park-name",
+      type: "symbol",
+      "source-layer": "park",
+      minzoom: 11,
+      layout: {
+        "text-field": nameExpr,
+        "text-font": REG,
+        "text-size": zl([[11, 10], [16, 13]]),
+        "text-max-width": 8
+      },
+      paint: {
+        "text-color": c.poiText,
+        "text-halo-color": c.poiHalo,
+        "text-halo-width": 1.2
+      }
     },
-    paint: {
-      "text-color": c.poiText,
-      "text-halo-color": c.poiHalo,
-      "text-halo-width": 1.2
-    }
-  });
+    [
+      "popisky",
+      "Názvy parkov",
+      "text",
+      { "text-color": "poiText", "text-halo-color": "poiHalo" }
+    ]
+  );
 
-  add({
-    id: "road-name",
-    type: "symbol",
-    "source-layer": "transportation_name",
-    minzoom: 13,
-    layout: {
-      "symbol-placement": "line",
-      "text-field": nameExpr,
-      "text-font": REG,
-      "text-size": zl([[13, 10], [16, 12], [20, 16]])
+  add(
+    {
+      id: "road-name",
+      type: "symbol",
+      "source-layer": "transportation_name",
+      minzoom: 13,
+      layout: {
+        "symbol-placement": "line",
+        "text-field": nameExpr,
+        "text-font": REG,
+        "text-size": zl([[13, 10], [16, 12], [20, 16]])
+      },
+      paint: {
+        "text-color": c.roadText,
+        "text-halo-color": c.placeHalo,
+        "text-halo-width": 1.2
+      }
     },
-    paint: {
-      "text-color": c.roadText,
-      "text-halo-color": c.placeHalo,
-      "text-halo-width": 1.2
-    }
-  });
+    [
+      "popisky",
+      "Názvy ulíc a ciest",
+      "text",
+      { "text-color": "roadText", "text-halo-color": "placeHalo" }
+    ]
+  );
 
   // Súpisné/orientačné čísla – iba na najväčšom detaile.
-  add({
-    id: "housenumber",
-    type: "symbol",
-    "source-layer": "housenumber",
-    minzoom: 17,
-    layout: {
-      "text-field": ["get", "housenumber"],
-      "text-font": REG,
-      "text-size": zl([[17, 9], [20, 12]]),
-      "text-allow-overlap": false
+  add(
+    {
+      id: "housenumber",
+      type: "symbol",
+      "source-layer": "housenumber",
+      minzoom: 17,
+      layout: {
+        "text-field": ["get", "housenumber"],
+        "text-font": REG,
+        "text-size": zl([[17, 9], [20, 12]]),
+        "text-allow-overlap": false
+      },
+      paint: {
+        "text-color": c.houseText,
+        "text-halo-color": c.poiHalo,
+        "text-halo-width": 1
+      }
     },
-    paint: {
-      "text-color": c.houseText,
-      "text-halo-color": c.poiHalo,
-      "text-halo-width": 1
-    }
-  });
+    [
+      "popisky",
+      "Súpisné čísla",
+      "text",
+      { "text-color": "houseText", "text-halo-color": "poiHalo" }
+    ]
+  );
 
   // ---- POI ----
-  // Ikona sa vyberá podľa `subclass`, potom `class`; ak pre ne sprite ikonu
-  // nemá, použije sa bodka – nikdy neodkazujeme na neexistujúcu ikonu.
+  // Ikona sa vyberá podľa `subclass`, potom `class`. Ak pre ne sprite ikonu
+  // nemá, nekreslí sa nič (prázdny reťazec) – žiadne náhradné kolieska.
   const iconExpr = [
     "case",
     ["in", str("subclass"), ["literal", iconClasses]],
     ["concat", str("subclass"), "_11"],
     ["in", str("class"), ["literal", iconClasses]],
     ["concat", str("class"), "_11"],
-    hasIcon("circle_11") ? "circle_11" : "dot_11"
+    ""
   ];
+
+  // SDF sprite obsahuje samotný symbol bez kolieska, ktoré predtým vypĺňalo
+  // celý štvorec ikony – aby ikony opticky nezmenšeli, sú o kúsok väčšie.
+  const iconScale = sdfIcons ? 1.35 : 1;
+  const scaled = (stops) => zl(stops.map(([z, s]) => [z, s * iconScale]));
 
   const poiLayout = {
     "icon-image": iconExpr,
-    "icon-size": zl([[14, 0.9], [18, 1.1], [20, 1.3]]),
+    "icon-size": scaled([[14, 0.9], [18, 1.1], [20, 1.3]]),
     "icon-optional": true,
     "text-field": nameExpr,
     "text-font": REG,
@@ -1035,124 +1600,202 @@ export function buildStyle({
     "text-max-width": 9,
     "symbol-sort-key": num("rank", 100)
   };
+  // Farba ikon funguje len pri SDF sprite (pipeline ho vyrobí z osm-liberty).
   const poiPaint = {
     "text-color": c.poiText,
     "text-halo-color": c.poiHalo,
-    "text-halo-width": 1.2
+    "text-halo-width": 1.2,
+    ...(sdfIcons
+      ? {
+          "icon-color": c.poiIcon,
+          "icon-halo-color": c.poiIconHalo,
+          "icon-halo-width": 1
+        }
+      : {})
+  };
+  const poiPalette = {
+    "text-color": "poiText",
+    "text-halo-color": "poiHalo",
+    ...(sdfIcons ? { "icon-color": "poiIcon", "icon-halo-color": "poiIconHalo" } : {})
   };
 
+  // Skryté POI triedy z developer módu – vypnú sa ako filter, nie zmazaním
+  // vrstvy, takže sa dajú kedykoľvek vrátiť späť.
+  const poiHidden = overrides?.poi?.hidden || [];
+  const notHidden = poiHidden.length
+    ? [
+        "all",
+        ["!", ["in", str("subclass"), ["literal", poiHidden]]],
+        ["!", ["in", str("class"), ["literal", poiHidden]]]
+      ]
+    : null;
+  const poiFilter = (base) =>
+    notHidden ? (base ? ["all", base, notHidden] : notHidden) : base;
+
   // z14–16: len dôležitejšie POI, aby mapa nebola zahltená.
-  add({
-    id: "poi-major",
-    type: "symbol",
-    "source-layer": "poi",
-    minzoom: DETAIL_Z,
-    maxzoom: 16,
-    filter: ["<=", num("rank", 100), 24],
-    layout: poiLayout,
-    paint: poiPaint
-  });
+  add(
+    {
+      id: "poi-major",
+      type: "symbol",
+      "source-layer": "poi",
+      minzoom: DETAIL_Z,
+      maxzoom: 16,
+      filter: poiFilter(["<=", num("rank", 100), 24]),
+      layout: poiLayout,
+      paint: poiPaint
+    },
+    ["poi", "POI – dôležité (z14–16)", "point", poiPalette]
+  );
   // z16+: úplne všetko, bez filtra na rank.
-  add({
-    id: "poi-all",
-    type: "symbol",
-    "source-layer": "poi",
-    minzoom: 16,
-    layout: { ...poiLayout, "text-allow-overlap": false },
-    paint: poiPaint
-  });
+  add(
+    {
+      id: "poi-all",
+      type: "symbol",
+      "source-layer": "poi",
+      minzoom: 16,
+      ...(poiFilter(null) ? { filter: poiFilter(null) } : {}),
+      layout: { ...poiLayout, "text-allow-overlap": false },
+      paint: poiPaint
+    },
+    ["poi", "POI – všetky (z16+)", "point", poiPalette]
+  );
 
   // ---- vrcholy hôr (dôležité pre outdoor mapu) ----
-  add({
-    id: "mountain-peak",
-    type: "symbol",
-    "source-layer": "mountain_peak",
-    minzoom: 9,
-    layout: {
-      "icon-image": [
-        "case",
-        ["==", ["get", "class"], "volcano"],
-        hasIcon(VOLCANO_ICON) ? VOLCANO_ICON : PEAK_ICON,
-        PEAK_ICON
-      ],
-      "icon-size": 0.9,
-      "icon-optional": true,
-      "text-field": [
-        "case",
-        ["has", "ele"],
-        ["concat", nameExpr, "\n", ["to-string", ["get", "ele"]], " m"],
-        nameExpr
-      ],
-      "text-font": REG,
-      "text-size": zl([[9, 9], [14, 11], [20, 14]]),
-      "text-offset": [0, 0.9],
-      "text-anchor": "top",
-      "text-optional": true,
-      "symbol-sort-key": num("rank", 100)
-    },
-    paint: {
-      "text-color": c.peakText,
-      "text-halo-color": c.poiHalo,
-      "text-halo-width": 1.4
-    }
-  });
-
-  add({
-    id: "aerodrome-label",
-    type: "symbol",
-    "source-layer": "aerodrome_label",
-    minzoom: 10,
-    layout: {
-      ...(hasIcon(AIRPORT_ICON) ? { "icon-image": AIRPORT_ICON, "icon-size": 1 } : {}),
-      "icon-optional": true,
-      "text-field": nameExpr,
-      "text-font": REG,
-      "text-size": zl([[10, 10], [16, 13]]),
-      "text-offset": [0, 1],
-      "text-anchor": "top",
-      "text-optional": true
-    },
-    paint: {
-      "text-color": c.poiText,
-      "text-halo-color": c.poiHalo,
-      "text-halo-width": 1.2
-    }
-  });
-
-  // ---- sídla ----
-  const places = [
-    ["neighbourhood", ["neighbourhood", "isolated_dwelling", "farm", "quarter"], 13, REG, zl([[13, 9], [18, 13]])],
-    ["hamlet", ["hamlet"], 12, REG, zl([[12, 10], [18, 14]])],
-    ["suburb", ["suburb"], 11, REG, zl([[11, 11], [18, 15]])],
-    ["village", ["village"], 9, REG, zl([[9, 10], [16, 15]])],
-    ["town", ["town"], 7, REG, zl([[7, 11], [14, 18]])],
-    ["city", ["city"], 4, BOLD, zl([[4, 12], [13, 22]])],
-    ["state", ["state", "province"], 4, BOLD, zl([[4, 11], [8, 15]])],
-    ["country", ["country"], 2, BOLD, zl([[2, 11], [6, 18]])]
-  ];
-  for (const [id, classes, mz, font, size] of places) {
-    add({
-      id: `place-${id}`,
+  add(
+    {
+      id: "mountain-peak",
       type: "symbol",
-      "source-layer": "place",
-      minzoom: mz,
-      filter: ["in", str("class"), ["literal", classes]],
+      "source-layer": "mountain_peak",
+      minzoom: 9,
       layout: {
-        "text-field": nameExpr,
-        "text-font": font,
-        "text-size": size,
-        "text-max-width": 9,
+        "icon-image": [
+          "case",
+          ["==", ["get", "class"], "volcano"],
+          hasIcon(VOLCANO_ICON) ? VOLCANO_ICON : PEAK_ICON,
+          PEAK_ICON
+        ],
+        "icon-size": 0.9 * iconScale,
+        "icon-optional": true,
+        "text-field": [
+          "case",
+          ["has", "ele"],
+          ["concat", nameExpr, "\n", ["to-string", ["get", "ele"]], " m"],
+          nameExpr
+        ],
+        "text-font": REG,
+        "text-size": zl([[9, 9], [14, 11], [20, 14]]),
+        "text-offset": [0, 0.9],
+        "text-anchor": "top",
+        "text-optional": true,
         "symbol-sort-key": num("rank", 100)
       },
       paint: {
-        "text-color": c.placeText,
-        "text-halo-color": c.placeHalo,
-        "text-halo-width": 1.6
+        "text-color": c.peakText,
+        "text-halo-color": c.poiHalo,
+        "text-halo-width": 1.4,
+        ...(sdfIcons
+          ? {
+              "icon-color": c.peakIcon,
+              "icon-halo-color": c.poiIconHalo,
+              "icon-halo-width": 1
+            }
+          : {})
       }
-    });
+    },
+    [
+      "poi",
+      "Vrcholy hôr",
+      "point",
+      {
+        "text-color": "peakText",
+        "text-halo-color": "poiHalo",
+        ...(sdfIcons ? { "icon-color": "peakIcon", "icon-halo-color": "poiIconHalo" } : {})
+      }
+    ]
+  );
+
+  add(
+    {
+      id: "aerodrome-label",
+      type: "symbol",
+      "source-layer": "aerodrome_label",
+      minzoom: 10,
+      layout: {
+        ...(hasIcon(AIRPORT_ICON)
+          ? { "icon-image": AIRPORT_ICON, "icon-size": iconScale }
+          : {}),
+        "icon-optional": true,
+        "text-field": nameExpr,
+        "text-font": REG,
+        "text-size": zl([[10, 10], [16, 13]]),
+        "text-offset": [0, 1],
+        "text-anchor": "top",
+        "text-optional": true
+      },
+      paint: {
+        "text-color": c.poiText,
+        "text-halo-color": c.poiHalo,
+        "text-halo-width": 1.2,
+        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+          ? {
+              "icon-color": c.aerodromeIcon,
+              "icon-halo-color": c.poiIconHalo,
+              "icon-halo-width": 1
+            }
+          : {})
+      }
+    },
+    [
+      "poi",
+      "Letiská (popisky)",
+      "point",
+      {
+        "text-color": "poiText",
+        "text-halo-color": "poiHalo",
+        ...(sdfIcons && hasIcon(AIRPORT_ICON)
+          ? { "icon-color": "aerodromeIcon", "icon-halo-color": "poiIconHalo" }
+          : {})
+      }
+    ]
+  );
+
+  // ---- sídla ----
+  const places = [
+    ["neighbourhood", "Štvrte a samoty", ["neighbourhood", "isolated_dwelling", "farm", "quarter"], 13, REG, zl([[13, 9], [18, 13]])],
+    ["hamlet", "Osady", ["hamlet"], 12, REG, zl([[12, 10], [18, 14]])],
+    ["suburb", "Mestské časti", ["suburb"], 11, REG, zl([[11, 11], [18, 15]])],
+    ["village", "Obce", ["village"], 9, REG, zl([[9, 10], [16, 15]])],
+    ["town", "Mestá", ["town"], 7, REG, zl([[7, 11], [14, 18]])],
+    ["city", "Veľké mestá", ["city"], 4, BOLD, zl([[4, 12], [13, 22]])],
+    ["state", "Kraje a regióny", ["state", "province"], 4, BOLD, zl([[4, 11], [8, 15]])],
+    ["country", "Štáty", ["country"], 2, BOLD, zl([[2, 11], [6, 18]])]
+  ];
+  for (const [id, label, classes, mz, font, size] of places) {
+    add(
+      {
+        id: `place-${id}`,
+        type: "symbol",
+        "source-layer": "place",
+        minzoom: mz,
+        filter: ["in", str("class"), ["literal", classes]],
+        layout: {
+          "text-field": nameExpr,
+          "text-font": font,
+          "text-size": size,
+          "text-max-width": 9,
+          "symbol-sort-key": num("rank", 100)
+        },
+        paint: {
+          "text-color": c.placeText,
+          "text-halo-color": c.placeHalo,
+          "text-halo-width": 1.6
+        }
+      },
+      ["sidla", label, "text", { "text-color": "placeText", "text-halo-color": "placeHalo" }]
+    );
   }
 
-  return style;
+  return applyLayerOverrides(style, overrides?.layers);
 }
 
 /** Vrstvy, na ktoré sa dá kliknúť (popup s detailom). */
