@@ -1,23 +1,32 @@
-# Planetiler custom schema – vrstevnice z digitálneho modelu terénu.
+# Planetiler custom schema – vrstevnice a skaly z digitálneho modelu terénu.
 #
 # OpenStreetMap výškové dáta neobsahuje (okrem bodového tagu `ele` na
 # vrcholoch, prameňoch a pod.) a vrstevnice sa doň zámerne nenahrávajú.
-# Terén preto ide z externého DEM: Copernicus GLO-30 (AWS Open Data).
+# Terén preto ide z externého DEM: Sonny's LiDAR DTM (presnejší, bez stromov
+# a budov) alebo Copernicus GLO-30 (celosvetový).
 #
-# Vstup vyrába workflow build-map.yml:
-#   gdal_contour → ogr2ogr (dopočíta `level`) → data/contours.gpkg
+# Vstupy vyrába workflow build-map.yml:
+#   gdal_contour → ogr2ogr (dopočíta `level`)        → data/contours.gpkg
+#   gdaldem slope → gdal_contour -p → ogr2ogr        → data/rock.gpkg
 #
 # `level` rozdeľuje vrstevnice na tri triedy, aby sa dali zapínať postupne
 # podľa zoomu a hlavné vrstevnice sa dali kresliť hrubšie:
 #   major = násobky 100 m, mid = násobky 50 m, minor = ostatné
-schema_name: FricoMaps vrstevnice
-schema_description: Vrstevnice a nadmorská výška z Copernicus GLO-30
-attribution: <a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>
+#
+# `class` pri skalách rozlišuje strmý svah (`steep`) od výraznej steny
+# (`cliff`), nech sa dajú kresliť rôzne tmavo.
+schema_name: FricoMaps vrstevnice a skaly
+schema_description: Vrstevnice, nadmorská výška a skalné plochy z DEM
+attribution: <a href="https://sonny.4lima.de/">Sonny's LiDAR DTM</a> / <a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>
 
 sources:
   contours:
     type: geopackage
     local_path: data/contours.gpkg
+    projection: EPSG:4326
+  rock:
+    type: geopackage
+    local_path: data/rock.gpkg
     projection: EPSG:4326
 
 layers:
@@ -53,3 +62,16 @@ layers:
           - key: ele
             type: integer
           - key: level
+
+  # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom). Sú to malé
+  # plochy, takže pod z12 nemá zmysel ich posielať; nižšie zoomy by z nich
+  # aj tak spravili nečitateľné bodky.
+  - id: rock
+    features:
+      - source: rock
+        geometry: polygon
+        min_zoom: 12
+        attributes:
+          - key: class
+          - key: slope
+            type: integer

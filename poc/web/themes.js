@@ -52,6 +52,28 @@ export const MAX_TILE_Z = 16;
 export const DEFAULT_DEM_TILES =
   "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
+/**
+ * Zdroje výšok, z ktorých pipeline počíta vrstevnice a skalné plochy.
+ * Licencia oboch vyžaduje uvedenie zdroja, preto ide atribúcia priamo do
+ * zdroja `contours` v štýle (MapLibre ju zobrazí v rohu mapy).
+ */
+export const DEM_SOURCES = {
+  sonny: {
+    label: "Sonny's LiDAR DTM",
+    note: "LiDAR model terénu – bez stromov a budov",
+    attribution:
+      '<a href="https://sonny.4lima.de/">Sonny\'s LiDAR DTM</a> (CC BY 4.0)'
+  },
+  copernicus: {
+    label: "Copernicus GLO-30",
+    note: "model povrchu vrátane stromov a budov",
+    attribution: '<a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>'
+  }
+};
+
+/** Predvolený zdroj výšok (pipeline vie prepnúť inputom `dem_source`). */
+export const DEFAULT_DEM_SOURCE = "sonny";
+
 export const THEMES = {
   svetla: {
     label: "Svetlá",
@@ -119,6 +141,8 @@ export const THEMES = {
     contour: "#b09070",
     contourMajor: "#96764e",
     contourText: "#8a6a45",
+    cliff: "#7c7772",
+    cliffStrong: "#54514d",
     hillShadow: "#5a4a3a",
     hillHighlight: "#ffffff",
     hillAccent: "#8a7a6a"
@@ -189,6 +213,8 @@ export const THEMES = {
     contour: "#4a4436",
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
+    cliff: "#43434f",
+    cliffStrong: "#6e6e7e",
     hillShadow: "#000000",
     hillHighlight: "#4a4a60",
     hillAccent: "#2a2a3a"
@@ -259,6 +285,8 @@ export const THEMES = {
     contour: "#b3835a",
     contourMajor: "#966034",
     contourText: "#7a4f28",
+    cliff: "#8a7f74",
+    cliffStrong: "#5d554c",
     hillShadow: "#6a5030",
     hillHighlight: "#fffaf0",
     hillAccent: "#9a8060"
@@ -329,6 +357,8 @@ export const THEMES = {
     contour: "#c8a488",
     contourMajor: "#b0846a",
     contourText: "#9a7058",
+    cliff: "#9a9088",
+    cliffStrong: "#6c635c",
     hillShadow: "#8a6a58",
     hillHighlight: "#fffdf8",
     hillAccent: "#c0a090"
@@ -443,11 +473,13 @@ export const PALETTE_GROUPS = [
   },
   {
     id: "vrstevnice",
-    label: "Vrstevnice",
+    label: "Vrstevnice a skaly",
     keys: [
       ["contour", "Vrstevnica"],
       ["contourMajor", "Hlavná vrstevnica"],
-      ["contourText", "Popisok výšky"]
+      ["contourText", "Popisok výšky"],
+      ["cliff", "Skalná plocha"],
+      ["cliffStrong", "Skalná stena (najstrmšie)"]
     ]
   },
   {
@@ -506,7 +538,7 @@ export const LAYER_GROUPS = [
   { id: "krajina", label: "Krajinná pokrývka" },
   { id: "uzemie", label: "Využitie územia" },
   { id: "voda", label: "Voda" },
-  { id: "vrstevnice", label: "Vrstevnice" },
+  { id: "vrstevnice", label: "Vrstevnice a skaly" },
   { id: "letiska", label: "Letiská" },
   { id: "budovy", label: "Budovy" },
   { id: "cesty", label: "Cesty" },
@@ -961,6 +993,8 @@ function applyLayerOverrides(style, layerOverrides) {
  * @param {number} [opts.maxzoom]   najvyšší zoom dlaždíc (default MAX_TILE_Z)
  * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
  * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
+ * @param {string} [opts.demSource]       zdroj výšok (kľúč z DEM_SOURCES) –
+ *                                        určuje atribúciu vrstevníc a skál
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
  *                                        a 3D terén (null = bez nich)
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
@@ -978,6 +1012,7 @@ export function buildStyle({
   maxzoom = MAX_TILE_Z,
   contoursUrl = null,
   contoursMaxzoom = 14,
+  demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
   sdfIcons = false,
   iconSet = null,
@@ -1054,8 +1089,8 @@ export function buildStyle({
       type: "vector",
       url: contoursUrl,
       maxzoom: contoursMaxzoom,
-      attribution:
-        '<a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>'
+      attribution: (DEM_SOURCES[demSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE])
+        .attribution
     };
   }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
@@ -1267,10 +1302,61 @@ export function buildStyle({
     ["voda", "Potoky a priekopy", "line", { "line-color": "river" }]
   );
 
-  // ================= vrstevnice =================
+  // ================= vrstevnice a skaly =================
   // Kreslia sa nad vodou (pod hladinou nemajú čo robiť) a pod budovami
   // a cestami, aby neprekrývali dôležitejšie prvky.
   if (contoursUrl) {
+    // Skalné plochy idú POD vrstevnice: sú to podkladové plochy, čiary
+    // vrstevníc nad nimi musia zostať čitateľné. Tam, kde by z vrstevníc
+    // aj tak bola tmavá šmuha (husté čiary = veľký sklon), teraz sedí
+    // jednoznačná sivá plocha.
+    const rockArea = (id, label, klass, paletteKey, opacity) =>
+      add(
+        {
+          id: `rock-${id}`,
+          type: "fill",
+          source: "contours",
+          "source-layer": "rock",
+          minzoom: 12,
+          filter: ["==", str("class"), klass],
+          paint: {
+            "fill-color": c[paletteKey],
+            "fill-opacity": zl(opacity),
+            "fill-antialias": true
+          }
+        },
+        ["vrstevnice", label, "area", { "fill-color": paletteKey }]
+      );
+
+    rockArea("steep", "Skalné plochy (strmý svah)", "steep", "cliff", [
+      [12, 0],
+      [13, 0.35],
+      [16, 0.5]
+    ]);
+    rockArea("cliff", "Skalné steny (najstrmšie)", "cliff", "cliffStrong", [
+      [12, 0],
+      [13, 0.5],
+      [16, 0.68]
+    ]);
+
+    // Tenký obrys – práve on „ohraničuje" strmé úseky, aby bolo vidieť, kde
+    // skala začína a končí, aj keď je výplň priehľadná.
+    add(
+      {
+        id: "rock-outline",
+        type: "line",
+        source: "contours",
+        "source-layer": "rock",
+        minzoom: 13,
+        paint: {
+          "line-color": c.cliffStrong,
+          "line-width": zl([[13, 0.4], [16, 0.8], [20, 1.6]]),
+          "line-opacity": zl([[13, 0], [14, 0.5]])
+        }
+      },
+      ["vrstevnice", "Obrys skalných plôch", "line", { "line-color": "cliffStrong" }]
+    );
+
     const contourLine = (id, label, level, minzoom, width, paletteKey) =>
       add(
         {

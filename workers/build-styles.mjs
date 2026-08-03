@@ -10,6 +10,7 @@
  *                  ak je sprite SDF, štýl navyše nastaví farby ikon
  *   --fonts-dir  … adresár s glyfmi na Pages – z neho sa vyberú fontstacky
  *   --overrides  … úpravy z developer módu (poc/web/style-overrides.json)
+ *   --dem-source … zdroj výšok (sonny / copernicus) – ide do atribúcie
  *   --sprites-dir… adresár s nasadenými spritmi; sada sa vyberie podľa úprav
  *
  * Použitie:
@@ -29,7 +30,9 @@ import {
   paletteCoverage,
   selectedIconSource,
   MAX_TILE_Z,
-  DEFAULT_DEM_TILES
+  DEFAULT_DEM_TILES,
+  DEFAULT_DEM_SOURCE,
+  DEM_SOURCES
 } from "../poc/web/themes.js";
 import { ICON_SOURCES } from "../poc/web/icon-sources.js";
 
@@ -47,6 +50,10 @@ const maxzoom = Number(args.maxzoom || MAX_TILE_Z);
 // Vrstevnice sú voliteľné – štýl ich zapne, len ak pipeline vyrobila .pmtiles.
 const contoursMaxzoom = Number(args["contours-maxzoom"] || 14);
 const hasContours = args.contours === "true" || args.contours === "1";
+// Zdroj výšok ovplyvňuje atribúciu vrstevníc a skál v štýle.
+const demSource = DEM_SOURCES[args["dem-source"]]
+  ? args["dem-source"]
+  : DEFAULT_DEM_SOURCE;
 // Tieňovanie reliéfu sa dá vypnúť (--dem-tiles=none).
 const demTiles =
   args["dem-tiles"] === "none" ? null : args["dem-tiles"] || DEFAULT_DEM_TILES;
@@ -209,6 +216,7 @@ for (const themeKey of Object.keys(THEMES)) {
       ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
       : null,
     contoursMaxzoom,
+    demSource,
     demTiles,
     name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
   });
@@ -218,7 +226,9 @@ for (const themeKey of Object.keys(THEMES)) {
 }
 
 console.log(
-  `Vrstevnice: ${hasContours ? `áno (do z${contoursMaxzoom})` : "nie"}, ` +
+  `Vrstevnice a skaly: ${
+    hasContours ? `áno (do z${contoursMaxzoom}, výšky: ${DEM_SOURCES[demSource].label})` : "nie"
+  }, ` +
     `výškové dáta (3D terén): ${demTiles ? "áno" : "nie"}, ` +
     `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`
 );

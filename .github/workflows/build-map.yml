@@ -56,7 +56,7 @@ on:
         default: true
         type: boolean
       contours:
-        description: "Vygenerovať vrstevnice z Copernicus DEM (pozor na veľkosť pri celom Slovensku)"
+        description: "Vygenerovať vrstevnice a skaly z DEM (pozor na veľkosť pri celom Slovensku)"
         required: false
         default: true
         type: boolean
@@ -74,6 +74,24 @@ on:
         description: "Zjemnenie DEM pred vrstevnicami v oblúkových sekundách (0 = vypnuté, plné rozlíšenie; 2 = pôvodné hladenie)"
         required: false
         default: "0"
+        type: string
+      dem_source:
+        description: "Zdroj výšok: sonny = LiDAR DTM z releasu dem-sonny (presnejší, bez stromov), copernicus = GLO-30 z AWS"
+        required: false
+        default: sonny
+        type: choice
+        options:
+          - sonny
+          - copernicus
+      rocks:
+        description: "Vygenerovať skalné plochy (najstrmšie úseky terénu z DEM)"
+        required: false
+        default: true
+        type: boolean
+      rock_slope:
+        description: "Od akého sklonu (°) je terén skala – 40 = štandard, menej = viac plôch"
+        required: false
+        default: "40"
         type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
@@ -106,6 +124,19 @@ env:
   # jediný bod zlyhania, pri ktorom sa mapa vykreslí bez akýchkoľvek nápisov.
   # (Zdroje ikoniek sú v poc/web/icon-sources.js.)
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
+  # Release s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
+  DEM_RELEASE: dem-sonny
+  # Skaly = najstrmšie úseky terénu. Ladenie mimo inputov, aby ich nebolo veľa:
+  ROCK_RES: "20" # mriežka na výpočet sklonu (m) – jemnejšie než 30 m DEM
+  ROCK_WIN: "40" # okno na spriemerovanie sklonu (m) – skala je súvislý úsek,
+  #                nie jeden strmý pixel; bez toho vzniká „soľ a korenie"
+  # Najmenšia skalná plocha (m²). Bunka priemerovanej mriežky má 40×40 m =
+  # 1600 m², takže čokoľvek pod ~3 bunky je šum. Merané na Copernicus DEM:
+  # 5000 m² zahodí vo Vysokých Tatrách polovicu plôch, ale len 0,16 % plochy
+  # skál – teda presne tie osamotené bodky.
+  ROCK_MIN_AREA: "5000"
+  ROCK_SIMPLIFY: "12" # zjednodušenie obrysu (m) – menej bodov, rovnaký tvar
+  ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
 
 jobs:
   build:
@@ -231,10 +262,18 @@ jobs:
           curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
             https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
-      # ---------- vrstevnice ----------
+      # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
-      # ide z Copernicus GLO-30 (AWS Open Data, bez autentifikácie).
-      # Vrstevnice závisia len od územia, nie od OSM dát – preto cache.
+      # ide z externého DEM:
+      #   sonny      … Sonny's LiDAR DTM (release `dem-sonny`, workflow
+      #                "Update DEM") – LiDAR *terén*, teda bez stromov a budov
+      #   copernicus … GLO-30 z AWS Open Data – *povrch* vrátane stromov,
+      #                ale dostupný pre celý svet a bez zrkadlenia
+      # Chýbajúce Sonny dlaždice sa dopĺňajú Copernicusom, takže build nikdy
+      # nezostane bez terénu.
+      #
+      # Z toho istého DEM vznikajú aj skalné plochy – husté vrstevnice sú len
+      # obraz veľkého sklonu, takže sa počítajú priamo zo sklonu terénu.
       #
       # Robia sa PRED dlaždicami zámerne: obe idú na tú istú stránku a musia
       # sa zmestiť do jedného rozpočtu. Keď sa vrstevnice urobia prvé, vie
@@ -246,48 +285,91 @@ jobs:
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v2-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v3-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
 
-      - name: Vrstevnice z Copernicus DEM
+      - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
-          mkdir -p dem data contours-out
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite
+          # Stiahnuté DEM dlaždice majú vlastný adresár: medzivýsledky
+          # (clip, slope…) sú tiež .tif a nesmú sa dostať do mozaiky.
+          mkdir -p dem/tiles data contours-out
 
           BBOX='${{ steps.region.outputs.bbox }}'
           IFS=, read -r W S E N <<< "$BBOX"
           INTERVAL='${{ inputs.contour_interval }}'
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
+          DEM_SRC='${{ inputs.dem_source }}'
+          [ -n "$DEM_SRC" ] || DEM_SRC=sonny
 
-          # Copernicus GLO-30 je delený na dlaždice 1°×1°:
-          #   Copernicus_DSM_COG_10_N49_00_E019_00_DEM/…_DEM.tif
+          # Oba zdroje sú delené na dlaždice 1°×1° pomenované podľa
+          # juhozápadného rohu (konvencia SRTM): N49E019.
           python3 - "$W" "$S" "$E" "$N" > dem/list.txt <<'PY'
           import math, sys
           w, s, e, n = map(float, sys.argv[1:5])
           for lat in range(math.floor(s), math.floor(n) + 1):
               for lon in range(math.floor(w), math.floor(e) + 1):
                   ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-                  print(f"Copernicus_DSM_COG_10_{ns}{abs(lat):02d}_00_{ew}{abs(lon):03d}_00_DEM")
+                  print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
           PY
-          echo "DEM dlaždíc na stiahnutie: $(wc -l < dem/list.txt)"
+          echo "DEM dlaždíc pre bbox: $(wc -l < dem/list.txt)"
 
-          BASE=https://copernicus-dem-30m.s3.amazonaws.com
+          COPERNICUS=https://copernicus-dem-30m.s3.amazonaws.com
+          get_copernicus() { # $1 = N49E019
+            local c="Copernicus_DSM_COG_10_${1:0:3}_00_${1:3:4}_00_DEM"
+            curl -fsSL --retry 3 --retry-delay 3 -o "dem/tiles/$1.tif" "$COPERNICUS/$c/$c.tif"
+          }
+
+          # Zoznam dlaždíc v release si vypýtame naraz – nemá zmysel skúšať
+          # sťahovať to, čo tam nie je.
+          SONNY_ASSETS=""
+          if [ "$DEM_SRC" = "sonny" ]; then
+            SONNY_ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+              --json assets -q '.assets[].name' 2>/dev/null || echo '')
+          fi
+
+          sonny_ok=0
+          missing=""
           while IFS= read -r t; do
+            if printf '%s\n' "$SONNY_ASSETS" | grep -qx "$t.tif" && \
+               gh release download "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$t.tif" --dir dem/tiles --clobber >/dev/null 2>&1; then
+              sonny_ok=$(( sonny_ok + 1 ))
+              continue
+            fi
+            [ "$DEM_SRC" = "sonny" ] && missing="$missing $t"
             # nad morom dlaždica neexistuje → 404 je v poriadku, preskočíme
-            curl -fsSL --retry 3 --retry-delay 3 -o "dem/$t.tif" "$BASE/$t/$t.tif" \
-              || echo "  (chýba $t – zrejme mimo pevniny)"
+            get_copernicus "$t" || echo "  (chýba $t – zrejme mimo pevniny)"
           done < dem/list.txt
 
+          DEM_USED="$DEM_SRC"
+          if [ "$DEM_SRC" = "sonny" ]; then
+            if [ "$sonny_ok" -eq 0 ]; then
+              echo "::warning::V release $DEM_RELEASE nie je pre toto územie ani jedna dlaždica – používam Copernicus GLO-30. Sonny dlaždice tam dostaneš workflowom 'Update DEM'."
+              DEM_USED=copernicus
+            elif [ -n "$missing" ]; then
+              echo "::warning::Sonny DTM chýbajú dlaždice:$missing – doplnené z Copernicus GLO-30."
+              DEM_USED=sonny
+            else
+              echo "Sonny's LiDAR DTM: všetkých $sonny_ok dlaždíc z release $DEM_RELEASE ✓"
+            fi
+          fi
+
           shopt -s nullglob
-          tifs=(dem/*.tif)
+          tifs=(dem/tiles/*.tif)
           if [ ${#tifs[@]} -eq 0 ]; then
-            echo "::error::Nepodarilo sa stiahnuť žiadnu DEM dlaždicu pre bbox $BBOX."
+            echo "::error::Nepodarilo sa získať žiadnu DEM dlaždicu pre bbox $BBOX."
             exit 1
           fi
-          echo "Stiahnutých ${#tifs[@]} DEM dlaždíc."
+          echo "DEM dlaždíc k dispozícii: ${#tifs[@]} (zdroj: $DEM_USED)"
 
-          gdalbuildvrt -q dem/all.vrt "${tifs[@]}"
+          # -resolution highest: Sonny (1″) a Copernicus (nad 50° s riedšou
+          # mriežkou po dĺžke) sa môžu líšiť – mozaika ide na to jemnejšie.
+          gdalbuildvrt -q -resolution highest dem/all.vrt "${tifs[@]}"
 
           # Zjemnenie DEM pred trasovaním vrstevníc. Copernicus GLO-30 je v
           # 1″ (~30 m); priemerovanie na hrubšiu mriežku vyhladí šum, ale
@@ -317,6 +399,99 @@ jobs:
                  ELSE 'minor' END AS level
                FROM contours WHERE ele IS NOT NULL"
           ls -lh data/contours.gpkg
+
+          # ---------- skaly: najstrmšie úseky terénu ----------
+          # „Husté vrstevnice = skala" je len iný pohľad na veľký sklon, preto
+          # sa neanalyzuje hustota čiar (tá závisí od intervalu a zoomu), ale
+          # rovno sklon terénu. Postup:
+          #   1. DEM do metrickej projekcie (v stupňoch by sklon vyšiel zle –
+          #      1° po dĺžke je u nás o tretinu kratší než 1° po šírke),
+          #   2. gdaldem slope → sklon v stupňoch,
+          #   3. priemer na hrubšej mriežke → skala je súvislý strmý úsek,
+          #      nie jeden pixel šumu,
+          #   4. gdal_contour -p → izolínie sklonu ako plochy (hladšie okraje
+          #      než polygonizácia po pixeloch),
+          #   5. zahodenie drobných plôch a zjednodušenie obrysu.
+          ROCK_SLOPE='${{ inputs.rock_slope }}'
+          case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=40 ;; esac
+          ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
+          ROCKS='${{ inputs.rocks }}'
+
+          # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj vtedy,
+          # keď sa žiadna skala nenašla alebo sú vypnuté.
+          make_empty_rock() {
+            echo '{"type":"FeatureCollection","features":[]}' > dem/empty.geojson
+            ogr2ogr -f GPKG data/rock.gpkg dem/empty.geojson -nln rock -overwrite \
+              -nlt POLYGON -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
+          }
+
+          rock_sql() { # $1 = podmienka na najmenšiu plochu (môže byť prázdna)
+            ogr2ogr -f GPKG dem/rock-m.gpkg dem/rock-parts.gpkg -nln rock \
+              -overwrite -simplify "$ROCK_SIMPLIFY" -dialect SQLITE \
+              -sql "SELECT *, CAST(smin AS INTEGER) AS slope, CASE
+                      WHEN smin >= $ROCK_CLIFF THEN 'cliff'
+                      ELSE 'steep' END AS class
+                    FROM band ${1:+WHERE }$1"
+          }
+
+          build_rocks() {
+            # EPSG:3035 (LAEA Európa) – metrická, pre naše zemepisné šírky
+            # skresľuje plochy minimálne.
+            gdalwarp -q -overwrite -t_srs EPSG:3035 -te_srs EPSG:4326 \
+              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r bilinear \
+              -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
+            gdaldem slope -q -compute_edges -co COMPRESS=DEFLATE -co TILED=YES \
+              dem/metric.tif dem/slope.tif || return 1
+            gdalwarp -q -overwrite -tr "$ROCK_WIN" "$ROCK_WIN" -r average \
+              -co COMPRESS=DEFLATE -co TILED=YES dem/slope.tif dem/slope-avg.tif || return 1
+
+            # -fl dáva pásma sklonu; nás zaujímajú tie od prahu vyššie.
+            gdal_contour -q -p -fl "$ROCK_SLOPE" "$ROCK_CLIFF" \
+              -amin smin -amax smax -f GPKG -nln band \
+              dem/slope-avg.tif dem/rock-band.gpkg || return 1
+
+            # gdal_contour zlepí každé pásmo do JEDNÉHO multipolygónu, takže
+            # bez rozbitia na kusy (-explodecollections) by sa nedali zahodiť
+            # drobné plôšky – plocha by sa počítala za celé pásmo naraz.
+            ogr2ogr -f GPKG dem/rock-parts.gpkg dem/rock-band.gpkg band -nln band \
+              -overwrite -explodecollections -where "smin >= $ROCK_SLOPE" || return 1
+
+            local geomcol
+            geomcol=$(ogrinfo -json dem/rock-parts.gpkg band 2>/dev/null \
+              | jq -r '.layers[0].geometryFields[0].name // "geom"' 2>/dev/null || echo geom)
+            [ -n "$geomcol" ] && [ "$geomcol" != "null" ] || geomcol=geom
+
+            # ST_Area potrebuje spatialite; keby v obraze runnera nebolo,
+            # drobné plochy zahodí až Planetiler podľa veľkosti v pixeloch.
+            rock_sql "ST_Area($geomcol) >= $ROCK_MIN_AREA" || {
+              echo "::warning::Filter najmenšej plochy (ST_Area) nefunguje – skaly idú bez neho."
+              rock_sql "" || return 1
+            }
+
+            # Späť do WGS84 (Planetiler číta GPKG v EPSG:4326). Zjednodušenie
+            # aj filter plochy museli byť ešte v metroch, preto až teraz.
+            ogr2ogr -f GPKG data/rock.gpkg dem/rock-m.gpkg -nln rock \
+              -overwrite -t_srs EPSG:4326 || return 1
+            ogrinfo -so data/rock.gpkg rock >/dev/null 2>&1 || return 1
+          }
+
+          if [ "$ROCKS" = "true" ]; then
+            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (výrazné steny od ${ROCK_CLIFF}°)"
+            # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
+            # v rovine nič nenašiel), nemá to zhodiť hodinový build – mapa
+            # pôjde s prázdnou vrstvou a varovaním.
+            if build_rocks; then
+              echo "Skalných plôch: $(ogrinfo -so data/rock.gpkg rock | awk -F: '/Feature Count/{print $2}' | xargs)"
+              ls -lh data/rock.gpkg
+            else
+              echo "::warning::Skalné plochy sa nevygenerovali (buď je územie rovinaté, alebo zlyhal výpočet sklonu) – vrstva bude prázdna."
+              make_empty_rock
+            fi
+            echo "::endgroup::"
+          else
+            make_empty_rock
+            echo "Skaly: vypnuté (prázdna vrstva)."
+          fi
 
           CZ='${{ inputs.contour_maxzoom }}'
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
@@ -351,8 +526,15 @@ jobs:
           done
 
           # Skutočne použitý maxzoom si odloží aj cache, nech štýl vie, po
-          # ktorý zoom vrstevnice naozaj existujú.
+          # ktorý zoom vrstevnice naozaj existujú. To isté platí pre zdroj
+          # výšok (ide do atribúcie mapy) a prah sklonu skál (do manifestu).
           echo "$CZ" > contours-out/maxzoom.txt
+          echo "$DEM_USED" > contours-out/dem-source.txt
+          if [ "$ROCKS" = "true" ]; then
+            echo "$ROCK_SLOPE" > contours-out/rock-slope.txt
+          else
+            echo "off" > contours-out/rock-slope.txt
+          fi
           ls -lh contours-out/
 
       - name: Zaraď vrstevnice do webu
@@ -374,9 +556,17 @@ jobs:
           case "$CZ" in ''|*[!0-9]*) CZ='${{ inputs.contour_maxzoom }}' ;; esac
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
           if [ "$CZ" -gt 16 ]; then CZ=16; fi
+          # Zdroj výšok a prah sklonu skál si nesie cache spolu s dlaždicami –
+          # pri cache hite sa krok s DEM vôbec nespustí.
+          DEM_USED=$(cat contours-out/dem-source.txt 2>/dev/null || echo '')
+          case "$DEM_USED" in sonny|copernicus) ;; *) DEM_USED='${{ inputs.dem_source }}' ;; esac
+          RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
+          echo "dem_source=$DEM_USED" >> "$GITHUB_OUTPUT"
+          echo "rock_slope=$RSLOPE" >> "$GITHUB_OUTPUT"
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
+          echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
 
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
@@ -577,6 +767,7 @@ jobs:
             --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
+            --dem-source='${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -627,6 +818,8 @@ jobs:
             --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ steps.contours.outputs.maxzoom || '14' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
+            --arg demsource '${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
+            --arg rockslope '${{ steps.contours.outputs.rock_slope || 'off' }}' \
             '{
               default_region: $region,
               built_at: $built,
@@ -645,8 +838,10 @@ jobs:
                 } + (if $contours then {
                   contours: ("tiles/" + $region + "-contours.pmtiles"),
                   contours_maxzoom: $cmaxzoom,
-                  contour_interval: $cinterval
-                } else {} end))
+                  contour_interval: $cinterval,
+                  dem_source: $demsource
+                } + (if $rockslope == "off" then {} else { rock_slope: ($rockslope | tonumber) } end)
+                else {} end))
               }
             }' > _site/tiles/manifest.json
           cat _site/tiles/manifest.json
