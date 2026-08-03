@@ -104,14 +104,14 @@ export const THEMES = {
     boundary: "#9e7bb5",
     boundaryLocal: "#b8a0c8",
     placeText: "#333333",
-    placeHalo: "#ffffff",
     roadText: "#5a4a3a",
     waterText: "#4a7bab",
     poiText: "#666655",
-    poiHalo: "#ffffff",
+    textHalo: "#ffffff",
     poiIcon: "#5f6b52",
     poiIconHalo: "#ffffff",
     peakText: "#6a5a3a",
+    geoText: "#6a6252",
     peakIcon: "#7a5a30",
     aerodromeIcon: "#6a6a80",
     onewayIcon: "#8a7a6a",
@@ -174,14 +174,14 @@ export const THEMES = {
     boundary: "#7a5f95",
     boundaryLocal: "#5f4a75",
     placeText: "#c8c8d8",
-    placeHalo: "#14141f",
     roadText: "#9a8f80",
     waterText: "#5a7bab",
     poiText: "#9a95a8",
-    poiHalo: "#14141f",
+    textHalo: "#14141f",
     poiIcon: "#9aa6b8",
     poiIconHalo: "#14141f",
     peakText: "#a8a08a",
+    geoText: "#a8a090",
     peakIcon: "#b09a70",
     aerodromeIcon: "#8a8ab0",
     onewayIcon: "#7a7a90",
@@ -244,14 +244,14 @@ export const THEMES = {
     boundary: "#8a6aa0",
     boundaryLocal: "#a880b8",
     placeText: "#2a2a1a",
-    placeHalo: "#f4f1e4",
     roadText: "#4a3a2a",
     waterText: "#33688a",
     poiText: "#4a5a3a",
-    poiHalo: "#f4f1e4",
+    textHalo: "#ffffff",
     poiIcon: "#3f5a30",
     poiIconHalo: "#f4f1e4",
     peakText: "#5a3a20",
+    geoText: "#5a4a2e",
     peakIcon: "#8a3a10",
     aerodromeIcon: "#4a5a7a",
     onewayIcon: "#6a5a45",
@@ -314,14 +314,14 @@ export const THEMES = {
     boundary: "#c090a8",
     boundaryLocal: "#c8a0b8",
     placeText: "#5a4a45",
-    placeHalo: "#fdf6ec",
     roadText: "#7a5a4a",
     waterText: "#4a8a7a",
     poiText: "#8a7060",
-    poiHalo: "#fdf6ec",
+    textHalo: "#ffffff",
     poiIcon: "#8a6a55",
     poiIconHalo: "#fdf6ec",
     peakText: "#7a6250",
+    geoText: "#8a7362",
     peakIcon: "#9a6a40",
     aerodromeIcon: "#7a7a95",
     onewayIcon: "#a89080",
@@ -463,9 +463,9 @@ export const PALETTE_GROUPS = [
     label: "Popisky a ikony",
     keys: [
       ["placeText", "Názov sídla"],
-      ["placeHalo", "Obrys textu sídla"],
+      ["textHalo", "Obrys písmen (čitateľnosť)"],
+      ["geoText", "Názov pohoria / oblasti"],
       ["poiText", "Popisok POI"],
-      ["poiHalo", "Obrys popisku POI"],
       ["poiIcon", "Ikona POI"],
       ["poiIconHalo", "Obrys ikony POI"],
       ["peakText", "Popisok vrcholu"],
@@ -515,6 +515,7 @@ export const LAYER_GROUPS = [
   { id: "hranice", label: "Hranice" },
   { id: "popisky", label: "Popisky" },
   { id: "poi", label: "POI a body záujmu" },
+  { id: "geo", label: "Pohoria a geografické názvy" },
   { id: "sidla", label: "Sídla" }
 ];
 
@@ -587,6 +588,16 @@ const widen = (stops, extra) => stops.map(([z, w]) => [z, w + extra]);
 const str = (prop) => ["coalesce", ["get", prop], ""];
 const num = (prop, fallback) => ["coalesce", ["get", prop], fallback];
 
+/**
+ * Triedy `mountain_peak`, ktoré nie sú bodovým vrcholom, ale pretiahnutým
+ * útvarom – hrebeňom či masívom. Popisujú územie, takže sa kreslia ako
+ * geografický názov, nie ako vrchol s výškou.
+ */
+const RANGE_CLASSES = ["ridge", "arete", "massif", "range", "mountain_range"];
+
+/** Triedy `place`, ktoré nie sú sídlom, ale geografickou oblasťou. */
+const GEO_PLACE_CLASSES = ["island", "archipelago", "peninsula", "region", "sea", "bay"];
+
 const isTunnel = ["==", ["get", "brunnel"], "tunnel"];
 const isBridge = ["==", ["get", "brunnel"], "bridge"];
 const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "brunnel"], "bridge"]];
@@ -595,7 +606,14 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
 
 /** Prázdna sada úprav z developer módu. */
 export function emptyOverrides() {
-  return { version: 1, icons: DEFAULT_ICON_SOURCE, palette: {}, layers: {}, poi: { hidden: [] } };
+  return {
+    version: 1,
+    icons: DEFAULT_ICON_SOURCE,
+    hillshade: false,
+    palette: {},
+    layers: {},
+    poi: { hidden: [] }
+  };
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
@@ -622,6 +640,11 @@ export function normalizeOverrides(raw) {
     problems.push("Súbor s úpravami nie je objekt JSON.");
     return { overrides: out, problems };
   }
+
+  // ---- tieňovanie reliéfu ----
+  // Defaultne vypnuté: na mape kaziť farby plôch a pri malých mierkach z nej
+  // spraví hnedý šum. Kto ho chce, zapne si ho.
+  out.hillshade = raw.hillshade === true;
 
   // ---- sada ikoniek ----
   if (raw.icons != null) {
@@ -751,6 +774,7 @@ export function normalizeOverrides(raw) {
 export function hasOverrides(o) {
   if (!o) return false;
   return (
+    o.hillshade === true ||
     (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
@@ -938,7 +962,8 @@ function applyLayerOverrides(style, layerOverrides) {
  * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
  * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
- *                                        (null = bez tieňovania reliéfu)
+ *                                        a 3D terén (null = bez nich)
+ * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
  * @param {object|null} [opts.overrides]  úpravy z developer módu
  */
@@ -956,8 +981,11 @@ export function buildStyle({
   demTiles = DEFAULT_DEM_TILES,
   sdfIcons = false,
   iconSet = null,
+  hillshade = null,
   overrides = null
 }) {
+  // Tieňovanie reliéfu je vypnuté, kým ho niekto výslovne nezapne.
+  const showHillshade = hillshade === null ? overrides?.hillshade === true : hillshade === true;
   const c = mergedPalette(theme, overrides);
   // Sada ikoniek určuje, ako sa mená skladajú (osm-liberty používa `_11`).
   const iconSetId = iconSet || selectedIconSource(overrides);
@@ -1000,6 +1028,7 @@ export function buildStyle({
     metadata: {
       "frico:theme": theme,
       "frico:icons": iconSetId,
+      "frico:hillshade": showHillshade,
       "frico:overrides": hasOverrides(overrides)
     },
     sources: {
@@ -1152,8 +1181,9 @@ export function buildStyle({
 
   // ================= tieňovanie reliéfu =================
   // Ide nad krajinnú pokrývku, ale pod vodu – tieňovaná vodná hladina
-  // vyzerá nesprávne.
-  if (demTiles) {
+  // vyzerá nesprávne. Zdroj `dem` zostáva v štýle aj keď je tieňovanie
+  // vypnuté, lebo z neho žije 3D terén.
+  if (demTiles && showHillshade) {
     add(
       {
         id: "hillshade",
@@ -1285,7 +1315,7 @@ export function buildStyle({
         },
         paint: {
           "text-color": c.contourText,
-          "text-halo-color": c.poiHalo,
+          "text-halo-color": c.textHalo,
           "text-halo-width": 1.4
         }
       },
@@ -1293,7 +1323,7 @@ export function buildStyle({
         "vrstevnice",
         "Popisky nadmorskej výšky",
         "text",
-        { "text-color": "contourText", "text-halo-color": "poiHalo" }
+        { "text-color": "contourText", "text-halo-color": "textHalo" }
       ]
     );
   }
@@ -1382,22 +1412,29 @@ export function buildStyle({
   // [id, popis, triedy, farba výplne, farba obrysu, stopy šírky, prídavok obrysu, minzoom]
   const roadDefs = [
     ["motorway", "Diaľnice", ["motorway"], "motorway", "motorwayCasing",
-      [[5, 0.8], [10, 3], [14, 8], [16, 18], [20, 60]], 3, 4],
+      [[4, 0.5], [6, 0.9], [10, 3], [14, 8], [16, 18], [20, 60]], 3, 4],
     ["trunk", "Rýchlostné cesty", ["trunk"], "trunk", "roadCasing",
-      [[6, 0.7], [10, 2.6], [14, 7], [16, 16], [20, 52]], 2.6, 6],
+      [[5, 0.45], [7, 0.8], [10, 2.6], [14, 7], [16, 16], [20, 52]], 2.6, 5],
     ["primary", "Cesty I. triedy", ["primary"], "primary", "roadCasing",
-      [[7, 0.7], [10, 2.2], [14, 6.5], [16, 15], [20, 48]], 2.4, 7],
+      [[6, 0.4], [8, 0.75], [10, 2.2], [14, 6.5], [16, 15], [20, 48]], 2.4, 6],
     ["secondary", "Cesty II. triedy", ["secondary"], "secondary", "roadCasing",
-      [[9, 0.6], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 9],
+      [[8, 0.4], [10, 0.7], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 8],
     ["tertiary", "Cesty III. triedy", ["tertiary"], "secondary", "roadCasing",
-      [[10, 0.5], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 10],
+      [[9, 0.35], [11, 0.6], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 9],
     ["minor", "Miestne cesty", ["minor", "living_street", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
-      [[12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 12],
+      [[11, 0.3], [12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 11],
     ["service", "Účelové cesty", ["service"], "service", "roadCasing",
-      [[13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 13],
+      [[12, 0.3], [13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 12],
     ["pedestrian", "Pešie zóny", ["pedestrian"], "pedestrian", "roadCasing",
-      [[13, 0.6], [14, 2.4], [16, 7], [20, 24]], 1.2, 13]
+      [[12, 0.3], [13, 0.6], [14, 2.4], [16, 7], [20, 24]], 1.2, 12]
   ];
+
+  /**
+   * Od tohto zoomu sa kreslia obrysy ciest. Nižšie by k vlasovej čiare
+   * pridali niekoľkonásobne širší lem a z cestnej siete by bola kaša –
+   * pri malých mierkach je čitateľnejšia tenká čiara bez obrysu.
+   */
+  const CASING_MIN_Z = 10;
 
   /** Cesty sa kreslia v troch priechodoch: tunely → povrch → mosty. */
   const roadPass = (suffix, passLabel, extraFilter, opts = {}) => {
@@ -1414,7 +1451,7 @@ export function buildStyle({
           id: `road-${id}-casing${suffix}`,
           type: "line",
           "source-layer": "transportation",
-          minzoom: mz,
+          minzoom: Math.max(mz, CASING_MIN_Z),
           filter: filterFor(classes),
           layout,
           paint: {
@@ -1447,14 +1484,14 @@ export function buildStyle({
 
   // --- chodníky, cyklotrasy, schody, poľné cesty ---
   const pathDefs = [
-    ["track", "Poľné a lesné cesty", ["==", str("class"), "track"], "track", [[12, 0.7], [14, 1.6], [16, 3.5], [20, 12]], [4, 2], 12],
+    ["track", "Poľné a lesné cesty", ["==", str("class"), "track"], "track", [[11, 0.4], [13, 0.9], [14, 1.6], [16, 3.5], [20, 12]], [4, 2], 11],
     ["steps", "Schody", ["==", str("subclass"), "steps"], "steps", [[14, 1.2], [16, 3], [20, 10]], [1, 0.6], 14],
-    ["cycleway", "Cyklotrasy", ["==", str("subclass"), "cycleway"], "cycleway", [[13, 0.7], [16, 2.2], [20, 8]], [3, 1.5], 13],
+    ["cycleway", "Cyklotrasy", ["==", str("subclass"), "cycleway"], "cycleway", [[12, 0.4], [14, 1], [16, 2.2], [20, 8]], [3, 1.5], 12],
     ["footway", "Chodníky a priechody", ["in", str("subclass"), ["literal", ["footway", "sidewalk", "crossing"]]], "footway", [[13, 0.6], [16, 2], [20, 7]], [2, 1.5], 13],
     // `path` bez subclass (alebo path/bridleway) – ale nie `track`, ten má vlastnú vrstvu
     ["path", "Turistické chodníky", ["all", ["==", str("class"), "path"],
       ["in", str("subclass"), ["literal", ["path", "bridleway", ""]]]],
-      "path", [[12, 0.7], [16, 2.2], [20, 8]], [2, 2], 12]
+      "path", [[11, 0.4], [13, 0.9], [16, 2.2], [20, 8]], [2, 2], 11]
   ];
   for (const [id, label, filter, paletteKey, stops, dash, mz] of pathDefs) {
     add(
@@ -1485,11 +1522,11 @@ export function buildStyle({
       id: "rail-bg",
       type: "line",
       "source-layer": "transportation",
-      minzoom: 9,
+      minzoom: 7,
       filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
       paint: {
         "line-color": c.rail,
-        "line-width": zw([[9, 0.8], [14, 2.4], [16, 4], [20, 12]])
+        "line-width": zw([[7, 0.4], [10, 0.8], [14, 2.4], [16, 4], [20, 12]])
       }
     },
     ["doprava", "Železnica", "line", { "line-color": "rail" }]
@@ -1668,7 +1705,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.waterText,
-        "text-halo-color": c.placeHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1
       }
     },
@@ -1676,7 +1713,7 @@ export function buildStyle({
       "popisky",
       "Názvy vodných tokov",
       "text",
-      { "text-color": "waterText", "text-halo-color": "placeHalo" }
+      { "text-color": "waterText", "text-halo-color": "textHalo" }
     ]
   );
   add(
@@ -1692,7 +1729,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.waterText,
-        "text-halo-color": c.placeHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1
       }
     },
@@ -1700,7 +1737,7 @@ export function buildStyle({
       "popisky",
       "Názvy vodných plôch",
       "text",
-      { "text-color": "waterText", "text-halo-color": "placeHalo" }
+      { "text-color": "waterText", "text-halo-color": "textHalo" }
     ]
   );
 
@@ -1718,7 +1755,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.poiText,
-        "text-halo-color": c.poiHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1.2
       }
     },
@@ -1726,7 +1763,7 @@ export function buildStyle({
       "popisky",
       "Názvy parkov",
       "text",
-      { "text-color": "poiText", "text-halo-color": "poiHalo" }
+      { "text-color": "poiText", "text-halo-color": "textHalo" }
     ]
   );
 
@@ -1744,7 +1781,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.roadText,
-        "text-halo-color": c.placeHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1.2
       }
     },
@@ -1752,7 +1789,7 @@ export function buildStyle({
       "popisky",
       "Názvy ulíc a ciest",
       "text",
-      { "text-color": "roadText", "text-halo-color": "placeHalo" }
+      { "text-color": "roadText", "text-halo-color": "textHalo" }
     ]
   );
 
@@ -1771,7 +1808,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.houseText,
-        "text-halo-color": c.poiHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1
       }
     },
@@ -1779,7 +1816,7 @@ export function buildStyle({
       "popisky",
       "Súpisné čísla",
       "text",
-      { "text-color": "houseText", "text-halo-color": "poiHalo" }
+      { "text-color": "houseText", "text-halo-color": "textHalo" }
     ]
   );
 
@@ -1816,7 +1853,7 @@ export function buildStyle({
   // Farba ikon funguje len pri SDF sprite (pipeline ho vyrobí z osm-liberty).
   const poiPaint = {
     "text-color": c.poiText,
-    "text-halo-color": c.poiHalo,
+    "text-halo-color": c.textHalo,
     "text-halo-width": 1.2,
     ...(sdfIcons
       ? {
@@ -1828,7 +1865,7 @@ export function buildStyle({
   };
   const poiPalette = {
     "text-color": "poiText",
-    "text-halo-color": "poiHalo",
+    "text-halo-color": "textHalo",
     ...(sdfIcons ? { "icon-color": "poiIcon", "icon-halo-color": "poiIconHalo" } : {})
   };
 
@@ -1880,6 +1917,9 @@ export function buildStyle({
       type: "symbol",
       "source-layer": "mountain_peak",
       minzoom: 9,
+      // Hrebene a masívy majú vlastnú vrstvu (kurzíva, verzálky), tu by len
+      // prekážali – `mountain_peak` obsahuje aj ich.
+      filter: ["!", ["in", str("class"), ["literal", RANGE_CLASSES]]],
       layout: {
         "icon-image": [
           "case",
@@ -1904,7 +1944,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.peakText,
-        "text-halo-color": c.poiHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1.4,
         ...(sdfIcons
           ? {
@@ -1921,7 +1961,7 @@ export function buildStyle({
       "point",
       {
         "text-color": "peakText",
-        "text-halo-color": "poiHalo",
+        "text-halo-color": "textHalo",
         ...(sdfIcons ? { "icon-color": "peakIcon", "icon-halo-color": "poiIconHalo" } : {})
       }
     ]
@@ -1947,7 +1987,7 @@ export function buildStyle({
       },
       paint: {
         "text-color": c.poiText,
-        "text-halo-color": c.poiHalo,
+        "text-halo-color": c.textHalo,
         "text-halo-width": 1.2,
         ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? {
@@ -1964,12 +2004,58 @@ export function buildStyle({
       "point",
       {
         "text-color": "poiText",
-        "text-halo-color": "poiHalo",
+        "text-halo-color": "textHalo",
         ...(sdfIcons && hasIcon(SPECIAL.airport)
           ? { "icon-color": "aerodromeIcon", "icon-halo-color": "poiIconHalo" }
           : {})
       }
     ]
+  );
+
+  // ---- pohoria a geografické oblasti ----
+  // Kreslia sa od malých mierok a inak než sídla: kurzíva, verzálky a väčšie
+  // rozpálenie písmen, aby čitateľ hneď videl, že ide o územie, nie o obec.
+  // Nemajú ikonu ani bod – popisujú plochu, nie miesto.
+  const geoLayout = (sizes) => ({
+    "text-field": nameExpr,
+    "text-font": ITAL,
+    "text-transform": "uppercase",
+    "text-letter-spacing": 0.18,
+    "text-size": zl(sizes),
+    "text-max-width": 8,
+    "symbol-sort-key": num("rank", 100)
+  });
+  const geoPaint = {
+    "text-color": c.geoText,
+    "text-halo-color": c.textHalo,
+    "text-halo-width": 1.6
+  };
+  const geoPalette = { "text-color": "geoText", "text-halo-color": "textHalo" };
+
+  add(
+    {
+      id: "mountain-range",
+      type: "symbol",
+      "source-layer": "mountain_peak",
+      minzoom: 6,
+      filter: ["in", str("class"), ["literal", RANGE_CLASSES]],
+      layout: geoLayout([[6, 12], [9, 16], [12, 19], [16, 22]]),
+      paint: geoPaint
+    },
+    ["geo", "Pohoria a hrebene", "text", geoPalette]
+  );
+
+  add(
+    {
+      id: "place-geo",
+      type: "symbol",
+      "source-layer": "place",
+      minzoom: 4,
+      filter: ["in", str("class"), ["literal", GEO_PLACE_CLASSES]],
+      layout: geoLayout([[4, 11], [7, 15], [11, 19], [16, 22]]),
+      paint: geoPaint
+    },
+    ["geo", "Geografické oblasti a ostrovy", "text", geoPalette]
   );
 
   // ---- sídla ----
@@ -2000,11 +2086,11 @@ export function buildStyle({
         },
         paint: {
           "text-color": c.placeText,
-          "text-halo-color": c.placeHalo,
+          "text-halo-color": c.textHalo,
           "text-halo-width": 1.6
         }
       },
-      ["sidla", label, "text", { "text-color": "placeText", "text-halo-color": "placeHalo" }]
+      ["sidla", label, "text", { "text-color": "placeText", "text-halo-color": "textHalo" }]
     );
   }
 

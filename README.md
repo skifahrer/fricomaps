@@ -12,9 +12,12 @@ poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
 workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov,
                SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
-docs/          návrhy (iOS / multiplatform)
+docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 .github/workflows/  CI pipeline (extrakty + build mapy + deploy Pages)
 ```
+
+> Podrobne – čo robí každý krok, aké formáty medzi sebou putujú a prečo –
+> je v [docs/pipeline.md](docs/pipeline.md).
 
 ## Ako funguje pipeline
 
@@ -52,7 +55,10 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   OpenMapTiles schému: krajinná pokrývka, využitie územia, voda a vodné toky,
   budovy (od z16 v 3D), cesty vrátane chodníkov/cyklotrás/schodov, mosty a
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
-  letiská a POI s ikonkami zo spritu osm-liberty (maki).
+  letiská a POI s ikonkami zo spritu osm-liberty (maki). Všetky nápisy majú
+  jemný obrys (`textHalo`), aby zostali čitateľné nad ľubovoľným podkladom;
+  pohoria, hrebene a geografické oblasti sa od nízkych zoomov kreslia
+  kurzívou a verzálkami, aby sa nepliedli so sídlami.
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
 - **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
   podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
@@ -77,12 +83,18 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | vrstevnice | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
 | tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
 
+Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
+odtiene plôch a pri malých mierkach z nej robí hnedý šum. Zapína sa
+prepínačom v paneli ⚙ (a takto zapnuté sa aj zapečie do štýlu pre iOS).
+
 Vrstevnice sa počítajú v pipeline a končia vo **vlastnom `.pmtiles`**, takže
 fungujú na webe aj na iOS cez ten istý `style.json`:
 
 ```
 Copernicus GLO-30 (1°×1° COG dlaždice pre bbox)
-  → gdalwarp   orez na bbox + zjemnenie na ~2″ (≈60 m), inak sú vrstevnice zubaté
+  → gdalwarp   orez na bbox (zjemnenie DEM je predvolene vypnuté – vrstevnice
+               sa trasujú z plného rozlíšenia; `contour_smoothing` v oblúkových
+               sekundách ho vie zapnúť, 2 = pôvodné hladenie)
   → gdal_contour -i 10
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
   → planetiler generate-custom --schema=workers/contours.yml
@@ -95,7 +107,9 @@ nacacheovaný podľa bboxu a intervalu — vrstevnice závisia len od územia, t
 sa pri ďalšom builde mapy nepočítajú znova.
 
 Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m),
-`contour_maxzoom` (default 14 — sú to hladké krivky, vyššie netreba).
+`contour_maxzoom` (default 14) a `contour_smoothing` (default 0 = bez
+zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
+prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 
 > **Kvalita dát:** Copernicus GLO-30 je *DSM*, teda povrchový model vrátane
 > stromov a budov. V lese sú vrstevnice preto mierne posunuté. Lepšie by boli
@@ -235,19 +249,31 @@ vyzeral ostro, najvyšší zoom sa generuje bez zjednodušovania geometrie:
 
 | zoom | správanie |
 |---|---|
-| < 14 | mapa sa orezáva – vrstvy sa zapínajú postupne podľa `minzoom` |
+| < 14 | mapa sa orezáva – vrstvy sa zapínajú postupne podľa `minzoom`. Cesty sa kreslia už od z4 vlasovými čiarami (obrysy až od z10), aby bola sieť čitateľná aj na malých mierkach |
 | 14–15 | plný detail, POI filtrované na `rank <= 24`, aby mapa nebola zahltená |
 | 16+ | **všetko bez filtra** – všetky body, línie aj plochy, 3D budovy |
 | 17+ | navyše súpisné čísla domov |
 
-**Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB. Celé Slovensko má
-pri z14 ~800 MB, pri z16 by limit prekročilo. Preto má workflow:
+**Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB a do toho sa musia
+zmestiť dlaždice **aj vrstevnice, fonty a sprity** – nie každé zvlášť. Celé
+Slovensko má pri z14 ~800 MB, vrstevnice po 10 m do z14 ďalších niekoľko sto,
+takže spolu by limit prekročili. Pipeline preto hospodári s jedným rozpočtom:
 
-- `size_limit_mb` (default 900) – strop pre `.pmtiles`,
-- `auto_shrink` (default áno) – ak je výsledok väčší, automaticky skúsi
-  o zoom nižšie (a povie to vo warningu),
+- `size_limit_mb` (default 900) – rozpočet na **celú stránku**,
+- vrstevnice sa robia **pred** dlaždicami a majú strop 40 % rozpočtu; keď sú
+  nad ním, prepočítajú sa o zoom nižšie (z hotového GPKG, teda v sekundách –
+  DEM sa znovu nesťahuje),
+- dlaždice potom dostanú presne to, čo zvýšilo, a `auto_shrink` (default áno)
+  ich zmenší na zoom, ktorý sa doň vojde. Keďže nižší zoom zmenší dlaždice
+  zhruba 3,5×, skáče sa rovno o toľko zoomov, koľko treba (najviac o dva
+  naraz), aby sa nerobili zbytočné hodinové behy Planetileru,
 - `crop_bbox` – oreže PBF na menšie územie (`west,south,east,north`), čím sa
   maxzoom 16 pohodlne zmestí.
+
+Vďaka tomu build na veľkosti nepadne až na konci po hodinách tilovania, ale
+sám sa zmestí a do logu napíše, čím ubral. Ak chceš väčší detail, ubrať treba
+územiu (`crop_bbox`, kraj) alebo vrstevniciam (`contour_interval` 20 m,
+`contour_maxzoom` 12, prípadne `contours: nie`).
 
 Pre maximálny detail na z20 teda voľ **kraj alebo `crop_bbox` + maxzoom 16**;
 pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.

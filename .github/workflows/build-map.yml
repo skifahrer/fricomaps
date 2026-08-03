@@ -46,12 +46,12 @@ on:
         default: ""
         type: string
       size_limit_mb:
-        description: "Max veľkosť .pmtiles v MB (GitHub Pages zvládne ~1 GB na celú stránku)"
+        description: "Rozpočet na celú stránku v MB – dlaždice + vrstevnice + fonty (GitHub Pages zvládne ~1 GB)"
         required: false
         default: "900"
         type: string
       auto_shrink:
-        description: "Ak je výsledok väčší ako limit, automaticky skús o zoom nižšie"
+        description: "Ak sa dlaždice do rozpočtu nezmestia, automaticky skús nižší zoom"
         required: false
         default: true
         type: boolean
@@ -69,6 +69,11 @@ on:
         description: "Max zoom dlaždíc s vrstevnicami (14 stačí, sú to hladké krivky)"
         required: false
         default: "14"
+        type: string
+      contour_smoothing:
+        description: "Zjemnenie DEM pred vrstevnicami v oblúkových sekundách (0 = vypnuté, plné rozlíšenie; 2 = pôvodné hladenie)"
+        required: false
+        default: "0"
         type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
@@ -226,74 +231,22 @@ jobs:
           curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
             https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
-      - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
-        id: tiles
-        run: |
-          set -euo pipefail
-          mkdir -p _site/tiles
-          OUT="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
-
-          # Planetiler: PlanetilerConfig.MAX_MAXZOOM = 16 → vyššie hodnoty
-          # zhodia build s "Max zoom must be <= 16". Radšej orežeme s hláškou.
-          MAXZOOM='${{ inputs.maxzoom }}'
-          case "$MAXZOOM" in ''|*[!0-9]*) MAXZOOM=16 ;; esac
-          if [ "$MAXZOOM" -gt 16 ]; then
-            echo "::warning::Planetiler vie vygenerovať dlaždice najviac po zoom 16 (zadané: $MAXZOOM). Používam 16 – priblíženie až na z20 zabezpečí overzoom v MapLibre."
-            MAXZOOM=16
-          fi
-          if [ "$MAXZOOM" -lt 8 ]; then MAXZOOM=8; fi
-
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          LIMIT=$(( LIMIT_MB * 1024 * 1024 ))
-
-          Z=$MAXZOOM
-          while : ; do
-            echo "::group::Planetiler – maxzoom $Z"
-            java -Xmx5g -jar planetiler.jar \
-              --osm-path=data/region.osm.pbf \
-              --output="$OUT" \
-              --download --download-dir=data/sources \
-              --minzoom=0 \
-              --maxzoom="$Z" \
-              --render_maxzoom="$Z" \
-              --min_feature_size_at_max_zoom=0 \
-              --simplify_tolerance_at_max_zoom=0 \
-              --transportation_z13_paths=true \
-              --building_merge_z13=false \
-              --languages=sk,en \
-              --force
-            echo "::endgroup::"
-
-            BYTES=$(stat -c%s "$OUT")
-            MB=$(( BYTES / 1048576 ))
-            echo "maxzoom $Z → ${MB} MB (limit ${LIMIT_MB} MB)"
-
-            if [ "$BYTES" -le "$LIMIT" ]; then break; fi
-
-            if [ '${{ inputs.auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
-              echo "::error::Výsledný .pmtiles má ${MB} MB, čo je nad limitom ${LIMIT_MB} MB (GitHub Pages zvládne ~1 GB na celú stránku). Možnosti: zníž maxzoom, vyber menší región, alebo použi crop_bbox."
-              exit 1
-            fi
-            echo "::warning::${MB} MB je nad limitom ${LIMIT_MB} MB – skúšam maxzoom $(( Z - 1 ))."
-            Z=$(( Z - 1 ))
-          done
-
-          echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
-          ls -lh _site/tiles/
-
       # ---------- vrstevnice ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
       # ide z Copernicus GLO-30 (AWS Open Data, bez autentifikácie).
       # Vrstevnice závisia len od územia, nie od OSM dát – preto cache.
+      #
+      # Robia sa PRED dlaždicami zámerne: obe idú na tú istú stránku a musia
+      # sa zmestiť do jedného rozpočtu. Keď sa vrstevnice urobia prvé, vie
+      # Planetiler dostať presne toľko miesta, koľko naozaj zvýšilo – inak by
+      # sa build po hodine tilovania zabil na tom, že súčet je nad limitom.
       - name: Cache vrstevníc
         id: contours-cache
         if: ${{ inputs.contours }}
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v1-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v2-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-${{ hashFiles('workers/contours.yml') }}
 
       - name: Vrstevnice z Copernicus DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -335,10 +288,22 @@ jobs:
           echo "Stiahnutých ${#tifs[@]} DEM dlaždíc."
 
           gdalbuildvrt -q dem/all.vrt "${tifs[@]}"
-          # Orežeme na bbox a zjemníme na ~2″ (≈60 m). Priame vrstevnice
-          # z 1″ dát sú zubaté; priemerovanie ich vyhladí bez straty tvaru.
-          gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
-            -tr 0.00055556 0.00055556 -r average dem/all.vrt dem/clip.tif
+
+          # Zjemnenie DEM pred trasovaním vrstevníc. Copernicus GLO-30 je v
+          # 1″ (~30 m); priemerovanie na hrubšiu mriežku vyhladí šum, ale
+          # zároveň zje detail terénu. Default 0 = žiadne zjemnenie, len orez
+          # na bbox v plnom rozlíšení.
+          SMOOTH='${{ inputs.contour_smoothing }}'
+          case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
+          if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
+            RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
+            echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
+            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
+              -tr "$RES" "$RES" -r average dem/all.vrt dem/clip.tif
+          else
+            echo "Zjemnenie DEM: vypnuté – vrstevnice sa trasujú z plného rozlíšenia."
+            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" dem/all.vrt dem/clip.tif
+          fi
 
           gdal_contour -q -a ele -i "$INTERVAL" -f GPKG -nln contours \
             dem/clip.tif dem/raw.gpkg
@@ -357,12 +322,37 @@ jobs:
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
           if [ "$CZ" -gt 16 ]; then CZ=16; fi
 
-          java -Xmx5g -jar planetiler.jar generate-custom \
-            --schema=workers/contours.yml \
-            --output=contours-out/contours.pmtiles \
-            --maxzoom="$CZ" --render_maxzoom="$CZ" \
-            --simplify_tolerance_at_max_zoom=0 \
-            --force
+          # Vrstevnice a mapa idú na tú istú stránku, takže si rozpočet delia.
+          # Viac než ~40 % naň nesmú zobrať, inak by na mapu ostalo tak málo,
+          # že by sa musela orezať o niekoľko zoomov. Prepočet z hotového GPKG
+          # je lacný (sekundy), na rozdiel od sťahovania DEM.
+          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
+          CBUDGET_MB=$(( LIMIT_MB * 40 / 100 ))
+
+          while : ; do
+            java -Xmx5g -jar planetiler.jar generate-custom \
+              --schema=workers/contours.yml \
+              --output=contours-out/contours.pmtiles \
+              --maxzoom="$CZ" --render_maxzoom="$CZ" \
+              --simplify_tolerance_at_max_zoom=0 \
+              --force
+
+            CMB=$(( $(stat -c%s contours-out/contours.pmtiles) / 1048576 ))
+            echo "Vrstevnice maxzoom $CZ → ${CMB} MB (strop ${CBUDGET_MB} MB)"
+            [ "$CMB" -le "$CBUDGET_MB" ] && break
+
+            if [ "$CZ" -le 10 ]; then
+              echo "::warning::Vrstevnice majú ${CMB} MB ani pri maxzoome 10 – zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
+              break
+            fi
+            CZ=$(( CZ - 1 ))
+            echo "::warning::Vrstevnice sú nad stropom ${CBUDGET_MB} MB – skúšam maxzoom ${CZ}."
+          done
+
+          # Skutočne použitý maxzoom si odloží aj cache, nech štýl vie, po
+          # ktorý zoom vrstevnice naozaj existujú.
+          echo "$CZ" > contours-out/maxzoom.txt
           ls -lh contours-out/
 
       - name: Zaraď vrstevnice do webu
@@ -370,6 +360,7 @@ jobs:
         if: ${{ inputs.contours }}
         run: |
           set -euo pipefail
+          mkdir -p _site/tiles
           SRC=contours-out/contours.pmtiles
           if [ ! -s "$SRC" ]; then
             echo "::warning::Vrstevnice sa nevygenerovali – mapa pôjde bez nich."
@@ -377,13 +368,102 @@ jobs:
             exit 0
           fi
           cp "$SRC" "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
-          CZ='${{ inputs.contour_maxzoom }}'
+          # Maxzoom berieme z toho, čo sa naozaj vygenerovalo (mohol sa znížiť
+          # kvôli veľkosti); ak súbor chýba, padáme späť na vstup.
+          CZ=$(cat contours-out/maxzoom.txt 2>/dev/null || echo '')
+          case "$CZ" in ''|*[!0-9]*) CZ='${{ inputs.contour_maxzoom }}' ;; esac
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
           if [ "$CZ" -gt 16 ]; then CZ=16; fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+
+      - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
+        id: tiles
+        run: |
+          set -euo pipefail
+          mkdir -p _site/tiles
+          OUT="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
+
+          # Planetiler: PlanetilerConfig.MAX_MAXZOOM = 16 → vyššie hodnoty
+          # zhodia build s "Max zoom must be <= 16". Radšej orežeme s hláškou.
+          MAXZOOM='${{ inputs.maxzoom }}'
+          case "$MAXZOOM" in ''|*[!0-9]*) MAXZOOM=16 ;; esac
+          if [ "$MAXZOOM" -gt 16 ]; then
+            echo "::warning::Planetiler vie vygenerovať dlaždice najviac po zoom 16 (zadané: $MAXZOOM). Používam 16 – priblíženie až na z20 zabezpečí overzoom v MapLibre."
+            MAXZOOM=16
+          fi
+          if [ "$MAXZOOM" -lt 8 ]; then MAXZOOM=8; fi
+
+          # Rozpočet je na CELÚ stránku, nielen na tieto dlaždice: Pages zvládne
+          # ~1 GB a do toho sa musia zmestiť aj vrstevnice, fonty a sprity.
+          # Vrstevnice sú už v _site, fonty a sprity pribudnú neskôr – na tie
+          # sa nechá rezerva.
+          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
+          RESERVE_MB=40
+          USED_MB=$(du -sm _site 2>/dev/null | cut -f1 || echo 0)
+          BUDGET_MB=$(( LIMIT_MB - USED_MB - RESERVE_MB ))
+          echo "Rozpočet stránky ${LIMIT_MB} MB − obsadené ${USED_MB} MB − rezerva ${RESERVE_MB} MB = ${BUDGET_MB} MB na dlaždice"
+
+          if [ "$BUDGET_MB" -lt 50 ]; then
+            echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB – ${USED_MB} MB už zaberajú vrstevnice. Zväčš contour_interval, zníž contour_maxzoom, vypni contours alebo zdvihni size_limit_mb."
+            exit 1
+          fi
+          if [ "$USED_MB" -gt $(( LIMIT_MB / 2 )) ]; then
+            echo "::warning::Vrstevnice zaberajú ${USED_MB} MB z rozpočtu ${LIMIT_MB} MB – na mapu ostáva málo. Zvážiť sa dá contour_interval 20 alebo contour_maxzoom 12."
+          fi
+          LIMIT=$(( BUDGET_MB * 1024 * 1024 ))
+
+          Z=$MAXZOOM
+          while : ; do
+            echo "::group::Planetiler – maxzoom $Z"
+            java -Xmx5g -jar planetiler.jar \
+              --osm-path=data/region.osm.pbf \
+              --output="$OUT" \
+              --download --download-dir=data/sources \
+              --minzoom=0 \
+              --maxzoom="$Z" \
+              --render_maxzoom="$Z" \
+              --min_feature_size_at_max_zoom=0 \
+              --simplify_tolerance_at_max_zoom=0 \
+              --transportation_z13_paths=true \
+              --building_merge_z13=false \
+              --languages=sk,en \
+              --force
+            echo "::endgroup::"
+
+            BYTES=$(stat -c%s "$OUT")
+            MB=$(( BYTES / 1048576 ))
+            echo "maxzoom $Z → ${MB} MB (na dlaždice je ${BUDGET_MB} MB)"
+
+            if [ "$BYTES" -le "$LIMIT" ]; then break; fi
+
+            if [ '${{ inputs.auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
+              echo "::error::Dlaždice majú ${MB} MB, na stránku sa ich zmestí ${BUDGET_MB} MB (rozpočet ${LIMIT_MB} MB, vrstevnice ${USED_MB} MB). Možnosti: zníž maxzoom, vyber menší región, použi crop_bbox alebo uber vrstevniciam."
+              exit 1
+            fi
+
+            # O koľko zoomov ísť dolu: každý nižší zoom zmenší dlaždice zhruba
+            # 3,5×. Skákať po jednom by pri celom Slovensku znamenalo aj tri
+            # hodinové behy Planetileru za sebou; naraz ale ideme najviac o dva,
+            # nech sa detail nezahodí zbytočne.
+            DROP=1
+            EST=$MB
+            while [ "$DROP" -lt 2 ] && [ $(( EST * 10 / 35 )) -gt "$BUDGET_MB" ]; do
+              EST=$(( EST * 10 / 35 ))
+              DROP=$(( DROP + 1 ))
+            done
+            NEXT=$(( Z - DROP ))
+            if [ "$NEXT" -lt 12 ]; then NEXT=12; fi
+            echo "::warning::${MB} MB je nad rozpočtom ${BUDGET_MB} MB – skúšam maxzoom ${NEXT}."
+            Z=$NEXT
+          done
+
+          echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
+          ls -lh _site/tiles/
 
       - name: Stiahni a priprav sady ikoniek
         id: sprite
@@ -626,12 +706,15 @@ jobs:
             [ -s "$CPM" ] || { echo "::error::štýl používa vrstevnice, ale chýba $CPM"; fail=1; }
           fi
 
-          # GitHub Pages zvládne ~1 GB na celú stránku – vrátane vrstevníc,
-          # fontov a spritov, nielen mapových dlaždíc.
+          # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
+          # overí, že súčet naozaj sedí (Pages zvládne ~1 GB na celú stránku).
+          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           TOTAL_MB=$(du -sm _site | cut -f1)
-          echo "Veľkosť _site: ${TOTAL_MB} MB"
-          if [ "$TOTAL_MB" -gt 950 ]; then
-            echo "::error::_site má ${TOTAL_MB} MB, GitHub Pages zvládne ~1 GB. Zníž maxzoom, vypni contours, zväčš contour_interval alebo použi menší región / crop_bbox."
+          echo "Veľkosť _site: ${TOTAL_MB} MB (rozpočet ${LIMIT_MB} MB)"
+          du -sm _site/tiles _site/fonts _site/sprites 2>/dev/null || true
+          if [ "$TOTAL_MB" -gt "$LIMIT_MB" ]; then
+            echo "::error::_site má ${TOTAL_MB} MB, rozpočet je ${LIMIT_MB} MB (GitHub Pages zvládne ~1 GB). Zníž maxzoom, vypni contours, zväčš contour_interval alebo použi menší región / crop_bbox."
             fail=1
           fi
           exit $fail

@@ -62,6 +62,7 @@ for (const p of problems) console.log(`::warning::${p}`);
 
 // ---------- prehľad, čo sa vlastne mení ----------
 const summary = [];
+if (overrides.hillshade) summary.push("  tieňovanie reliéfu: zapnuté");
 if (overrides.icons && overrides.icons !== DEFAULT_ICON_SOURCE) {
   summary.push(`  sada ikoniek: ${overrides.icons}`);
 }
@@ -110,6 +111,7 @@ const payload = {
   version: 1,
   updated_at: new Date().toISOString(),
   icons: overrides.icons,
+  hillshade: overrides.hillshade,
   palette: overrides.palette,
   layers: overrides.layers,
   poi: overrides.poi

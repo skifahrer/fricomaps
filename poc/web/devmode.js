@@ -48,7 +48,8 @@ export function loadOverrides() {
   }
 }
 
-function storeOverrides(overrides) {
+/** Uloží úpravy do prehliadača (používa aj hlavný panel viewra). */
+export function saveOverrides(overrides) {
   try {
     if (hasOverrides(overrides)) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides));
@@ -230,7 +231,7 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
 
   // ---------- ukladanie a prekreslenie ----------
   function apply({ rerender = true, immediate = false } = {}) {
-    storeOverrides(overrides);
+    saveOverrides(overrides);
     renderStatus();
     const run = () => {
       applyTimer = null;
