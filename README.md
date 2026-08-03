@@ -240,14 +240,26 @@ vyzeral ostro, najvyšší zoom sa generuje bez zjednodušovania geometrie:
 | 16+ | **všetko bez filtra** – všetky body, línie aj plochy, 3D budovy |
 | 17+ | navyše súpisné čísla domov |
 
-**Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB. Celé Slovensko má
-pri z14 ~800 MB, pri z16 by limit prekročilo. Preto má workflow:
+**Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB a do toho sa musia
+zmestiť dlaždice **aj vrstevnice, fonty a sprity** – nie každé zvlášť. Celé
+Slovensko má pri z14 ~800 MB, vrstevnice po 10 m do z14 ďalších niekoľko sto,
+takže spolu by limit prekročili. Pipeline preto hospodári s jedným rozpočtom:
 
-- `size_limit_mb` (default 900) – strop pre `.pmtiles`,
-- `auto_shrink` (default áno) – ak je výsledok väčší, automaticky skúsi
-  o zoom nižšie (a povie to vo warningu),
+- `size_limit_mb` (default 900) – rozpočet na **celú stránku**,
+- vrstevnice sa robia **pred** dlaždicami a majú strop 40 % rozpočtu; keď sú
+  nad ním, prepočítajú sa o zoom nižšie (z hotového GPKG, teda v sekundách –
+  DEM sa znovu nesťahuje),
+- dlaždice potom dostanú presne to, čo zvýšilo, a `auto_shrink` (default áno)
+  ich zmenší na zoom, ktorý sa doň vojde. Keďže nižší zoom zmenší dlaždice
+  zhruba 3,5×, skáče sa rovno o toľko zoomov, koľko treba (najviac o dva
+  naraz), aby sa nerobili zbytočné hodinové behy Planetileru,
 - `crop_bbox` – oreže PBF na menšie územie (`west,south,east,north`), čím sa
   maxzoom 16 pohodlne zmestí.
+
+Vďaka tomu build na veľkosti nepadne až na konci po hodinách tilovania, ale
+sám sa zmestí a do logu napíše, čím ubral. Ak chceš väčší detail, ubrať treba
+územiu (`crop_bbox`, kraj) alebo vrstevniciam (`contour_interval` 20 m,
+`contour_maxzoom` 12, prípadne `contours: nie`).
 
 Pre maximálny detail na z20 teda voľ **kraj alebo `crop_bbox` + maxzoom 16**;
 pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
