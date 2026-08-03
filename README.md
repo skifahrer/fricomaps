@@ -49,6 +49,47 @@ Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
   letiská a POI s ikonkami zo spritu osm-liberty (maki).
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
 
+## Nadmorská výška a vrstevnice
+
+**OpenStreetMap výškové dáta neobsahuje.** Má len bodový tag
+[`ele`](https://wiki.openstreetmap.org/wiki/Key:ele) na vrcholoch, sedlách,
+prameňoch či staniciach — žiadny terénny model, a vrstevnice sa doň zámerne
+nenahrávajú. Každá OSM mapa s reliéfom (OpenTopoMap, OpenAndroMaps, Waymarked
+Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
+
+| čo | zdroj | kde sa berie |
+|---|---|---|
+| výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
+| vrstevnice | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
+| tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
+
+Vrstevnice sa počítajú v pipeline a končia vo **vlastnom `.pmtiles`**, takže
+fungujú na webe aj na iOS cez ten istý `style.json`:
+
+```
+Copernicus GLO-30 (1°×1° COG dlaždice pre bbox)
+  → gdalwarp   orez na bbox + zjemnenie na ~2″ (≈60 m), inak sú vrstevnice zubaté
+  → gdal_contour -i 10
+  → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
+  → planetiler generate-custom --schema=workers/contours.yml
+  → {región}-contours.pmtiles
+```
+
+`level` riadi, čo je vidieť kedy: hlavné vrstevnice od z10, polovičné od z12,
+základné od z13, popisky výšky pozdĺž hlavných od z13. Výsledok je
+nacacheovaný podľa bboxu a intervalu — vrstevnice závisia len od územia, takže
+sa pri ďalšom builde mapy nepočítajú znova.
+
+Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m),
+`contour_maxzoom` (default 14 — sú to hladké krivky, vyššie netreba).
+
+> **Kvalita dát:** Copernicus GLO-30 je *DSM*, teda povrchový model vrátane
+> stromov a budov. V lese sú vrstevnice preto mierne posunuté. Lepšie by boli
+> [Sonny's LiDAR DTM](https://sonny.4lima.de/) alebo slovenský
+> [ÚGKK DMR 5.0](https://www.geoportal.sk/) (1 m LiDAR, voľný aj komerčne pri
+> uvedení zdroja) — ani jeden sa však nedá sťahovať priamo v CI, museli by sa
+> nacacheovať do releasu.
+
 ## Zoom a detail
 
 Planetiler má tvrdý limit `maxzoom <= 16`
@@ -102,8 +143,10 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `region`: `slovensko` alebo kraj (`bratislavsky`, `zilinsky`, …)
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
-4. Mapa je na `https://<user>.github.io/fricomaps/` – viewer s prepínačom
-   témy a regiónu, POI ikonkami a popupmi.
+   - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
+4. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
+   tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
+   témy, regiónu, vrstevníc a 3D terénu.
 
 Pipeline si po nasadení sama overí, že mapa naozaj funguje (**smoke test**):
 `manifest.json`, `style.json`, sprite, glyfy a `Range` request na `.pmtiles`

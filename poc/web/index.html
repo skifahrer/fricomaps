@@ -8,56 +8,95 @@
   <style>
     html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
     #map { position: absolute; inset: 0; }
+
+    /* Ovládanie je zbalené, aby bolo vidieť hlavne mapu. */
+    #toggle {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      width: 36px; height: 36px; border: none; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.94); color: #333;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      font-size: 17px; line-height: 1; cursor: pointer; padding: 0;
+    }
+    #toggle:hover { background: #fff; }
+    #toggle.has-warning::after {
+      content: ""; position: absolute; top: 5px; right: 5px;
+      width: 7px; height: 7px; border-radius: 50%; background: #e08030;
+    }
+
     #panel {
-      position: absolute; top: 10px; left: 10px; z-index: 10;
-      background: rgba(255, 255, 255, 0.92); color: #222;
+      position: absolute; top: 56px; left: 10px; z-index: 11;
+      background: rgba(255, 255, 255, 0.94); color: #222;
       border-radius: 10px; padding: 12px 14px;
       box-shadow: 0 2px 10px rgba(0,0,0,.25);
-      min-width: 220px;
+      width: 232px; max-height: calc(100% - 80px); overflow: auto;
     }
-    #panel h1 { font-size: 16px; margin: 0 0 8px; }
+    #panel[hidden] { display: none; }
     #panel label { display: block; font-size: 12px; margin: 8px 0 3px; color: #555; }
+    #panel label:first-child { margin-top: 0; }
     #panel select {
       width: 100%; padding: 5px 6px; font-size: 14px;
       border: 1px solid #ccc; border-radius: 6px; background: #fff;
     }
-    #meta { font-size: 11px; color: #777; margin-top: 10px; line-height: 1.5; }
-    #zoom {
-      font-size: 12px; color: #444; margin-top: 8px;
-      font-variant-numeric: tabular-nums;
+    #panel .row {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: #555; margin-top: 10px;
     }
+    #meta { font-size: 11px; color: #777; margin-top: 10px; line-height: 1.5; }
+
+    /* Nenápadný ukazovateľ zoomu – neprekáža v mape. */
+    #zoom {
+      position: absolute; left: 10px; bottom: 10px; z-index: 11;
+      background: rgba(255, 255, 255, 0.82); color: #444;
+      border-radius: 6px; padding: 3px 7px; font-size: 11px;
+      font-variant-numeric: tabular-nums; pointer-events: none;
+    }
+
     #warn {
       display: none; margin-top: 10px; padding: 8px 10px;
       background: #fff4e5; border: 1px solid #f0c07a; border-radius: 6px;
-      font-size: 11px; color: #7a4a10; max-height: 160px; overflow: auto;
+      font-size: 11px; color: #7a4a10; max-height: 150px; overflow: auto;
     }
     #warn ul { margin: 4px 0 0; padding-left: 16px; }
     #warn li { margin-bottom: 3px; word-break: break-word; }
+
     #error {
       display: none; position: absolute; inset: 0; z-index: 20;
       background: #fff; padding: 40px; font-size: 15px; line-height: 1.6;
     }
     #error code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
-    body.dark #panel { background: rgba(24, 24, 36, 0.92); color: #ddd; }
-    body.dark #panel label { color: #aaa; }
+
+    body.dark #toggle { background: rgba(24,24,36,.94); color: #ddd; }
+    body.dark #panel { background: rgba(24, 24, 36, 0.94); color: #ddd; }
+    body.dark #panel label, body.dark #panel .row { color: #aaa; }
     body.dark #panel select { background: #222; color: #ddd; border-color: #444; }
-    body.dark #zoom { color: #bbb; }
+    body.dark #zoom { background: rgba(24,24,36,.8); color: #bbb; }
     body.dark #warn { background: #3a2a12; border-color: #7a5a20; color: #f0c890; }
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <div id="panel">
-    <h1>🗺️ FricoMaps</h1>
+  <button id="toggle" type="button" title="Nastavenia" aria-expanded="false"
+          aria-controls="panel">⚙</button>
+
+  <div id="panel" hidden>
     <label for="theme">Farebná téma</label>
     <select id="theme"></select>
     <label for="region">Región</label>
     <select id="region"></select>
-    <div id="zoom">zoom –</div>
+    <div class="row" id="row-contours" hidden>
+      <input type="checkbox" id="contours" checked />
+      <label for="contours" style="margin:0">Vrstevnice</label>
+    </div>
+    <div class="row" id="row-terrain" hidden>
+      <input type="checkbox" id="terrain" />
+      <label for="terrain" style="margin:0">3D terén</label>
+    </div>
     <div id="meta"></div>
     <div id="warn"><b>Problém s načítaním:</b><ul></ul></div>
   </div>
+
+  <div id="zoom">zoom –</div>
 
   <div id="error">
     <h2>Dlaždice sa nepodarilo načítať</h2>

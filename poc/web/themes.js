@@ -21,6 +21,15 @@ export const MAX_DISPLAY_Z = 20;
 /** Najvyšší zoom dlaždíc, ktorý Planetiler dokáže vygenerovať. */
 export const MAX_TILE_Z = 16;
 
+/**
+ * Zdroj výškových dát pre tieňovanie reliéfu (hillshade) a 3D terén.
+ * OpenStreetMap terénny model neobsahuje – `ele` je len bodový tag na
+ * vrcholoch a pod. Terén preto ide z AWS Terrain Tiles (Terrarium),
+ * ktoré sú verejné a bez autentifikácie.
+ */
+export const DEFAULT_DEM_TILES =
+  "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+
 export const THEMES = {
   svetla: {
     label: "Svetlá",
@@ -79,7 +88,13 @@ export const THEMES = {
     poiText: "#666655",
     poiHalo: "#ffffff",
     peakText: "#6a5a3a",
-    houseText: "#a09488"
+    houseText: "#a09488",
+    contour: "#b09070",
+    contourMajor: "#96764e",
+    contourText: "#8a6a45",
+    hillShadow: "#5a4a3a",
+    hillHighlight: "#ffffff",
+    hillAccent: "#8a7a6a"
   },
   tmava: {
     label: "Tmavá",
@@ -138,7 +153,13 @@ export const THEMES = {
     poiText: "#9a95a8",
     poiHalo: "#14141f",
     peakText: "#a8a08a",
-    houseText: "#6a6678"
+    houseText: "#6a6678",
+    contour: "#4a4436",
+    contourMajor: "#6a6048",
+    contourText: "#8a7f60",
+    hillShadow: "#000000",
+    hillHighlight: "#4a4a60",
+    hillAccent: "#2a2a3a"
   },
   outdoor: {
     label: "Outdoor / Turistická",
@@ -197,7 +218,13 @@ export const THEMES = {
     poiText: "#4a5a3a",
     poiHalo: "#f4f1e4",
     peakText: "#5a3a20",
-    houseText: "#8a7a60"
+    houseText: "#8a7a60",
+    contour: "#b3835a",
+    contourMajor: "#966034",
+    contourText: "#7a4f28",
+    hillShadow: "#6a5030",
+    hillHighlight: "#fffaf0",
+    hillAccent: "#9a8060"
   },
   retro: {
     label: "Retro / Pastel",
@@ -256,7 +283,13 @@ export const THEMES = {
     poiText: "#8a7060",
     poiHalo: "#fdf6ec",
     peakText: "#7a6250",
-    houseText: "#b0a294"
+    houseText: "#b0a294",
+    contour: "#c8a488",
+    contourMajor: "#b0846a",
+    contourText: "#9a7058",
+    hillShadow: "#8a6a58",
+    hillHighlight: "#fffdf8",
+    hillAccent: "#c0a090"
   }
 };
 
@@ -328,6 +361,10 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
  * @param {string[]} [opts.icons]   mená ikon dostupných v sprite (s `_11` aj bez)
  * @param {object} [opts.fonts]     {regular, bold, italic} – názvy fontstackov
  * @param {number} [opts.maxzoom]   najvyšší zoom dlaždíc (default MAX_TILE_Z)
+ * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
+ * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
+ * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
+ *                                        (null = bez tieňovania reliéfu)
  */
 export function buildStyle({
   theme,
@@ -337,7 +374,10 @@ export function buildStyle({
   name,
   icons,
   fonts,
-  maxzoom = MAX_TILE_Z
+  maxzoom = MAX_TILE_Z,
+  contoursUrl = null,
+  contoursMaxzoom = 14,
+  demTiles = DEFAULT_DEM_TILES
 }) {
   const c = THEMES[theme];
   if (!c) throw new Error(`Neznáma téma: ${theme}`);
@@ -379,6 +419,30 @@ export function buildStyle({
     glyphs: glyphsUrl,
     layers: []
   };
+
+  // Vrstevnice sú samostatný .pmtiles – nezávislý od OSM buildu, lebo
+  // závisia len od územia, nie od toho, čo sa v OSM zmenilo.
+  if (contoursUrl) {
+    style.sources.contours = {
+      type: "vector",
+      url: contoursUrl,
+      maxzoom: contoursMaxzoom,
+      attribution:
+        '<a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>'
+    };
+  }
+  // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
+  if (demTiles) {
+    style.sources.dem = {
+      type: "raster-dem",
+      tiles: [demTiles],
+      encoding: "terrarium",
+      tileSize: 256,
+      maxzoom: 15,
+      attribution:
+        '<a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>'
+    };
+  }
 
   const L = style.layers;
   const add = (layer) => L.push({ source: "omt", ...layer });
@@ -455,6 +519,23 @@ export function buildStyle({
     }
   });
 
+  // ================= tieňovanie reliéfu =================
+  // Ide nad krajinnú pokrývku, ale pod vodu – tieňovaná vodná hladina
+  // vyzerá nesprávne.
+  if (demTiles) {
+    L.push({
+      id: "hillshade",
+      type: "hillshade",
+      source: "dem",
+      paint: {
+        "hillshade-exaggeration": zl([[6, 0.5], [12, 0.4], [16, 0.25]]),
+        "hillshade-shadow-color": c.hillShadow,
+        "hillshade-highlight-color": c.hillHighlight,
+        "hillshade-accent-color": c.hillAccent
+      }
+    });
+  }
+
   // ================= voda =================
   add({
     id: "water",
@@ -500,6 +581,56 @@ export function buildStyle({
       "line-opacity": 0.85
     }
   });
+
+  // ================= vrstevnice =================
+  // Kreslia sa nad vodou (pod hladinou nemajú čo robiť) a pod budovami
+  // a cestami, aby neprekrývali dôležitejšie prvky.
+  if (contoursUrl) {
+    const contourLine = (id, level, minzoom, width, color) =>
+      L.push({
+        id: `contour-${id}`,
+        type: "line",
+        source: "contours",
+        "source-layer": "contour",
+        minzoom,
+        filter: ["==", str("level"), level],
+        paint: {
+          "line-color": color,
+          "line-width": zl(width),
+          "line-opacity": zl([[minzoom, 0], [minzoom + 1, 0.55]])
+        }
+      });
+
+    contourLine("minor", "minor", 13, [[13, 0.4], [16, 0.7], [20, 1.4]], c.contour);
+    contourLine("mid", "mid", 12, [[12, 0.5], [16, 0.9], [20, 1.8]], c.contour);
+    contourLine("major", "major", 10, [[10, 0.7], [16, 1.4], [20, 2.6]], c.contourMajor);
+
+    // Popisky nadmorskej výšky pozdĺž hlavných vrstevníc.
+    L.push({
+      id: "contour-label",
+      type: "symbol",
+      source: "contours",
+      "source-layer": "contour",
+      minzoom: 13,
+      filter: ["in", str("level"), ["literal", ["major", "mid"]]],
+      layout: {
+        "symbol-placement": "line",
+        // `ele` môže z GDALu prísť ako desatinné číslo – zaokrúhlime v štýle,
+        // aby popisok nikdy nebol "810.0 m".
+        "text-field": ["concat", ["to-string", ["round", num("ele", 0)]], " m"],
+        "text-font": REG,
+        "text-size": zl([[13, 9], [16, 11], [20, 13]]),
+        "symbol-spacing": 320,
+        "text-max-angle": 25,
+        "text-padding": 8
+      },
+      paint: {
+        "text-color": c.contourText,
+        "text-halo-color": c.poiHalo,
+        "text-halo-width": 1.4
+      }
+    });
+  }
 
   // ================= letiská =================
   add({

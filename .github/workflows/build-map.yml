@@ -55,6 +55,21 @@ on:
         required: false
         default: true
         type: boolean
+      contours:
+        description: "Vygenerovať vrstevnice z Copernicus DEM (pozor na veľkosť pri celom Slovensku)"
+        required: false
+        default: true
+        type: boolean
+      contour_interval:
+        description: "Interval vrstevníc v metroch (10 = štandard pre 30 m DEM)"
+        required: false
+        default: "10"
+        type: string
+      contour_maxzoom:
+        description: "Max zoom dlaždíc s vrstevnicami (14 stačí, sú to hladké krivky)"
+        required: false
+        default: "14"
+        type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
         required: false
@@ -189,6 +204,8 @@ jobs:
           echo "key=$KEY"   >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
+          # bezpečná podoba bboxu do kľúča cache
+          echo "bboxkey=$(echo "$BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
           echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
           ls -lh data/region.osm.pbf
 
@@ -266,6 +283,108 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh _site/tiles/
 
+      # ---------- vrstevnice ----------
+      # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
+      # ide z Copernicus GLO-30 (AWS Open Data, bez autentifikácie).
+      # Vrstevnice závisia len od územia, nie od OSM dát – preto cache.
+      - name: Cache vrstevníc
+        id: contours-cache
+        if: ${{ inputs.contours }}
+        uses: actions/cache@v4
+        with:
+          path: contours-out
+          key: contours-v1-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-${{ hashFiles('workers/contours.yml') }}
+
+      - name: Vrstevnice z Copernicus DEM
+        if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
+          mkdir -p dem data contours-out
+
+          BBOX='${{ steps.region.outputs.bbox }}'
+          IFS=, read -r W S E N <<< "$BBOX"
+          INTERVAL='${{ inputs.contour_interval }}'
+          case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
+
+          # Copernicus GLO-30 je delený na dlaždice 1°×1°:
+          #   Copernicus_DSM_COG_10_N49_00_E019_00_DEM/…_DEM.tif
+          python3 - "$W" "$S" "$E" "$N" > dem/list.txt <<'PY'
+          import math, sys
+          w, s, e, n = map(float, sys.argv[1:5])
+          for lat in range(math.floor(s), math.floor(n) + 1):
+              for lon in range(math.floor(w), math.floor(e) + 1):
+                  ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
+                  print(f"Copernicus_DSM_COG_10_{ns}{abs(lat):02d}_00_{ew}{abs(lon):03d}_00_DEM")
+          PY
+          echo "DEM dlaždíc na stiahnutie: $(wc -l < dem/list.txt)"
+
+          BASE=https://copernicus-dem-30m.s3.amazonaws.com
+          while IFS= read -r t; do
+            # nad morom dlaždica neexistuje → 404 je v poriadku, preskočíme
+            curl -fsSL --retry 3 --retry-delay 3 -o "dem/$t.tif" "$BASE/$t/$t.tif" \
+              || echo "  (chýba $t – zrejme mimo pevniny)"
+          done < dem/list.txt
+
+          shopt -s nullglob
+          tifs=(dem/*.tif)
+          if [ ${#tifs[@]} -eq 0 ]; then
+            echo "::error::Nepodarilo sa stiahnuť žiadnu DEM dlaždicu pre bbox $BBOX."
+            exit 1
+          fi
+          echo "Stiahnutých ${#tifs[@]} DEM dlaždíc."
+
+          gdalbuildvrt -q dem/all.vrt "${tifs[@]}"
+          # Orežeme na bbox a zjemníme na ~2″ (≈60 m). Priame vrstevnice
+          # z 1″ dát sú zubaté; priemerovanie ich vyhladí bez straty tvaru.
+          gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
+            -tr 0.00055556 0.00055556 -r average dem/all.vrt dem/clip.tif
+
+          gdal_contour -q -a ele -i "$INTERVAL" -f GPKG -nln contours \
+            dem/clip.tif dem/raw.gpkg
+
+          # `level` rozdelí vrstevnice na hlavné/polovičné/základné, aby sa
+          # dali zapínať podľa zoomu a kresliť rôzne hrubo.
+          ogr2ogr -f GPKG data/contours.gpkg dem/raw.gpkg -nln contours \
+            -dialect SQLITE -sql "SELECT *, CASE
+                 WHEN CAST(ele AS INTEGER) % 100 = 0 THEN 'major'
+                 WHEN CAST(ele AS INTEGER) % 50  = 0 THEN 'mid'
+                 ELSE 'minor' END AS level
+               FROM contours WHERE ele IS NOT NULL"
+          ls -lh data/contours.gpkg
+
+          CZ='${{ inputs.contour_maxzoom }}'
+          case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
+          if [ "$CZ" -gt 16 ]; then CZ=16; fi
+
+          java -Xmx5g -jar planetiler.jar generate-custom \
+            --schema=workers/contours.yml \
+            --output=contours-out/contours.pmtiles \
+            --maxzoom="$CZ" --render_maxzoom="$CZ" \
+            --simplify_tolerance_at_max_zoom=0 \
+            --force
+          ls -lh contours-out/
+
+      - name: Zaraď vrstevnice do webu
+        id: contours
+        if: ${{ inputs.contours }}
+        run: |
+          set -euo pipefail
+          SRC=contours-out/contours.pmtiles
+          if [ ! -s "$SRC" ]; then
+            echo "::warning::Vrstevnice sa nevygenerovali – mapa pôjde bez nich."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          cp "$SRC" "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+          CZ='${{ inputs.contour_maxzoom }}'
+          case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
+          if [ "$CZ" -gt 16 ]; then CZ=16; fi
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
+          ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+
       - name: Stiahni sprite (ikonky) k sebe na Pages
         run: |
           set -euo pipefail
@@ -327,6 +446,8 @@ jobs:
             --region='${{ steps.region.outputs.key }}' \
             --name='${{ steps.region.outputs.name }}' \
             --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
+            --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
+            --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
             --sprite=_site/sprites/osm-liberty.json \
             --fonts-dir=_site/fonts \
             --out=_site/styles
@@ -353,6 +474,9 @@ jobs:
             --arg sprite "$BASE/sprites/osm-liberty" \
             --argjson maxzoom '${{ steps.tiles.outputs.maxzoom }}' \
             --argjson size_mb '${{ steps.tiles.outputs.size_mb }}' \
+            --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
+            --argjson cmaxzoom '${{ steps.contours.outputs.maxzoom || '14' }}' \
+            --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
             '{
               default_region: $region,
               built_at: $built,
@@ -360,13 +484,17 @@ jobs:
               glyphs: $glyphs,
               sprite: $sprite,
               regions: {
-                ($region): {
+                ($region): ({
                   name: $name,
                   bbox: ($bbox | split(",") | map(tonumber)),
                   pmtiles: ("tiles/" + $region + ".pmtiles"),
                   maxzoom: $maxzoom,
                   size_mb: $size_mb
-                }
+                } + (if $contours then {
+                  contours: ("tiles/" + $region + "-contours.pmtiles"),
+                  contours_maxzoom: $cmaxzoom,
+                  contour_interval: $cinterval
+                } else {} end))
               }
             }' > _site/tiles/manifest.json
           cat _site/tiles/manifest.json
@@ -411,7 +539,20 @@ jobs:
           PM="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
           [ -s "$PM" ] || { echo "::error::chýba $PM"; fail=1; }
 
-          echo "Veľkosť _site: $(du -sh _site | cut -f1)"
+          # vrstevnice, ak ich štýl používa
+          if jq -e '.sources.contours' "$STYLE" >/dev/null; then
+            CPM="_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+            [ -s "$CPM" ] || { echo "::error::štýl používa vrstevnice, ale chýba $CPM"; fail=1; }
+          fi
+
+          # GitHub Pages zvládne ~1 GB na celú stránku – vrátane vrstevníc,
+          # fontov a spritov, nielen mapových dlaždíc.
+          TOTAL_MB=$(du -sm _site | cut -f1)
+          echo "Veľkosť _site: ${TOTAL_MB} MB"
+          if [ "$TOTAL_MB" -gt 950 ]; then
+            echo "::error::_site má ${TOTAL_MB} MB, GitHub Pages zvládne ~1 GB. Zníž maxzoom, vypni contours, zväčš contour_interval alebo použi menší región / crop_bbox."
+            fail=1
+          fi
           exit $fail
 
       - name: Upload Pages artifact
@@ -459,5 +600,9 @@ jobs:
 
           # PMTiles sa číta HTTP Range requestmi – bez 206 sa mapa nenačíta.
           check "$BASE/tiles/$REGION.pmtiles" 206 "pmtiles (Range request)" "-H Range:bytes=0-1023"
+
+          if [ '${{ steps.contours.outputs.enabled }}' = 'true' ]; then
+            check "$BASE/tiles/$REGION-contours.pmtiles" 206 "vrstevnice (Range request)" "-H Range:bytes=0-1023"
+          fi
 
           exit $fail
