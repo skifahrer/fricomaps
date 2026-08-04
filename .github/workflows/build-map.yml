@@ -190,9 +190,11 @@ jobs:
               printf '%s\n' "$ASSETS" | grep -qx "$t.tif" && HAVE=$(( HAVE + 1 )) || true
             done
             TOTAL=$(printf '%s\n' "$TILES" | grep -c .)
-            # Stačí jedna chýbajúca dlaždica: iný zdroj výšok nemáme, takže
-            # by build zlyhal. Radšej sa skúsi doplniť release.
-            NEED=$([ "$HAVE" -lt "$TOTAL" ] && echo true || echo false)
+            # Doplňujeme, len keď nie je ani jedna použiteľná dlaždica. Bbox je
+            # obdĺžnik, ale produkt pokrýva krajinu – rohové bunky (u Slovenska
+            # napr. N47E016 v Maďarsku) v ňom nikdy nebudú, takže „chýba jedna,
+            # tak sťahuj znova" by mirrorovalo pri každom builde.
+            NEED=$([ "$HAVE" -eq 0 ] && echo true || echo false)
             echo "Dlaždíc pre bbox: $TOTAL, v release $DEM_RELEASE: $HAVE → doplniť: $NEED"
           fi
           echo "needed=$NEED" >> "$GITHUB_OUTPUT"
@@ -200,9 +202,11 @@ jobs:
           # Otlačok obsahu releasu ide do kľúča cache vrstevníc. Bez neho by
           # sa po doplnení terénu vrátili z cache staré vrstevnice počítané
           # ešte z Copernicusu.
-          DEMKEY=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
+          # `|| true` vnútri zátvoriek: keď release ešte neexistuje, gh skončí
+          # nenulovo a `set -o pipefail` by zhodil celý krok.
+          DEMKEY=$({ gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
             -q '[.assets[] | .name + ":" + (.size|tostring)] | sort | join(",")' 2>/dev/null \
-            | sha256sum | cut -c1-12)
+            || true; } | sha256sum | cut -c1-12)
           echo "demkey=$DEMKEY" >> "$GITHUB_OUTPUT"
           echo "Otlačok releasu: $DEMKEY"
 
@@ -408,13 +412,19 @@ jobs:
           done < dem/list.txt
 
           DEM_USED=sonny
-          if [ -n "$missing" ]; then
-            echo "::error::V release $DEM_RELEASE chýbajú dlaždice:$missing"
+          if [ "$sonny_ok" -eq 0 ]; then
+            echo "::error::V release $DEM_RELEASE nie je pre toto územie ani jedna dlaždica."
             echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
             echo "Spusti workflow 'Update DEM' s priečinkom, ktorý toto územie pokrýva – alebo mu vyplň direct_urls."
             exit 1
           fi
-          echo "Sonny's LiDAR DTM: všetkých $sonny_ok dlaždíc z release $DEM_RELEASE ✓"
+          if [ -n "$missing" ]; then
+            # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za
+            # hranicou v ňom byť nemusia. Tam jednoducho nebude terén; radšej
+            # diera, ktorú vidno, než výplň z modelu povrchu.
+            echo "::warning::V release $DEM_RELEASE nie sú dlaždice:$missing – tam vrstevnice ani skaly nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
+          fi
+          echo "Sonny's LiDAR DTM: $sonny_ok z $(wc -l < dem/list.txt) dlaždíc z release $DEM_RELEASE ✓"
 
           shopt -s nullglob
           tifs=(dem/tiles/*.tif)

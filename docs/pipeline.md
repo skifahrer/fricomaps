@@ -80,8 +80,9 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 Iný zdroj sa nepoužíva. **Copernicus GLO-30 ako záloha je zámerne vypnutý** –
 je to model *povrchu*, takže vrstevnice by v lese viedli po korunách stromov
 a skaly by vychádzali z vegetácie. Keby sa ním chýbajúce dlaždice ticho
-dopĺňali, časť mapy by klamala a nebolo by vidieť ktorá; build preto radšej
-zlyhá a vypíše, ktoré dlaždice v release chýbajú.
+dopĺňali, časť mapy by klamala a nebolo by vidieť ktorá. Kde dlaždica nie je,
+tam radšej nebude terén – build to vypíše ako varovanie so zoznamom a zlyhá
+až vtedy, keď pre dané územie nie je ani jedna dlaždica.
 
 ```
 DEM dlaždice 1°×1° pre bbox (N49E019.tif)
@@ -316,10 +317,12 @@ geometrie a bez zahadzovania malých prvkov.
 
 > **Spúšťa sa aj sám.** „Build map" má pred sebou úlohu *Kontrola výškového
 > modelu*: zistí, ktoré 1° dlaždice pokrývajú jeho bbox, a porovná ich
-> s assetmi releasu. Keď čo i len jedna chýba, zavolá tento workflow ako
+> s assetmi releasu. Keď tam nie je ani jedna, zavolá tento workflow ako
 > `workflow_call` a až potom sa tiluje – iný zdroj výšok totiž nemáme, takže
-> by build aj tak zlyhal. Otlačok obsahu releasu ide do kľúča cache
-> vrstevníc, takže po doplnení terénu sa nevrátia staré vrstevnice.
+> by build aj tak zlyhal. Keď časť dlaždíc chýba (rohové bunky bboxu bývajú
+> za hranicou, kde produkt dáta nemá), nespúšťa sa nič a build len napíše,
+> kde terén nebude. Otlačok obsahu releasu ide do kľúča cache vrstevníc,
+> takže po doplnení terénu sa nevrátia staré vrstevnice.
 
 Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
 distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v
