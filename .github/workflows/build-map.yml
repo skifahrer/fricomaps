@@ -93,16 +93,6 @@ on:
         required: false
         default: "40"
         type: string
-      terrain:
-        description: "Vyrobiť vlastné výškové dlaždice z DEM (3D terén a tieňovanie z toho istého modelu ako vrstevnice)"
-        required: false
-        default: true
-        type: boolean
-      terrain_maxzoom:
-        description: "Max zoom výškových dlaždíc (12 = plné rozlíšenie 30 m DEM, vyššie už nepridá detail)"
-        required: false
-        default: "12"
-        type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
         required: false
@@ -289,25 +279,22 @@ jobs:
       # sa zmestiť do jedného rozpočtu. Keď sa vrstevnice urobia prvé, vie
       # Planetiler dostať presne toľko miesta, koľko naozaj zvýšilo – inak by
       # sa build po hodine tilovania zabil na tom, že súčet je nad limitom.
-      - name: Cache terénu (vrstevnice, skaly, výškové dlaždice)
+      - name: Cache vrstevníc
         id: contours-cache
-        if: ${{ inputs.contours || inputs.terrain }}
+        if: ${{ inputs.contours }}
         uses: actions/cache@v4
         with:
-          path: |
-            contours-out
-            terrain-out
-          key: dem-v1-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-c${{ inputs.contours }}i${{ inputs.contour_interval }}z${{ inputs.contour_maxzoom }}s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-t${{ inputs.terrain }}${{ inputs.terrain_maxzoom }}-${{ hashFiles('workers/contours.yml', 'workers/build-terrain.py') }}
+          path: contours-out
+          key: contours-v3-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
 
-      - name: Vrstevnice, skaly a výškové dlaždice z DEM
-        if: ${{ (inputs.contours || inputs.terrain) && steps.contours-cache.outputs.cache-hit != 'true' }}
+      - name: Vrstevnice a skaly z DEM
+        if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite
-          python3 -m pip install --quiet numpy
           # Stiahnuté DEM dlaždice majú vlastný adresár: medzivýsledky
           # (clip, slope…) sú tiež .tif a nesmú sa dostať do mozaiky.
           mkdir -p dem/tiles data contours-out
@@ -383,30 +370,6 @@ jobs:
           # -resolution highest: Sonny (1″) a Copernicus (nad 50° s riedšou
           # mriežkou po dĺžke) sa môžu líšiť – mozaika ide na to jemnejšie.
           gdalbuildvrt -q -resolution highest dem/all.vrt "${tifs[@]}"
-
-          # ---------- výškové dlaždice pre 3D terén a tieňovanie ----------
-          # MapLibre potrebuje výšky ako pyramídu PNG dlaždíc (terrarium).
-          # Doteraz sa brali z AWS Terrain Tiles – to je ale povrchový model
-          # (so stromami), takže 3D terén hovoril niečo iné než vrstevnice
-          # a skaly z LiDAR terénu. Teraz ide všetko z toho istého DEM.
-          if [ '${{ inputs.terrain }}' = 'true' ]; then
-            TZ='${{ inputs.terrain_maxzoom }}'
-            case "$TZ" in ''|*[!0-9]*) TZ=12 ;; esac
-            # Nad z12 už 30 m DEM nemá čo pridať – dlaždice by len narástli.
-            if [ "$TZ" -gt 14 ]; then TZ=14; fi
-            echo "::group::Výškové dlaždice do z$TZ"
-            rm -rf terrain-out
-            python3 workers/build-terrain.py --dem=dem/all.vrt --bbox="$BBOX" \
-              --minzoom=5 --maxzoom="$TZ" --out=terrain-out
-            echo "$TZ" > terrain-out/maxzoom.txt
-            du -sh terrain-out
-            echo "::endgroup::"
-          fi
-
-          if [ '${{ inputs.contours }}' != 'true' ]; then
-            echo "Vrstevnice a skaly: vypnuté."
-            exit 0
-          fi
 
           # Zjemnenie DEM pred trasovaním vrstevníc. Copernicus GLO-30 je v
           # 1″ (~30 m); priemerovanie na hrubšiu mriežku vyhladí šum, ale
@@ -605,50 +568,6 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
-
-      - name: Zaraď výškové dlaždice do webu
-        id: terrain
-        if: ${{ inputs.terrain }}
-        run: |
-          set -euo pipefail
-          if [ ! -d terrain-out ] || [ -z "$(ls -A terrain-out 2>/dev/null)" ]; then
-            echo "::warning::Výškové dlaždice sa nevygenerovali – 3D terén a tieňovanie pôjdu z AWS Terrain Tiles."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          TZ=$(cat terrain-out/maxzoom.txt 2>/dev/null || echo '')
-          case "$TZ" in ''|*[!0-9]*) TZ='${{ inputs.terrain_maxzoom }}' ;; esac
-          case "$TZ" in ''|*[!0-9]*) TZ=12 ;; esac
-
-          # Rozpočet: výšky sú tretí spolubývajúci na stránke (dlaždice mapy,
-          # vrstevnice, výšky). Viac než 20 % im nedáme – a keď sú nad tým,
-          # stačí odobrať najvyšší zoom, lebo každý sa generuje samostatne
-          # (netreba nič prepočítavať).
-          mkdir -p _site/terrain
-          # maxzoom.txt patrí do cache, nie na stránku
-          find terrain-out -mindepth 1 -maxdepth 1 -type d -exec cp -r {} _site/terrain/ \;
-
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          TBUDGET_MB=$(( LIMIT_MB * 20 / 100 ))
-          # Oreže sa až kópia na stránke, nie cache – inak by sa pri zdvihnutí
-          # rozpočtu vrátili z cache už okresané dlaždice.
-          while : ; do
-            TMB=$(du -sm _site/terrain | cut -f1)
-            echo "Výškové dlaždice do z$TZ → ${TMB} MB (strop ${TBUDGET_MB} MB)"
-            [ "$TMB" -le "$TBUDGET_MB" ] && break
-            if [ "$TZ" -le 8 ]; then
-              echo "::warning::Výškové dlaždice majú ${TMB} MB aj pri z8 – zvýš size_limit_mb alebo terrain vypni."
-              break
-            fi
-            rm -rf "_site/terrain/$TZ"
-            TZ=$(( TZ - 1 ))
-            echo "::warning::Výškové dlaždice sú nad stropom – uberám najvyšší zoom, ostáva z${TZ}."
-          done
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$(du -sm _site/terrain | cut -f1)" >> "$GITHUB_OUTPUT"
-          echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks, do z$TZ"
 
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
@@ -849,7 +768,6 @@ jobs:
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
             --dem-source='${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
-            ${{ steps.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, steps.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -902,8 +820,6 @@ jobs:
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
             --arg demsource '${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
             --arg rockslope '${{ steps.contours.outputs.rock_slope || 'off' }}' \
-            --arg dem '${{ steps.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
-            --argjson demmaxzoom '${{ steps.terrain.outputs.maxzoom || 15 }}' \
             '{
               default_region: $region,
               built_at: $built,
@@ -912,8 +828,6 @@ jobs:
               sprite: $sprite,
               icon_sources: $icon_sources,
               default_icons: "${{ steps.sprite.outputs.name }}",
-              dem: $dem,
-              dem_maxzoom: $demmaxzoom,
               regions: {
                 ($region): ({
                   name: $name,
@@ -1050,13 +964,6 @@ jobs:
 
           if [ '${{ steps.contours.outputs.enabled }}' = 'true' ]; then
             check "$BASE/tiles/$REGION-contours.pmtiles" 206 "vrstevnice (Range request)" "-H Range:bytes=0-1023"
-          fi
-
-          if [ '${{ steps.terrain.outputs.enabled }}' = 'true' ]; then
-            # Ľubovoľná existujúca dlaždica – bez výšok by nebol 3D terén
-            # ani tieňovanie a v konzole by pršali 404.
-            T=$(find _site/terrain -name '*.png' | head -1 | sed 's|_site/||')
-            check "$BASE/$T" 200 "výšková dlaždica ($T)"
           fi
 
           exit $fail

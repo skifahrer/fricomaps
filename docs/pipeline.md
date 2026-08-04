@@ -72,7 +72,7 @@ všetky kraje naraz).
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### 3. Vrstevnice, skaly a výškové dlaždice z DEM
+### 3. Vrstevnice a skaly z DEM
 
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
@@ -95,21 +95,16 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
   │    ogr2ogr        … dopočíta atribút `level`
   │
-  ├─ skaly ──────────────────────────────────────────────────
-  │    gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 20 m
-  │    gdaldem slope             … sklon v stupňoch
-  │    gdalwarp -r average       … priemer na 40 m (súvislé úseky, nie šum)
-  │    gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
-  │    ogr2ogr                   … filter plochy, zjednodušenie, `class`
-  │        │
-  │        │  planetiler generate-custom --schema=workers/contours.yml
-  │        ▼
-  │  {región}-contours.pmtiles   (vrstvy `contour` a `rock`)
+  └─ skaly ──────────────────────────────────────────────────
+       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 20 m
+       gdaldem slope             … sklon v stupňoch
+       gdalwarp -r average       … priemer na 40 m (súvislé úseky, nie šum)
+       gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
+       ogr2ogr                   … filter plochy, zjednodušenie, `class`
   │
-  └─ výškové dlaždice ───────────────────────────────────────
-       gdalwarp -t_srs EPSG:3857 … pre každý zoom zvlášť, priemerom
-       build-terrain.py          … terrarium PNG 256×256
-                                 → terrain/{z}/{x}/{y}.png
+  │  planetiler generate-custom --schema=workers/contours.yml
+  ▼
+{región}-contours.pmtiles   (vrstvy `contour` a `rock`)
 ```
 
 - **`level`** rozdelí vrstevnice na `major` (po 100 m), `mid` (50 m) a
@@ -141,35 +136,6 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   mapy sa nepočítajú znova.
 - **Vlastný `.pmtiles`** (nie súčasť mapových dlaždíc) práve preto, aby sa
   dali cacheovať zvlášť a aby ich štýl vedel vypnúť bez prebuildu mapy.
-
-#### Výškové dlaždice (3D terén a tieňovanie)
-
-MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc, kde je
-nadmorská výška zakódovaná do farby (*terrarium*: `výška = R·256 + G + B/256 −
-32768`). Doteraz sa brali z verejných AWS Terrain Tiles; tie sú ale povrchový
-model, takže by 3D reliéf zdvíhal koruny stromov, kým vrstevnice by viedli po
-zemi. [`workers/build-terrain.py`](../workers/build-terrain.py) ich preto
-vyrobí z toho istého DEM:
-
-- **Každý zoom sa prevzorkuje z DEM nanovo** (`gdalwarp -r average`), nezmenšujú
-  sa hotové dlaždice. Priemerovať sa totiž musí *výška*; priemer bajtov R a G
-  zakódovanej farby by dal nezmysel (R je horný bajt, jeho priemer nie je
-  priemer výšky).
-- **Obyčajné `{z}/{x}/{y}.png`**, nie `.pmtiles`: raster-dem cez vlastný
-  protokol by musel fungovať aj v MapLibre Native na iOS. Takto je to formát,
-  ktorému rozumie každý klient bez ďalších závislostí.
-- **Zoom končí na 12.** Dlaždica z12 má u nás ~25 m na pixel, čo je práve
-  rozlíšenie 30 m DEM – vyšší zoom by pridal len bajty. Vyššie priblíženie si
-  MapLibre dopočíta sám.
-- **Výška po celých metroch** (posledný bajt kódovania = 0). Porovnané na
-  Vysokých Tatrách proti plnej presnosti: dlaždice **2,9× menšie**, rozdiel vo
-  vykreslenom tieňovaní priemerne 0,5 z 255 odtieňov (max 8) – okom
-  nerozoznateľné. Ten bajt je totiž z väčšiny šum, ktorý sa nedá skomprimovať.
-- **PNG si skript zapisuje sám** (zlib + hlavičky, filter sa pre každý riadok
-  vyberá heuristikou najmenšieho súčtu odchýlok). Ušetrí to závislosť na
-  Pillow a od `optimize=True` v Pillow je výsledok väčší len o ~4 %.
-- Keď dlaždice nevzniknú alebo sú vypnuté (`terrain: nie`), štýl padá späť na
-  AWS Terrain Tiles – 3D terén teda funguje ako predtým.
 
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
@@ -279,9 +245,7 @@ GitHub Pages zvládne stránku do ~1 GB a do toho sa musia zmestiť dlaždice
 **aj vrstevnice, fonty a sprity**. Preto je rozpočet jeden a spoločný
 (`size_limit_mb`, default 900):
 
-1. **Vrstevnice a výšky sa robia prvé** – vrstevnice majú strop 40 %
-   rozpočtu, výškové dlaždice 20 % (nad stropom sa im odoberie najvyšší zoom,
-   každý je totiž generovaný samostatne). Keď vrstevnice strop prekročia,
+1. **Vrstevnice sa robia prvé** a majú strop 40 % rozpočtu. Keď ho prekročia,
    prepočítajú sa o zoom nižšie priamo z hotového GPKG – sekundy, DEM sa
    znovu nesťahuje.
 2. **Dlaždice dostanú, čo zvýšilo** (rozpočet − obsadené − rezerva na fonty

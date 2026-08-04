@@ -86,16 +86,11 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
 | **vrstevnice a skaly** | **Sonny's LiDAR DTM** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
 | vrstevnice a skaly – záloha | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
-| **tieňovanie reliéfu, 3D terén** | **ten istý DEM** | vlastné výškové dlaždice `terrain/{z}/{x}/{y}.png` na našich Pages |
-| tieňovanie a 3D terén – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
+| tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
 odtiene plôch a pri malých mierkach z nej robí hnedý šum. Zapína sa
 prepínačom v paneli ⚙ (a takto zapnuté sa aj zapečie do štýlu pre iOS).
-
-**Všetko z jedného modelu.** Vrstevnice, skaly, tieňovanie aj 3D terén idú
-z toho istého DEM – inak by 3D reliéf ukazoval korunami stromov zdvihnutý
-povrch, kým vrstevnice by viedli po zemi.
 
 ### Zdroj výšok: Sonny's LiDAR DTM
 
@@ -148,37 +143,6 @@ Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m)
 `contour_maxzoom` (default 14) a `contour_smoothing` (default 0 = bez
 zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
 prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
-
-### Výškové dlaždice pre 3D terén a tieňovanie
-
-MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc, kde
-je nadmorská výška zakódovaná do farby (*terrarium*: `výška = R·256 + G +
-B/256 − 32768`). Doteraz sa brali z verejných AWS Terrain Tiles, čo je ale
-povrchový model. [workers/build-terrain.py](workers/build-terrain.py) ich
-preto vyrobí z nášho DEM:
-
-```
-DEM
-  → gdalwarp -t_srs EPSG:3857   pre každý zoom zvlášť, priemerom (-r average)
-                                – priemerovať sa musí VÝŠKA, nie farba
-  → terrarium PNG 256×256       B = 0, teda výška po celých metroch
-  → _site/terrain/{z}/{x}/{y}.png
-```
-
-- **Obyčajné PNG dlaždice**, nie `.pmtiles`: raster-dem cez vlastný protokol
-  je vec navyše, ktorá by musela fungovať aj v MapLibre Native na iOS.
-  Takto je to obyčajné `{z}/{x}/{y}.png`, ktoré vie každý klient.
-- **Zoom končí na 12** (`terrain_maxzoom`): dlaždica z12 má u nás ~25 m na
-  pixel, čo je presne rozlíšenie 30 m DEM – vyšší zoom by pridal len bajty.
-  Nad tým si MapLibre dopočíta zvyšok sám.
-- **Výška po celých metroch** (posledný bajt = 0). Merané na Vysokých
-  Tatrách: dlaždice sú oproti plnej presnosti **2,9× menšie** a rozdiel vo
-  vykreslenom tieňovaní je priemerne 0,5 z 255 odtieňov – teda žiadny.
-- Dlaždice majú **strop 20 % rozpočtu** stránky; keď ho prekročia, odoberie
-  sa najvyšší zoom (každý sa generuje samostatne, netreba nič prepočítavať).
-  Pre celé Slovensko je to do z12 rádovo 100 MB.
-- Keď sa nevygenerujú (alebo `terrain: nie`), štýl padá späť na AWS Terrain
-  Tiles, takže 3D terén funguje ako doteraz.
 
 ### Skaly (najstrmšie úseky terénu)
 
@@ -407,7 +371,6 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
    - `dem_source`: `sonny` (LiDAR terén) alebo `copernicus`
    - `rocks` + `rock_slope`: skalné plochy a od akého sklonu (default 40°)
-   - `terrain` + `terrain_maxzoom`: vlastné výškové dlaždice pre 3D a tieňovanie
 5. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
