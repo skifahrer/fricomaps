@@ -83,7 +83,7 @@ on:
         default: "50"
         type: string
       rock_res:
-        description: "Mriežka na obrys skál v metroch (2 = najjemnejší obrys; zdrojový DEM má 20 m, jemnejšia mriežka už len hladí)"
+        description: "Mriežka na obrys skál v metroch (2 = default; 1 dá detail na 1 m², ale 4× dlhšie – len s crop_bbox. Zdrojový DEM má 20 m, jemnejšia mriežka už len hladí)"
         required: false
         default: "2"
         type: string
@@ -158,13 +158,15 @@ env:
   # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
   # 4 m²) – menšie útvary sú už len zubaté artefakty jednej bunky, nie skala.
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
-  # Susediace plochy sa na konci zlúčia do jedného polygónu (ST_Union), aby
-  # stena zrezaná na hranici počítanej časti bola zase jedna skala.
-  ROCK_DISSOLVE: "true"
+  # Verzia algoritmu v mene uloženého assetu. Zmena algoritmu = iné skaly,
+  # takže sa nesmú použiť tie staré uložené.
+  ROCK_ALGO: v2
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
   # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
   # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster) – naraz sa to do
   # runnera nezmestí. 150 miliónov je ~600 MB na raster, čo je bezpečné.
+  # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
+  # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
 
 jobs:
@@ -657,7 +659,7 @@ jobs:
             # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
             # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
             # asset zahodí a počíta odznova.
-            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-g${RR}.gpkg.zst"
+            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
             ROCK_READY=""
             ROCK_SRC="výpočet"
             if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
@@ -679,7 +681,7 @@ jobs:
               if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
                    --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
                    --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
-                   --dissolve="$ROCK_DISSOLVE" --stats=contours-out/rock-stats.txt \
+                   --stats=contours-out/rock-stats.txt \
                    --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
                 ls -lh data/rock.gpkg
                 # Ulož ich, nech ich nabudúce netreba počítať znova.
@@ -1427,11 +1429,15 @@ jobs:
               echo "| priemerná plocha | ${avg_m2:-?} m² |"
               echo "| najväčšia plocha | ${max_ha:-?} ha |"
               echo "| skalného terénu spolu | ${total_km2:-?} km² |"
-              echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°) |"
+              echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°, krok ${slope_step_deg:-?}°) |"
+              echo "| plôch s dierou (miesto pod prahom vnútri skaly) | ${with_holes:-0} |"
+              echo "| vykrojené dierami | ${holes_km2:-0} km² |"
               echo
               echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
-              echo "Susediace plochy sú zlúčené do jedného polygónu, takže stena"
-              echo "nie je rozsekaná na kusy podľa toho, ako sa počítalo po častiach."
+              echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
+              echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
+              echo "všade sklon nad prahom. Vektorizuje sa jedným priechodom nad"
+              echo "celým územím, takže na hraniciach počítaných častí nie sú švy."
               echo
               echo "> Mriežka ${grid_m:-?} m hovorí, ako jemne je obrys odkrokovaný;"
               echo "> ale zdrojový DEM má bunku ~${dem_cell_m:-?} m, takže nové detaily"

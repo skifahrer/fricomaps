@@ -136,14 +136,15 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    ogr2ogr        … dopočíta atribút `level`
   │
   ├─ skaly ──────────────────────────────────────────────────
-  │    workers/rock-areas.py – po častiach, aby sa 2 m mriežka zmestila:
+  │    workers/rock-areas.py
+  │    a) sklon PO ČASTIACH (pamäťovo drahé), na disk:
   │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 2 m
   │      gdaldem slope             … sklon v stupňoch
-  │      gdal_contour -p -fl 50 65 … izolínie sklonu ako plochy
-  │      ogr2ogr -clipsrc          … orez presne na hranicu časti
-  │    a nad celým územím naraz:
-  │      ST_Union po triedach      … zlepí, čo spolu súvisí
-  │      -explodecollections       … späť na samostatné skaly
+  │      gdal_translate -ot Byte   … krok 0,5°, aby sa mozaika zmestila
+  │      gdalbuildvrt              … mozaika sklonu celého územia
+  │    b) vektorizácia NARAZ nad mozaikou:
+  │      gdal_contour -p -fl 100 130 … izolínie sklonu ako plochy (s dierami)
+  │      -explodecollections       … samostatné skaly
   │      filter najmenšej plochy   … + `class`, `slope`, `area`
   │
   └─ tieňovanie a 3D ────────────────────────────────────────
@@ -175,14 +176,38 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   kde svah prekročí prah. Vzniká tak zubatý pás pod hrebeňom, oblúk okolo
   žľabu, ostrov brala v suti. Do augusta 2026 tu bola mriežka štvorčekov
   (`rock_piece`); je preč, lebo skaly štvorcové nie sú.
-- **Susediace plochy sa zlučujú** (`ROCK_DISSOLVE`, default zapnuté). Územie
-  sa počíta po častiach, takže jedna stena môže vyjsť ako niekoľko kusov
-  zrezaných na hranici časti. Na konci sa preto všetko v rámci triedy zlúči
-  (`ST_Union` v SpatiaLite) a hneď rozbije späť na samostatné plochy
-  (`-explodecollections`): čo spolu súvisí, je jeden polygón; čo spolu
-  nesúvisí, ostáva samostatné. Keby zlučovanie zlyhalo (pamäť, chýbajúca
-  SpatiaLite), plochy ostanú tak, ako vyšli po častiach – s varovaním, nie
-  s pádom buildu.
+- **Diery: čo nie je nad prahom, sa nezafarbí.** Keď je vnútri steny miesto
+  s menším sklonom – polica, terasa, zarastený stupeň – vypadne z plochy
+  **diera**, aj keď je dookola všade sklon nad prahom. Robí to priamo
+  `gdal_contour -p`: pásmo `[prah, ∞)` je polygón s vnútornými prstencami
+  tam, kde hodnota pod prah klesla. Diery sa nezapĺňajú ani nefiltrujú a
+  vrstva `rock-outline` ich obkreslí rovnako ako vonkajší obrys, takže je
+  polica v mape vidieť.
+- **Vektorizuje sa naraz, nie po častiach – a je to nutné.** Pôvodne sa každá
+  časť územia vektorizovala zvlášť, orezala (`-clipsrc`) a výsledky sa lepili
+  cez `ST_Union`. To diery ničí: diera prerezaná hranicou časti sa zmení na
+  zárez v okraji a späť sa už nezlepí. Namerané na syntetickom teréne
+  (prstencová terasa v kuželi):
+
+  | postup | plôch | dier |
+  |---|--:|--:|
+  | celý raster naraz (referencia) | 2 | 2 |
+  | po častiach + `ST_Union` | 4 | **0** |
+  | **sklon po častiach, vektorizácia naraz** | **2** | **2** |
+
+  Preto sa **po častiach počíta len raster sklonu** – to je tá pamäťovo drahá
+  časť – zapíše sa na disk a `gdal_contour` ide jedným priechodom nad celou
+  mozaikou. Výsledok potom nezávisí od toho, na koľko častí sa počítalo:
+  overené pri 1, 12 aj 60 častiach je zhodný do posledného m².
+- **Mozaika sklonu je Byte s krokom 0,5°.** Vo `Float32` by mala pre kraj pri
+  2 m ~13 GB, čo sa na disk runnera nezmestí; ako `Byte` (hodnota = 2×
+  stupne, 0–180) je 4× menšia a ešte sa komprimuje `DEFLATE`+`PREDICTOR`.
+  Presnosť 0,5° je na prahovanie viac než dosť – prahy sú aj tak celé stupne.
+  Prahy sa preto do `gdal_contour` dávajú vynásobené dvomi (`-fl 100 130`).
+- **Časti sa počítajú s presahom** niekoľkých pixelov, aby sklon na okraji
+  nebol zrezaný, a zapisujú sa až orezané presne na svoju hranicu. Hranice sú
+  prichytené na mriežku, takže dlaždice mozaiky na seba sadnú bez medzery aj
+  bez prekryvu. Merané ~2,5 mil. buniek/s → kraj pri 2 m okolo 30 minút.
 - **Veľkosť plôch neurčuje mriežka, ale prah sklonu.**
   Súvislá stena nad prahom je jedna plocha, nech ju počítaš na akejkoľvek
   mriežke. Namerané na výreze Vysokých Tatier pri mriežke 2 m:
@@ -199,23 +224,14 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   strmý svah. Preto je predvolený prah 50°.
 - **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
   najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
-  4 m²) – menší útvar už nie je tvar terénu, ale zubaté rohy jedinej bunky.
-  Skutočný detail je ale stropený zdrojom: **Sonny má pre Slovensko bunku
-  ~20 m**, takže tvary pod 20 m sú dopočítané, nie merané. Jemnejšia mriežka
-  dá hladší a presnejšie umiestnený obrys, novú informáciu však nepridá – na
-  tom istom území dalo 5 m 366 plôch a 2 m 387. Presné čísla za konkrétny beh
-  (počet plôch, najmenšia/priemerná/najväčšia, koľko km² spolu) píše
-  `rock-areas.py` do `contours-out/rock-stats.txt` a build ich vypíše
-  v [súhrne](#12-súhrn-buildu).
-- **Počíta sa po častiach** ([`workers/rock-areas.py`](../workers/rock-areas.py)).
-  Bbox kraja má pri 2 m vyše 3 miliardy buniek, čo je ~13 GB na jeden raster –
-  viac, než má runner miesta aj pamäte. Územie sa preto krája na kusy
-  (`ROCK_CHUNK_CELLS`, default 150 mil. buniek), každý sa spracuje a hneď
-  upratá. Sklon sa počíta s presahom niekoľkých pixelov a plochy sa orežú
-  presne na hranicu kusa (`-clipsrc`), takže susedné na seba nadväzujú bez
-  medzery aj bez prekryvu – a zlučovanie na konci z nich spraví jednu skalu.
-  Merané ~1,5 mil. buniek/s → kraj pri 2 m ~35 minút; mriežka 1 m sa oplatí
-  len na `crop_bbox`.
+  4 m², pri 1 m rovno 1 m²) – menší útvar už nie je tvar terénu, ale zubaté
+  rohy jedinej bunky. Skutočný detail je ale stropený zdrojom: **Sonny má pre
+  Slovensko bunku ~20 m**, takže tvary pod 20 m sú dopočítané, nie merané.
+  Jemnejšia mriežka dá hladší a presnejšie umiestnený obrys a viac dier, novú
+  informáciu o teréne však nepridá. Cena za `rock_res: 1` je 4× viac buniek
+  (kraj ~2 hodiny), takže má zmysel len s `crop_bbox`. Presné čísla za
+  konkrétny beh píše `rock-areas.py` do `contours-out/rock-stats.txt` a build
+  ich vypíše v [súhrne](#12-súhrn-buildu).
 - **Bez zjednodušovania** (`ROCK_SIMPLIFY=0`) – zjednodušenie obrysu by tie
   najmenšie plochy zmazalo úplne.
 - **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z9**
