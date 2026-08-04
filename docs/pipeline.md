@@ -65,10 +65,6 @@ Zdrojom sú regionálne exporty [osm.fr](https://download.openstreetmap.fr/extra
 rezané po **skutočných administratívnych hraniciach** a aktualizované denne.
 Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 
-Ak osm.fr vypadne, použije sa fallback z releasu `osm-extracts`, ktorý raz
-týždenne vyrába druhý workflow (Geofabrik Slovensko → `osmium extract -c` →
-všetky kraje naraz).
-
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
@@ -79,12 +75,13 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | čo to je | odkiaľ |
 |---|---|---|
-| **Sonny's LiDAR DTM** (default) | *model terénu* z LiDARu – bez stromov a striech | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#tretí-workflow-update-dem)) |
-| Copernicus GLO-30 | *model povrchu* vrátane vegetácie, 1″ (~30 m) | AWS Open Data, bez autentifikácie |
+| **Sonny's LiDAR DTM, model 20m** | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
 
-Berie sa to, čo je pre danú dlaždicu k dispozícii: chýbajúce Sonny dlaždice
-doplní Copernicus, takže build nezostane bez terénu (a v logu je varovanie,
-ktoré dlaždice chýbali). Prepínač je input `dem_source`.
+Iný zdroj sa nepoužíva. **Copernicus GLO-30 ako záloha je zámerne vypnutý** –
+je to model *povrchu*, takže vrstevnice by v lese viedli po korunách stromov
+a skaly by vychádzali z vegetácie. Keby sa ním chýbajúce dlaždice ticho
+dopĺňali, časť mapy by klamala a nebolo by vidieť ktorá; build preto radšej
+zlyhá a vypíše, ktoré dlaždice v release chýbajú.
 
 ```
 DEM dlaždice 1°×1° pre bbox (N49E019.tif)
@@ -96,7 +93,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    ogr2ogr        … dopočíta atribút `level`
   │
   └─ skaly ──────────────────────────────────────────────────
-       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, natívna mriežka
+       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 5 m
        gdaldem slope             … sklon v stupňoch
        gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
        ogr2ogr                   … rozbitie na kusy, `class`
@@ -121,24 +118,37 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Mriežka = natívne rozlíšenie DEM** (`ROCK_RES=0`). Jemnejšia by bola len
-  interpolácia – viac bodov, žiadna nová informácia; hrubšia by zahodila
-  skutočný detail. Mriežka DEM je v stupňoch, takže sa po dĺžke prenásobí
-  `cos(šírky)`: z 1″ vyjde u nás ~20 m.
+- **Mriežka 5 m** (`rock_res`, 0 = natívne rozlíšenie DEM). Sklon sa počíta
+  na jemnejšej mriežke, než má DEM – DEM sa doň prevzorkuje `cubicspline`.
+  Namerané na celom Žilinskom kraji (prah 40°):
+
+  | mriežka | plôch | z toho pod 100 m² | GPKG | kontúrovanie |
+  |---|---|---|---|---|
+  | 20 m (natívna) | 10 343 | – | 5 MB | ~1 min |
+  | 10 m | 19 882 | 2 739 | 13 MB | ~3 min |
+  | **5 m** | **24 465** | – | 28 MB | ~14 min |
+
+  Tvary pod 20 m sú **dopočítané, nie merané** – interpolácia neprináša novú
+  informáciu, len jemnejšie hrany a viac samostatných plôch. Kto chce čisto
+  to, čo dáta unesú, dá `rock_res=0`.
 - **Bez priemerovania a bez zjednodušovania** (`ROCK_WIN=0`, `ROCK_SIMPLIFY=0`).
   Priemerovanie sklonu robí súvislejšie plochy, ale zje malé skalky;
   zjednodušenie obrysu by tie najmenšie zmazalo úplne. Kto chce pokojnejší
   obraz, oboje si v `env:` zapne späť.
-- **Najmenšia plocha 5 m²** (`ROCK_MIN_AREA`), teda prakticky bez filtra – a
-  aby ich nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`.
-  Merané na výreze Vysokých Tatier: 878 plôch, z toho 73 pod 100 m², a
-  v hotových dlaždiciach sa naozaj nachádzajú. Pri nižších zoomoch drobnosti
-  odpadnú samé – tam Planetiler prvky menšie než pixel zahadzuje, čo je
-  správne, lebo by z nich boli nečitateľné bodky.
-- **Aká je vlastne rozlišovacia schopnosť.** Bunka 1″ DEM má u nás ~20×30 m,
-  takže najmenší *skutočný* útvar má rádovo stovky m². Prah 5 m² neznamená,
-  že vidíme päťmetrovú skalku, ale že sa nezahadzuje nič z toho, čo dáta
-  unesú (a že kúsky pri okraji dlaždice prežijú aj po orezaní).
+- **Najmenšia plocha 1 m²** (`ROCK_MIN_AREA`), teda bez filtra – a aby ich
+  nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`. Overené
+  na hotových dlaždiciach: najmenšie skalné polygóny v nich majú 1,2 m².
+  Pri nižších zoomoch drobnosti odpadnú samé – tam Planetiler prvky menšie
+  než pixel zahadzuje, čo je správne, lebo by z nich boli nečitateľné bodky.
+- **Strop na veľkosť rastra** (`ROCK_MAX_CELLS`, 600 mil. buniek). Bbox kraja
+  má pri 5 m ~520 miliónov, celé Slovensko by malo 3,6 miliardy – tam sa
+  mriežka sama dopočíta na ~12 m a workflow to napíše do logu. Pre plný detail
+  teda kraj alebo `crop_bbox`, nie celá republika.
+- **Skutočná rozlišovacia schopnosť dát.** Bunka 1″ DEM má u nás ~20×30 m,
+  takže najmenší *meraný* útvar má rádovo stovky m². Naozajstné 1 m² skaly by
+  potreboval 1 m LiDAR (ÚGKK DMR 5.0), ktorý sa ale z geoportálu sťahuje cez
+  interaktívny export – musel by sa najprv nazrkadliť do releasu ako Sonnyho
+  DTM.
 - **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
   obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
   medzi bunkami, takže je okraj hladký a bodov výrazne menej.
@@ -151,7 +161,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   rastre. Na najvyššom zoome ide geometria do dlaždíc bez zjednodušovania
   (`--simplify_tolerance_at_max_zoom=0`), takže obrys skaly aj priebeh
   vrstevnice sedia presne tam, kam ich položil DEM.
-- **Cache.** Vrstevnice aj skaly závisia len od územia, zdroja výšok,
+- **Cache.** Vrstevnice aj skaly závisia len od územia, obsahu releasu s DEM,
   intervalu, maxzoomu, zjemnenia a prahu sklonu – nie od toho, čo sa zmenilo
   v OSM. Sú preto nacacheované podľa týchto parametrov a pri ďalšom builde
   mapy sa nepočítajú znova.
@@ -302,14 +312,14 @@ geometrie a bez zahadzovania malých prvkov.
 
 ---
 
-## Druhý workflow: „Update OSM extracts"
+## Druhý workflow: „Update DEM"
 
-Beží raz týždenne a slúži len ako **poistka**, keby osm.fr nebolo dostupné.
-Stiahne Geofabrik export Slovenska a `osmium extract -c` z neho jedným
-priechodom vyreže všetky kraje po administratívnych hraniciach; výsledok
-uloží do releasu `osm-extracts`.
-
-## Tretí workflow: „Update DEM"
+> **Spúšťa sa aj sám.** „Build map" má pred sebou úlohu *Kontrola výškového
+> modelu*: zistí, ktoré 1° dlaždice pokrývajú jeho bbox, a porovná ich
+> s assetmi releasu. Keď čo i len jedna chýba, zavolá tento workflow ako
+> `workflow_call` a až potom sa tiluje – iný zdroj výšok totiž nemáme, takže
+> by build aj tak zlyhal. Otlačok obsahu releasu ide do kľúča cache
+> vrstevníc, takže po doplnení terénu sa nevrátia staré vrstevnice.
 
 Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
 distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v
@@ -317,16 +327,40 @@ zdieľanom priečinku a pri väčšom počte stiahnutí odpovedá limitom, takž
 z neho nedá sťahovať v každom builde mapy.
 
 ```
-Google Drive priečinok (napr. Slovensko)
+Google Drive priečinok (napr. Slovensko, model 20m)
   │  gdown --folder     … stiahne celý priečinok naraz
   │  7z                 … rozbalí .zip / .7z
-  │  gdal_translate     … .hgt → N49E019.tif (GeoTIFF, DEFLATE)
+  │  workers/dem-tiles.py … GeoTIFF → dlaždice 1°×1° vo WGS84
+  │  (alebo .hgt priamo … to je už 1° dlaždica, len bez hlavičky)
   ▼
 release `dem-sonny`: N49E019.tif … + meta.json
 ```
 
-- **Meno dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný roh),
-  takže je jedno, ako sú súbory v priečinku pomenované navyše.
+- **Ktorý model.** Sonny má 1″/3″ ako `.hgt` (20×30 m, výška po celých
+  metroch) a 20m/50m ako GeoTIFF (20×20 m, výška po 0,1 m). Berieme **20m** –
+  a nie kvôli vodorovnej mriežke, ale kvôli tomu zvislému kroku: z metrových
+  schodov vychádza schodíkovitý sklon. Namerané na tom istom území Vysokých
+  Tatier: z 1 m dát 5 293 skalných plôch so 101 bodmi na obrys, z 0,1 m dát
+  2 138 plôch so 195 bodmi – pri rovnakej celkovej ploche skál (4 218 vs
+  4 223 ha). Metrové dáta teda tú istú stenu rozdrobia na falošné kúsky.
+- **Rezanie na dlaždice** ([`workers/dem-tiles.py`](../workers/dem-tiles.py)).
+  20m model môže byť jeden GeoTIFF na celú krajinu a v metrickej projekcii;
+  build mapy ale sťahuje len dlaždice pre svoj bbox a lepí ich `gdalbuildvrt`,
+  ktorý rôzne projekcie v jednom VRT neunesie. Skript preto rozsah prepočíta
+  do stupňov, mriežku z metrov na stupne (po dĺžke cez `cos(šírky)`) a vyreže
+  dlaždice `N49E019.tif`. Prevzorkúva sa **bilineárne** – pri prakticky
+  rovnakej mierke to stačí a na okrajoch dát nič „neprestrelí" mimo rozsah
+  skutočných výšok, ako to robí kubické.
+- **Meno .hgt dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný
+  roh), takže je jedno, ako sú súbory v priečinku pomenované navyše.
+- **Škálované výšky sa rozbalia.** Desatiny metra sa v GeoTIFFe dajú uložiť aj
+  ako celé čísla so `scale` (napr. decimetre so `scale=0.1`). `gdalwarp` škálu
+  neuplatňuje, takže bez rozbalenia (`gdal_translate -unscale`) by boli výšky
+  desaťkrát väčšie – a sklon by potom ukázal skalu úplne všade. Skript to
+  zistí z hlavičky a rovno vypíše rozsah výšok zdroja; keď nevyzerá ako metre
+  nad morom, workflow varuje.
+- **Prázdne dlaždice sa nepublikujú** – ak po vyrezaní neostane ani jeden
+  platný pixel, dlaždica sa zahodí.
 - **`.hgt` je surové pole int16 bez hlavičky.** GDAL ho pozná pri štandardných
   veľkostiach (1201², 3601²); pri neštandardnej mriežke (0,5″ = 7201²) si
   workflow georeferenciu poskladá sám cez VRT – krok mriežky je `1/(n−1)`,
@@ -336,7 +370,7 @@ release `dem-sonny`: N49E019.tif … + meta.json
 - Ak by Drive limitoval, dá sa namiesto neho vyplniť `direct_urls` (priame
   odkazy na mirror).
 
-## Štvrtý workflow: „Uložiť úpravy štýlu do zdrojáku"
+## Tretí workflow: „Uložiť úpravy štýlu do zdrojáku"
 
 Protikus developer módu – vezme stiahnutý `style-overrides.json`, prežene ho
 **tou istou validáciou ako prehliadač** (`normalizeOverrides`) a commitne do

@@ -1,11 +1,8 @@
 name: Build map (PBF → PMTiles) & deploy Pages
 
-# Stiahne PBF export IBA zvoleného regiónu:
-#   1. primárne z osm.fr regionálnych exportov
-#      (https://download.openstreetmap.fr/extracts/ – Európa aj svet,
-#      rezané po administratívnych hraniciach, denne aktualizované),
-#   2. fallback: asset releasu `osm-extracts` (vyrába workflow
-#      "Update OSM extracts").
+# Stiahne PBF export IBA zvoleného regiónu z osm.fr regionálnych exportov
+# (https://download.openstreetmap.fr/extracts/ – Európa aj svet, rezané po
+# administratívnych hraniciach, denne aktualizované).
 # Potom Planetiler → PMTiles → GitHub Pages.
 #
 # Detail a zoom:
@@ -75,14 +72,6 @@ on:
         required: false
         default: "0"
         type: string
-      dem_source:
-        description: "Zdroj výšok: sonny = LiDAR DTM z releasu dem-sonny (presnejší, bez stromov), copernicus = GLO-30 z AWS"
-        required: false
-        default: sonny
-        type: choice
-        options:
-          - sonny
-          - copernicus
       rocks:
         description: "Vygenerovať skalné plochy (najstrmšie úseky terénu z DEM)"
         required: false
@@ -92,6 +81,11 @@ on:
         description: "Od akého sklonu (°) je terén skala – 40 = štandard, menej = viac plôch"
         required: false
         default: "40"
+        type: string
+      rock_res:
+        description: "Mriežka na výpočet sklonu skál v metroch (5 = drobné skaly, 0 = natívne rozlíšenie DEM; menej = viac plôch, ale dlhší build)"
+        required: false
+        default: "5"
         type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
@@ -129,15 +123,105 @@ env:
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
-  ROCK_RES: "0" # mriežka na výpočet sklonu (m); 0 = natívne rozlíšenie DEM
+  ROCK_RES: "5" # záložná mriežka na sklon (m), keď input rock_res chýba
   ROCK_WIN: "0" # okno na spriemerovanie sklonu (m); 0 = žiadne priemerovanie.
   #               Priemerovanie robí súvislejšie plochy, ale zje malé skalky.
-  ROCK_MIN_AREA: "5" # najmenšia skalná plocha (m²) – prakticky bez filtra
+  ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
+  # Strop na veľkosť rastra so sklonom. Jemná mriežka na veľkom území by
+  # runner utopila v hodinách kontúrovania, tak sa v takom prípade zhrubne.
+  # Bbox kraja má pri 5 m ~520 mil. buniek (namerané: ~14 min kontúrovania,
+  # rastre ~3,5 GB), celé Slovensko by pri 5 m malo 3,6 miliardy – tomu sa
+  # mriežka dopočíta na ~12 m.
+  ROCK_MAX_CELLS: "600000000"
 
 jobs:
+  # ---------- je v release terén pre toto územie? ----------
+  # Iný zdroj výšok nemáme (Copernicus je zámerne vypnutý), takže bez dlaždíc
+  # by build po pár minútach zlyhal. Radšej sa najprv pozrieme, či v release
+  # niečo pre náš bbox je – a keď nie, doplní ho `mirror-dem` ešte predtým.
+  check-dem:
+    name: Kontrola výškového modelu
+    runs-on: ubuntu-latest
+    if: ${{ inputs.contours }}
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+      demkey: ${{ steps.check.outputs.demkey }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sú v release dlaždice pre bbox?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BBOX=''
+          if [ -n '${{ inputs.custom_pbf_url }}' ]; then
+            BBOX='${{ inputs.custom_bbox }}'
+          else
+            BBOX=$(jq -r --arg r '${{ inputs.region }}' '.[$r].bbox // [] | join(",")' workers/regions.json)
+          fi
+          if [ -n '${{ inputs.crop_bbox }}' ]; then BBOX='${{ inputs.crop_bbox }}'; fi
+
+          ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets[].name' 2>/dev/null || echo '')
+
+          if [ -z "$BBOX" ]; then
+            # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak sa
+            # pozeráme len na to, či v release vôbec niečo je.
+            NEED=$([ -z "$ASSETS" ] && echo true || echo false)
+            echo "Bbox nie je známy; release $DEM_RELEASE má $(printf '%s' "$ASSETS" | grep -c . || true) assetov → doplniť: $NEED"
+          else
+            IFS=, read -r W S E N <<< "$BBOX"
+            TILES=$(python3 - "$W" "$S" "$E" "$N" <<'PY'
+          import math, sys
+          w, s, e, n = map(float, sys.argv[1:5])
+          for lat in range(math.floor(s), math.floor(n) + 1):
+              for lon in range(math.floor(w), math.floor(e) + 1):
+                  ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
+                  print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
+          PY
+          )
+            HAVE=0
+            for t in $TILES; do
+              printf '%s\n' "$ASSETS" | grep -qx "$t.tif" && HAVE=$(( HAVE + 1 )) || true
+            done
+            TOTAL=$(printf '%s\n' "$TILES" | grep -c .)
+            # Stačí jedna chýbajúca dlaždica: iný zdroj výšok nemáme, takže
+            # by build zlyhal. Radšej sa skúsi doplniť release.
+            NEED=$([ "$HAVE" -lt "$TOTAL" ] && echo true || echo false)
+            echo "Dlaždíc pre bbox: $TOTAL, v release $DEM_RELEASE: $HAVE → doplniť: $NEED"
+          fi
+          echo "needed=$NEED" >> "$GITHUB_OUTPUT"
+
+          # Otlačok obsahu releasu ide do kľúča cache vrstevníc. Bez neho by
+          # sa po doplnení terénu vrátili z cache staré vrstevnice počítané
+          # ešte z Copernicusu.
+          DEMKEY=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
+            -q '[.assets[] | .name + ":" + (.size|tostring)] | sort | join(",")' 2>/dev/null \
+            | sha256sum | cut -c1-12)
+          echo "demkey=$DEMKEY" >> "$GITHUB_OUTPUT"
+          echo "Otlačok releasu: $DEMKEY"
+
+  # ---------- doplnenie terénu (rovnaký workflow ako Update DEM) ----------
+  mirror-dem:
+    name: Doplniť výškový model
+    needs: check-dem
+    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+
   build:
+    needs: [check-dem, mirror-dem]
+    # Kontrola aj doplnenie sa môžu preskočiť (vypnuté vrstevnice, terén už
+    # v release) – build musí bežať aj tak. Keď doplnenie zlyhá (napr. Drive
+    # limituje sťahovanie), build sa spustí tiež a zastaví sa až na kroku
+    # s DEM, kde presne napíše, ktoré dlaždice chýbajú.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
@@ -162,8 +246,6 @@ jobs:
 
       - name: Stiahni PBF iba daného regiónu
         id: region
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data
           CUSTOM_URL='${{ inputs.custom_pbf_url }}'
@@ -198,22 +280,14 @@ jobs:
             if [ "$NAME" = "null" ]; then echo "::error::Neznámy región: $KEY"; exit 1; fi
 
             OK=""
-            # 1) osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
+            # osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
             for SLUG in $(jq -r --arg r "$KEY" '.[$r].osmfr.slugs[]' workers/regions.json); do
               if download "$OSMFR_BASE/$DIR/$SLUG.osm.pbf"; then OK=1; break; fi
             done
-            # 2) fallback: náš release osm-extracts
-            if [ -z "$OK" ]; then
-              echo "::warning::osm.fr export sa nenašiel, skúšam release osm-extracts…"
-              if gh release download osm-extracts --repo "$GITHUB_REPOSITORY" \
-                   --pattern "$KEY.osm.pbf" --output data/region.osm.pbf; then
-                OK=1
-              fi
-            fi
             if [ -z "$OK" ]; then
               echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/regions.json):"
               curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
-              echo "…alebo spusti workflow 'Update OSM extracts' (release fallback)."
+              echo "…alebo vyplň custom_pbf_url s priamou URL na .osm.pbf."
               exit 1
             fi
           fi
@@ -262,13 +336,16 @@ jobs:
 
       # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
-      # ide z externého DEM:
-      #   sonny      … Sonny's LiDAR DTM (release `dem-sonny`, workflow
-      #                "Update DEM") – LiDAR *terén*, teda bez stromov a budov
-      #   copernicus … GLO-30 z AWS Open Data – *povrch* vrátane stromov,
-      #                ale dostupný pre celý svet a bez zrkadlenia
-      # Chýbajúce Sonny dlaždice sa dopĺňajú Copernicusom, takže build nikdy
-      # nezostane bez terénu.
+      # ide z externého DEM: **Sonny's LiDAR DTM** z releasu `dem-sonny`
+      # (napĺňa ho workflow "Update DEM"). Je to LiDAR *model terénu*, teda
+      # bez stromov a striech.
+      #
+      # Copernicus GLO-30 ako záloha je zámerne VYPNUTÝ. Je to model povrchu:
+      # vrstevnice by v lese viedli po korunách stromov a skaly by vychádzali
+      # z vegetácie. Miešať to s LiDARom v jednej mape znamená, že polovica
+      # mapy klame a nikde nie je vidieť, ktorá. Keď dlaždica chýba, build
+      # radšej zlyhá s hláškou. (Späť sa dá zapnúť tým, že sa sem vráti
+      # sťahovanie z copernicus-dem-30m.s3.amazonaws.com – viď história.)
       #
       # Z toho istého DEM vznikajú aj skalné plochy – husté vrstevnice sú len
       # obraz veľkého sklonu, takže sa počítajú priamo zo sklonu terénu.
@@ -283,7 +360,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v3-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
 
       - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -301,11 +378,8 @@ jobs:
           IFS=, read -r W S E N <<< "$BBOX"
           INTERVAL='${{ inputs.contour_interval }}'
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
-          DEM_SRC='${{ inputs.dem_source }}'
-          [ -n "$DEM_SRC" ] || DEM_SRC=sonny
-
-          # Oba zdroje sú delené na dlaždice 1°×1° pomenované podľa
-          # juhozápadného rohu (konvencia SRTM): N49E019.
+          # Dlaždice sú 1°×1°, pomenované podľa juhozápadného rohu
+          # (konvencia SRTM): N49E019.
           python3 - "$W" "$S" "$E" "$N" > dem/list.txt <<'PY'
           import math, sys
           w, s, e, n = map(float, sys.argv[1:5])
@@ -316,19 +390,10 @@ jobs:
           PY
           echo "DEM dlaždíc pre bbox: $(wc -l < dem/list.txt)"
 
-          COPERNICUS=https://copernicus-dem-30m.s3.amazonaws.com
-          get_copernicus() { # $1 = N49E019
-            local c="Copernicus_DSM_COG_10_${1:0:3}_00_${1:3:4}_00_DEM"
-            curl -fsSL --retry 3 --retry-delay 3 -o "dem/tiles/$1.tif" "$COPERNICUS/$c/$c.tif"
-          }
-
           # Zoznam dlaždíc v release si vypýtame naraz – nemá zmysel skúšať
           # sťahovať to, čo tam nie je.
-          SONNY_ASSETS=""
-          if [ "$DEM_SRC" = "sonny" ]; then
-            SONNY_ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
-              --json assets -q '.assets[].name' 2>/dev/null || echo '')
-          fi
+          SONNY_ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets[].name' 2>/dev/null || echo '')
 
           sonny_ok=0
           missing=""
@@ -337,25 +402,19 @@ jobs:
                gh release download "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
                  --pattern "$t.tif" --dir dem/tiles --clobber >/dev/null 2>&1; then
               sonny_ok=$(( sonny_ok + 1 ))
-              continue
+            else
+              missing="$missing $t"
             fi
-            [ "$DEM_SRC" = "sonny" ] && missing="$missing $t"
-            # nad morom dlaždica neexistuje → 404 je v poriadku, preskočíme
-            get_copernicus "$t" || echo "  (chýba $t – zrejme mimo pevniny)"
           done < dem/list.txt
 
-          DEM_USED="$DEM_SRC"
-          if [ "$DEM_SRC" = "sonny" ]; then
-            if [ "$sonny_ok" -eq 0 ]; then
-              echo "::warning::V release $DEM_RELEASE nie je pre toto územie ani jedna dlaždica – používam Copernicus GLO-30. Sonny dlaždice tam dostaneš workflowom 'Update DEM'."
-              DEM_USED=copernicus
-            elif [ -n "$missing" ]; then
-              echo "::warning::Sonny DTM chýbajú dlaždice:$missing – doplnené z Copernicus GLO-30."
-              DEM_USED=sonny
-            else
-              echo "Sonny's LiDAR DTM: všetkých $sonny_ok dlaždíc z release $DEM_RELEASE ✓"
-            fi
+          DEM_USED=sonny
+          if [ -n "$missing" ]; then
+            echo "::error::V release $DEM_RELEASE chýbajú dlaždice:$missing"
+            echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
+            echo "Spusti workflow 'Update DEM' s priečinkom, ktorý toto územie pokrýva – alebo mu vyplň direct_urls."
+            exit 1
           fi
+          echo "Sonny's LiDAR DTM: všetkých $sonny_ok dlaždíc z release $DEM_RELEASE ✓"
 
           shopt -s nullglob
           tifs=(dem/tiles/*.tif)
@@ -365,12 +424,12 @@ jobs:
           fi
           echo "DEM dlaždíc k dispozícii: ${#tifs[@]} (zdroj: $DEM_USED)"
 
-          # -resolution highest: Sonny (1″) a Copernicus (nad 50° s riedšou
-          # mriežkou po dĺžke) sa môžu líšiť – mozaika ide na to jemnejšie.
+          # -resolution highest: dlaždice môžu mať rôznu mriežku (20m model má
+          # obdĺžnikové pixely) – mozaika ide na to jemnejšie.
           gdalbuildvrt -q -resolution highest dem/all.vrt "${tifs[@]}"
 
-          # Zjemnenie DEM pred trasovaním vrstevníc. Copernicus GLO-30 je v
-          # 1″ (~30 m); priemerovanie na hrubšiu mriežku vyhladí šum, ale
+          # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
+          # mriežku vyhladí šum, ale
           # zároveň zje detail terénu. Default 0 = žiadne zjemnenie, len orez
           # na bbox v plnom rozlíšení.
           SMOOTH='${{ inputs.contour_smoothing }}'
@@ -420,6 +479,10 @@ jobs:
           # bola len interpolácia (viac bodov, žiadna nová informácia),
           # hrubšia by zahodila skutočný detail. Mriežka DEM je v stupňoch,
           # takže po dĺžke ju treba prenásobiť cos(zemepisnej šírky).
+          # Input má prednosť pred env; 0 znamená „natívne rozlíšenie DEM".
+          RR='${{ inputs.rock_res }}'
+          case "$RR" in ''|*[!0-9]*) RR="$ROCK_RES" ;; esac
+          ROCK_RES="$RR"
           if [ "${ROCK_RES:-0}" -le 0 ] 2>/dev/null; then
             ROCK_RES=$(python3 - "$S" "$N" <<'PY'
           import json, math, subprocess, sys
@@ -433,6 +496,22 @@ jobs:
           print(max(1, round(min(x, y))))
           PY
           )
+          fi
+          # Strop na veľkosť rastra: pri jemnej mriežke a veľkom území by
+          # kontúrovanie bežalo hodiny. Radšej mriežku zhrubneme a povieme to.
+          REQ_RES="$ROCK_RES"
+          ROCK_RES=$(python3 - "$W" "$S" "$E" "$N" "$ROCK_RES" "$ROCK_MAX_CELLS" <<'PY'
+          import math, sys
+          w, s, e, n, res, cap = (float(v) for v in sys.argv[1:7])
+          lat = math.radians((s + n) / 2)
+          width = (e - w) * 111320 * math.cos(lat)
+          height = (n - s) * 110540
+          need = math.sqrt(width * height / cap)
+          print(max(1, round(max(res, need))))
+          PY
+          )
+          if [ "$ROCK_RES" -gt "$REQ_RES" ]; then
+            echo "::warning::Mriežka skál zhrubnutá z ${REQ_RES} m na ${ROCK_RES} m – inak by mal raster so sklonom nad ${ROCK_MAX_CELLS} buniek a kontúrovanie by bežalo hodiny. Pre plný detail vyber menší región alebo crop_bbox."
           fi
           [ "${ROCK_WIN:-0}" -gt 0 ] 2>/dev/null || ROCK_WIN="$ROCK_RES"
 
@@ -462,8 +541,8 @@ jobs:
             # EPSG:3035 (LAEA Európa) – metrická, pre naše zemepisné šírky
             # skresľuje plochy minimálne.
             gdalwarp -q -overwrite -t_srs EPSG:3035 -te_srs EPSG:4326 \
-              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r bilinear \
-              -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
+              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r cubicspline \
+              -ot Float32 -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
             gdaldem slope -q -compute_edges -co COMPRESS=DEFLATE -co TILED=YES \
               dem/metric.tif dem/slope.tif || return 1
             if [ "$ROCK_WIN" -gt "$ROCK_RES" ]; then
@@ -590,7 +669,7 @@ jobs:
           # Zdroj výšok a prah sklonu skál si nesie cache spolu s dlaždicami –
           # pri cache hite sa krok s DEM vôbec nespustí.
           DEM_USED=$(cat contours-out/dem-source.txt 2>/dev/null || echo '')
-          case "$DEM_USED" in sonny|copernicus) ;; *) DEM_USED='${{ inputs.dem_source }}' ;; esac
+          case "$DEM_USED" in sonny|copernicus) ;; *) DEM_USED=sonny ;; esac
           RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
@@ -798,7 +877,7 @@ jobs:
             --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
-            --dem-source='${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
+            --dem-source='${{ steps.contours.outputs.dem_source || 'sonny' }}' \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -849,7 +928,7 @@ jobs:
             --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ steps.contours.outputs.maxzoom || '14' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
-            --arg demsource '${{ steps.contours.outputs.dem_source || inputs.dem_source }}' \
+            --arg demsource '${{ steps.contours.outputs.dem_source || 'sonny' }}' \
             --arg rockslope '${{ steps.contours.outputs.rock_slope || 'off' }}' \
             '{
               default_region: $region,

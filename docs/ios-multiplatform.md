@@ -8,10 +8,9 @@ z OSM dát až do iOS aplikácie – a čo z toho už rieši naša pipeline.
 ```
 OSM (Geofabrik)          GitHub Actions pipeline                 Klienti
 ─────────────────        ─────────────────────────────────       ─────────────────
-slovakia-latest  ──►  1) worker: osmium extract -c (všetky kraje po
-   .osm.pbf           │  OSM admin. hraniciach) ─► release osm-extracts
-                      ▼
-                 2) build: stiahne iba {región}.osm.pbf
+osm.fr exporty   ──►  build: stiahne iba {región}.osm.pbf
+(kraje po admin.      │
+ hraniciach)          │
                       │
                       ▼
                  Planetiler (OpenMapTiles schéma)
