@@ -1,0 +1,70 @@
+{
+  "_comment": [
+    "Pomenované výrezy pre input `rock_area` vo workflowe Build map.",
+    "Skaly sú najdrahšia časť buildu (~30 min na kraj); pri ladení nastavení",
+    "nemá zmysel počítať celý kraj, keď zaujíma jedno pohorie.",
+    "Bbox je west,south,east,north vo WGS84 a je zámerne o kúsok väčší než",
+    "samotné pohorie – radšej trochu navyše než odrezaný hrebeň.",
+    "Workflow ho vždy ešte pretne s bboxom zvoleného regiónu."
+  ],
+  "tatry": {
+    "name": "Tatry (Západné + Vysoké + Belianske)",
+    "bbox": [19.55, 49.08, 20.4, 49.32]
+  },
+  "vysoke_tatry": {
+    "name": "Vysoké Tatry",
+    "bbox": [19.9, 49.09, 20.32, 49.25]
+  },
+  "belianske_tatry": {
+    "name": "Belianske Tatry",
+    "bbox": [20.18, 49.19, 20.38, 49.3]
+  },
+  "zapadne_tatry": {
+    "name": "Západné Tatry (Roháče)",
+    "bbox": [19.55, 49.1, 20.0, 49.28]
+  },
+  "nizke_tatry": {
+    "name": "Nízke Tatry",
+    "bbox": [19.05, 48.83, 20.2, 49.08]
+  },
+  "slovensky_raj": {
+    "name": "Slovenský raj",
+    "bbox": [20.2, 48.85, 20.55, 49.0]
+  },
+  "pieniny": {
+    "name": "Pieniny",
+    "bbox": [20.3, 49.35, 20.62, 49.47]
+  },
+  "mala_fatra": {
+    "name": "Malá Fatra",
+    "bbox": [18.75, 49.08, 19.25, 49.35]
+  },
+  "velka_fatra": {
+    "name": "Veľká Fatra",
+    "bbox": [18.9, 48.75, 19.32, 49.12]
+  },
+  "sulovske_skaly": {
+    "name": "Súľovské skaly",
+    "bbox": [18.53, 49.11, 18.72, 49.22]
+  },
+  "slovensky_kras": {
+    "name": "Slovenský kras",
+    "bbox": [20.4, 48.5, 21.0, 48.72]
+  },
+  "muranska_planina": {
+    "name": "Muránska planina",
+    "bbox": [19.9, 48.68, 20.25, 48.85]
+  },
+  "vihorlat": {
+    "name": "Vihorlat",
+    "bbox": [21.85, 48.85, 22.3, 49.0]
+  },
+  "strazovske_vrchy": {
+    "name": "Strážovské vrchy",
+    "bbox": [18.3, 48.85, 18.85, 49.15]
+  },
+  "male_karpaty": {
+    "name": "Malé Karpaty",
+    "bbox": [16.98, 48.15, 17.75, 48.72]
+  }
+}

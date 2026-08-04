@@ -284,6 +284,40 @@ má 20 m, takže sú to jemnejšie *obrysy a diery*, nie nové merania terénu.
 > interaktívny export, takže by sa musel najprv nazrkadliť do releasu rovnako
 > ako Sonnyho DTM.
 
+#### Skaly len na výreze (rýchly beh)
+
+Skaly sú najdrahšia časť buildu. Pri ladení prahu, mriežky alebo farieb nemá
+zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno pohorie – na to je
+input **`rock_area`**:
+
+| `rock_area` | územie | plocha | skaly trvajú |
+|---|---|--:|--:|
+| *(prázdne)* | celý región | 16 103 km² | ~30 min |
+| `tatry` | Západné + Vysoké + Belianske | 1 032 km² | ~2 min |
+| `vysoke_tatry` | Vysoké Tatry | 541 km² | ~1 min |
+| `belianske_tatry` | Belianske Tatry | 177 km² | <1 min |
+| `slovensky_raj` | Slovenský raj | 424 km² | ~1 min |
+| `20.0,49.1,20.2,49.2` | vlastný bbox | 161 km² | <1 min |
+
+*(plochy sú po orezaní na Prešovský kraj)*
+
+Pomenované výrezy sú vo [`workers/areas.json`](workers/areas.json) – zatiaľ
+Tatry (celé aj po častiach), Nízke Tatry, Slovenský raj, Pieniny, Malá aj
+Veľká Fatra, Súľovské skaly, Slovenský kras, Muránska planina, Vihorlat,
+Strážovské vrchy a Malé Karpaty. Namiesto názvu sa dá zadať aj bbox
+`west,south,east,north`.
+
+Výrez sa vždy **pretne s bboxom regiónu** – čo je mimo, sa nepočíta (nie je
+tam ani DEM, ani mapa). Keď sa neprekrývajú vôbec (napr. `mala_fatra`
+s Prešovským krajom), build to povie rovno a zastaví sa, namiesto aby
+polhodinu počítal prázdno.
+
+> **Vo zvyšku regiónu potom skaly nie sú.** Nie je to orez mapy, len skál –
+> vrstevnice, terén aj dlaždice sú za celý región. Build to hlási ako
+> `::warning::` aj v súhrne, aby sa taký beh omylom nenasadil ako finálny.
+> Výrez je aj v mene uloženého assetu (`rock-{región}-{výrez}-…`) a v kľúči
+> cache, takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja.
+
 #### Veľkosť plôch určuje prah sklonu, nie mriežka
 
 Súvislá stena nad prahom je jedna plocha, nech ju počítaš na akejkoľvek
@@ -567,6 +601,9 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
      terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
      (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod
      prahom vnútri steny ostanú nezafarbené
+   - `rock_area`: počítať skaly len na výreze (`vysoke_tatry`, `tatry`,
+     `slovensky_raj`… alebo bbox) – z ~30 min sa stane ~1 min, ale skaly
+     budú len tam
    - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
      dlaždice (uložia sa do releasu)
    - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať

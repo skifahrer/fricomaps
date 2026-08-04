@@ -87,6 +87,11 @@ on:
         required: false
         default: "2"
         type: string
+      rock_area:
+        description: "Skaly len na výreze – názov pohoria (vysoke_tatry, tatry, nizke_tatry, slovensky_raj, mala_fatra… viď workers/areas.json) alebo bbox W,S,E,N. Prázdne = celý región"
+        required: false
+        default: ""
+        type: string
       rocks_rebuild:
         description: "PREGENEROVAŤ skaly – zmaže uloženú verziu pre tento región aj cache a počíta odznova"
         required: false
@@ -410,7 +415,10 @@ jobs:
           B='${{ steps.region.outputs.bboxkey }}'
           D='${{ needs.check-dem.outputs.demkey }}'
           {
-            echo "contours=contours-v6-$D-$B-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
+            # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
+            # vrátili z cache ako keby to boli skaly celého kraja.
+            RA=$(printf '%s' '${{ inputs.rock_area }}' | tr -c 'a-zA-Z0-9' '_')
+            echo "contours=contours-v6-$D-$B-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
             echo "demtiles=demtiles-$D-$B"
             echo "terrain=terrain-v1-$D-$B-z${{ inputs.terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
@@ -646,6 +654,51 @@ jobs:
           # terénu, ale zubaté rohy jedinej bunky.
           MIN_AREA=$(python3 -c "print(round($RR * $RR, 2))")
 
+          # ---------- výrez na skaly ----------
+          # Skaly sú najdrahšia časť buildu. Pri ladení nastavení nemá zmysel
+          # počítať celý kraj, keď zaujíma jedno pohorie: Prešovský kraj má
+          # 16 400 km², Vysoké Tatry 540 km² – tridsaťkrát menej.
+          ROCK_BBOX="$BBOX"
+          ROCK_AREA_KEY="cely"
+          ROCK_AREA_NAME="celý región"
+          RA='${{ inputs.rock_area }}'
+          if [ -n "$RA" ]; then
+            case "$RA" in
+              *,*)
+                ROCK_BBOX="$RA"
+                ROCK_AREA_KEY="vyrez"
+                ROCK_AREA_NAME="vlastný výrez $RA"
+                ;;
+              *)
+                AB=$(jq -r --arg a "$RA" '.[$a].bbox // [] | join(",")' workers/areas.json)
+                if [ -z "$AB" ]; then
+                  echo "::error::Neznámy výrez '$RA'. Známe výrezy (workers/areas.json): $(jq -r 'to_entries|map(select(.key|startswith("_")|not))|map(.key)|join(", ")' workers/areas.json). Alebo zadaj bbox west,south,east,north."
+                  exit 1
+                fi
+                ROCK_BBOX="$AB"
+                ROCK_AREA_KEY=$(printf '%s' "$RA" | tr -c 'a-zA-Z0-9' '_')
+                ROCK_AREA_NAME=$(jq -r --arg a "$RA" '.[$a].name' workers/areas.json)
+                ;;
+            esac
+
+            # Prienik s bboxom regiónu: mimo neho nie sú ani DEM dlaždice, ani
+            # mapa – počítať tam skaly by bola len stratená polhodina.
+            ROCK_BBOX=$(python3 - "$BBOX" "$ROCK_BBOX" <<'PY'
+          import sys
+          a = [float(v) for v in sys.argv[1].split(",")]
+          b = [float(v) for v in sys.argv[2].split(",")]
+          w, s = max(a[0], b[0]), max(a[1], b[1])
+          e, n = min(a[2], b[2]), min(a[3], b[3])
+          print(f"{w},{s},{e},{n}" if e > w and n > s else "")
+          PY
+          )
+            if [ -z "$ROCK_BBOX" ]; then
+              echo "::error::Výrez '$RA' neleží v regióne (bbox $BBOX) – neprekrývajú sa. Vyber iný región alebo iný výrez."
+              exit 1
+            fi
+            echo "::warning::Skaly sa počítajú LEN na výreze „$ROCK_AREA_NAME“ ($ROCK_BBOX). Vo zvyšku regiónu skaly v mape nebudú. Pre celý región nechaj rock_area prázdne."
+          fi
+
           make_empty_rock() {
             # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj
             # vtedy, keď sa žiadna skala nenašla alebo sú vypnuté.
@@ -659,7 +712,9 @@ jobs:
             # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
             # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
             # asset zahodí a počíta odznova.
-            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+            # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
+            # vydávať za skaly celého kraja.
+            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-${ROCK_AREA_KEY}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
             ROCK_READY=""
             ROCK_SRC="výpočet"
             if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
@@ -675,10 +730,10 @@ jobs:
             fi
 
             if [ -z "$ROCK_READY" ]; then
-              echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
+              echo "::group::Skaly – $ROCK_AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
               # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
               # v rovine nič nenašiel), nemá to zhodiť hodinový build.
-              if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
+              if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$ROCK_BBOX" \
                    --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
                    --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
                    --stats=contours-out/rock-stats.txt \
@@ -706,8 +761,23 @@ jobs:
             ROCK_N=$(ogrinfo -so data/rock.gpkg rock 2>/dev/null \
               | awk -F': ' '/^Feature Count/ {print $2}')
             printf '%s\t%s\t%s\n' "Skalné plochy" "$(( $(date +%s) - T_ROCK ))" \
-              "${ROCK_N:-0} plôch, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m ($ROCK_SRC)" \
+              "${ROCK_N:-0} plôch, $ROCK_AREA_NAME, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m ($ROCK_SRC)" \
               >> /tmp/build-steps.tsv
+            # Keď skaly prišli z releasu, script nebežal a štatistiku nemá kto
+            # napísať – aspoň to základné, nech súhrn nie je plný otáznikov.
+            if [ ! -s contours-out/rock-stats.txt ]; then
+              { echo "count=${ROCK_N:-0}"; echo "grid_m=$RR"
+                echo "min_area_m2=$MIN_AREA"
+                echo "slope_deg=$ROCK_SLOPE"; echo "cliff_deg=$ROCK_CLIFF"
+              } > contours-out/rock-stats.txt
+            fi
+            # Výrez do štatistiky, nech je v súhrne vidieť, že skaly nie sú
+            # všade – aj keď sa tento krok nabudúce vezme z cache.
+            # Hodnoty v apostrofoch: súhrn si súbor načíta cez `.` a meno
+            # výrezu má medzeru („celý región").
+            { printf "area_key='%s'\n" "$ROCK_AREA_KEY"
+              printf "area_name='%s'\n" "$ROCK_AREA_NAME"
+              printf "area_bbox='%s'\n" "$ROCK_BBOX"; } >> contours-out/rock-stats.txt
           else
             make_empty_rock
             echo "Skaly: vypnuté (prázdna vrstva)."
@@ -1421,6 +1491,7 @@ jobs:
               echo
               echo "| vlastnosť | hodnota |"
               echo "|---|---|"
+              echo "| územie | ${area_name:-celý región}${area_bbox:+ (\`$area_bbox\`)} |"
               echo "| počet samostatných plôch | ${count:-?} |"
               echo "| obrys sa počíta na mriežke | ${grid_m:-?} m |"
               echo "| bunka zdrojového DEM (Sonny) | ~${dem_cell_m:-?} m → **strop skutočného detailu** |"
@@ -1438,6 +1509,12 @@ jobs:
               echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
               echo "všade sklon nad prahom. Vektorizuje sa jedným priechodom nad"
               echo "celým územím, takže na hraniciach počítaných častí nie sú švy."
+              if [ "${area_key:-cely}" != "cely" ]; then
+                echo
+                echo "> ⚠️ **Skaly sú len na výreze „${area_name}“.** Vo zvyšku"
+                echo "> regiónu v mape žiadne nebudú. Pre celý región nechaj"
+                echo "> input \`rock_area\` prázdny."
+              fi
               echo
               echo "> Mriežka ${grid_m:-?} m hovorí, ako jemne je obrys odkrokovaný;"
               echo "> ale zdrojový DEM má bunku ~${dem_cell_m:-?} m, takže nové detaily"
