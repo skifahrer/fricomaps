@@ -64,8 +64,8 @@ layers:
           - key: level
 
   # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom). Obrys je
-  # izolínia sklonu, takže plocha má tvar, aký terén naozaj má; susediace
-  # plochy sú už zlúčené do jedného polygónu.
+  # izolínia sklonu, takže plocha má tvar, aký terén naozaj má. Kde je vnútri
+  # steny miesto pod prahom (polica, terasa), má polygón dieru a nezafarbí sa.
   #
   # min_zoom 9, nie 13: skaly majú byť vidieť všade, kde sú – veľká stena je
   # čitateľná aj z prehľadového zoomu. Malé plochy sa nižšími zoomami netreba

@@ -211,11 +211,12 @@ DEM
                                   o tretinu kratší než 1° po šírke),
                                   mriežka 2 m (`rock_res`)
   → gdaldem slope                 sklon v stupňoch
-  → gdal_contour -p -fl 50 65     izolínie sklonu ako PLOCHY (hladší okraj
-                                  než polygonizácia po pixeloch)
-  → ST_Union po triedach          zlúči, čo spolu súvisí – aj cez hranicu
-                                  počítanej časti
-  → -explodecollections           späť na samostatné skaly
+  → gdal_translate -ot Byte       sklon s krokom 0,5° na disk (mozaika celého
+                                  územia sa vo Float32 nezmestí)
+  → gdalbuildvrt                  mozaika sklonu, a až nad ňou NARAZ:
+  → gdal_contour -p -fl 100 130   izolínie sklonu ako PLOCHY, aj s dierami
+                                  (hladší okraj než polygonizácia po pixeloch)
+  → -explodecollections           samostatné skaly
   → filter najmenšej plochy       + `class`: steep (≥50°) / cliff (≥65°)
   → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
 ```
@@ -225,12 +226,29 @@ kde svah prekročí prah – zubatý pás pod hrebeňom, oblúk okolo žľabu, o
 brala v suti. Žiadna mriežka štvorčekov (tá tu bola do augusta 2026 a je
 preč).
 
-**Susediace plochy sa zlučujú.** Územie sa počíta po častiach, takže jedna
-stena môže vyjsť ako niekoľko kusov zrezaných na hranici časti. Na konci sa
-preto všetko v rámci triedy zlúči (`ST_Union`) a hneď rozbije späť na
-samostatné plochy (`-explodecollections`): čo spolu súvisí, je jeden polygón;
-čo spolu nesúvisí, ostáva samostatné. Vypnúť sa to dá cez `ROCK_DISSOLVE`
-v `env:`.
+**Čo nie je nad prahom, sa nezafarbí.** Keď je vnútri steny miesto s menším
+sklonom – polica, terasa, zarastený stupeň – vypadne z plochy **diera**, aj
+keď je dookola všade sklon nad prahom. Diery sa nezapĺňajú ani nefiltrujú a
+obrys ich obkreslí rovnako ako vonkajšiu hranicu, takže je polica v mape
+vidieť.
+
+**Vektorizuje sa naraz nad celým územím – a je to nutné.** Sklon sa pre kraj
+nedá spočítať jedným rasterom (pri 2 m je to vyše 3 miliárd buniek), takže sa
+počíta po častiach. Vektorizovať po častiach sa ale nedá: diera prerezaná
+hranicou časti sa zmení na zárez v okraji a späť sa nezlepí ani cez
+`ST_Union`. Namerané na syntetickom teréne (prstencová terasa v kuželi):
+
+| postup | plôch | dier |
+|---|--:|--:|
+| celý raster naraz (referencia) | 2 | 2 |
+| po častiach + `ST_Union` | 4 | **0** |
+| **sklon po častiach, vektorizácia naraz** | **2** | **2** |
+
+Preto sa po častiach počíta **len raster sklonu**, uloží sa na disk ako `Byte`
+s krokom 0,5° (vo `Float32` by mala mozaika kraja ~13 GB) a `gdal_contour` ide
+jedným priechodom nad celou mozaikou. Výsledok potom nezávisí od toho, na
+koľko častí sa počítalo – overené pri 1, 12 aj 60 častiach je zhodný do
+posledného m².
 
 **Skaly sú vidieť všade, kde sú** – vrstva ide do dlaždíc od **z9** a štýl ich
 kreslí od z9 (obrys od z11). Drobné plochy pritom nižšie zoomy nezaťažia:
@@ -241,15 +259,21 @@ veľké steny a s približovaním pribúdajú detaily.
 
 | vec | hodnota |
 |---|---|
-| mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`) |
+| mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`; `1` dá 1 m²) |
 | bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
-| najmenšia ponechaná plocha | jedna bunka mriežky, teda **4 m²** pri 2 m |
+| najmenšia ponechaná plocha | jedna bunka mriežky: **4 m²** pri 2 m, **1 m²** pri 1 m |
+| krok sklonu v mozaike | 0,5° |
 | zjednodušovanie obrysu | žiadne (`ROCK_SIMPLIFY: 0`) |
 | filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
 
 Presné čísla za konkrétny beh (počet plôch, najmenšia/priemerná/najväčšia
-plocha, koľko km² skál) píše build do **Summary** – viď [Súhrn
-buildu](#súhrn-buildu).
+plocha, koľko km² skál, koľko plôch má dieru a koľko km² diery vykrojili) píše
+build do **Summary** – viď [Súhrn buildu](#súhrn-buildu).
+
+**Detail na 1 m² sa dá zapnúť** – `rock_res: 1`. Najmenšia ponechaná plocha je
+potom naozaj 1 m². Cena: 4× viac buniek, teda pre celý kraj okolo dvoch hodín,
+takže to má zmysel len s `crop_bbox`. A platí to isté ako vyššie: zdrojový DEM
+má 20 m, takže sú to jemnejšie *obrysy a diery*, nie nové merania terénu.
 
 > **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
 > obrys odkrokovaný. Skutočný detail je ale stropený zdrojom: Sonny má pre
@@ -282,17 +306,18 @@ vymedzené skaly, dá 55° alebo 60°.
 ~13 GB na jeden raster – viac, než má runner miesta aj pamäte. Územie sa preto
 krája (`ROCK_CHUNK_CELLS`, default 150 mil. buniek na kus), každá časť sa
 spracuje a hneď upratá; sklon sa počíta s presahom a plochy sa orežú presne na
-hranicu časti, takže susedné kusy na seba nadväzujú. Čas rastie lineárne –
-merané ~1,5 mil. buniek/s, teda kraj pri 2 m okolo 35 minút. **Mriežka 1 m sa
-oplatí len na `crop_bbox`; pre kraj by to boli hodiny.**
+hranicu časti, takže susedné kusy na seba nadväzujú bez medzery ani prekryvu.
+Čas rastie lineárne – merané ~2,5 mil. buniek/s, teda kraj pri 2 m okolo
+30 minút. **Mriežka 1 m sa oplatí len na `crop_bbox`; pre kraj by to boli
+~2 hodiny.**
 
 Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` (od akého sklonu je
 terén skala, default 50°) a `rock_res` (mriežka obrysu v metroch, default 2).
 Ostatné ladenie je v `env:` na začiatku
 [build-map.yml](.github/workflows/build-map.yml): `ROCK_SIMPLIFY` (0 = presný
-obrys), `ROCK_DISSOLVE` (zlučovanie susedných plôch), `ROCK_CLIFF_PLUS`
-(o koľko ° nad prahom začína trieda `cliff`), `ROCK_CHUNK_CELLS` (koľko buniek
-naraz).
+obrys), `ROCK_CLIFF_PLUS` (o koľko ° nad prahom začína trieda `cliff`),
+`ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
+(verzia algoritmu v mene uloženého assetu).
 
 V mape z toho sú **tmavosivé plochy** s tenkým obrysom, kreslené *pod*
 vrstevnicami, takže ohraničujú strmé úseky a vrstevnice nad nimi zostávajú
@@ -302,7 +327,7 @@ sa dajú v developer móde doladiť ako čokoľvek iné.
 
 **Hotové skaly sa neprepočítavajú.** Uložia sa do releasu `dem-rocks` pod
 menom, ktoré nesie región aj nastavenia
-(`rock-{región}-s{prah}-g{mriežka}.gpkg.zst`), takže ďalší build s tými istými
+(`rock-{región}-s{prah}-g{mriežka}-{algo}.gpkg.zst`), takže ďalší build s tými istými
 nastaveniami ich len stiahne – sekundy namiesto desiatok minút. Iné nastavenia
 dajú iné meno assetu, takže sa nikdy nepomiešajú. Ako to prepočítať nanovo,
 hovorí [Pregenerovanie](#pregenerovanie).
@@ -540,7 +565,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy – od akého sklonu je
      terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
-     (2 m). Tvar plôch je tvar terénu, susedné sa zlučujú
+     (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod
+     prahom vnútri steny ostanú nezafarbené
    - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
      dlaždice (uložia sa do releasu)
    - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať
