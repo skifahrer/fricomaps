@@ -75,12 +75,13 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | čo to je | odkiaľ |
 |---|---|---|
-| **Sonny's LiDAR DTM, model 20m** (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
-| Copernicus GLO-30 | *model povrchu* vrátane vegetácie, 1″ (~30 m) | AWS Open Data, bez autentifikácie |
+| **Sonny's LiDAR DTM, model 20m** | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
 
-Berie sa to, čo je pre danú dlaždicu k dispozícii: chýbajúce Sonny dlaždice
-doplní Copernicus, takže build nezostane bez terénu (a v logu je varovanie,
-ktoré dlaždice chýbali). Prepínač je input `dem_source`.
+Iný zdroj sa nepoužíva. **Copernicus GLO-30 ako záloha je zámerne vypnutý** –
+je to model *povrchu*, takže vrstevnice by v lese viedli po korunách stromov
+a skaly by vychádzali z vegetácie. Keby sa ním chýbajúce dlaždice ticho
+dopĺňali, časť mapy by klamala a nebolo by vidieť ktorá; build preto radšej
+zlyhá a vypíše, ktoré dlaždice v release chýbajú.
 
 ```
 DEM dlaždice 1°×1° pre bbox (N49E019.tif)
@@ -160,7 +161,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   rastre. Na najvyššom zoome ide geometria do dlaždíc bez zjednodušovania
   (`--simplify_tolerance_at_max_zoom=0`), takže obrys skaly aj priebeh
   vrstevnice sedia presne tam, kam ich položil DEM.
-- **Cache.** Vrstevnice aj skaly závisia len od územia, zdroja výšok,
+- **Cache.** Vrstevnice aj skaly závisia len od územia, obsahu releasu s DEM,
   intervalu, maxzoomu, zjemnenia a prahu sklonu – nie od toho, čo sa zmenilo
   v OSM. Sú preto nacacheované podľa týchto parametrov a pri ďalšom builde
   mapy sa nepočítajú znova.
@@ -315,11 +316,10 @@ geometrie a bez zahadzovania malých prvkov.
 
 > **Spúšťa sa aj sám.** „Build map" má pred sebou úlohu *Kontrola výškového
 > modelu*: zistí, ktoré 1° dlaždice pokrývajú jeho bbox, a porovná ich
-> s assetmi releasu. Keď tam nie je ani jedna, zavolá tento workflow ako
-> `workflow_call` a až potom sa tiluje. Keď časť dlaždíc chýba, nespúšťa sa
-> nič – build si tie chýbajúce doplní Copernicusom a napíše to do logu.
-> Otlačok obsahu releasu ide do kľúča cache vrstevníc, takže po doplnení
-> terénu sa nevrátia staré vrstevnice počítané ešte z Copernicusu.
+> s assetmi releasu. Keď čo i len jedna chýba, zavolá tento workflow ako
+> `workflow_call` a až potom sa tiluje – iný zdroj výšok totiž nemáme, takže
+> by build aj tak zlyhal. Otlačok obsahu releasu ide do kľúča cache
+> vrstevníc, takže po doplnení terénu sa nevrátia staré vrstevnice.
 
 Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
 distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v

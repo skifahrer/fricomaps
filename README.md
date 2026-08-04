@@ -81,7 +81,6 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
 | **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
-| vrstevnice a skaly – záloha | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
 | tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
@@ -135,12 +134,17 @@ dlaždice pre svoj bbox a lepiť ich `gdalbuildvrt`-om (ten rôzne projekcie
 v jednom VRT neunesie). Jeden release = jeden model; miešať 20m a 1″ pod
 rovnakým `release_tag` nemá zmysel, dlaždice sa volajú rovnako.
 
-Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**.
-Čo v releasi nie je, doplní Copernicus
-GLO-30, takže build bez terénu nikdy nezostane – v logu je varovanie, ktoré
-dlaždice chýbali. Prepnúť sa dá inputom `dem_source` (`sonny` / `copernicus`).
-Licencia Sonny's DTM je CC BY 4.0, zdroj sa uvádza v atribúcii mapy
-(nastavuje ju štýl podľa toho, čo build naozaj použil).
+Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox** –
+a keď niektorá chýba, **zlyhá s hláškou, ktorá presne povie ktorá**.
+
+> **Copernicus GLO-30 ako záloha je zámerne vypnutý.** Je to model *povrchu*:
+> vrstevnice by v lese viedli po korunách stromov a skaly by vychádzali
+> z vegetácie. Keby sa ním chýbajúce dlaždice ticho dopĺňali, časť mapy by
+> klamala a nikde by nebolo vidieť, ktorá. Radšej nech build povie, že terén
+> chýba. Zapnúť sa dá vrátením sťahovania z `copernicus-dem-30m.s3.amazonaws.com`
+> do kroku *Vrstevnice a skaly z DEM*.
+
+Licencia Sonny's DTM je CC BY 4.0, zdroj sa uvádza v atribúcii mapy.
 
 ### Vrstevnice
 
@@ -424,14 +428,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
-   - `dem_source`: `sonny` (LiDAR terén) alebo `copernicus`
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy, od akého sklonu
      (default 40°) a na akej mriežke (default 5 m = drobné skaly)
 
-   Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
-   jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*
-   (v behu je to samostatná úloha „Doplniť výškový model"). Ručne ho teda
-   treba spúšťať len vtedy, keď chceš iný priečinok alebo iný model.
+   Výškový model si build **doplní sám**: keď v release `dem-sonny` chýba
+   čo i len jedna dlaždica pre jeho územie, spustí pred sebou workflow
+   *Update DEM* (v behu je to samostatná úloha „Doplniť výškový model").
+   Ručne ho teda treba spúšťať len vtedy, keď chceš iný priečinok alebo iný
+   model.
 3. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
