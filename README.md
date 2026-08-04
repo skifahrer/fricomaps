@@ -29,8 +29,10 @@ Build map                    stiahne IBA {región}.osm.pbf z osm.fr exportov
                              ─► GitHub Pages (viewer + dlaždice + style.json)
 
 Update DEM                   Sonny's LiDAR DTM 20m (Google Drive) ─► rezanie
-(raz, keď treba nový terén)  na 1° dlaždice ─► release `dem-sonny`:
+(sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
                              N49E019.tif + meta.json
+                             ▲ Build map ho zavolá automaticky, keď v release
+                               nie je pre jeho územie ani jedna dlaždica
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -417,12 +419,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 ## Prvé spustenie
 
 1. **Zapni GitHub Pages:** Settings → Pages → Source: **GitHub Actions**.
-2. Actions → **Update DEM (Sonny's LiDAR DTM → release)** → *Run workflow*
-   (stiahne dlaždice výškového modelu z Google Drive priečinka Sonnyho a uloží
-   ich do releasu `dem-sonny`; predvolený priečinok je Slovensko, pre inú
-   krajinu stačí vymeniť odkaz). Stačí raz – kým sa terén nezmení. Bez tohto
-   kroku sa vrstevnice a skaly urobia z Copernicus GLO-30.
-3. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
+2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
    - `region`: `slovensko` alebo kraj (`bratislavsky`, `zilinsky`, …)
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
@@ -430,7 +427,12 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `dem_source`: `sonny` (LiDAR terén) alebo `copernicus`
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy, od akého sklonu
      (default 40°) a na akej mriežke (default 5 m = drobné skaly)
-4. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
+
+   Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
+   jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*
+   (v behu je to samostatná úloha „Doplniť výškový model"). Ručne ho teda
+   treba spúšťať len vtedy, keď chceš iný priečinok alebo iný model.
+3. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
 

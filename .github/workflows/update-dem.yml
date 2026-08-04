@@ -52,6 +52,30 @@ on:
         required: false
         default: true
         type: boolean
+  # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho
+  # územie – vtedy si terén doplní sám, s predvolenými hodnotami.
+  workflow_call:
+    inputs:
+      drive_folder:
+        description: "Google Drive priečinok so Sonny dátami (default = Slovensko, model 20m: mriežka 20×20 m, výška po 0,1 m)"
+        required: false
+        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
+        type: string
+      direct_urls:
+        description: "Náhrada za Drive: priame URL na .zip/.hgt/.tif oddelené medzerou alebo novým riadkom"
+        required: false
+        default: ""
+        type: string
+      release_tag:
+        description: "Tag releasu, do ktorého sa dlaždice uložia"
+        required: false
+        default: "dem-sonny"
+        type: string
+      keep_existing:
+        description: "Nechať v release aj dlaždice, ktoré sa teraz nestiahli"
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write

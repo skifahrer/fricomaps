@@ -145,7 +145,92 @@ env:
   ROCK_MAX_CELLS: "600000000"
 
 jobs:
+  # ---------- je v release terén pre toto územie? ----------
+  # Bez Sonny dlaždíc by build ticho spadol na Copernicus (povrch so stromami).
+  # Radšej sa najprv pozrieme, či v release niečo pre náš bbox vôbec je –
+  # a keď nie, doplní ho úloha `mirror-dem` ešte pred buildom.
+  check-dem:
+    name: Kontrola výškového modelu
+    runs-on: ubuntu-latest
+    if: ${{ inputs.contours && inputs.dem_source == 'sonny' }}
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+      demkey: ${{ steps.check.outputs.demkey }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sú v release dlaždice pre bbox?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BBOX=''
+          if [ -n '${{ inputs.custom_pbf_url }}' ]; then
+            BBOX='${{ inputs.custom_bbox }}'
+          else
+            BBOX=$(jq -r --arg r '${{ inputs.region }}' '.[$r].bbox // [] | join(",")' workers/regions.json)
+          fi
+          if [ -n '${{ inputs.crop_bbox }}' ]; then BBOX='${{ inputs.crop_bbox }}'; fi
+
+          ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+            --json assets -q '.assets[].name' 2>/dev/null || echo '')
+
+          if [ -z "$BBOX" ]; then
+            # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak sa
+            # pozeráme len na to, či v release vôbec niečo je.
+            NEED=$([ -z "$ASSETS" ] && echo true || echo false)
+            echo "Bbox nie je známy; release $DEM_RELEASE má $(printf '%s' "$ASSETS" | grep -c . || true) assetov → doplniť: $NEED"
+          else
+            IFS=, read -r W S E N <<< "$BBOX"
+            TILES=$(python3 - "$W" "$S" "$E" "$N" <<'PY'
+          import math, sys
+          w, s, e, n = map(float, sys.argv[1:5])
+          for lat in range(math.floor(s), math.floor(n) + 1):
+              for lon in range(math.floor(w), math.floor(e) + 1):
+                  ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
+                  print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
+          PY
+          )
+            HAVE=0
+            for t in $TILES; do
+              printf '%s\n' "$ASSETS" | grep -qx "$t.tif" && HAVE=$(( HAVE + 1 )) || true
+            done
+            TOTAL=$(printf '%s\n' "$TILES" | grep -c .)
+            # Doplňujeme len vtedy, keď nie je ani jedna použiteľná dlaždica.
+            # Keď ich časť chýba, build ich sám dopĺňa Copernicusom a napíše to.
+            NEED=$([ "$HAVE" -eq 0 ] && echo true || echo false)
+            echo "Dlaždíc pre bbox: $TOTAL, v release $DEM_RELEASE: $HAVE → doplniť: $NEED"
+          fi
+          echo "needed=$NEED" >> "$GITHUB_OUTPUT"
+
+          # Otlačok obsahu releasu ide do kľúča cache vrstevníc. Bez neho by
+          # sa po doplnení terénu vrátili z cache staré vrstevnice počítané
+          # ešte z Copernicusu.
+          DEMKEY=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
+            -q '[.assets[] | .name + ":" + (.size|tostring)] | sort | join(",")' 2>/dev/null \
+            | sha256sum | cut -c1-12)
+          echo "demkey=$DEMKEY" >> "$GITHUB_OUTPUT"
+          echo "Otlačok releasu: $DEMKEY"
+
+  # ---------- doplnenie terénu (rovnaký workflow ako Update DEM) ----------
+  mirror-dem:
+    name: Doplniť výškový model
+    needs: check-dem
+    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+
   build:
+    needs: [check-dem, mirror-dem]
+    # Kontrola aj doplnenie sa môžu preskočiť (Copernicus, vypnuté vrstevnice,
+    # terén už v release) – build musí bežať aj tak. Keď doplnenie zlyhá
+    # (napr. Drive limituje sťahovanie), build ide ďalej a spadne na Copernicus
+    # s hlasným varovaním; beh je aj tak červený, takže to nezostane bez
+    # povšimnutia.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     environment:
@@ -281,7 +366,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v3-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v4-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-${{ inputs.dem_source }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
 
       - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}

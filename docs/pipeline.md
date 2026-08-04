@@ -313,6 +313,14 @@ geometrie a bez zahadzovania malých prvkov.
 
 ## Druhý workflow: „Update DEM"
 
+> **Spúšťa sa aj sám.** „Build map" má pred sebou úlohu *Kontrola výškového
+> modelu*: zistí, ktoré 1° dlaždice pokrývajú jeho bbox, a porovná ich
+> s assetmi releasu. Keď tam nie je ani jedna, zavolá tento workflow ako
+> `workflow_call` a až potom sa tiluje. Keď časť dlaždíc chýba, nespúšťa sa
+> nič – build si tie chýbajúce doplní Copernicusom a napíše to do logu.
+> Otlačok obsahu releasu ide do kľúča cache vrstevníc, takže po doplnení
+> terénu sa nevrátia staré vrstevnice počítané ešte z Copernicusu.
+
 Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
 distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v
 zdieľanom priečinku a pri väčšom počte stiahnutí odpovedá limitom, takže sa
