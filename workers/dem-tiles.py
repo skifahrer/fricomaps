@@ -27,11 +27,26 @@ import subprocess
 import sys
 
 
-def gdalinfo(path):
+# GDAL_PAM_ENABLED=NO: bez neho si `gdalinfo -stats` odkladá štatistiky do
+# súborov .aux.xml, ktoré by sa potom viezli do releasu ako smetie.
+NO_PAM = {**os.environ, "GDAL_PAM_ENABLED": "NO"}
+
+
+def gdalinfo(path, stats=False):
+    cmd = ["gdalinfo", "-json"] + (["-approx_stats"] if stats else []) + [path]
     out = subprocess.run(
-        ["gdalinfo", "-json", path], capture_output=True, text=True, check=True
+        cmd, capture_output=True, text=True, check=True, env=NO_PAM
     ).stdout
     return json.loads(out)
+
+
+def elevation_range(path):
+    """(min, max) výšok, alebo None, keď v rastri nie je ani jeden platný pixel."""
+    try:
+        b = gdalinfo(path, stats=True)["bands"][0]
+        return b["minimum"], b["maximum"]
+    except Exception:
+        return None
 
 
 def wgs84_bounds(info):
@@ -85,6 +100,7 @@ def main():
     ap.add_argument("--resampling", default="bilinear")
     args = ap.parse_args()
 
+    temps = []
     src = args.src[0]
     if len(args.src) > 1:
         # jeden VRT nad všetkými vstupmi – rieši aj prekryvy
@@ -92,9 +108,30 @@ def main():
         os.makedirs(args.out, exist_ok=True)
         subprocess.run(["gdalbuildvrt", "-q", "-resolution", "highest", src, *args.src],
                        check=True)
+        temps.append(src)
         print(f"Zlepené do VRT: {len(args.src)} rastrov")
 
     info = gdalinfo(src)
+
+    # Výšky uložené ako celé čísla so škálou (napr. decimetre so scale=0.1)
+    # by sa bez rozbalenia dostali do mapy desaťkrát väčšie – a sklon by potom
+    # ukázal skalu na každom poli. gdalwarp škálu sám neuplatňuje, preto sa
+    # raster najprv prepíše na skutočné metre.
+    band = info["bands"][0]
+    scale, offset = band.get("scale", 1) or 1, band.get("offset", 0) or 0
+    if scale != 1 or offset != 0:
+        print(f"Výšky sú škálované (scale={scale}, offset={offset}) – rozbaľujem na metre")
+        os.makedirs(args.out, exist_ok=True)
+        unscaled = os.path.join(args.out, "_dem-tiles-unscaled.tif")
+        subprocess.run(
+            ["gdal_translate", "-q", "-unscale", "-ot", "Float32",
+             "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3", src, unscaled],
+            check=True,
+        )
+        temps.append(unscaled)
+        src = unscaled
+        info = gdalinfo(src)
+
     w, s, e, n = wgs84_bounds(info)
     dtype = info["bands"][0]["type"]
     predictor = "3" if dtype.startswith("Float") else "2"
@@ -107,6 +144,17 @@ def main():
         f"{dtype}, mriežka {dlon * 3600:.2f}″ × {dlat * 3600:.2f}″"
         f"{'' if same_grid else ' (prepočítané z metrov)'}"
     )
+
+    # Keby boli výšky v iných jednotkách (decimetre, stopy) alebo by sa
+    # nerozbalila škála, prejaví sa to tu – a nie až tak, že mapa bude samá
+    # skala, lebo sklon vyjde desaťkrát väčší.
+    rng = elevation_range(src)
+    if rng:
+        lo, hi = rng
+        print(f"Výšky v zdroji: {lo:.1f} … {hi:.1f} m")
+        if lo < -500 or hi > 9000:
+            print("::warning::Rozsah výšok nevyzerá ako metre nad morom – "
+                  "skontroluj jednotky zdroja (decimetre? stopy?).")
 
     os.makedirs(args.out, exist_ok=True)
     made = []
@@ -133,13 +181,19 @@ def main():
             if nodata is not None:
                 cmd += ["-dstnodata", repr(nodata)]
             subprocess.run(cmd + [src, dst], check=True)
+            if elevation_range(dst) is None:
+                # celá dlaždica je nodata – do releasu nemá čo pridať
+                os.remove(dst)
+                continue
             made.append(name)
             print(f"  ✓ {name}")
 
-    if len(args.src) > 1 and os.path.exists(src):
-        os.remove(src)
+    for t in temps:
+        if os.path.exists(t):
+            os.remove(t)
     if not made:
         raise SystemExit("Raster nepokrýva ani jednu celú 1° dlaždicu.")
+
     print(f"{len(made)} dlaždíc: {' '.join(sorted(set(made)))}")
 
 

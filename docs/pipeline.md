@@ -345,6 +345,14 @@ release `dem-sonny`: N49E019.tif … + meta.json
   skutočných výšok, ako to robí kubické.
 - **Meno .hgt dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný
   roh), takže je jedno, ako sú súbory v priečinku pomenované navyše.
+- **Škálované výšky sa rozbalia.** Desatiny metra sa v GeoTIFFe dajú uložiť aj
+  ako celé čísla so `scale` (napr. decimetre so `scale=0.1`). `gdalwarp` škálu
+  neuplatňuje, takže bez rozbalenia (`gdal_translate -unscale`) by boli výšky
+  desaťkrát väčšie – a sklon by potom ukázal skalu úplne všade. Skript to
+  zistí z hlavičky a rovno vypíše rozsah výšok zdroja; keď nevyzerá ako metre
+  nad morom, workflow varuje.
+- **Prázdne dlaždice sa nepublikujú** – ak po vyrezaní neostane ani jeden
+  platný pixel, dlaždica sa zahodí.
 - **`.hgt` je surové pole int16 bez hlavičky.** GDAL ho pozná pri štandardných
   veľkostiach (1201², 3601²); pri neštandardnej mriežke (0,5″ = 7201²) si
   workflow georeferenciu poskladá sám cez VRT – krok mriežky je `1/(n−1)`,
