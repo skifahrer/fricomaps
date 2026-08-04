@@ -297,6 +297,13 @@ je v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
 `ROCK_PIECE_FILL` (0,8 = kúsok vyplní 80 % bunky), `ROCK_CHUNK_CELLS`
 (koľko buniek naraz).
 
+**Hotové skaly sa neprepočítavajú.** Uložia sa do releasu `dem-rocks` pod
+menom, ktoré nesie región aj nastavenia
+(`rock-{región}-s{prah}-p{kúsok}-r{mriežka}.gpkg.zst`), takže ďalší build
+s tými istými nastaveniami ich len stiahne – sekundy namiesto desiatok minút.
+Iné nastavenia dajú iné meno assetu, takže sa nikdy nepomiešajú.
+`rocks_rebuild: áno` ich prepočíta nanovo.
+
 Hotové skaly a vrstevnice si každý build odloží aj ako **artefakt behu**
 (`teren-{región}-s{prah}-p{kúsok}`) s 90-dňovou lehotou – to je maximum, ktoré
 GitHub dovolí. Dajú sa teda stiahnuť a pozrieť v QGISe bez ďalšieho buildu.
@@ -488,7 +495,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
    - `rocks`, `rock_slope`, `rock_res`, `rock_piece`: skalné plochy, od akého
      sklonu (default 50° = steny), na akej mriežke (2 m) a ako veľké kúsky
-     (10 m; `0` = súvislé plochy)
+     (10 m; `0` = súvislé plochy). `rocks_rebuild` ich prepočíta nanovo aj
+     vtedy, keď sú pre dané nastavenia už uložené
    - `terrain`, `terrain_maxzoom`, `terrain_rebuild`: tieňovanie a 3D terén
      zo Sonnyho ako PNG dlaždice (uložia sa do releasu; `rebuild` ich
      prepočíta nanovo)
