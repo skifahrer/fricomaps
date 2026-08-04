@@ -24,6 +24,7 @@ Použitie:
         --res=2 --slope=40 --cliff=55 --min-area=1 --out=data/rock.gpkg
 """
 import argparse
+import csv
 import math
 import os
 import shutil
@@ -50,6 +51,54 @@ def to_metric(bbox):
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def pieces_from_slope(slope_tif, piece, fill, lo, hi, out_csv, clip):
+    """Zo sklonu spraví jeden malý polygón na každú bunku P×P nad prahom.
+
+    Súvislá stena je inak jedna obrovská plocha; takto z nej vznikne mriežka
+    samostatných kúskov, ktoré sa v mape čítajú ako skalné šrafovanie.
+    `fill` < 1 kúsok zmenší dovnútra bunky, takže susedné sa nedotýkajú a
+    medzi nimi presvitá podklad.
+    """
+    import numpy as np
+    agg = slope_tif.replace(".tif", f"-p{int(piece)}.tif")
+    subprocess.run(["gdalwarp", "-q", "-overwrite", "-tr", repr(piece), repr(piece),
+                    "-r", "average", "-co", "COMPRESS=DEFLATE", slope_tif, agg],
+                   check=True, capture_output=True)
+    info = subprocess.run(["gdalinfo", "-json", agg], check=True,
+                          capture_output=True, text=True).stdout
+    import json as _json
+    gt = _json.loads(info)["geoTransform"]
+    w, h = _json.loads(info)["size"]
+    raw = agg.replace(".tif", ".raw")
+    subprocess.run(["gdal_translate", "-q", "-of", "ENVI", "-ot", "Float32", agg, raw],
+                   check=True, capture_output=True)
+    a = np.fromfile(raw, dtype="<f4").reshape(h, w)
+
+    cx0, cy0, cx1, cy1 = clip
+    half = piece * fill / 2.0
+    rows = np.nonzero(a >= lo)
+    n = 0
+    with open(out_csv, "w", newline="") as f:
+        wr = csv.writer(f)
+        wr.writerow(["wkt", "slope", "class"])
+        for iy, ix in zip(*rows):
+            x = gt[0] + (ix + 0.5) * gt[1]
+            y = gt[3] + (iy + 0.5) * gt[5]
+            if not (cx0 <= x < cx1 and cy0 <= y < cy1):
+                continue  # kúsky mimo časti spraví susedná časť
+            v = float(a[iy, ix])
+            wr.writerow([
+                f"POLYGON(({x-half} {y-half},{x+half} {y-half},"
+                f"{x+half} {y+half},{x-half} {y+half},{x-half} {y-half}))",
+                int(v), "cliff" if v >= hi else "steep",
+            ])
+            n += 1
+    for f in (agg, raw, raw + ".hdr", agg.replace(".tif", ".raw.aux.xml")):
+        if os.path.exists(f):
+            os.remove(f)
+    return n
+
+
 def ogr_count(path, layer="rock"):
     try:
         out = run(["ogrinfo", "-so", path, layer]).stdout
@@ -73,6 +122,10 @@ def main():
     ap.add_argument("--simplify", type=float, default=0.0, help="0 = presný obrys")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť (pamäť a disk)")
+    ap.add_argument("--piece", type=float, default=0.0,
+                    help="rozdeliť skaly na kúsky P×P metrov (0 = súvislé plochy)")
+    ap.add_argument("--piece-fill", type=float, default=0.8,
+                    help="akú časť bunky kúsok vyplní (1 = celý štvorec)")
     ap.add_argument("--keep-temp", action="store_true")
     args = ap.parse_args()
 
@@ -116,21 +169,37 @@ def main():
                      "-multi", args.dem, dem_tif])
                 run(["gdaldem", "slope", "-q", "-compute_edges",
                      "-co", "COMPRESS=DEFLATE", "-co", "TILED=YES", dem_tif, slope_tif])
-                run(["gdal_contour", "-q", "-p",
-                     "-fl", repr(args.slope), repr(args.cliff),
-                     "-amin", "smin", "-amax", "smax",
-                     "-f", "GPKG", "-nln", "band", slope_tif, band_gpkg])
+                if args.piece > 0:
+                    # Malé kúsky: jeden polygón na bunku P×P nad prahom.
+                    csv_path = os.path.join(tmp, "pieces.csv")
+                    made = pieces_from_slope(
+                        slope_tif, args.piece, args.piece_fill,
+                        args.slope, args.cliff, csv_path,
+                        (cx0, cy0, cx1, cy1))
+                    if made:
+                        cmd = ["ogr2ogr", "-f", "GPKG", metric_gpkg, csv_path,
+                               "-nln", "rock", "-a_srs", METRIC,
+                               "-oo", "GEOM_POSSIBLE_NAMES=wkt",
+                               "-oo", "AUTODETECT_TYPE=YES", "-lco", "GEOMETRY_NAME=geom"]
+                        cmd += ["-append"] if os.path.exists(metric_gpkg) else []
+                        run(cmd)
+                    os.path.exists(csv_path) and os.remove(csv_path)
+                else:
+                    run(["gdal_contour", "-q", "-p",
+                         "-fl", repr(args.slope), repr(args.cliff),
+                         "-amin", "smin", "-amax", "smax",
+                         "-f", "GPKG", "-nln", "band", slope_tif, band_gpkg])
 
-                # Rozbitie pásiem na jednotlivé plochy + orez presne na časť.
-                # gdal_contour zlepí každé pásmo do jedného multipolygónu,
-                # takže bez -explodecollections by sa nedala merať plocha
-                # jednotlivej skaly.
-                cmd = ["ogr2ogr", "-f", "GPKG", metric_gpkg, band_gpkg, "band",
-                       "-nln", "rock", "-explodecollections",
-                       "-where", f"smin >= {args.slope}",
-                       "-clipsrc", repr(cx0), repr(cy0), repr(cx1), repr(cy1)]
-                cmd += ["-append"] if os.path.exists(metric_gpkg) else []
-                run(cmd)
+                    # Rozbitie pásiem na jednotlivé plochy + orez presne na
+                    # časť. gdal_contour zlepí každé pásmo do jedného
+                    # multipolygónu, takže bez -explodecollections by sa
+                    # nedala merať plocha jednotlivej skaly.
+                    cmd = ["ogr2ogr", "-f", "GPKG", metric_gpkg, band_gpkg, "band",
+                           "-nln", "rock", "-explodecollections",
+                           "-where", f"smin >= {args.slope}",
+                           "-clipsrc", repr(cx0), repr(cy0), repr(cx1), repr(cy1)]
+                    cmd += ["-append"] if os.path.exists(metric_gpkg) else []
+                    run(cmd)
 
                 done += 1
                 print(f"  [{done}/{nx*ny}] {ogr_count(metric_gpkg)} plôch spolu",
@@ -142,6 +211,13 @@ def main():
 
         # Filter najmenšej plochy a triedy až nakoniec – nad hotovou vrstvou
         # je to jeden priechod a plocha sa počíta v metroch, nie v stupňoch.
+        if args.piece > 0:
+            run(["ogr2ogr", "-f", "GPKG", args.out, metric_gpkg, "-nln", "rock",
+                 "-overwrite", "-t_srs", "EPSG:4326"])
+            print(f"Skalných kúskov: {ogr_count(args.out)} "
+                  f"(po {args.piece:.0f}×{args.piece:.0f} m)")
+            return 0
+
         final_metric = os.path.join(tmp, "rock-final.gpkg")
         sql = (f"SELECT *, CAST(smin AS INTEGER) AS slope, "
                f"CASE WHEN smin >= {args.cliff} THEN 'cliff' ELSE 'steep' END AS class "

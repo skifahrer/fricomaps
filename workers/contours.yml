@@ -63,14 +63,14 @@ layers:
             type: integer
           - key: level
 
-  # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom). Sú to malé
-  # plochy, takže pod z12 nemá zmysel ich posielať; nižšie zoomy by z nich
-  # aj tak spravili nečitateľné bodky.
+  # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom), delené na
+  # malé kúsky. Kúsok 10×10 m je pod z13 menší než pixel, takže nižšie zoomy
+  # nemá zmysel zaťažovať – boli by z nich len nečitateľné bodky.
   - id: rock
     features:
       - source: rock
         geometry: polygon
-        min_zoom: 12
+        min_zoom: 13
         attributes:
           - key: class
           - key: slope

@@ -125,9 +125,17 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Veľkosť plôch neurčuje mriežka, ale prah sklonu.** Súvislá stena nad
-  prahom je jedna plocha, nech ju počítaš na akejkoľvek mriežke. Namerané na
-  výreze Vysokých Tatier pri mriežke 2 m:
+- **Skaly sa delia na malé kúsky** (`rock_piece`, default 10 m). Sklon sa
+  spriemeruje na mriežku kúskov a každá bunka nad prahom sa vypíše ako
+  samostatný štvorček vyplňujúci 80 % bunky (`ROCK_PIECE_FILL`). Susedné sa
+  teda nedotýkajú a v mape z toho je šrafovanie namiesto jednej plochy.
+  Namerané na výreze Vysokých Tatier (884 ha skál pri 50°): 10 m → 87 839
+  kúskov (35 MB), 20 m → 21 491 (8,4 MB), 30 m → 9 261 (3,7 MB). Kúsky po
+  1–2 m² možné nie sú: strana 1,4 m dá na kraj ~23 miliónov polygónov, teda
+  rádovo 9 GB GeoPackage. Praktické minimum je 5 m.
+- **Veľkosť plôch pri `rock_piece: 0` neurčuje mriežka, ale prah sklonu.**
+  Súvislá stena nad prahom je jedna plocha, nech ju počítaš na akejkoľvek
+  mriežke. Namerané na výreze Vysokých Tatier pri mriežke 2 m:
 
   | prah | plôch | plocha spolu | priemerná | najväčšia |
   |---|---|---|---|---|

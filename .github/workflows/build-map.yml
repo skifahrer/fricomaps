@@ -87,6 +87,11 @@ on:
         required: false
         default: "2"
         type: string
+      rock_piece:
+        description: "Skaly ako malé kúsky – veľkosť kúska v metroch (10 = ~100 m² kúsky, 0 = súvislé plochy)"
+        required: false
+        default: "10"
+        type: string
       terrain:
         description: "Tieňovanie reliéfu a 3D terén zo Sonnyho ako PNG dlaždice"
         required: false
@@ -142,6 +147,10 @@ env:
   TERRAIN_RELEASE: dem-terrain
   ROCK_RES: "2" # záložná mriežka na sklon (m), keď input rock_res chýba
   ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
+  # Akú časť bunky kúsok vyplní. 0,8 znamená 8×8 m kúsok v 10 m bunke, takže
+  # sa susedné nedotýkajú a medzi nimi presvitá podklad – v mape z toho je
+  # skalné šrafovanie namiesto jednej sivej plochy.
+  ROCK_PIECE_FILL: "0.8"
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
   # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
@@ -431,6 +440,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite
+          python3 -m pip install --quiet numpy
           # Stiahnuté DEM dlaždice majú vlastný adresár: medzivýsledky
           # (clip, slope…) sú tiež .tif a nesmú sa dostať do mozaiky.
           mkdir -p dem/tiles data contours-out
@@ -534,6 +544,8 @@ jobs:
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
           RR='${{ inputs.rock_res }}'
           case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
+          RP='${{ inputs.rock_piece }}'
+          case "$RP" in ''|*[!0-9.]*) RP=10 ;; esac
 
           make_empty_rock() {
             # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj
@@ -544,12 +556,18 @@ jobs:
           }
 
           if [ '${{ inputs.rocks }}' = 'true' ]; then
-            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m"
+            if [ "${RP%%.*}" -gt 0 ] 2>/dev/null; then
+              PIECE_MSG="kúsky ${RP}×${RP} m"
+            else
+              PIECE_MSG="súvislé plochy"
+            fi
+            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, ${PIECE_MSG}"
             # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
             # v rovine nič nenašiel), nemá to zhodiť hodinový build.
             if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
                  --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
                  --min-area="$ROCK_MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                 --piece="$RP" --piece-fill="$ROCK_PIECE_FILL" \
                  --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
               ls -lh data/rock.gpkg
             else
@@ -717,6 +735,22 @@ jobs:
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
           echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ, $(du -sm _site/terrain | cut -f1) MB"
+
+      # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
+      # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
+      # pre artefakty dovolí.
+      - name: Odlož skaly a vrstevnice ako artefakt
+        if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: teren-${{ steps.region.outputs.key }}-s${{ inputs.rock_slope }}-p${{ inputs.rock_piece }}
+          path: |
+            data/rock.gpkg
+            data/contours.gpkg
+            contours-out/contours.pmtiles
+          retention-days: 90
+          compression-level: 9
+          if-no-files-found: ignore
 
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
