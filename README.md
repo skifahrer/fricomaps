@@ -209,55 +209,62 @@ DEM
   → gdalwarp -t_srs EPSG:3035     do metrickej projekcie (v stupňoch by sklon
                                   vyšiel skreslený – 1° po dĺžke je u nás
                                   o tretinu kratší než 1° po šírke),
-                                  mriežka 5 m (`rock_res`)
+                                  mriežka 2 m (`rock_res`)
   → gdaldem slope                 sklon v stupňoch
-  → gdal_contour -p -fl 40 55     izolínie sklonu ako PLOCHY (hladší okraj
+  → gdal_contour -p -fl 50 65     izolínie sklonu ako PLOCHY (hladší okraj
                                   než polygonizácia po pixeloch)
-  → ogr2ogr                       rozbije na jednotlivé plochy, dopočíta
-                                  `class`: steep (≥40°) / cliff (≥55°)
+  → ST_Union po triedach          zlúči, čo spolu súvisí – aj cez hranicu
+                                  počítanej časti
+  → -explodecollections           späť na samostatné skaly
+  → filter najmenšej plochy       + `class`: steep (≥50°) / cliff (≥65°)
   → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
 ```
 
-V mape z toho sú **malé tmavosivé plochy** s tenkým obrysom, kreslené *pod*
-vrstevnicami (od z12, obrys od z13), takže ohraničujú strmé úseky a vrstevnice
-nad nimi zostávajú čitateľné. Strmý svah je svetlejší, výrazná stena tmavšia –
-farby `Skalná plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a
-skaly**, takže sa dajú v developer móde doladiť ako čokoľvek iné.
+**Tvar plôch je tvar terénu.** Obrys je izolínia sklonu, teda presne tá čiara,
+kde svah prekročí prah – zubatý pás pod hrebeňom, oblúk okolo žľabu, ostrov
+brala v suti. Žiadna mriežka štvorčekov (tá tu bola do augusta 2026 a je
+preč).
 
-**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na mriežke 2 m (DEM
-sa doň prevzorkuje `cubicspline`), obrys ide presne po izolínii sklonu
-a najmenšia plocha je **1 m²**. Planetiler dostane
-`--min_feature_size_at_max_zoom=0`, takže drobné plochy neodfiltruje – overené
-na hotových dlaždiciach, najmenšie skalné polygóny v nich majú 1,2 m². Pri
-nižších zoomoch drobnosti odpadnú samé (Planetiler zahadzuje prvky menšie než
-pixel), takže sa objavia až tam, kde majú zmysel.
+**Susediace plochy sa zlučujú.** Územie sa počíta po častiach, takže jedna
+stena môže vyjsť ako niekoľko kusov zrezaných na hranici časti. Na konci sa
+preto všetko v rámci triedy zlúči (`ST_Union`) a hneď rozbije späť na
+samostatné plochy (`-explodecollections`): čo spolu súvisí, je jeden polygón;
+čo spolu nesúvisí, ostáva samostatné. Vypnúť sa to dá cez `ROCK_DISSOLVE`
+v `env:`.
 
-**Skaly sú delené na malé kúsky.** Súvislá stena nad prahom by inak bola
-jedna obrovská plocha; namiesto toho z nej vzniká mriežka samostatných kúskov
-(`rock_piece`, default 10 m). Každý vypĺňa 80 % svojej bunky, takže sa
-susedné nedotýkajú a medzi nimi presvitá podklad – v mape z toho je skalné
-šrafovanie, nie sivá machuľa. Namerané na výreze Vysokých Tatier (884 ha skál
-pri prahu 50°):
+**Skaly sú vidieť všade, kde sú** – vrstva ide do dlaždíc od **z9** a štýl ich
+kreslí od z9 (obrys od z11). Drobné plochy pritom nižšie zoomy nezaťažia:
+Planetiler sám zahodí všetko menšie než pixel, takže z prehľadu ostanú len
+veľké steny a s približovaním pribúdajú detaily.
 
-| kúsok | kúskov | GPKG |
-|---|---|---|
-| **10 m (100 m², default)** | **87 839** | 35 MB |
-| 20 m (400 m²) | 21 491 | 8,4 MB |
-| 30 m (900 m²) | 9 261 | 3,7 MB |
+#### Aký je to detail
 
-Kraj má zhruba 2,5× toľko skál ako tento výrez, teda pri 10 m kúskoch okolo
-220 000 kúskov. `rock_piece: 0` vráti súvislé plochy.
+| vec | hodnota |
+|---|---|
+| mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`) |
+| bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
+| najmenšia ponechaná plocha | jedna bunka mriežky, teda **4 m²** pri 2 m |
+| zjednodušovanie obrysu | žiadne (`ROCK_SIMPLIFY: 0`) |
+| filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
 
-> **Kúsky po 1–2 m² nie sú možné.** Kúsok s plochou 2 m² má stranu 1,4 m,
-> takže na tento výrez by pripadlo ~8,8 milióna kúskov a na kraj ~23 miliónov
-> – rádovo 9 GB GeoPackage a dlaždice ďaleko za rozpočtom stránky. Praktické
-> minimum je **5 m** (25 m², ~900 tisíc kúskov na kraj); pod tým už aj tak
-> nejde o dáta, ale o kresbu – bunka DEM má 20×20 m.
+Presné čísla za konkrétny beh (počet plôch, najmenšia/priemerná/najväčšia
+plocha, koľko km² skál) píše build do **Summary** – viď [Súhrn
+buildu](#súhrn-buildu).
 
-**Veľkosť plôch pri `rock_piece: 0` neurčuje mriežka, ale prah sklonu.** Súvislá stena
-nad prahom je jedna plocha, nech ju počítaš na akejkoľvek mriežke – jemnejšia
-mriežka dá presnejší *obrys*, nie menšie plochy. Namerané na výreze Vysokých
-Tatier (mriežka 2 m):
+> **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
+> obrys odkrokovaný. Skutočný detail je ale stropený zdrojom: Sonny má pre
+> Slovensko bunku ~20 m, takže tvary pod 20 m sú **dopočítané, nie merané** –
+> interpolácia dá hladší a presnejšie umiestnený obrys, novú informáciu však
+> nepridá. Jemnejšie by vedel len 1 m LiDAR
+> ([ÚGKK DMR 5.0](https://www.geoportal.sk/)); ten sa z geoportálu sťahuje cez
+> interaktívny export, takže by sa musel najprv nazrkadliť do releasu rovnako
+> ako Sonnyho DTM.
+
+#### Veľkosť plôch určuje prah sklonu, nie mriežka
+
+Súvislá stena nad prahom je jedna plocha, nech ju počítaš na akejkoľvek
+mriežke – jemnejšia mriežka dá presnejší *obrys*, nie menšie plochy. Namerané
+na výreze Vysokých Tatier (mriežka 2 m):
 
 | prah | plôch | plocha spolu | priemerná | najväčšia |
 |---|---|---|---|---|
@@ -268,8 +275,8 @@ Tatier (mriežka 2 m):
 | 60° | 208 | 131 ha | 6 301 m² | 18 ha |
 
 Pri 40° je najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
-strmý svah. Preto je predvolený prah **50°**; kto chce ešte drobnejšie kúsky,
-dá 55° alebo 60°.
+strmý svah. Preto je predvolený prah **50°**; kto chce drobnejšie a ostrejšie
+vymedzené skaly, dá 55° alebo 60°.
 
 **Počíta sa po častiach.** Bbox kraja má pri 2 m vyše 3 miliardy buniek, čo je
 ~13 GB na jeden raster – viac, než má runner miesta aj pamäte. Územie sa preto
@@ -279,37 +286,33 @@ hranicu časti, takže susedné kusy na seba nadväzujú. Čas rastie lineárne 
 merané ~1,5 mil. buniek/s, teda kraj pri 2 m okolo 35 minút. **Mriežka 1 m sa
 oplatí len na `crop_bbox`; pre kraj by to boli hodiny.**
 
-> Poznámka k dátam: bunka 1″ DEM má u nás ~20×30 m, takže tvary pod 20 m sú
-> **dopočítané, nie merané** – interpolácia dá jemnejšie hrany a viac
-> samostatných plôch, ale novú informáciu nepridá. Naozajstné 1 m² skaly by
-> potreboval 1 m LiDAR ([ÚGKK DMR 5.0](https://www.geoportal.sk/)); ten sa
-> ale z geoportálu sťahuje cez interaktívny export, takže by sa musel najprv
-> nazrkadliť do releasu rovnako ako Sonnyho DTM.
->
-> Ak by bolo v teréne priveľa bodiek, zdvihni `rock_slope` alebo
-> `ROCK_MIN_AREA` v `env:`.
+Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` (od akého sklonu je
+terén skala, default 50°) a `rock_res` (mriežka obrysu v metroch, default 2).
+Ostatné ladenie je v `env:` na začiatku
+[build-map.yml](.github/workflows/build-map.yml): `ROCK_SIMPLIFY` (0 = presný
+obrys), `ROCK_DISSOLVE` (zlučovanie susedných plôch), `ROCK_CLIFF_PLUS`
+(o koľko ° nad prahom začína trieda `cliff`), `ROCK_CHUNK_CELLS` (koľko buniek
+naraz).
 
-Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` – od akého sklonu sa
-terén považuje za skalu (default 40°, menej = viac plôch) – a `rock_res`
-(mriežka v metroch, default 5, `0` = natívne rozlíšenie DEM). Ostatné ladenie
-je v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
-`ROCK_MIN_AREA` (1 m²), `ROCK_SIMPLIFY` (0 = presný obrys),
-`ROCK_PIECE_FILL` (0,8 = kúsok vyplní 80 % bunky), `ROCK_CHUNK_CELLS`
-(koľko buniek naraz).
+V mape z toho sú **tmavosivé plochy** s tenkým obrysom, kreslené *pod*
+vrstevnicami, takže ohraničujú strmé úseky a vrstevnice nad nimi zostávajú
+čitateľné. Strmý svah je svetlejší, výrazná stena tmavšia – farby `Skalná
+plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a skaly**, takže
+sa dajú v developer móde doladiť ako čokoľvek iné.
 
 **Hotové skaly sa neprepočítavajú.** Uložia sa do releasu `dem-rocks` pod
 menom, ktoré nesie región aj nastavenia
-(`rock-{región}-s{prah}-p{kúsok}-r{mriežka}.gpkg.zst`), takže ďalší build
-s tými istými nastaveniami ich len stiahne – sekundy namiesto desiatok minút.
-Iné nastavenia dajú iné meno assetu, takže sa nikdy nepomiešajú.
-`rocks_rebuild: áno` ich prepočíta nanovo.
+(`rock-{región}-s{prah}-g{mriežka}.gpkg.zst`), takže ďalší build s tými istými
+nastaveniami ich len stiahne – sekundy namiesto desiatok minút. Iné nastavenia
+dajú iné meno assetu, takže sa nikdy nepomiešajú. Ako to prepočítať nanovo,
+hovorí [Pregenerovanie](#pregenerovanie).
 
 Hotové skaly a vrstevnice si každý build odloží aj ako **artefakt behu**
-(`teren-{región}-s{prah}-p{kúsok}`) s 90-dňovou lehotou – to je maximum, ktoré
-GitHub dovolí. Dajú sa teda stiahnuť a pozrieť v QGISe bez ďalšieho buildu.
+(`teren-{región}-s{prah}-g{mriežka}`) s 90-dňovou lehotou – to je maximum,
+ktoré GitHub dovolí. Dajú sa teda stiahnuť a pozrieť v QGISe bez ďalšieho
+buildu.
 
-Prah 40° je vyskúšaný na Copernicus DEM tak, aby označil naozaj len steny, nie
-každý strmší svah:
+Podiel plochy nad prahom (merané pri 40°, teda hornom odhade):
 
 | územie | podiel plochy nad 40° |
 |---|---|
@@ -317,10 +320,52 @@ každý strmší svah:
 | Malá Fatra (lesnaté hory) | 0,7 % |
 | Považie pri Trenčíne (kopce) | 0,7 % |
 
-> **Pozn.:** Presnejší než Sonny by bol už len slovenský
-> [ÚGKK DMR 5.0](https://www.geoportal.sk/) (1 m LiDAR, voľný aj komerčne pri
-> uvedení zdroja). Ten sa ale sťahuje po mapových listoch cez portál, takže by
-> potreboval vlastné zrkadlo – to isté, čo robí *Update DEM* pre Sonnyho.
+### Pregenerovanie
+
+Nič sa nepočíta dvakrát: vrstevnice, skaly aj tieňovanie sa berú z cache
+(a skaly navyše z releasu `dem-rocks`, tieňovanie z `dem-terrain`). Keď sa
+zmenia nastavenia, zmení sa aj kľúč a prepočíta sa to samo. Keď chceš to isté
+prepočítať **nanovo aj pri rovnakých nastaveniach**, spusť *Build map*
+so zaškrtnutým inputom:
+
+| input | čo pregeneruje |
+|---|---|
+| `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
+| `rocks_rebuild` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+
+Prečo to musí najprv mazať: **cache sa v GitHube nedá prepísať.** Kľúč, ktorý
+raz existuje, si drží starý obsah, takže bez zmazania by sa prepočítaná verzia
+zahodila a ďalší build by dostal späť tú starú. Preto má build právo
+`actions: write` a každý `*_rebuild` začne tým, že príslušný záznam zmaže.
+
+Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
+nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
+dátum, alebo otlačok zdroja.
+
+### Súhrn buildu
+
+Každý beh napíše do záložky **Summary** prehľad: čo sa robilo, ako dlho to
+trvalo a s akým výsledkom.
+
+| krok | trvanie | výsledok |
+|---|--:|---|
+| PBF regiónu | 0:00:12 | Prešovský kraj, 63M (z cache) |
+| DEM dlaždice (Sonny) | 0:01:44 | 9 z 21 dlaždíc, 412M |
+| Vrstevnice (gdal_contour) | 0:04:31 | interval 10 m, 218M |
+| Skalné plochy | 0:36:07 | 41 802 plôch, sklon ≥ 50°, mriežka 2 m (výpočet) |
+| Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
+| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
+| Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
+| Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
+
+*(Ukážka – čísla sa líšia podľa regiónu a nastavení.)*
+
+Pod tabuľkou je **detail skál** za tento beh (počet plôch, mriežka, bunka DEM,
+najmenšia/priemerná/najväčšia plocha, koľko km² skalného terénu spolu) a
+prehľad, **čo prišlo z cache a čo sa naozaj počítalo** – takže sa hneď vidí,
+či mal beh trvať hodinu, alebo minútu.
+
 
 ## Developer mode – ladenie mapy v prehliadači
 
@@ -493,13 +538,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
-   - `rocks`, `rock_slope`, `rock_res`, `rock_piece`: skalné plochy, od akého
-     sklonu (default 50° = steny), na akej mriežke (2 m) a ako veľké kúsky
-     (10 m; `0` = súvislé plochy). `rocks_rebuild` ich prepočíta nanovo aj
-     vtedy, keď sú pre dané nastavenia už uložené
-   - `terrain`, `terrain_maxzoom`, `terrain_rebuild`: tieňovanie a 3D terén
-     zo Sonnyho ako PNG dlaždice (uložia sa do releasu; `rebuild` ich
-     prepočíta nanovo)
+   - `rocks`, `rock_slope`, `rock_res`: skalné plochy – od akého sklonu je
+     terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
+     (2 m). Tvar plôch je tvar terénu, susedné sa zlučujú
+   - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
+     dlaždice (uložia sa do releasu)
+   - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať
+     nanovo aj vtedy, keď je hotová verzia uložená – viď
+     [Pregenerovanie](#pregenerovanie)
 
    Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
    jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*

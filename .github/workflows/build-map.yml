@@ -83,17 +83,17 @@ on:
         default: "50"
         type: string
       rock_res:
-        description: "Mriežka na výpočet sklonu skál v metroch (2 = jemný obrys; 1 len na malé územie, kraj by trval hodiny)"
+        description: "Mriežka na obrys skál v metroch (2 = najjemnejší obrys; zdrojový DEM má 20 m, jemnejšia mriežka už len hladí)"
         required: false
         default: "2"
         type: string
-      rock_piece:
-        description: "Skaly ako malé kúsky – veľkosť kúska v metroch (10 = ~100 m² kúsky, 0 = súvislé plochy)"
-        required: false
-        default: "10"
-        type: string
       rocks_rebuild:
-        description: "Vždy prepočítať skaly, aj keď sú pre tento región a nastavenia už uložené"
+        description: "PREGENEROVAŤ skaly – zmaže uloženú verziu pre tento región aj cache a počíta odznova"
+        required: false
+        default: false
+        type: boolean
+      contours_rebuild:
+        description: "PREGENEROVAŤ vrstevnice (a s nimi aj skaly) – zmaže cache a trasuje ich z DEM odznova"
         required: false
         default: false
         type: boolean
@@ -155,12 +155,12 @@ env:
   # nabudúce len stiahnu.
   ROCK_RELEASE: dem-rocks
   ROCK_RES: "2" # záložná mriežka na sklon (m), keď input rock_res chýba
-  ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
-  # Akú časť bunky kúsok vyplní. 0,8 znamená 8×8 m kúsok v 10 m bunke, takže
-  # sa susedné nedotýkajú a medzi nimi presvitá podklad – v mape z toho je
-  # skalné šrafovanie namiesto jednej sivej plochy.
-  ROCK_PIECE_FILL: "0.8"
+  # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
+  # 4 m²) – menšie útvary sú už len zubaté artefakty jednej bunky, nie skala.
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
+  # Susediace plochy sa na konci zlúčia do jedného polygónu (ST_Union), aby
+  # stena zrezaná na hranici počítanej časti bola zase jedna skala.
+  ROCK_DISSOLVE: "true"
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
   # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
   # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster) – naraz sa to do
@@ -252,9 +252,11 @@ jobs:
 
   build:
     needs: [check-dem, mirror-dem]
-    # `contents: write` kvôli ukladaniu hotových výškových dlaždíc do releasu
+    # `contents: write` kvôli ukladaniu hotových výškových dlaždíc do releasu,
+    # `actions: write` kvôli mazaniu cache pri pregenerovaní (`*_rebuild`).
     permissions:
       contents: write
+      actions: write
       pages: write
       id-token: write
     # Kontrola aj doplnenie sa môžu preskočiť (vypnuté vrstevnice, terén už
@@ -288,7 +290,13 @@ jobs:
       # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
       - name: Dnešný dátum do kľúča cache
         id: day
-        run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          # Meranie krokov: každý dlhý krok si na konci pripíše riadok
+          # „názov, sekundy, čo spravil" a posledný krok z toho poskladá
+          # súhrn buildu (Summary v GitHub Actions).
+          echo "BUILD_T0=$(date +%s)" >> "$GITHUB_ENV"
+          : > /tmp/build-steps.tsv
 
       # POZOR na restore/save: obyčajné `actions/cache` ukladá až v post-kroku
       # a IBA keď job dobehne úspešne. Keď build spadne o hodinu neskôr, hodiny
@@ -304,6 +312,7 @@ jobs:
       - name: Stiahni PBF iba daného regiónu
         id: region
         run: |
+          T0=$(date +%s)
           mkdir -p data
           CUSTOM_URL='${{ inputs.custom_pbf_url }}'
 
@@ -384,6 +393,47 @@ jobs:
           echo "bboxkey=$(echo "$BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
           echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
           ls -lh data/region.osm.pbf
+          printf '%s\t%s\t%s\n' "PBF regiónu" "$(( $(date +%s) - T0 ))" \
+            "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')" \
+            >> /tmp/build-steps.tsv
+
+      # ---------- kľúče cache na jednom mieste ----------
+      # Kľúč potrebuje restore, save aj mazanie pri pregenerovaní. Keby bol
+      # napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho
+      # rozsype (uloží sa pod iným kľúčom, než sa hľadá).
+      - name: Kľúče cache
+        id: keys
+        run: |
+          set -euo pipefail
+          B='${{ steps.region.outputs.bboxkey }}'
+          D='${{ needs.check-dem.outputs.demkey }}'
+          {
+            echo "contours=contours-v6-$D-$B-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
+            echo "demtiles=demtiles-$D-$B"
+            echo "terrain=terrain-v1-$D-$B-z${{ inputs.terrain_maxzoom }}"
+          } >> "$GITHUB_OUTPUT"
+          cat "$GITHUB_OUTPUT"
+
+      # Cache sa v GitHube nedá prepísať – kľúč, ktorý raz existuje, ostane so
+      # starým obsahom. Pregenerovanie preto starý záznam najprv zmaže; až
+      # potom má zmysel počítať nanovo a uložiť to pod ten istý kľúč.
+      - name: Pregenerovanie – zmaž staré cache
+        if: ${{ inputs.contours_rebuild || inputs.rocks_rebuild || inputs.terrain_rebuild }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          drop() { # $1 = kľúč cache
+            gh cache delete "$1" --repo "$GITHUB_REPOSITORY" \
+              && echo "zmazané: $1" \
+              || echo "nebolo v cache: $1"
+          }
+          if [ '${{ inputs.contours_rebuild }}' = 'true' ] || [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
+            drop '${{ steps.keys.outputs.contours }}'
+          fi
+          if [ '${{ inputs.terrain_rebuild }}' = 'true' ]; then
+            drop '${{ steps.keys.outputs.terrain }}'
+          fi
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -412,6 +462,7 @@ jobs:
 
       - name: Cache PBF regiónu (save)
         if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: data/region.osm.pbf
@@ -419,6 +470,7 @@ jobs:
 
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: planetiler.jar
@@ -444,23 +496,28 @@ jobs:
       # sa zmestiť do jedného rozpočtu. Keď sa vrstevnice urobia prvé, vie
       # Planetiler dostať presne toľko miesta, koľko naozaj zvýšilo – inak by
       # sa build po hodine tilovania zabil na tom, že súčet je nad limitom.
+      #
+      # Pri pregenerovaní (`contours_rebuild` / `rocks_rebuild`) sa restore
+      # preskočí, takže krok nižšie beží aj vtedy, keď cache existuje. Starý
+      # záznam už zmazal krok „Pregenerovanie", nech sa dá uložiť nový.
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
-        if: ${{ inputs.contours }}
+        if: ${{ inputs.contours && !inputs.contours_rebuild && !inputs.rocks_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: contours-out
-          key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}p${{ inputs.rock_piece }}z${{ inputs.rock_res }}-${{ hashFiles('workers/contours.yml') }}
+          key: ${{ steps.keys.outputs.contours }}
 
       # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
-      # release – čo je presne to, čo hovorí `demkey`.
+      # release – čo je presne to, čo hovorí `demkey`. Tie sa nepregenerúvajú
+      # nikdy: sú to stiahnuté dáta, nie výpočet.
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         if: ${{ inputs.contours }}
         uses: actions/cache/restore@v4
         with:
           path: dem/tiles
-          key: demtiles-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}
+          key: ${{ steps.keys.outputs.demtiles }}
 
       - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -468,6 +525,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          T_DEM=$(date +%s)
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite zstd
           python3 -m pip install --quiet numpy
@@ -522,6 +580,9 @@ jobs:
             echo "::warning::V release $DEM_RELEASE nie sú dlaždice:$missing – tam vrstevnice ani skaly nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
           fi
           echo "Sonny's LiDAR DTM: $sonny_ok z $(wc -l < dem/list.txt) dlaždíc z release $DEM_RELEASE ✓"
+          printf '%s\t%s\t%s\n' "DEM dlaždice (Sonny)" "$(( $(date +%s) - T_DEM ))" \
+            "$sonny_ok z $(wc -l < dem/list.txt) dlaždíc, $(du -sh dem/tiles | cut -f1)" \
+            >> /tmp/build-steps.tsv
 
           shopt -s nullglob
           tifs=(dem/tiles/*.tif)
@@ -539,6 +600,7 @@ jobs:
           # mriežku vyhladí šum, ale
           # zároveň zje detail terénu. Default 0 = žiadne zjemnenie, len orez
           # na bbox v plnom rozlíšení.
+          T_CONT=$(date +%s)
           SMOOTH='${{ inputs.contour_smoothing }}'
           case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
           if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
@@ -563,19 +625,24 @@ jobs:
                  ELSE 'minor' END AS level
                FROM contours WHERE ele IS NOT NULL"
           ls -lh data/contours.gpkg
+          printf '%s\t%s\t%s\n' "Vrstevnice (gdal_contour)" "$(( $(date +%s) - T_CONT ))" \
+            "interval ${INTERVAL} m, $(du -h data/contours.gpkg | cut -f1)" \
+            >> /tmp/build-steps.tsv
 
           # ---------- skaly: najstrmšie úseky terénu ----------
           # Celý výpočet je vo workers/rock-areas.py – po častiach, aby sa
           # jemná mriežka zmestila do pamäte aj na disk. Bbox kraja má pri
           # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster), takže naraz
           # sa to spočítať nedá.
+          T_ROCK=$(date +%s)
           ROCK_SLOPE='${{ inputs.rock_slope }}'
           case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=50 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
           RR='${{ inputs.rock_res }}'
           case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
-          RP='${{ inputs.rock_piece }}'
-          case "$RP" in ''|*[!0-9.]*) RP=10 ;; esac
+          # Najmenšia skala = jedna bunka mriežky. Menší útvar už nie je tvar
+          # terénu, ale zubaté rohy jedinej bunky.
+          MIN_AREA=$(python3 -c "print(round($RR * $RR, 2))")
 
           make_empty_rock() {
             # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj
@@ -586,33 +653,33 @@ jobs:
           }
 
           if [ '${{ inputs.rocks }}' = 'true' ]; then
-            if [ "${RP%%.*}" -gt 0 ] 2>/dev/null; then
-              PIECE_MSG="kúsky ${RP}×${RP} m"
-            else
-              PIECE_MSG="súvislé plochy"
-            fi
-
             # Hotové skaly pre tento región a tieto nastavenia sú v release –
             # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
-            # je na desiatky minút, stiahnutie na sekundy.
-            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-p${RP}-r${RR}.gpkg.zst"
+            # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
+            # asset zahodí a počíta odznova.
+            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-g${RR}.gpkg.zst"
             ROCK_READY=""
+            ROCK_SRC="výpočet"
             if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
-              echo "rocks_rebuild=áno – skaly sa počítajú nanovo."
+              echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
+              gh release delete-asset "$ROCK_RELEASE" "$ROCK_ASSET" \
+                --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 \
+                && echo "  zmazané z releasu: $ROCK_ASSET" || true
             elif gh release download "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
                    --pattern "$ROCK_ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
               unzstd -q -f -o data/rock.gpkg "/tmp/$ROCK_ASSET" && ROCK_READY=1
-              [ -n "$ROCK_READY" ] && echo "Skaly z releasu $ROCK_RELEASE ✓ ($ROCK_ASSET)"
+              [ -n "$ROCK_READY" ] && ROCK_SRC="release $ROCK_RELEASE" \
+                && echo "Skaly z releasu $ROCK_RELEASE ✓ ($ROCK_ASSET)"
             fi
 
             if [ -z "$ROCK_READY" ]; then
-              echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, ${PIECE_MSG}"
+              echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
               # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
               # v rovine nič nenašiel), nemá to zhodiť hodinový build.
               if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
                    --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
-                   --min-area="$ROCK_MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
-                   --piece="$RP" --piece-fill="$ROCK_PIECE_FILL" \
+                   --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                   --dissolve="$ROCK_DISSOLVE" --stats=contours-out/rock-stats.txt \
                    --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
                 ls -lh data/rock.gpkg
                 # Ulož ich, nech ich nabudúce netreba počítať znova.
@@ -620,7 +687,7 @@ jobs:
                 gh release view "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
                   gh release create "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
                     --title "Skalné plochy z DEM" \
-                    --notes "Vektorové skaly počítané zo sklonu Sonny DEM. Meno assetu nesie región a nastavenia (prah sklonu, veľkosť kúska, mriežka)." || true
+                    --notes "Vektorové skaly počítané zo sklonu Sonny DEM. Meno assetu nesie región a nastavenia (prah sklonu, mriežka obrysu)." || true
                 gh release upload "$ROCK_RELEASE" "/tmp/$ROCK_ASSET" \
                   --repo "$GITHUB_REPOSITORY" --clobber \
                   && echo "Uložené do releasu $ROCK_RELEASE ako $ROCK_ASSET" \
@@ -631,6 +698,14 @@ jobs:
               fi
               echo "::endgroup::"
             fi
+
+            # Štatistika ide do contours-out, takže ju nesie aj cache – pri
+            # cache hite sa tento krok vôbec nespustí, ale súhrn čísla má.
+            ROCK_N=$(ogrinfo -so data/rock.gpkg rock 2>/dev/null \
+              | awk -F': ' '/^Feature Count/ {print $2}')
+            printf '%s\t%s\t%s\n' "Skalné plochy" "$(( $(date +%s) - T_ROCK ))" \
+              "${ROCK_N:-0} plôch, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m ($ROCK_SRC)" \
+              >> /tmp/build-steps.tsv
           else
             make_empty_rock
             echo "Skaly: vypnuté (prázdna vrstva)."
@@ -648,6 +723,7 @@ jobs:
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           CBUDGET_MB=$(( LIMIT_MB * 40 / 100 ))
 
+          T_PM=$(date +%s)
           while : ; do
             java -Xmx5g -jar planetiler.jar generate-custom \
               --schema=workers/contours.yml \
@@ -680,22 +756,27 @@ jobs:
             echo "off" > contours-out/rock-slope.txt
           fi
           ls -lh contours-out/
+          printf '%s\t%s\t%s\n' "Vrstevnice a skaly → PMTiles" "$(( $(date +%s) - T_PM ))" \
+            "maxzoom $CZ, $(du -h contours-out/contours.pmtiles | cut -f1)" \
+            >> /tmp/build-steps.tsv
 
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: contours-out
-          key: ${{ steps.contours-cache.outputs.cache-primary-key }}
+          key: ${{ steps.keys.outputs.contours }}
 
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && inputs.contours && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/tiles/**') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: dem/tiles
-          key: ${{ steps.demtiles-cache.outputs.cache-primary-key }}
+          key: ${{ steps.keys.outputs.demtiles }}
 
       - name: Zaraď vrstevnice do webu
         id: contours
@@ -728,6 +809,13 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+          # Keď cache trafila, celý výpočet vyššie sa preskočil – v súhrne to
+          # má byť vidieť ako riadok, nie ako chýbajúce kroky.
+          if [ '${{ steps.contours-cache.outputs.cache-hit }}' = 'true' ]; then
+            printf '%s\t%s\t%s\n' "Vrstevnice a skaly" "0" \
+              "z cache (nič sa nepočítalo), maxzoom $CZ, $(du -h "$SRC" | cut -f1)" \
+              >> /tmp/build-steps.tsv
+          fi
 
       # ---------- tieňovanie reliéfu a 3D terén ----------
       # MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc
@@ -739,11 +827,11 @@ jobs:
       # `terrain_rebuild` ich prepíše nanovo.
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
-        if: ${{ inputs.terrain }}
+        if: ${{ inputs.terrain && !inputs.terrain_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out
-          key: terrain-v1-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-z${{ inputs.terrain_maxzoom }}
+          key: ${{ steps.keys.outputs.terrain }}
 
       - name: Tieňovanie reliéfu (PNG dlaždice zo Sonnyho)
         id: terrain
@@ -752,6 +840,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          T_TER=$(date +%s)
+          TSRC="výpočet"
           TZ='${{ inputs.terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
           BBOX='${{ steps.region.outputs.bbox }}'
@@ -765,6 +855,7 @@ jobs:
             rm -rf terrain-out
           elif have_tiles; then
             echo "Výškové dlaždice sú v cache behu ✓"
+            TSRC="cache"
           else
             # Skús release – uložené dlaždice sú lacnejšie než ich prepočítať.
             if gh release download "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
@@ -772,6 +863,7 @@ jobs:
               mkdir -p terrain-out
               tar --use-compress-program=unzstd -xf "/tmp/$ASSET" -C terrain-out
               echo "Výškové dlaždice stiahnuté z releasu $TERRAIN_RELEASE ✓"
+              TSRC="release $TERRAIN_RELEASE"
             fi
           fi
 
@@ -807,13 +899,17 @@ jobs:
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
           echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ, $(du -sm _site/terrain | cut -f1) MB"
+          printf '%s\t%s\t%s\n' "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
+            "$(find _site/terrain -name '*.png' | wc -l) PNG dlaždíc do z$TZ, $(du -sm _site/terrain | cut -f1) MB ($TSRC)" \
+            >> /tmp/build-steps.tsv
 
       - name: Cache výškových dlaždíc (save)
         if: ${{ always() && inputs.terrain && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: terrain-out
-          key: ${{ steps.terrain-cache.outputs.cache-primary-key }}
+          key: ${{ steps.keys.outputs.terrain }}
 
       # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
       # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
@@ -822,11 +918,12 @@ jobs:
         if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: teren-${{ steps.region.outputs.key }}-s${{ inputs.rock_slope }}-p${{ inputs.rock_piece }}
+          name: teren-${{ steps.region.outputs.key }}-s${{ inputs.rock_slope }}-g${{ inputs.rock_res }}
           path: |
             data/rock.gpkg
             data/contours.gpkg
             contours-out/contours.pmtiles
+            contours-out/rock-stats.txt
           retention-days: 90
           compression-level: 9
           if-no-files-found: ignore
@@ -835,6 +932,7 @@ jobs:
         id: tiles
         run: |
           set -euo pipefail
+          T_TILES=$(date +%s)
           mkdir -p _site/tiles
           OUT="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
 
@@ -916,6 +1014,9 @@ jobs:
           echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
           echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh _site/tiles/
+          printf '%s\t%s\t%s\n' "Mapové dlaždice (Planetiler)" "$(( $(date +%s) - T_TILES ))" \
+            "maxzoom $Z, $(( $(stat -c%s "$OUT") / 1048576 )) MB" \
+            >> /tmp/build-steps.tsv
 
       - name: Cache glyfov a spritov (restore)
         id: assets-cache
@@ -930,6 +1031,7 @@ jobs:
         id: sprite
         run: |
           set -uo pipefail
+          T_SPR=$(date +%s)
           mkdir -p _site/sprites /tmp/icons
 
           # Cache: hotové sprity sa nemenia, kým sa nezmení zoznam zdrojov ani
@@ -997,6 +1099,9 @@ jobs:
           echo "name=$WANT" >> "$GITHUB_OUTPUT"
           echo "available=$(echo $ok | xargs)" >> "$GITHUB_OUTPUT"
           echo "Nasadené sady:$ok, štýl použije $WANT"
+          printf '%s\t%s\t%s\n' "Ikonky (SDF sprity)" "$(( $(date +%s) - T_SPR ))" \
+            "sady:$ok, štýl používa $WANT$([ "$CACHED_SPRITES" -gt 0 ] && echo ' (z cache)')" \
+            >> /tmp/build-steps.tsv
 
       - name: Stiahni glyfy (fonty) k sebe na Pages
         run: |
@@ -1043,6 +1148,7 @@ jobs:
       # vzory druhýkrát.
       - name: Cache glyfov a spritov (save)
         if: ${{ always() && steps.assets-cache.outputs.cache-hit != 'true' && hashFiles('_site/sprites/**') != '' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: |
@@ -1268,3 +1374,93 @@ jobs:
           fi
 
           exit $fail
+
+      # ---------- súhrn ----------
+      # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
+      # mieste v záložke Summary, nech sa to nemusí lúštiť z logov.
+      # `always()`, aby súhrn bol aj vtedy (hlavne vtedy), keď build spadol.
+      - name: Súhrn buildu
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          S="$GITHUB_STEP_SUMMARY"
+          TOTAL=$(( $(date +%s) - ${BUILD_T0:-$(date +%s)} ))
+          hms() { printf '%d:%02d:%02d' $(( $1 / 3600 )) $(( $1 % 3600 / 60 )) $(( $1 % 60 )); }
+
+          {
+            echo "# ${{ steps.region.outputs.name || inputs.region }}"
+            echo
+            echo "Celý build: **$(hms "$TOTAL")**"
+            echo
+            echo "## Čo sa robilo"
+            echo
+            echo "| krok | trvanie | výsledok |"
+            echo "|---|--:|---|"
+          } >> "$S"
+
+          if [ -s /tmp/build-steps.tsv ]; then
+            while IFS=$'\t' read -r name secs detail; do
+              [ -n "$name" ] || continue
+              printf '| %s | %s | %s |\n' "$name" "$(hms "$secs")" "$detail" >> "$S"
+            done < /tmp/build-steps.tsv
+          else
+            echo "| — | — | build sa nedostal ani po prvý meraný krok |" >> "$S"
+          fi
+
+          # ---- detail skál ----
+          # Čísla píše workers/rock-areas.py; sú v contours-out, takže ich
+          # nesie aj cache a súhrn ich má aj pri behu bez výpočtu.
+          if [ -s contours-out/rock-stats.txt ]; then
+            # shellcheck disable=SC1091
+            . contours-out/rock-stats.txt
+            {
+              echo
+              echo "## Skalné plochy – aký to je detail"
+              echo
+              echo "| vlastnosť | hodnota |"
+              echo "|---|---|"
+              echo "| počet samostatných plôch | ${count:-?} |"
+              echo "| obrys sa počíta na mriežke | ${grid_m:-?} m |"
+              echo "| bunka zdrojového DEM (Sonny) | ~${dem_cell_m:-?} m → **strop skutočného detailu** |"
+              echo "| najmenšia ponechaná plocha | ${min_area_m2:-?} m² |"
+              echo "| skutočne najmenšia plocha | ${min_m2:-?} m² |"
+              echo "| priemerná plocha | ${avg_m2:-?} m² |"
+              echo "| najväčšia plocha | ${max_ha:-?} ha |"
+              echo "| skalného terénu spolu | ${total_km2:-?} km² |"
+              echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°) |"
+              echo
+              echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
+              echo "Susediace plochy sú zlúčené do jedného polygónu, takže stena"
+              echo "nie je rozsekaná na kusy podľa toho, ako sa počítalo po častiach."
+              echo
+              echo "> Mriežka ${grid_m:-?} m hovorí, ako jemne je obrys odkrokovaný;"
+              echo "> ale zdrojový DEM má bunku ~${dem_cell_m:-?} m, takže nové detaily"
+              echo "> terénu jemnejšia mriežka nevymyslí – len obrys vyhladí a presnejšie"
+              echo "> umiestni. Jemnejší DEM pre Slovensko Sonny neponúka."
+            } >> "$S"
+          fi
+
+          # ---- čo je v cache a čo sa počítalo ----
+          {
+            echo
+            echo "## Cache"
+            echo
+            echo "| čo | stav |"
+            echo "|---|---|"
+            echo "| PBF regiónu | ${{ steps.pbf-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté' }} |"
+            echo "| Planetiler | ${{ steps.planetiler-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnutý' }} |"
+            echo "| DEM dlaždice | ${{ steps.demtiles-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté z releasu' }} |"
+            echo "| vrstevnice a skaly | ${{ steps.contours-cache.outputs.cache-hit == 'true' && 'z cache' || 'počítané' }} |"
+            echo "| výškové dlaždice | ${{ steps.terrain-cache.outputs.cache-hit == 'true' && 'z cache' || 'počítané / z releasu' }} |"
+            echo "| glyfy a sprity | ${{ steps.assets-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté' }} |"
+            echo
+            echo "**Ako pregenerovať:** spusti workflow znova a zaškrtni"
+            echo "\`contours_rebuild\` (vrstevnice + skaly), \`rocks_rebuild\` (skaly"
+            echo "vrátane uloženej verzie v release \`dem-rocks\`) alebo"
+            echo "\`terrain_rebuild\` (tieňovanie). Každý z nich najprv zmaže"
+            echo "príslušnú cache – inak by sa stará verzia len vrátila späť."
+          } >> "$S"
+
+          if [ '${{ steps.deployment.outputs.page_url }}' != '' ]; then
+            echo -e "\n[Otvoriť mapu](${{ steps.deployment.outputs.page_url }})" >> "$S"
+          fi

@@ -63,15 +63,23 @@ layers:
             type: integer
           - key: level
 
-  # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom), delené na
-  # malé kúsky. Kúsok 10×10 m je pod z13 menší než pixel, takže nižšie zoomy
-  # nemá zmysel zaťažovať – boli by z nich len nečitateľné bodky.
+  # Skalné plochy – najstrmšie úseky terénu (sklon nad prahom). Obrys je
+  # izolínia sklonu, takže plocha má tvar, aký terén naozaj má; susediace
+  # plochy sú už zlúčené do jedného polygónu.
+  #
+  # min_zoom 9, nie 13: skaly majú byť vidieť všade, kde sú – veľká stena je
+  # čitateľná aj z prehľadového zoomu. Malé plochy sa nižšími zoomami netreba
+  # báť, Planetiler zahodí všetko pod pixel sám (min_feature_size platí na
+  # každom zoome okrem najvyššieho, kde ho zámerne vypíname).
   - id: rock
     features:
       - source: rock
         geometry: polygon
-        min_zoom: 13
+        min_zoom: 9
         attributes:
           - key: class
           - key: slope
+            type: integer
+          # plocha v m² – nech sa dá v štýle rozlíšiť bralo od odrobinky
+          - key: area
             type: integer
