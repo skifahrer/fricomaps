@@ -92,6 +92,11 @@ on:
         required: false
         default: "10"
         type: string
+      rocks_rebuild:
+        description: "Vždy prepočítať skaly, aj keď sú pre tento región a nastavenia už uložené"
+        required: false
+        default: false
+        type: boolean
       terrain:
         description: "Tieňovanie reliéfu a 3D terén zo Sonnyho ako PNG dlaždice"
         required: false
@@ -145,6 +150,10 @@ env:
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
   # Release s hotovými výškovými (hillshade) dlaždicami – aby sa nerobili znova.
   TERRAIN_RELEASE: dem-terrain
+  # Release s hotovými skalami. Sú to desiatky minút výpočtu, ale závisia len
+  # od územia a nastavení – tie sú preto v mene assetu a hotové skaly sa
+  # nabudúce len stiahnu.
+  ROCK_RELEASE: dem-rocks
   ROCK_RES: "2" # záložná mriežka na sklon (m), keď input rock_res chýba
   ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
   # Akú časť bunky kúsok vyplní. 0,8 znamená 8×8 m kúsok v 10 m bunke, takže
@@ -421,7 +430,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: contours-out
-          key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
+          key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}p${{ inputs.rock_piece }}z${{ inputs.rock_res }}-${{ hashFiles('workers/contours.yml') }}
 
       # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
       # release – čo je presne to, čo hovorí `demkey`.
@@ -439,7 +448,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite
+          sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite zstd
           python3 -m pip install --quiet numpy
           # Stiahnuté DEM dlaždice majú vlastný adresár: medzivýsledky
           # (clip, slope…) sú tiež .tif a nesmú sa dostať do mozaiky.
@@ -561,20 +570,46 @@ jobs:
             else
               PIECE_MSG="súvislé plochy"
             fi
-            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, ${PIECE_MSG}"
-            # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
-            # v rovine nič nenašiel), nemá to zhodiť hodinový build.
-            if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
-                 --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
-                 --min-area="$ROCK_MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
-                 --piece="$RP" --piece-fill="$ROCK_PIECE_FILL" \
-                 --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
-              ls -lh data/rock.gpkg
-            else
-              echo "::warning::Skalné plochy sa nevygenerovali – vrstva bude prázdna."
-              make_empty_rock
+
+            # Hotové skaly pre tento región a tieto nastavenia sú v release –
+            # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
+            # je na desiatky minút, stiahnutie na sekundy.
+            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-s${ROCK_SLOPE}-p${RP}-r${RR}.gpkg.zst"
+            ROCK_READY=""
+            if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
+              echo "rocks_rebuild=áno – skaly sa počítajú nanovo."
+            elif gh release download "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                   --pattern "$ROCK_ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
+              unzstd -q -f -o data/rock.gpkg "/tmp/$ROCK_ASSET" && ROCK_READY=1
+              [ -n "$ROCK_READY" ] && echo "Skaly z releasu $ROCK_RELEASE ✓ ($ROCK_ASSET)"
             fi
-            echo "::endgroup::"
+
+            if [ -z "$ROCK_READY" ]; then
+              echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, ${PIECE_MSG}"
+              # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
+              # v rovine nič nenašiel), nemá to zhodiť hodinový build.
+              if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
+                   --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+                   --min-area="$ROCK_MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                   --piece="$RP" --piece-fill="$ROCK_PIECE_FILL" \
+                   --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
+                ls -lh data/rock.gpkg
+                # Ulož ich, nech ich nabudúce netreba počítať znova.
+                zstd -q -19 -T0 -f -o "/tmp/$ROCK_ASSET" data/rock.gpkg
+                gh release view "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+                  gh release create "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                    --title "Skalné plochy z DEM" \
+                    --notes "Vektorové skaly počítané zo sklonu Sonny DEM. Meno assetu nesie región a nastavenia (prah sklonu, veľkosť kúska, mriežka)." || true
+                gh release upload "$ROCK_RELEASE" "/tmp/$ROCK_ASSET" \
+                  --repo "$GITHUB_REPOSITORY" --clobber \
+                  && echo "Uložené do releasu $ROCK_RELEASE ako $ROCK_ASSET" \
+                  || echo "::warning::Skaly sa nepodarilo uložiť do releasu."
+              else
+                echo "::warning::Skalné plochy sa nevygenerovali – vrstva bude prázdna."
+                make_empty_rock
+              fi
+              echo "::endgroup::"
+            fi
           else
             make_empty_rock
             echo "Skaly: vypnuté (prázdna vrstva)."
@@ -854,7 +889,9 @@ jobs:
 
           # Cache: hotové sprity sa nemenia, kým sa nezmení zoznam zdrojov ani
           # generátor – v kľúči je hash oboch.
-          CACHED_SPRITES=$(ls _site/sprites/*.json 2>/dev/null | wc -l)
+          # find, nie ls: `ls vzor*` bez zhody končí kódom 2 a `pipefail`
+          # by ním zhodil celý krok (find nad existujúcim adresárom vráti 0).
+          CACHED_SPRITES=$(find _site/sprites -maxdepth 1 -name '*.json' | wc -l)
 
           # Zoznam zdrojov je v poc/web/icon-sources.js – jedno miesto pre web
           # aj pipeline. Z každého sa vyrobí SDF sprite: symboly bez koliesok

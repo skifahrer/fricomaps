@@ -210,7 +210,8 @@ Build sťahuje viac vecí, než len DEM, a všetky majú vlastnú cache:
 | `planetiler.jar` | dátum | 89 MB pri každom behu |
 | DEM dlaždice | otlačok releasu + bbox | desiatky MB na dlaždicu |
 | výškové dlaždice | otlačok releasu + bbox + maxzoom | drahé na výpočet |
-| vrstevnice a skaly | + interval, prah, mriežka | hodiny výpočtu |
+| vrstevnice a skaly | + interval, prah, mriežka, kúsok | hodiny výpočtu |
+| hotové skaly (release `dem-rocks`) | región + nastavenia v mene assetu | desiatky minút výpočtu; `rocks_rebuild` ich prepočíta |
 | glyfy a sprity | hash zoznamu zdrojov | menia sa len so zmenou kódu |
 | zdroje Planetileru | pevný | water polygons, Natural Earth |
 
