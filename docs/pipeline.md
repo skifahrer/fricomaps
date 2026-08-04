@@ -75,7 +75,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | čo to je | odkiaľ |
 |---|---|---|
-| **Sonny's LiDAR DTM** (default) | *model terénu* z LiDARu – bez stromov a striech | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
+| **Sonny's LiDAR DTM, model 20m** (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
 | Copernicus GLO-30 | *model povrchu* vrátane vegetácie, 1″ (~30 m) | AWS Open Data, bez autentifikácie |
 
 Berie sa to, čo je pre danú dlaždicu k dispozícii: chýbajúce Sonny dlaždice
@@ -319,16 +319,32 @@ zdieľanom priečinku a pri väčšom počte stiahnutí odpovedá limitom, takž
 z neho nedá sťahovať v každom builde mapy.
 
 ```
-Google Drive priečinok (napr. Slovensko)
+Google Drive priečinok (napr. Slovensko, model 20m)
   │  gdown --folder     … stiahne celý priečinok naraz
   │  7z                 … rozbalí .zip / .7z
-  │  gdal_translate     … .hgt → N49E019.tif (GeoTIFF, DEFLATE)
+  │  workers/dem-tiles.py … GeoTIFF → dlaždice 1°×1° vo WGS84
+  │  (alebo .hgt priamo … to je už 1° dlaždica, len bez hlavičky)
   ▼
 release `dem-sonny`: N49E019.tif … + meta.json
 ```
 
-- **Meno dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný roh),
-  takže je jedno, ako sú súbory v priečinku pomenované navyše.
+- **Ktorý model.** Sonny má 1″/3″ ako `.hgt` (20×30 m, výška po celých
+  metroch) a 20m/50m ako GeoTIFF (20×20 m, výška po 0,1 m). Berieme **20m** –
+  a nie kvôli vodorovnej mriežke, ale kvôli tomu zvislému kroku: z metrových
+  schodov vychádza schodíkovitý sklon. Namerané na tom istom území Vysokých
+  Tatier: z 1 m dát 5 293 skalných plôch so 101 bodmi na obrys, z 0,1 m dát
+  2 138 plôch so 195 bodmi – pri rovnakej celkovej ploche skál (4 218 vs
+  4 223 ha). Metrové dáta teda tú istú stenu rozdrobia na falošné kúsky.
+- **Rezanie na dlaždice** ([`workers/dem-tiles.py`](../workers/dem-tiles.py)).
+  20m model môže byť jeden GeoTIFF na celú krajinu a v metrickej projekcii;
+  build mapy ale sťahuje len dlaždice pre svoj bbox a lepí ich `gdalbuildvrt`,
+  ktorý rôzne projekcie v jednom VRT neunesie. Skript preto rozsah prepočíta
+  do stupňov, mriežku z metrov na stupne (po dĺžke cez `cos(šírky)`) a vyreže
+  dlaždice `N49E019.tif`. Prevzorkúva sa **bilineárne** – pri prakticky
+  rovnakej mierke to stačí a na okrajoch dát nič „neprestrelí" mimo rozsah
+  skutočných výšok, ako to robí kubické.
+- **Meno .hgt dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný
+  roh), takže je jedno, ako sú súbory v priečinku pomenované navyše.
 - **`.hgt` je surové pole int16 bez hlavičky.** GDAL ho pozná pri štandardných
   veľkostiach (1201², 3601²); pri neštandardnej mriežke (0,5″ = 7201²) si
   workflow georeferenciu poskladá sám cez VRT – krok mriežky je `1/(n−1)`,

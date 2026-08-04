@@ -10,8 +10,8 @@ app/ios/       iOS aplikácia (SwiftUI + MapLibre Native)
 backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
-workers/       pipeline: regióny, generátor štýlov, SDF sprite,
-               vzory do spritu, zápis úprav štýlu do zdrojáku
+workers/       pipeline: regióny, výškové dlaždice, generátor štýlov,
+               SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
 docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 .github/workflows/  CI pipeline (výškový model + build mapy + deploy Pages)
 ```
@@ -28,8 +28,9 @@ Build map                    stiahne IBA {región}.osm.pbf z osm.fr exportov
                              ─► Planetiler ─► {región}.pmtiles
                              ─► GitHub Pages (viewer + dlaždice + style.json)
 
-Update DEM                   Sonny's LiDAR DTM (Google Drive) ─► .hgt ─► GeoTIFF
-(raz, keď treba nový terén)  ─► release `dem-sonny`: N49E019.tif + meta.json
+Update DEM                   Sonny's LiDAR DTM 20m (Google Drive) ─► rezanie
+(raz, keď treba nový terén)  na 1° dlaždice ─► release `dem-sonny`:
+                             N49E019.tif + meta.json
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -77,7 +78,7 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | čo | zdroj | kde sa berie |
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
-| **vrstevnice a skaly** | **Sonny's LiDAR DTM** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
+| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
 | vrstevnice a skaly – záloha | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
 | tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
 
@@ -85,24 +86,52 @@ Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
 odtiene plôch a pri malých mierkach z nej robí hnedý šum. Zapína sa
 prepínačom v paneli ⚙ (a takto zapnuté sa aj zapečie do štýlu pre iOS).
 
-### Zdroj výšok: Sonny's LiDAR DTM
+### Zdroj výšok: Sonny's LiDAR DTM, model **20m**
 
 [Sonny's LiDAR DTM](https://sonny.4lima.de/) je **model terénu z LiDARu** –
 na rozdiel od Copernicus GLO-30, ktorý je *DSM*, teda model povrchu vrátane
 stromov a striech. V lese preto vrstevnice sedia na zemi, nie na korunách, a
 skalné steny nie sú rozmazané vegetáciou. Práve preto je predvoleným zdrojom.
 
-Sonny distribuuje dlaždice cez **Google Drive**, z ktorého sa v každom builde
+Sonny ponúka pre Slovensko dva použiteľné modely a **berieme 20m**:
+
+| model | formát | vodorovne | **zvisle** |
+|---|---|---|---|
+| **20m** | GeoTIFF | 20 × 20 m | **0,1 m** |
+| 1″ | `.hgt` | 20 × 30 m | 1 m |
+
+Rozhoduje ten zvislý krok. Z metrových schodov vychádza schodíkovitý sklon,
+ktorý súvislú skalnú stenu roztrhá na kopu falošných úlomkov – namerané na
+tom istom území Vysokých Tatier:
+
+| zvislé rozlíšenie | skalných plôch | plocha skál | bodov na obrys |
+|---|---|---|---|
+| 0,1 m (20m model) | 2 138 | 4 218 ha | 195 |
+| 1 m (1″ `.hgt`) | 5 293 | 4 223 ha | 101 |
+
+Rovnaká celková plocha skál, ale z metrových dát je z nej **2,5× viac
+polámaných kúskov s hrubším obrysom**. Viac polygónov tu teda neznamená viac
+detailu, ale viac šumu.
+
+Sonny distribuuje dáta cez **Google Drive**, z ktorého sa v každom builde
 sťahovať nedá (nemá stabilné priame URL a pri väčšom počte stiahnutí vracia
 limit). Preto je medzi tým **zrkadlo v releasi**:
 
 ```
 Google Drive (priečinok krajiny)
-  → gdown        stiahne celý priečinok
-  → 7z / unzip   rozbalí .zip
-  → gdal_translate  .hgt → N49E019.tif (GeoTIFF, DEFLATE)
+  → gdown              stiahne celý priečinok
+  → 7z / unzip         rozbalí .zip
+  → workers/dem-tiles.py   GeoTIFF (aj celá krajina v metrickej projekcii)
+                           → dlaždice 1°×1° N49E019.tif vo WGS84
+     (.hgt sa prevádza priamo – je to už 1° dlaždica, len bez hlavičky)
   → release `dem-sonny` + meta.json
 ```
+
+Rezanie na dlaždice je potrebné preto, že 20m model môže byť **jeden GeoTIFF
+na celú krajinu a v metrickej projekcii**, kým build mapy chce sťahovať len
+dlaždice pre svoj bbox a lepiť ich `gdalbuildvrt`-om (ten rôzne projekcie
+v jednom VRT neunesie). Jeden release = jeden model; miešať 20m a 1″ pod
+rovnakým `release_tag` nemá zmysel, dlaždice sa volajú rovnako.
 
 Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**.
 Čo v releasi nie je, doplní Copernicus
