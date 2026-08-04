@@ -134,8 +134,11 @@ dlaždice pre svoj bbox a lepiť ich `gdalbuildvrt`-om (ten rôzne projekcie
 v jednom VRT neunesie). Jeden release = jeden model; miešať 20m a 1″ pod
 rovnakým `release_tag` nemá zmysel, dlaždice sa volajú rovnako.
 
-Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox** –
-a keď niektorá chýba, **zlyhá s hláškou, ktorá presne povie ktorá**.
+Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**.
+Bbox je obdĺžnik, ale produkt pokrýva krajinu – rohové bunky za hranicou
+(u Slovenska napr. `N47E016` v Maďarsku) v ňom nikdy nebudú. Chýbajúce
+dlaždice sú preto **varovanie so zoznamom**, nie chyba: tam jednoducho nebude
+terén. Build zlyhá až vtedy, keď pre dané územie nie je **ani jedna**.
 
 > **Copernicus GLO-30 ako záloha je zámerne vypnutý.** Je to model *povrchu*:
 > vrstevnice by v lese viedli po korunách stromov a skaly by vychádzali
@@ -431,11 +434,10 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy, od akého sklonu
      (default 40°) a na akej mriežke (default 5 m = drobné skaly)
 
-   Výškový model si build **doplní sám**: keď v release `dem-sonny` chýba
-   čo i len jedna dlaždica pre jeho územie, spustí pred sebou workflow
-   *Update DEM* (v behu je to samostatná úloha „Doplniť výškový model").
-   Ručne ho teda treba spúšťať len vtedy, keď chceš iný priečinok alebo iný
-   model.
+   Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
+   jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*
+   (v behu je to samostatná úloha „Doplniť výškový model"). Ručne ho teda
+   treba spúšťať len vtedy, keď chceš iný priečinok alebo iný model.
 3. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.

@@ -111,9 +111,13 @@ jobs:
           else
             FOLDER='${{ inputs.drive_folder }}'
             echo "Sťahujem Google Drive priečinok: $FOLDER"
-            # --remaining-ok: gdown sťahuje naraz najviac 50 súborov a inak
-            # skončí chybou; pre 1°×1° dlaždice jednej krajiny to stačí.
-            gdown --folder --remaining-ok --no-cookies -O dl "$FOLDER" || {
+            # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
+            # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
+            # neexistuje (a limit tiež nie), takže sa pridáva len ak ho daná
+            # verzia pozná.
+            REMAINING=""
+            gdown --help 2>&1 | grep -q -- --remaining-ok && REMAINING="--remaining-ok"
+            gdown --folder $REMAINING --no-cookies -O dl "$FOLDER" || {
               echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí skús o pár hodín neskôr, alebo vyplň input direct_urls (mirror)."
               exit 1
             }
