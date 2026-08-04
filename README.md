@@ -81,7 +81,8 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
 | **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
-| tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
+| **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastné PNG dlaždice `terrain/{z}/{x}/{y}.png`, uložené v release `dem-terrain` |
+| tieňovanie a 3D – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/), keď sa vlastné nevyrobia |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
 odtiene plôch a pri malých mierkach z nej robí hnedý šum. Zapína sa
@@ -182,6 +183,21 @@ Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m)
 zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
 prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 
+### Tieňovanie reliéfu a 3D terén
+
+MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc, kde je
+výška zakódovaná do farby (*terrarium*). Robia sa z toho istého Sonny DEM ako
+vrstevnice ([workers/build-terrain.py](workers/build-terrain.py)), takže 3D
+reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
+
+- **Každý zoom sa prevzorkuje z DEM nanovo** (`-r average`), nezmenšujú sa
+  hotové dlaždice: priemerovať sa musí *výška*, nie zakódovaná farba.
+- **Zoom končí na 13** (`terrain_maxzoom`) – jemnejšie 20 m DEM neunesie.
+- **Ukladajú sa do releasu `dem-terrain`** ako jeden `.tar.zst` na región
+  a maxzoom. Ďalší build ich už len stiahne; `terrain_rebuild: áno` ich
+  vynúti prepočítať nanovo.
+- Keď sa nevyrobia, štýl padá späť na AWS Terrain Tiles.
+
 ### Skaly (najstrmšie úseky terénu)
 
 Kde sú vrstevnice husté, je stena. Hustota čiar je ale len **obraz sklonu** –
@@ -208,25 +224,38 @@ nad nimi zostávajú čitateľné. Strmý svah je svetlejší, výrazná stena t
 farby `Skalná plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a
 skaly**, takže sa dajú v developer móde doladiť ako čokoľvek iné.
 
-**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na mriežke 5 m (DEM
-sa doň prevzorkuje `cubicspline`), bez priemerovania, obrys ide presne po
-izolínii sklonu a najmenšia plocha je **1 m²**. Planetiler dostane
+**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na mriežke 2 m (DEM
+sa doň prevzorkuje `cubicspline`), obrys ide presne po izolínii sklonu
+a najmenšia plocha je **1 m²**. Planetiler dostane
 `--min_feature_size_at_max_zoom=0`, takže drobné plochy neodfiltruje – overené
 na hotových dlaždiciach, najmenšie skalné polygóny v nich majú 1,2 m². Pri
 nižších zoomoch drobnosti odpadnú samé (Planetiler zahadzuje prvky menšie než
 pixel), takže sa objavia až tam, kde majú zmysel.
 
-Koľko toho z kraja vyjde (namerané na celom Žilinskom kraji, prah 40°):
+**Veľkosť skalných plôch neurčuje mriežka, ale prah sklonu.** Súvislá stena
+nad prahom je jedna plocha, nech ju počítaš na akejkoľvek mriežke – jemnejšia
+mriežka dá presnejší *obrys*, nie menšie plochy. Namerané na výreze Vysokých
+Tatier (mriežka 2 m):
 
-| mriežka | plôch | GPKG | kontúrovanie |
-|---|---|---|---|
-| 20 m (natívna) | 10 343 | 5 MB | ~1 min |
-| 10 m | 19 882 | 13 MB | ~3 min |
-| **5 m (default)** | **24 465** | 28 MB | ~14 min |
+| prah | plôch | plocha spolu | priemerná | najväčšia |
+|---|---|---|---|---|
+| 40° | 1 299 | 2 931 ha | 22 567 m² | **428 ha** |
+| 45° | 1 019 | 1 710 ha | 16 788 m² | 82 ha |
+| **50° (default)** | **719** | **884 ha** | **12 295 m²** | **38 ha** |
+| 55° | 402 | 389 ha | 9 698 m² | 30 ha |
+| 60° | 208 | 131 ha | 6 301 m² | 18 ha |
 
-Bbox kraja má pri 5 m ~520 miliónov buniek; celé Slovensko by malo 3,6
-miliardy, tak sa mriežka sama dopočíta na ~12 m (`ROCK_MAX_CELLS`) a workflow
-to napíše do logu. **Pre drobné skaly teda voľ kraj alebo `crop_bbox`.**
+Pri 40° je najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
+strmý svah. Preto je predvolený prah **50°**; kto chce ešte drobnejšie kúsky,
+dá 55° alebo 60°.
+
+**Počíta sa po častiach.** Bbox kraja má pri 2 m vyše 3 miliardy buniek, čo je
+~13 GB na jeden raster – viac, než má runner miesta aj pamäte. Územie sa preto
+krája (`ROCK_CHUNK_CELLS`, default 150 mil. buniek na kus), každá časť sa
+spracuje a hneď upratá; sklon sa počíta s presahom a plochy sa orežú presne na
+hranicu časti, takže susedné kusy na seba nadväzujú. Čas rastie lineárne –
+merané ~1,5 mil. buniek/s, teda kraj pri 2 m okolo 35 minút. **Mriežka 1 m sa
+oplatí len na `crop_bbox`; pre kraj by to boli hodiny.**
 
 > Poznámka k dátam: bunka 1″ DEM má u nás ~20×30 m, takže tvary pod 20 m sú
 > **dopočítané, nie merané** – interpolácia dá jemnejšie hrany a viac
@@ -235,16 +264,15 @@ to napíše do logu. **Pre drobné skaly teda voľ kraj alebo `crop_bbox`.**
 > ale z geoportálu sťahuje cez interaktívny export, takže by sa musel najprv
 > nazrkadliť do releasu rovnako ako Sonnyho DTM.
 >
-> Ak by bolo v teréne priveľa bodiek, `ROCK_WIN` (priemerovanie sklonu) a
-> `ROCK_MIN_AREA` v `env:` to vedia stiahnuť; `rock_res=0` vráti natívnu
-> mriežku DEM.
+> Ak by bolo v teréne priveľa bodiek, zdvihni `rock_slope` alebo
+> `ROCK_MIN_AREA` v `env:`.
 
 Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` – od akého sklonu sa
 terén považuje za skalu (default 40°, menej = viac plôch) – a `rock_res`
 (mriežka v metroch, default 5, `0` = natívne rozlíšenie DEM). Ostatné ladenie
 je v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
-`ROCK_WIN` (priemerovanie sklonu, 0 = žiadne), `ROCK_MIN_AREA` (1 m²),
-`ROCK_SIMPLIFY` (0 = presný obrys), `ROCK_MAX_CELLS` (strop na veľkosť rastra).
+`ROCK_MIN_AREA` (1 m²), `ROCK_SIMPLIFY` (0 = presný obrys),
+`ROCK_CHUNK_CELLS` (koľko buniek naraz).
 
 Prah 40° je vyskúšaný na Copernicus DEM tak, aby označil naozaj len steny, nie
 každý strmší svah:
@@ -432,7 +460,10 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy, od akého sklonu
-     (default 40°) a na akej mriežke (default 5 m = drobné skaly)
+     (default 50° = steny) a na akej mriežke (default 2 m)
+   - `terrain`, `terrain_maxzoom`, `terrain_rebuild`: tieňovanie a 3D terén
+     zo Sonnyho ako PNG dlaždice (uložia sa do releasu; `rebuild` ich
+     prepočíta nanovo)
 
    Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
    jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*

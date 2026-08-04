@@ -78,15 +78,30 @@ on:
         default: true
         type: boolean
       rock_slope:
-        description: "Od akého sklonu (°) je terén skala – 40 = štandard, menej = viac plôch"
+        description: "Od akého sklonu (°) je terén skala – 50 = steny (odporúčané), 40 = aj strmé svahy, teda oveľa väčšie plochy"
         required: false
-        default: "40"
+        default: "50"
         type: string
       rock_res:
-        description: "Mriežka na výpočet sklonu skál v metroch (5 = drobné skaly, 0 = natívne rozlíšenie DEM; menej = viac plôch, ale dlhší build)"
+        description: "Mriežka na výpočet sklonu skál v metroch (2 = jemný obrys; 1 len na malé územie, kraj by trval hodiny)"
         required: false
-        default: "5"
+        default: "2"
         type: string
+      terrain:
+        description: "Tieňovanie reliéfu a 3D terén zo Sonnyho ako PNG dlaždice"
+        required: false
+        default: true
+        type: boolean
+      terrain_maxzoom:
+        description: "Max zoom výškových dlaždíc (13 stačí – jemnejšie už 20 m DEM neunesie)"
+        required: false
+        default: "13"
+        type: string
+      terrain_rebuild:
+        description: "Vždy pregenerovať výškové dlaždice, aj keď sú už uložené v release"
+        required: false
+        default: false
+        type: boolean
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
         required: false
@@ -123,18 +138,16 @@ env:
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
-  ROCK_RES: "5" # záložná mriežka na sklon (m), keď input rock_res chýba
-  ROCK_WIN: "0" # okno na spriemerovanie sklonu (m); 0 = žiadne priemerovanie.
-  #               Priemerovanie robí súvislejšie plochy, ale zje malé skalky.
+  # Release s hotovými výškovými (hillshade) dlaždicami – aby sa nerobili znova.
+  TERRAIN_RELEASE: dem-terrain
+  ROCK_RES: "2" # záložná mriežka na sklon (m), keď input rock_res chýba
   ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
-  # Strop na veľkosť rastra so sklonom. Jemná mriežka na veľkom území by
-  # runner utopila v hodinách kontúrovania, tak sa v takom prípade zhrubne.
-  # Bbox kraja má pri 5 m ~520 mil. buniek (namerané: ~14 min kontúrovania,
-  # rastre ~3,5 GB), celé Slovensko by pri 5 m malo 3,6 miliardy – tomu sa
-  # mriežka dopočíta na ~12 m.
-  ROCK_MAX_CELLS: "600000000"
+  # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
+  # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster) – naraz sa to do
+  # runnera nezmestí. 150 miliónov je ~600 MB na raster, čo je bezpečné.
+  ROCK_CHUNK_CELLS: "150000000"
 
 jobs:
   # ---------- je v release terén pre toto územie? ----------
@@ -221,6 +234,11 @@ jobs:
 
   build:
     needs: [check-dem, mirror-dem]
+    # `contents: write` kvôli ukladaniu hotových výškových dlaždíc do releasu
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     # Kontrola aj doplnenie sa môžu preskočiť (vypnuté vrstevnice, terén už
     # v release) – build musí bežať aj tak. Keď doplnenie zlyhá (napr. Drive
     # limituje sťahovanie), build sa spustí tiež a zastaví sa až na kroku
@@ -248,13 +266,34 @@ jobs:
           fi
           echo "Pages je zapnuté ✓"
 
+      # PBF sa mení denne, tak je v kľúči dátum – v ten istý deň sa už
+      # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
+      - name: Dnešný dátum do kľúča cache
+        id: day
+        run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache PBF regiónu
+        uses: actions/cache@v4
+        with:
+          path: data/region.osm.pbf
+          key: pbf-${{ inputs.region }}-${{ inputs.custom_pbf_url }}-${{ inputs.crop_bbox }}-${{ steps.day.outputs.d }}
+
       - name: Stiahni PBF iba daného regiónu
         id: region
         run: |
           mkdir -p data
           CUSTOM_URL='${{ inputs.custom_pbf_url }}'
 
+          # Cache: keď PBF (už aj orezané) leží z predošlého behu, sťahovať ani
+          # rezať netreba – kľúč nesie región, orez aj dátum.
+          CACHED=""
+          if [ -s data/region.osm.pbf ]; then
+            CACHED=1
+            echo "PBF z cache ✓ ($(du -h data/region.osm.pbf | cut -f1))"
+          fi
+
           download() { # $1 = URL
+            [ -n "$CACHED" ] && return 0
             echo "Skúšam: $1"
             curl -fL --retry 3 --retry-delay 5 -o data/region.osm.pbf "$1"
           }
@@ -300,14 +339,16 @@ jobs:
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
           CROP='${{ inputs.crop_bbox }}'
           if [ -n "$CROP" ]; then
-            command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
-            echo "Orezávam na bbox $CROP …"
-            if ! osmium extract --overwrite -b "$CROP" -s smart \
-                 -o data/region-crop.osm.pbf data/region.osm.pbf; then
-              echo "::error::Orezanie na bbox '$CROP' zlyhalo – očakávaný formát je west,south,east,north (napr. 18.98,49.18,19.20,49.28)."
-              exit 1
+            if [ -z "$CACHED" ]; then
+              command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
+              echo "Orezávam na bbox $CROP …"
+              if ! osmium extract --overwrite -b "$CROP" -s smart \
+                   -o data/region-crop.osm.pbf data/region.osm.pbf; then
+                echo "::error::Orezanie na bbox '$CROP' zlyhalo – očakávaný formát je west,south,east,north (napr. 18.98,49.18,19.20,49.28)."
+                exit 1
+              fi
+              mv data/region-crop.osm.pbf data/region.osm.pbf
             fi
-            mv data/region-crop.osm.pbf data/region.osm.pbf
             BBOX="$CROP"
             KEY="${KEY}_crop"
             NAME="$NAME (výrez)"
@@ -333,8 +374,15 @@ jobs:
           path: data/sources
           key: planetiler-sources-v1
 
+      - name: Cache Planetileru
+        uses: actions/cache@v4
+        with:
+          path: planetiler.jar
+          key: planetiler-latest-${{ steps.day.outputs.d }}
+
       - name: Stiahni Planetiler
         run: |
+          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
           curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
             https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
@@ -365,6 +413,15 @@ jobs:
         with:
           path: contours-out
           key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}-${{ hashFiles('workers/contours.yml') }}
+
+      # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
+      # release – čo je presne to, čo hovorí `demkey`.
+      - name: Cache DEM dlaždíc
+        if: ${{ inputs.contours }}
+        uses: actions/cache@v4
+        with:
+          path: dem/tiles
+          key: demtiles-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}
 
       - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -468,142 +525,35 @@ jobs:
           ls -lh data/contours.gpkg
 
           # ---------- skaly: najstrmšie úseky terénu ----------
-          # „Husté vrstevnice = skala" je len iný pohľad na veľký sklon, preto
-          # sa neanalyzuje hustota čiar (tá závisí od intervalu a zoomu), ale
-          # rovno sklon terénu. Výsledok sú vektorové plochy, nie raster:
-          #   1. DEM do metrickej projekcie (v stupňoch by sklon vyšiel zle –
-          #      1° po dĺžke je u nás o tretinu kratší než 1° po šírke),
-          #      na mriežke v natívnom rozlíšení DEM,
-          #   2. gdaldem slope → sklon v stupňoch,
-          #   3. gdal_contour -p → izolínie sklonu ako plochy (hladší okraj
-          #      než polygonizácia po pixeloch),
-          #   4. rozbitie na jednotlivé plochy a dopočítanie triedy.
-          # Predvolene sa nič nepriemeruje, nezjednodušuje ani nezahadzuje –
-          # najmenšia plocha je ROCK_MIN_AREA (5 m²).
+          # Celý výpočet je vo workers/rock-areas.py – po častiach, aby sa
+          # jemná mriežka zmestila do pamäte aj na disk. Bbox kraja má pri
+          # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster), takže naraz
+          # sa to spočítať nedá.
           ROCK_SLOPE='${{ inputs.rock_slope }}'
-          case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=40 ;; esac
+          case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=50 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
-          ROCKS='${{ inputs.rocks }}'
-
-          # Mriežka na sklon = natívne rozlíšenie DEM. Jemnejšia mriežka by
-          # bola len interpolácia (viac bodov, žiadna nová informácia),
-          # hrubšia by zahodila skutočný detail. Mriežka DEM je v stupňoch,
-          # takže po dĺžke ju treba prenásobiť cos(zemepisnej šírky).
-          # Input má prednosť pred env; 0 znamená „natívne rozlíšenie DEM".
           RR='${{ inputs.rock_res }}'
-          case "$RR" in ''|*[!0-9]*) RR="$ROCK_RES" ;; esac
-          ROCK_RES="$RR"
-          if [ "${ROCK_RES:-0}" -le 0 ] 2>/dev/null; then
-            ROCK_RES=$(python3 - "$S" "$N" <<'PY'
-          import json, math, subprocess, sys
-          info = json.loads(
-              subprocess.run(["gdalinfo", "-json", "dem/all.vrt"],
-                             capture_output=True, text=True).stdout)
-          gt = info["geoTransform"]
-          lat = (float(sys.argv[1]) + float(sys.argv[2])) / 2
-          x = abs(gt[1]) * 111320 * math.cos(math.radians(lat))
-          y = abs(gt[5]) * 110540
-          print(max(1, round(min(x, y))))
-          PY
-          )
-          fi
-          # Strop na veľkosť rastra: pri jemnej mriežke a veľkom území by
-          # kontúrovanie bežalo hodiny. Radšej mriežku zhrubneme a povieme to.
-          REQ_RES="$ROCK_RES"
-          ROCK_RES=$(python3 - "$W" "$S" "$E" "$N" "$ROCK_RES" "$ROCK_MAX_CELLS" <<'PY'
-          import math, sys
-          w, s, e, n, res, cap = (float(v) for v in sys.argv[1:7])
-          lat = math.radians((s + n) / 2)
-          width = (e - w) * 111320 * math.cos(lat)
-          height = (n - s) * 110540
-          need = math.sqrt(width * height / cap)
-          print(max(1, round(max(res, need))))
-          PY
-          )
-          if [ "$ROCK_RES" -gt "$REQ_RES" ]; then
-            echo "::warning::Mriežka skál zhrubnutá z ${REQ_RES} m na ${ROCK_RES} m – inak by mal raster so sklonom nad ${ROCK_MAX_CELLS} buniek a kontúrovanie by bežalo hodiny. Pre plný detail vyber menší región alebo crop_bbox."
-          fi
-          [ "${ROCK_WIN:-0}" -gt 0 ] 2>/dev/null || ROCK_WIN="$ROCK_RES"
+          case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
 
-          # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj vtedy,
-          # keď sa žiadna skala nenašla alebo sú vypnuté.
           make_empty_rock() {
+            # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj
+            # vtedy, keď sa žiadna skala nenašla alebo sú vypnuté.
             echo '{"type":"FeatureCollection","features":[]}' > dem/empty.geojson
             ogr2ogr -f GPKG data/rock.gpkg dem/empty.geojson -nln rock -overwrite \
               -nlt POLYGON -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
           }
 
-          # -simplify 0 by ogr2ogr bralo ako „zjednodušuj s nulovou toleranciou";
-          # pri presnom obryse ho radšej nedávame vôbec.
-          SIMPLIFY_ARG=""
-          [ "${ROCK_SIMPLIFY:-0}" != "0" ] && SIMPLIFY_ARG="-simplify $ROCK_SIMPLIFY"
-
-          rock_sql() { # $1 = podmienka na najmenšiu plochu (môže byť prázdna)
-            ogr2ogr -f GPKG dem/rock-m.gpkg dem/rock-parts.gpkg -nln rock \
-              -overwrite $SIMPLIFY_ARG -dialect SQLITE \
-              -sql "SELECT *, CAST(smin AS INTEGER) AS slope, CASE
-                      WHEN smin >= $ROCK_CLIFF THEN 'cliff'
-                      ELSE 'steep' END AS class
-                    FROM band ${1:+WHERE }$1"
-          }
-
-          build_rocks() {
-            # EPSG:3035 (LAEA Európa) – metrická, pre naše zemepisné šírky
-            # skresľuje plochy minimálne.
-            gdalwarp -q -overwrite -t_srs EPSG:3035 -te_srs EPSG:4326 \
-              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r cubicspline \
-              -ot Float32 -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
-            gdaldem slope -q -compute_edges -co COMPRESS=DEFLATE -co TILED=YES \
-              dem/metric.tif dem/slope.tif || return 1
-            if [ "$ROCK_WIN" -gt "$ROCK_RES" ]; then
-              gdalwarp -q -overwrite -tr "$ROCK_WIN" "$ROCK_WIN" -r average \
-                -co COMPRESS=DEFLATE -co TILED=YES dem/slope.tif dem/slope-avg.tif || return 1
-            else
-              # Bez priemerovania: izolínia sklonu ide presne cez mriežku DEM,
-              # takže sa zachytí aj skalka veľkosti jednej bunky.
-              mv dem/slope.tif dem/slope-avg.tif
-            fi
-
-            # -fl dáva pásma sklonu; nás zaujímajú tie od prahu vyššie.
-            gdal_contour -q -p -fl "$ROCK_SLOPE" "$ROCK_CLIFF" \
-              -amin smin -amax smax -f GPKG -nln band \
-              dem/slope-avg.tif dem/rock-band.gpkg || return 1
-
-            # gdal_contour zlepí každé pásmo do JEDNÉHO multipolygónu, takže
-            # bez rozbitia na kusy (-explodecollections) by sa nedali zahodiť
-            # drobné plôšky – plocha by sa počítala za celé pásmo naraz.
-            ogr2ogr -f GPKG dem/rock-parts.gpkg dem/rock-band.gpkg band -nln band \
-              -overwrite -explodecollections -where "smin >= $ROCK_SLOPE" || return 1
-
-            local geomcol
-            geomcol=$(ogrinfo -json dem/rock-parts.gpkg band 2>/dev/null \
-              | jq -r '.layers[0].geometryFields[0].name // "geom"' 2>/dev/null || echo geom)
-            [ -n "$geomcol" ] && [ "$geomcol" != "null" ] || geomcol=geom
-
-            # ST_Area potrebuje spatialite; keby v obraze runnera nebolo,
-            # drobné plochy zahodí až Planetiler podľa veľkosti v pixeloch.
-            rock_sql "ST_Area($geomcol) >= $ROCK_MIN_AREA" || {
-              echo "::warning::Filter najmenšej plochy (ST_Area) nefunguje – skaly idú bez neho."
-              rock_sql "" || return 1
-            }
-
-            # Späť do WGS84 (Planetiler číta GPKG v EPSG:4326). Zjednodušenie
-            # aj filter plochy museli byť ešte v metroch, preto až teraz.
-            ogr2ogr -f GPKG data/rock.gpkg dem/rock-m.gpkg -nln rock \
-              -overwrite -t_srs EPSG:4326 || return 1
-            ogrinfo -so data/rock.gpkg rock >/dev/null 2>&1 || return 1
-          }
-
-          if [ "$ROCKS" = "true" ]; then
-            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${ROCK_RES} m, okno ${ROCK_WIN} m, najmenšia plocha ${ROCK_MIN_AREA} m²"
+          if [ '${{ inputs.rocks }}' = 'true' ]; then
+            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m"
             # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
-            # v rovine nič nenašiel), nemá to zhodiť hodinový build – mapa
-            # pôjde s prázdnou vrstvou a varovaním.
-            if build_rocks; then
-              echo "Skalných plôch: $(ogrinfo -so data/rock.gpkg rock | awk -F: '/Feature Count/{print $2}' | xargs)"
+            # v rovine nič nenašiel), nemá to zhodiť hodinový build.
+            if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$BBOX" \
+                 --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+                 --min-area="$ROCK_MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                 --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
               ls -lh data/rock.gpkg
             else
-              echo "::warning::Skalné plochy sa nevygenerovali (buď je územie rovinaté, alebo zlyhal výpočet sklonu) – vrstva bude prázdna."
+              echo "::warning::Skalné plochy sa nevygenerovali – vrstva bude prázdna."
               make_empty_rock
             fi
             echo "::endgroup::"
@@ -650,7 +600,7 @@ jobs:
           # výšok (ide do atribúcie mapy) a prah sklonu skál (do manifestu).
           echo "$CZ" > contours-out/maxzoom.txt
           echo "$DEM_USED" > contours-out/dem-source.txt
-          if [ "$ROCKS" = "true" ]; then
+          if [ '${{ inputs.rocks }}' = 'true' ]; then
             echo "$ROCK_SLOPE" > contours-out/rock-slope.txt
           else
             echo "off" > contours-out/rock-slope.txt
@@ -688,6 +638,85 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
           ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+
+      # ---------- tieňovanie reliéfu a 3D terén ----------
+      # MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc
+      # (kódovanie terrarium). Robia sa z toho istého Sonny DEM ako vrstevnice,
+      # aby 3D reliéf nedvíhal koruny stromov, kým vrstevnice vedú po zemi.
+      #
+      # Sú drahé na výpočet, ale závisia len od územia – preto sa raz uložia
+      # do releasu `dem-terrain` ako jeden .tar.zst a nabudúce sa len stiahnu.
+      # `terrain_rebuild` ich prepíše nanovo.
+      - name: Cache výškových dlaždíc
+        id: terrain-cache
+        if: ${{ inputs.terrain }}
+        uses: actions/cache@v4
+        with:
+          path: terrain-out
+          key: terrain-v1-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-z${{ inputs.terrain_maxzoom }}
+
+      - name: Tieňovanie reliéfu (PNG dlaždice zo Sonnyho)
+        id: terrain
+        if: ${{ inputs.terrain }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TZ='${{ inputs.terrain_maxzoom }}'
+          case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
+          BBOX='${{ steps.region.outputs.bbox }}'
+          ASSET="terrain-${{ steps.region.outputs.key }}-z${TZ}.tar.zst"
+          REBUILD='${{ inputs.terrain_rebuild }}'
+
+          have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
+
+          if [ "$REBUILD" = 'true' ]; then
+            echo "terrain_rebuild=áno – dlaždice sa počítajú nanovo."
+            rm -rf terrain-out
+          elif have_tiles; then
+            echo "Výškové dlaždice sú v cache behu ✓"
+          else
+            # Skús release – uložené dlaždice sú lacnejšie než ich prepočítať.
+            if gh release download "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                 --pattern "$ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
+              mkdir -p terrain-out
+              tar --use-compress-program=unzstd -xf "/tmp/$ASSET" -C terrain-out
+              echo "Výškové dlaždice stiahnuté z releasu $TERRAIN_RELEASE ✓"
+            fi
+          fi
+
+          if ! have_tiles; then
+            if [ ! -s dem/all.vrt ]; then
+              echo "::warning::DEM nie je k dispozícii (vrstevnice sa brali z cache) – tieňovanie sa preskočí."
+              echo "enabled=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sudo apt-get install -y -qq zstd >/dev/null 2>&1 || true
+            python3 -m pip install --quiet numpy
+            echo "::group::Výškové dlaždice do z$TZ"
+            python3 workers/build-terrain.py --dem=dem/all.vrt --bbox="$BBOX" \
+              --minzoom=5 --maxzoom="$TZ" --out=terrain-out
+            echo "$TZ" > terrain-out/maxzoom.txt
+            echo "::endgroup::"
+
+            # Ulož do releasu, nech ich nabudúce netreba počítať znova.
+            tar --use-compress-program='zstd -19 -T0' -cf "/tmp/$ASSET" -C terrain-out .
+            gh release view "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+              gh release create "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                --title "Výškové dlaždice (tieňovanie a 3D terén)" \
+                --notes "Terrarium PNG dlaždice zo Sonny's LiDAR DTM. Jeden .tar.zst na región a maxzoom; vyrába ich workflow Build map." || true
+            gh release upload "$TERRAIN_RELEASE" "/tmp/$ASSET" \
+              --repo "$GITHUB_REPOSITORY" --clobber \
+              && echo "Uložené do releasu $TERRAIN_RELEASE ako $ASSET" \
+              || echo "::warning::Výškové dlaždice sa nepodarilo uložiť do releasu."
+          fi
+
+          TZ=$(cat terrain-out/maxzoom.txt 2>/dev/null || echo "$TZ")
+          mkdir -p _site/terrain
+          find terrain-out -mindepth 1 -maxdepth 1 -type d -exec cp -r {} _site/terrain/ \;
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
+          echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ, $(du -sm _site/terrain | cut -f1) MB"
 
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
@@ -775,11 +804,23 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh _site/tiles/
 
+      - name: Cache glyfov a spritov
+        uses: actions/cache@v4
+        with:
+          path: |
+            _site/fonts
+            _site/sprites
+          key: assets-${{ hashFiles('poc/web/icon-sources.js', 'workers/build-sdf-sprite.mjs') }}-${{ env.GLYPHS_ZIP }}
+
       - name: Stiahni a priprav sady ikoniek
         id: sprite
         run: |
           set -uo pipefail
           mkdir -p _site/sprites /tmp/icons
+
+          # Cache: hotové sprity sa nemenia, kým sa nezmení zoznam zdrojov ani
+          # generátor – v kľúči je hash oboch.
+          CACHED_SPRITES=$(ls _site/sprites/*.json 2>/dev/null | wc -l)
 
           # Zoznam zdrojov je v poc/web/icon-sources.js – jedno miesto pre web
           # aj pipeline. Z každého sa vyrobí SDF sprite: symboly bez koliesok
@@ -794,6 +835,11 @@ jobs:
           ok=""
           while read -r id url; do
             [ -n "$id" ] || continue
+            if [ "$CACHED_SPRITES" -gt 0 ] && [ -s "_site/sprites/$id.json" ]; then
+              echo "── $id (z cache)"
+              ok="$ok $id"
+              continue
+            fi
             echo "── $id"
             got=1
             for ext in .json .png; do
@@ -840,7 +886,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p _site/fonts
-          if curl -fL --retry 4 --retry-delay 5 -o /tmp/glyphs.zip "$GLYPHS_ZIP"; then
+          if [ -n "$(ls -A _site/fonts 2>/dev/null)" ]; then
+            echo "Glyfy z cache ✓"
+          elif curl -fL --retry 4 --retry-delay 5 -o /tmp/glyphs.zip "$GLYPHS_ZIP"; then
             unzip -q /tmp/glyphs.zip -d /tmp/glyphs
 
             # Fontstack = adresár, ktorý obsahuje 0-255.pbf. Presné mená
@@ -888,6 +936,7 @@ jobs:
             --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
             --dem-source='${{ steps.contours.outputs.dem_source || 'sonny' }}' \
+            ${{ steps.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, steps.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -939,6 +988,8 @@ jobs:
             --argjson cmaxzoom '${{ steps.contours.outputs.maxzoom || '14' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
             --arg demsource '${{ steps.contours.outputs.dem_source || 'sonny' }}' \
+            --arg dem '${{ steps.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
+            --argjson demmaxzoom '${{ steps.terrain.outputs.maxzoom || 15 }}' \
             --arg rockslope '${{ steps.contours.outputs.rock_slope || 'off' }}' \
             '{
               default_region: $region,
@@ -948,6 +999,8 @@ jobs:
               sprite: $sprite,
               icon_sources: $icon_sources,
               default_icons: "${{ steps.sprite.outputs.name }}",
+              dem: $dem,
+              dem_maxzoom: $demmaxzoom,
               regions: {
                 ($region): ({
                   name: $name,

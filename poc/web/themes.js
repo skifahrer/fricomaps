@@ -53,6 +53,13 @@ export const DEFAULT_DEM_TILES =
   "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
 
 /**
+ * Najvyšší zoom výškových dlaždíc. AWS Terrain Tiles idú po z15; naše vlastné
+ * (z 30 m DEM) končia nižšie – vyšší zoom by už nepridal detail, len veľkosť.
+ * Skutočnú hodnotu dodá pipeline cez `demMaxzoom`.
+ */
+export const DEFAULT_DEM_MAXZOOM = 15;
+
+/**
  * Zdroje výšok, z ktorých pipeline počíta vrstevnice a skalné plochy.
  * Licencia oboch vyžaduje uvedenie zdroja, preto ide atribúcia priamo do
  * zdroja `contours` v štýle (MapLibre ju zobrazí v rohu mapy).
@@ -997,6 +1004,7 @@ function applyLayerOverrides(style, layerOverrides) {
  *                                        určuje atribúciu vrstevníc a skál
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
  *                                        a 3D terén (null = bez nich)
+ * @param {number} [opts.demMaxzoom]      najvyšší zoom výškových dlaždíc
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
  * @param {object|null} [opts.overrides]  úpravy z developer módu
@@ -1014,6 +1022,7 @@ export function buildStyle({
   contoursMaxzoom = 14,
   demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
+  demMaxzoom = DEFAULT_DEM_MAXZOOM,
   sdfIcons = false,
   iconSet = null,
   hillshade = null,
@@ -1094,15 +1103,20 @@ export function buildStyle({
     };
   }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
+  // Vlastné dlaždice (workers/build-terrain.py) sú z toho istého modelu ako
+  // vrstevnice a skaly – atribúcia preto ide podľa zdroja výšok. Keď ich
+  // pipeline nevyrobila, padá sa na verejné AWS Terrain Tiles.
   if (demTiles) {
+    const ownDem = demTiles !== DEFAULT_DEM_TILES;
     style.sources.dem = {
       type: "raster-dem",
       tiles: [demTiles],
       encoding: "terrarium",
       tileSize: 256,
-      maxzoom: 15,
-      attribution:
-        '<a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>'
+      maxzoom: demMaxzoom,
+      attribution: ownDem
+        ? (DEM_SOURCES[demSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).attribution
+        : '<a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>'
     };
   }
 
