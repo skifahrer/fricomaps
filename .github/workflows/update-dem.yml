@@ -9,7 +9,7 @@ name: Update DEM (Sonny's LiDAR DTM → release)
 # takže sa z neho nedá spoľahlivo sťahovať v každom builde mapy. Stiahne sa
 # preto raz sem, prevedie na dlaždice `N49E019.tif` (GeoTIFF, DEFLATE) a
 # publikuje ako assety releasu – build mapy si potom vypýta len tie dlaždice,
-# ktoré pokrývajú jeho bbox (rovnaký princíp ako release `osm-extracts`).
+# ktoré pokrývajú jeho bbox.
 #
 # Prevod .hgt → GeoTIFF je zámerný: .hgt je surové pole int16 bez hlavičky,
 # takže sa musí interpretovať podľa názvu súboru; hotový GeoTIFF je menší

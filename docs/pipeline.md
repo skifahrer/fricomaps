@@ -65,10 +65,6 @@ Zdrojom sú regionálne exporty [osm.fr](https://download.openstreetmap.fr/extra
 rezané po **skutočných administratívnych hraniciach** a aktualizované denne.
 Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 
-Ak osm.fr vypadne, použije sa fallback z releasu `osm-extracts`, ktorý raz
-týždenne vyrába druhý workflow (Geofabrik Slovensko → `osmium extract -c` →
-všetky kraje naraz).
-
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
@@ -79,7 +75,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | čo to je | odkiaľ |
 |---|---|---|
-| **Sonny's LiDAR DTM** (default) | *model terénu* z LiDARu – bez stromov a striech | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#tretí-workflow-update-dem)) |
+| **Sonny's LiDAR DTM** (default) | *model terénu* z LiDARu – bez stromov a striech | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
 | Copernicus GLO-30 | *model povrchu* vrátane vegetácie, 1″ (~30 m) | AWS Open Data, bez autentifikácie |
 
 Berie sa to, čo je pre danú dlaždicu k dispozícii: chýbajúce Sonny dlaždice
@@ -96,7 +92,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    ogr2ogr        … dopočíta atribút `level`
   │
   └─ skaly ──────────────────────────────────────────────────
-       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, natívna mriežka
+       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 5 m
        gdaldem slope             … sklon v stupňoch
        gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
        ogr2ogr                   … rozbitie na kusy, `class`
@@ -121,24 +117,37 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Mriežka = natívne rozlíšenie DEM** (`ROCK_RES=0`). Jemnejšia by bola len
-  interpolácia – viac bodov, žiadna nová informácia; hrubšia by zahodila
-  skutočný detail. Mriežka DEM je v stupňoch, takže sa po dĺžke prenásobí
-  `cos(šírky)`: z 1″ vyjde u nás ~20 m.
+- **Mriežka 5 m** (`rock_res`, 0 = natívne rozlíšenie DEM). Sklon sa počíta
+  na jemnejšej mriežke, než má DEM – DEM sa doň prevzorkuje `cubicspline`.
+  Namerané na celom Žilinskom kraji (prah 40°):
+
+  | mriežka | plôch | z toho pod 100 m² | GPKG | kontúrovanie |
+  |---|---|---|---|---|
+  | 20 m (natívna) | 10 343 | – | 5 MB | ~1 min |
+  | 10 m | 19 882 | 2 739 | 13 MB | ~3 min |
+  | **5 m** | **24 465** | – | 28 MB | ~14 min |
+
+  Tvary pod 20 m sú **dopočítané, nie merané** – interpolácia neprináša novú
+  informáciu, len jemnejšie hrany a viac samostatných plôch. Kto chce čisto
+  to, čo dáta unesú, dá `rock_res=0`.
 - **Bez priemerovania a bez zjednodušovania** (`ROCK_WIN=0`, `ROCK_SIMPLIFY=0`).
   Priemerovanie sklonu robí súvislejšie plochy, ale zje malé skalky;
   zjednodušenie obrysu by tie najmenšie zmazalo úplne. Kto chce pokojnejší
   obraz, oboje si v `env:` zapne späť.
-- **Najmenšia plocha 5 m²** (`ROCK_MIN_AREA`), teda prakticky bez filtra – a
-  aby ich nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`.
-  Merané na výreze Vysokých Tatier: 878 plôch, z toho 73 pod 100 m², a
-  v hotových dlaždiciach sa naozaj nachádzajú. Pri nižších zoomoch drobnosti
-  odpadnú samé – tam Planetiler prvky menšie než pixel zahadzuje, čo je
-  správne, lebo by z nich boli nečitateľné bodky.
-- **Aká je vlastne rozlišovacia schopnosť.** Bunka 1″ DEM má u nás ~20×30 m,
-  takže najmenší *skutočný* útvar má rádovo stovky m². Prah 5 m² neznamená,
-  že vidíme päťmetrovú skalku, ale že sa nezahadzuje nič z toho, čo dáta
-  unesú (a že kúsky pri okraji dlaždice prežijú aj po orezaní).
+- **Najmenšia plocha 1 m²** (`ROCK_MIN_AREA`), teda bez filtra – a aby ich
+  nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`. Overené
+  na hotových dlaždiciach: najmenšie skalné polygóny v nich majú 1,2 m².
+  Pri nižších zoomoch drobnosti odpadnú samé – tam Planetiler prvky menšie
+  než pixel zahadzuje, čo je správne, lebo by z nich boli nečitateľné bodky.
+- **Strop na veľkosť rastra** (`ROCK_MAX_CELLS`, 600 mil. buniek). Bbox kraja
+  má pri 5 m ~520 miliónov, celé Slovensko by malo 3,6 miliardy – tam sa
+  mriežka sama dopočíta na ~12 m a workflow to napíše do logu. Pre plný detail
+  teda kraj alebo `crop_bbox`, nie celá republika.
+- **Skutočná rozlišovacia schopnosť dát.** Bunka 1″ DEM má u nás ~20×30 m,
+  takže najmenší *meraný* útvar má rádovo stovky m². Naozajstné 1 m² skaly by
+  potreboval 1 m LiDAR (ÚGKK DMR 5.0), ktorý sa ale z geoportálu sťahuje cez
+  interaktívny export – musel by sa najprv nazrkadliť do releasu ako Sonnyho
+  DTM.
 - **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
   obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
   medzi bunkami, takže je okraj hladký a bodov výrazne menej.
@@ -302,14 +311,7 @@ geometrie a bez zahadzovania malých prvkov.
 
 ---
 
-## Druhý workflow: „Update OSM extracts"
-
-Beží raz týždenne a slúži len ako **poistka**, keby osm.fr nebolo dostupné.
-Stiahne Geofabrik export Slovenska a `osmium extract -c` z neho jedným
-priechodom vyreže všetky kraje po administratívnych hraniciach; výsledok
-uloží do releasu `osm-extracts`.
-
-## Tretí workflow: „Update DEM"
+## Druhý workflow: „Update DEM"
 
 Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
 distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v
@@ -336,7 +338,7 @@ release `dem-sonny`: N49E019.tif … + meta.json
 - Ak by Drive limitoval, dá sa namiesto neho vyplniť `direct_urls` (priame
   odkazy na mirror).
 
-## Štvrtý workflow: „Uložiť úpravy štýlu do zdrojáku"
+## Tretí workflow: „Uložiť úpravy štýlu do zdrojáku"
 
 Protikus developer módu – vezme stiahnutý `style-overrides.json`, prežene ho
 **tou istou validáciou ako prehliadač** (`normalizeOverrides`) a commitne do

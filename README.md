@@ -10,11 +10,10 @@ app/ios/       iOS aplikácia (SwiftUI + MapLibre Native)
 backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
-workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov,
-               SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
+workers/       pipeline: regióny, generátor štýlov, SDF sprite,
+               vzory do spritu, zápis úprav štýlu do zdrojáku
 docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
-.github/workflows/  CI pipeline (extrakty + výškový model + build mapy
-               + deploy Pages)
+.github/workflows/  CI pipeline (výškový model + build mapy + deploy Pages)
 ```
 
 > Podrobne – čo robí každý krok, aké formáty medzi sebou putujú a prečo –
@@ -23,16 +22,11 @@ docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 ## Ako funguje pipeline
 
 ```
-Build map                    stiahne IBA {región}.osm.pbf:
-(manuálne, výber regiónu)      1. osm.fr exporty (download.openstreetmap.fr/extracts –
-                                  Európa aj svet, rezané po admin. hraniciach, denné)
-                               2. fallback: release `osm-extracts` (vlastné exporty)
+Build map                    stiahne IBA {región}.osm.pbf z osm.fr exportov
+(manuálne, výber regiónu)    (download.openstreetmap.fr/extracts – Európa aj
+                             svet, rezané po admin. hraniciach, denné)
                              ─► Planetiler ─► {región}.pmtiles
                              ─► GitHub Pages (viewer + dlaždice + style.json)
-
-Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
-(fallback, raz týždenne)     (všetky kraje po OSM admin. hraniciach naraz)
-                             ─► release `osm-extracts`: {kraj}.osm.pbf + meta.json
 
 Update DEM                   Sonny's LiDAR DTM (Google Drive) ─► .hgt ─► GeoTIFF
 (raz, keď treba nový terén)  ─► release `dem-sonny`: N49E019.tif + meta.json
@@ -48,8 +42,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   (rezané po skutočných administratívnych hraniciach, denne aktualizované):
   `europe/slovakia/{kraj}-latest.osm.pbf` (36–63 MB na kraj), celé Slovensko
   `europe/slovakia-latest.osm.pbf` (~380 MB). Mapovanie a presné bboxy z
-  osm.fr rezacích polygónov sú vo [workers/regions.json](workers/regions.json);
-  pri výpadku osm.fr sa použije fallback release `osm-extracts`.
+  osm.fr rezacích polygónov sú vo [workers/regions.json](workers/regions.json).
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
@@ -111,8 +104,8 @@ Google Drive (priečinok krajiny)
   → release `dem-sonny` + meta.json
 ```
 
-Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**
-(rovnaký princíp ako `osm-extracts`). Čo v releasi nie je, doplní Copernicus
+Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**.
+Čo v releasi nie je, doplní Copernicus
 GLO-30, takže build bez terénu nikdy nezostane – v logu je varovanie, ktoré
 dlaždice chýbali. Prepnúť sa dá inputom `dem_source` (`sonny` / `copernicus`).
 Licencia Sonny's DTM je CC BY 4.0, zdroj sa uvádza v atribúcii mapy
@@ -162,7 +155,7 @@ DEM
   → gdalwarp -t_srs EPSG:3035     do metrickej projekcie (v stupňoch by sklon
                                   vyšiel skreslený – 1° po dĺžke je u nás
                                   o tretinu kratší než 1° po šírke),
-                                  mriežka = natívne rozlíšenie DEM
+                                  mriežka 5 m (`rock_res`)
   → gdaldem slope                 sklon v stupňoch
   → gdal_contour -p -fl 40 55     izolínie sklonu ako PLOCHY (hladší okraj
                                   než polygonizácia po pixeloch)
@@ -177,26 +170,43 @@ nad nimi zostávajú čitateľné. Strmý svah je svetlejší, výrazná stena t
 farby `Skalná plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a
 skaly**, takže sa dajú v developer móde doladiť ako čokoľvek iné.
 
-**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na natívnej mriežke
-DEM (bez priemerovania), obrys plochy ide presne po izolínii sklonu (bez
-zjednodušovania) a najmenšia plocha je **5 m²**. Planetiler dostane
+**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na mriežke 5 m (DEM
+sa doň prevzorkuje `cubicspline`), bez priemerovania, obrys ide presne po
+izolínii sklonu a najmenšia plocha je **1 m²**. Planetiler dostane
 `--min_feature_size_at_max_zoom=0`, takže drobné plochy neodfiltruje – overené
-na dlaždiciach: v testovacom výreze Tatier je 878 plôch, z toho 73 pod 100 m²,
-a najmenšie sa v dlaždiciach naozaj nachádzajú. Pri nižších zoomoch drobnosti
-odpadnú samé (Planetiler zahadzuje prvky menšie než pixel), takže sa objavia až
-tam, kde majú zmysel.
+na hotových dlaždiciach, najmenšie skalné polygóny v nich majú 1,2 m². Pri
+nižších zoomoch drobnosti odpadnú samé (Planetiler zahadzuje prvky menšie než
+pixel), takže sa objavia až tam, kde majú zmysel.
 
-> Poznámka k dátam: jedna bunka 1″ DEM má u nás ~20×30 m, takže najmenší
-> *skutočný* útvar, ktorý z neho vie vzniknúť, má rádovo stovky m². Prah 5 m²
-> teda neznamená, že vidíme päťmetrovú skalku – znamená, že sa nefiltruje nič
-> z toho, čo dáta unesú. Ak by z toho bolo v teréne priveľa bodiek, `ROCK_WIN`
-> (priemerovanie sklonu) a `ROCK_MIN_AREA` v `env:` to vedia stiahnuť.
+Koľko toho z kraja vyjde (namerané na celom Žilinskom kraji, prah 40°):
 
-Ovládanie vo workflowe: `rocks` (zap/vyp) a `rock_slope` – od akého sklonu sa
-terén považuje za skalu (default 40°, menej = viac plôch). Ostatné ladenie je
-v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
-`ROCK_RES` (mriežka, 0 = natívna), `ROCK_WIN` (priemerovanie sklonu, 0 = žiadne),
-`ROCK_MIN_AREA` (5 m²), `ROCK_SIMPLIFY` (0 = presný obrys).
+| mriežka | plôch | GPKG | kontúrovanie |
+|---|---|---|---|
+| 20 m (natívna) | 10 343 | 5 MB | ~1 min |
+| 10 m | 19 882 | 13 MB | ~3 min |
+| **5 m (default)** | **24 465** | 28 MB | ~14 min |
+
+Bbox kraja má pri 5 m ~520 miliónov buniek; celé Slovensko by malo 3,6
+miliardy, tak sa mriežka sama dopočíta na ~12 m (`ROCK_MAX_CELLS`) a workflow
+to napíše do logu. **Pre drobné skaly teda voľ kraj alebo `crop_bbox`.**
+
+> Poznámka k dátam: bunka 1″ DEM má u nás ~20×30 m, takže tvary pod 20 m sú
+> **dopočítané, nie merané** – interpolácia dá jemnejšie hrany a viac
+> samostatných plôch, ale novú informáciu nepridá. Naozajstné 1 m² skaly by
+> potreboval 1 m LiDAR ([ÚGKK DMR 5.0](https://www.geoportal.sk/)); ten sa
+> ale z geoportálu sťahuje cez interaktívny export, takže by sa musel najprv
+> nazrkadliť do releasu rovnako ako Sonnyho DTM.
+>
+> Ak by bolo v teréne priveľa bodiek, `ROCK_WIN` (priemerovanie sklonu) a
+> `ROCK_MIN_AREA` v `env:` to vedia stiahnuť; `rock_res=0` vráti natívnu
+> mriežku DEM.
+
+Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` – od akého sklonu sa
+terén považuje za skalu (default 40°, menej = viac plôch) – a `rock_res`
+(mriežka v metroch, default 5, `0` = natívne rozlíšenie DEM). Ostatné ladenie
+je v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
+`ROCK_WIN` (priemerovanie sklonu, 0 = žiadne), `ROCK_MIN_AREA` (1 m²),
+`ROCK_SIMPLIFY` (0 = presný obrys), `ROCK_MAX_CELLS` (strop na veľkosť rastra).
 
 Prah 40° je vyskúšaný na Copernicus DEM tak, aby označil naozaj len steny, nie
 každý strmší svah:
@@ -378,22 +388,20 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 ## Prvé spustenie
 
 1. **Zapni GitHub Pages:** Settings → Pages → Source: **GitHub Actions**.
-2. Actions → **Update OSM extracts (PBF exporty regiónov)** → *Run workflow*
-   (vyrobí PBF exporty krajov do releasu `osm-extracts`; potom beží sám raz
-   týždenne).
-3. Actions → **Update DEM (Sonny's LiDAR DTM → release)** → *Run workflow*
+2. Actions → **Update DEM (Sonny's LiDAR DTM → release)** → *Run workflow*
    (stiahne dlaždice výškového modelu z Google Drive priečinka Sonnyho a uloží
    ich do releasu `dem-sonny`; predvolený priečinok je Slovensko, pre inú
    krajinu stačí vymeniť odkaz). Stačí raz – kým sa terén nezmení. Bez tohto
    kroku sa vrstevnice a skaly urobia z Copernicus GLO-30.
-4. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
+3. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
    - `region`: `slovensko` alebo kraj (`bratislavsky`, `zilinsky`, …)
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
    - `dem_source`: `sonny` (LiDAR terén) alebo `copernicus`
-   - `rocks` + `rock_slope`: skalné plochy a od akého sklonu (default 40°)
-5. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
+   - `rocks`, `rock_slope`, `rock_res`: skalné plochy, od akého sklonu
+     (default 40°) a na akej mriežke (default 5 m = drobné skaly)
+4. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
 

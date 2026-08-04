@@ -1,11 +1,8 @@
 name: Build map (PBF → PMTiles) & deploy Pages
 
-# Stiahne PBF export IBA zvoleného regiónu:
-#   1. primárne z osm.fr regionálnych exportov
-#      (https://download.openstreetmap.fr/extracts/ – Európa aj svet,
-#      rezané po administratívnych hraniciach, denne aktualizované),
-#   2. fallback: asset releasu `osm-extracts` (vyrába workflow
-#      "Update OSM extracts").
+# Stiahne PBF export IBA zvoleného regiónu z osm.fr regionálnych exportov
+# (https://download.openstreetmap.fr/extracts/ – Európa aj svet, rezané po
+# administratívnych hraniciach, denne aktualizované).
 # Potom Planetiler → PMTiles → GitHub Pages.
 #
 # Detail a zoom:
@@ -93,6 +90,11 @@ on:
         required: false
         default: "40"
         type: string
+      rock_res:
+        description: "Mriežka na výpočet sklonu skál v metroch (5 = drobné skaly, 0 = natívne rozlíšenie DEM; menej = viac plôch, ale dlhší build)"
+        required: false
+        default: "5"
+        type: string
       custom_pbf_url:
         description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
         required: false
@@ -129,12 +131,18 @@ env:
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
-  ROCK_RES: "0" # mriežka na výpočet sklonu (m); 0 = natívne rozlíšenie DEM
+  ROCK_RES: "5" # záložná mriežka na sklon (m), keď input rock_res chýba
   ROCK_WIN: "0" # okno na spriemerovanie sklonu (m); 0 = žiadne priemerovanie.
   #               Priemerovanie robí súvislejšie plochy, ale zje malé skalky.
-  ROCK_MIN_AREA: "5" # najmenšia skalná plocha (m²) – prakticky bez filtra
+  ROCK_MIN_AREA: "1" # najmenšia skalná plocha (m²) – teda bez filtra
   ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
+  # Strop na veľkosť rastra so sklonom. Jemná mriežka na veľkom území by
+  # runner utopila v hodinách kontúrovania, tak sa v takom prípade zhrubne.
+  # Bbox kraja má pri 5 m ~520 mil. buniek (namerané: ~14 min kontúrovania,
+  # rastre ~3,5 GB), celé Slovensko by pri 5 m malo 3,6 miliardy – tomu sa
+  # mriežka dopočíta na ~12 m.
+  ROCK_MAX_CELLS: "600000000"
 
 jobs:
   build:
@@ -162,8 +170,6 @@ jobs:
 
       - name: Stiahni PBF iba daného regiónu
         id: region
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p data
           CUSTOM_URL='${{ inputs.custom_pbf_url }}'
@@ -198,22 +204,14 @@ jobs:
             if [ "$NAME" = "null" ]; then echo "::error::Neznámy región: $KEY"; exit 1; fi
 
             OK=""
-            # 1) osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
+            # osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
             for SLUG in $(jq -r --arg r "$KEY" '.[$r].osmfr.slugs[]' workers/regions.json); do
               if download "$OSMFR_BASE/$DIR/$SLUG.osm.pbf"; then OK=1; break; fi
             done
-            # 2) fallback: náš release osm-extracts
-            if [ -z "$OK" ]; then
-              echo "::warning::osm.fr export sa nenašiel, skúšam release osm-extracts…"
-              if gh release download osm-extracts --repo "$GITHUB_REPOSITORY" \
-                   --pattern "$KEY.osm.pbf" --output data/region.osm.pbf; then
-                OK=1
-              fi
-            fi
             if [ -z "$OK" ]; then
               echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/regions.json):"
               curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
-              echo "…alebo spusti workflow 'Update OSM extracts' (release fallback)."
+              echo "…alebo vyplň custom_pbf_url s priamou URL na .osm.pbf."
               exit 1
             fi
           fi
@@ -420,6 +418,10 @@ jobs:
           # bola len interpolácia (viac bodov, žiadna nová informácia),
           # hrubšia by zahodila skutočný detail. Mriežka DEM je v stupňoch,
           # takže po dĺžke ju treba prenásobiť cos(zemepisnej šírky).
+          # Input má prednosť pred env; 0 znamená „natívne rozlíšenie DEM".
+          RR='${{ inputs.rock_res }}'
+          case "$RR" in ''|*[!0-9]*) RR="$ROCK_RES" ;; esac
+          ROCK_RES="$RR"
           if [ "${ROCK_RES:-0}" -le 0 ] 2>/dev/null; then
             ROCK_RES=$(python3 - "$S" "$N" <<'PY'
           import json, math, subprocess, sys
@@ -433,6 +435,22 @@ jobs:
           print(max(1, round(min(x, y))))
           PY
           )
+          fi
+          # Strop na veľkosť rastra: pri jemnej mriežke a veľkom území by
+          # kontúrovanie bežalo hodiny. Radšej mriežku zhrubneme a povieme to.
+          REQ_RES="$ROCK_RES"
+          ROCK_RES=$(python3 - "$W" "$S" "$E" "$N" "$ROCK_RES" "$ROCK_MAX_CELLS" <<'PY'
+          import math, sys
+          w, s, e, n, res, cap = (float(v) for v in sys.argv[1:7])
+          lat = math.radians((s + n) / 2)
+          width = (e - w) * 111320 * math.cos(lat)
+          height = (n - s) * 110540
+          need = math.sqrt(width * height / cap)
+          print(max(1, round(max(res, need))))
+          PY
+          )
+          if [ "$ROCK_RES" -gt "$REQ_RES" ]; then
+            echo "::warning::Mriežka skál zhrubnutá z ${REQ_RES} m na ${ROCK_RES} m – inak by mal raster so sklonom nad ${ROCK_MAX_CELLS} buniek a kontúrovanie by bežalo hodiny. Pre plný detail vyber menší región alebo crop_bbox."
           fi
           [ "${ROCK_WIN:-0}" -gt 0 ] 2>/dev/null || ROCK_WIN="$ROCK_RES"
 
@@ -462,8 +480,8 @@ jobs:
             # EPSG:3035 (LAEA Európa) – metrická, pre naše zemepisné šírky
             # skresľuje plochy minimálne.
             gdalwarp -q -overwrite -t_srs EPSG:3035 -te_srs EPSG:4326 \
-              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r bilinear \
-              -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
+              -te "$W" "$S" "$E" "$N" -tr "$ROCK_RES" "$ROCK_RES" -r cubicspline \
+              -ot Float32 -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
             gdaldem slope -q -compute_edges -co COMPRESS=DEFLATE -co TILED=YES \
               dem/metric.tif dem/slope.tif || return 1
             if [ "$ROCK_WIN" -gt "$ROCK_RES" ]; then
