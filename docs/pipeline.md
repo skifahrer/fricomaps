@@ -73,7 +73,7 @@ nezahodil to, čo je už hotové.
 | 9 | Cache Planetileru (restore) + stiahnutie | `planetiler.jar` (89 MB, kľúč = dátum) | `planetiler.jar` |
 | 10 | Cache PBF a Planetileru (save) | uloží oboje **ešte pred** dlhými výpočtami | — |
 | 11 | Cache vrstevníc a DEM dlaždíc (restore) | pri `*_rebuild` sa preskočí | `contours-out`, `dem/tiles` |
-| 12 | **Vrstevnice a skaly z DEM** | stiahne DEM dlaždice, `gdal_contour`, `rock-areas.py`, Planetiler `generate-custom` | `data/contours.gpkg`, `data/rock.gpkg`, `contours-out/contours.pmtiles` |
+| 12 | **Vrstevnice a skaly z DEM** | stiahne DEM dlaždice, `gdal_contour`, `rock-areas.py` (voliteľne len na výreze `rock_area`), Planetiler `generate-custom` | `data/contours.gpkg`, `data/rock.gpkg`, `contours-out/contours.pmtiles` |
 | 13 | Cache vrstevníc a DEM dlaždíc (save) | `if: always()` – uloží aj keď build ďalej spadne | — |
 | 14 | Zaraď vrstevnice do webu | kópia do `_site/tiles`, prečíta skutočný maxzoom | `steps.contours.outputs.*` |
 | 15 | Cache terénu (restore) + **Tieňovanie reliéfu** | `build-terrain.py` alebo stiahnutie z release `dem-terrain` | `_site/terrain/{z}/{x}/{y}.png` |
@@ -222,6 +222,25 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
 
   Pri 40° má najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
   strmý svah. Preto je predvolený prah 50°.
+- **Skaly len na výreze** (`rock_area`). Skaly sú najdrahšia časť buildu, tak
+  sa dajú počítať len na kuse regiónu – pri ladení prahu alebo mriežky netreba
+  čakať polhodinu na celý kraj. Input berie buď názov pohoria zo
+  [`workers/areas.json`](../workers/areas.json) (`vysoke_tatry`, `tatry`,
+  `slovensky_raj`, …), alebo bbox `W,S,E,N`. Po orezaní na Prešovský kraj:
+
+  | `rock_area` | plocha | skaly |
+  |---|--:|--:|
+  | *(prázdne)* | 16 103 km² | ~30 min |
+  | `tatry` | 1 032 km² | ~2 min |
+  | `vysoke_tatry` | 541 km² | ~1 min |
+  | `belianske_tatry` | 177 km² | <1 min |
+
+  Výrez sa vždy pretne s bboxom regiónu (mimo neho nie je ani DEM, ani mapa)
+  a keď sa neprekrývajú vôbec, build to povie rovno a zastaví sa. Je aj
+  **v mene uloženého assetu** (`rock-{región}-{výrez}-…`) **a v kľúči cache**,
+  takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja. Že sú skaly
+  len na výreze, hlási build ako `::warning::` aj v súhrne – taký beh nie je
+  na nasadenie, je na ladenie.
 - **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
   najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
   4 m², pri 1 m rovno 1 m²) – menší útvar už nie je tvar terénu, ale zubaté
