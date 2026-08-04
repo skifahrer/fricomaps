@@ -1331,7 +1331,10 @@ export function buildStyle({
           type: "fill",
           source: "contours",
           "source-layer": "rock",
-          minzoom: 12,
+          // Skaly majú byť vidieť všade, kde sú – veľká stena je čitateľná
+          // aj z prehľadu. Drobné plochy sa na nízkych zoomoch neriešia:
+          // do dlaždíc sa vôbec nedostanú (Planetiler ich zahodí pod pixel).
+          minzoom: 9,
           filter: ["==", str("class"), klass],
           paint: {
             "fill-color": c[paletteKey],
@@ -1343,12 +1346,12 @@ export function buildStyle({
       );
 
     rockArea("steep", "Skalné plochy (strmý svah)", "steep", "cliff", [
-      [12, 0],
+      [9, 0.25],
       [13, 0.35],
       [16, 0.5]
     ]);
     rockArea("cliff", "Skalné steny (najstrmšie)", "cliff", "cliffStrong", [
-      [12, 0],
+      [9, 0.4],
       [13, 0.5],
       [16, 0.68]
     ]);
@@ -1361,11 +1364,11 @@ export function buildStyle({
         type: "line",
         source: "contours",
         "source-layer": "rock",
-        minzoom: 13,
+        minzoom: 11,
         paint: {
           "line-color": c.cliffStrong,
-          "line-width": zl([[13, 0.4], [16, 0.8], [20, 1.6]]),
-          "line-opacity": zl([[13, 0], [14, 0.5]])
+          "line-width": zl([[11, 0.3], [13, 0.4], [16, 0.8], [20, 1.6]]),
+          "line-opacity": zl([[11, 0.3], [14, 0.5]])
         }
       },
       ["vrstevnice", "Obrys skalných plôch", "line", { "line-color": "cliffStrong" }]

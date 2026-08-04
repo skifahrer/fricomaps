@@ -53,6 +53,48 @@ zoomu 6". Zmena farieb preto nevyžaduje prepočet dlaždíc – to je celý zá
 
 ## Workflow „Build map" krok po kroku
 
+Najprv prehľad – **každý krok behu v poradí**, aj tie, ktoré nič nepočítajú.
+Kroky s cache sú rozdelené na *restore* (hore, hneď ako je známy kľúč)
+a *save* (hneď ako dáta vzniknú, s `if: always()`), aby pád o hodinu neskôr
+nezahodil to, čo je už hotové.
+
+| # | krok | čo robí | čo z toho vypadne |
+|--:|---|---|---|
+| — | *Kontrola výškového modelu* (vlastný job) | pozrie sa, či sú v release `dem-sonny` dlaždice pre bbox; spočíta otlačok obsahu releasu | `needed`, `demkey` (ide do kľúčov cache) |
+| — | *Doplniť výškový model* (vlastný job) | keď dlaždice chýbajú, spustí workflow **Update DEM** | naplnený release `dem-sonny` |
+| 1 | Over, že GitHub Pages je zapnuté | `gh api repos/…/pages` | rýchly pád namiesto pádu po hodinách |
+| 2 | Dnešný dátum do kľúča cache | dátum + štart merania času | `steps.day.outputs.d`, `BUILD_T0` |
+| 3 | Cache PBF (restore) | skúsi vytiahnuť už stiahnutý `.osm.pbf` | `data/region.osm.pbf` |
+| 4 | Stiahni PBF iba daného regiónu | osm.fr export, voliteľný `osmium extract` orez | PBF + `key`, `name`, `bbox`, `bboxkey` |
+| 5 | **Kľúče cache** | poskladá kľúče pre vrstevnice, DEM dlaždice a terén na jednom mieste | `steps.keys.outputs.*` |
+| 6 | **Pregenerovanie – zmaž staré cache** | pri `*_rebuild` zmaže príslušný záznam (`gh cache delete`) | prázdny kľúč, pod ktorý sa dá uložiť nová verzia |
+| 7 | Setup Java 21 | JDK pre Planetiler | — |
+| 8 | Cache zdrojov Planetileru | water polygons, Natural Earth (1,4 GB, pevný kľúč) | `data/sources` |
+| 9 | Cache Planetileru (restore) + stiahnutie | `planetiler.jar` (89 MB, kľúč = dátum) | `planetiler.jar` |
+| 10 | Cache PBF a Planetileru (save) | uloží oboje **ešte pred** dlhými výpočtami | — |
+| 11 | Cache vrstevníc a DEM dlaždíc (restore) | pri `*_rebuild` sa preskočí | `contours-out`, `dem/tiles` |
+| 12 | **Vrstevnice a skaly z DEM** | stiahne DEM dlaždice, `gdal_contour`, `rock-areas.py`, Planetiler `generate-custom` | `data/contours.gpkg`, `data/rock.gpkg`, `contours-out/contours.pmtiles` |
+| 13 | Cache vrstevníc a DEM dlaždíc (save) | `if: always()` – uloží aj keď build ďalej spadne | — |
+| 14 | Zaraď vrstevnice do webu | kópia do `_site/tiles`, prečíta skutočný maxzoom | `steps.contours.outputs.*` |
+| 15 | Cache terénu (restore) + **Tieňovanie reliéfu** | `build-terrain.py` alebo stiahnutie z release `dem-terrain` | `_site/terrain/{z}/{x}/{y}.png` |
+| 16 | Cache terénu (save) | `if: always()` | — |
+| 17 | Odlož skaly a vrstevnice ako artefakt | GPKG + PMTiles + `rock-stats.txt`, 90 dní | artefakt behu |
+| 18 | **PBF → PMTiles (Planetiler)** | mapové dlaždice, s `auto_shrink` do rozpočtu | `_site/tiles/{región}.pmtiles` |
+| 19 | Cache glyfov a spritov (restore) | kľúč = hash zoznamu zdrojov | `_site/fonts`, `_site/sprites` |
+| 20 | Stiahni a priprav sady ikoniek | SDF sprity z maki/temaki/… | `_site/sprites/*.json`, `*.png` |
+| 21 | Stiahni glyfy (fonty) | Noto Sans z balíka openmaptiles | `_site/fonts/{fontstack}/…` |
+| 22 | Cache glyfov a spritov (save) | **pred** zapečením vzorov do atlasu | — |
+| 23 | Setup Pages | zistí `base_url` | `steps.pages.outputs.base_url` |
+| 24 | Vygeneruj `style.json` | `build-styles.mjs` pre web aj iOS | `_site/styles/*.json` |
+| 25 | Dopeč vzory plôch a čiar do spritu | vzory z developer módu do atlasu | upravený sprite |
+| 26 | Poskladaj web | viewer + `manifest.json` | `_site/*` |
+| 27 | Kontrola pred nasadením | overí, že štýl odkazuje len na existujúce súbory a že sa všetko zmestí do rozpočtu | pád s konkrétnou hláškou |
+| 28 | Deploy na GitHub Pages | `upload-pages-artifact` + `deploy-pages` | živá mapa |
+| 29 | Smoke test | HTTP kontrola manifestu, štýlu, spritu, glyfov a `Range` na `.pmtiles` | istota, že mapa naozaj beží |
+| 30 | **Súhrn buildu** | tabuľka „čo sa robilo, ako dlho, s akým výsledkom" | záložka Summary |
+
+Ďalej detailne, čo z toho je zaujímavé a **prečo** je to tak.
+
 ### 1. Kontrola, či je GitHub Pages zapnuté
 
 `GITHUB_TOKEN` nemá práva Pages zapnúť, takže sa to musí raz spraviť ručne.
@@ -98,7 +140,11 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 2 m
   │      gdaldem slope             … sklon v stupňoch
   │      gdal_contour -p -fl 50 65 … izolínie sklonu ako plochy
-  │      ogr2ogr                   … rozbitie na kusy, orez, `class`
+  │      ogr2ogr -clipsrc          … orez presne na hranicu časti
+  │    a nad celým územím naraz:
+  │      ST_Union po triedach      … zlepí, čo spolu súvisí
+  │      -explodecollections       … späť na samostatné skaly
+  │      filter najmenšej plochy   … + `class`, `slope`, `area`
   │
   └─ tieňovanie a 3D ────────────────────────────────────────
        workers/build-terrain.py … terrarium PNG dlaždice
@@ -125,15 +171,19 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Skaly sa delia na malé kúsky** (`rock_piece`, default 10 m). Sklon sa
-  spriemeruje na mriežku kúskov a každá bunka nad prahom sa vypíše ako
-  samostatný štvorček vyplňujúci 80 % bunky (`ROCK_PIECE_FILL`). Susedné sa
-  teda nedotýkajú a v mape z toho je šrafovanie namiesto jednej plochy.
-  Namerané na výreze Vysokých Tatier (884 ha skál pri 50°): 10 m → 87 839
-  kúskov (35 MB), 20 m → 21 491 (8,4 MB), 30 m → 9 261 (3,7 MB). Kúsky po
-  1–2 m² možné nie sú: strana 1,4 m dá na kraj ~23 miliónov polygónov, teda
-  rádovo 9 GB GeoPackage. Praktické minimum je 5 m.
-- **Veľkosť plôch pri `rock_piece: 0` neurčuje mriežka, ale prah sklonu.**
+- **Tvar skaly je tvar terénu.** Obrys je izolínia sklonu – presne tá čiara,
+  kde svah prekročí prah. Vzniká tak zubatý pás pod hrebeňom, oblúk okolo
+  žľabu, ostrov brala v suti. Do augusta 2026 tu bola mriežka štvorčekov
+  (`rock_piece`); je preč, lebo skaly štvorcové nie sú.
+- **Susediace plochy sa zlučujú** (`ROCK_DISSOLVE`, default zapnuté). Územie
+  sa počíta po častiach, takže jedna stena môže vyjsť ako niekoľko kusov
+  zrezaných na hranici časti. Na konci sa preto všetko v rámci triedy zlúči
+  (`ST_Union` v SpatiaLite) a hneď rozbije späť na samostatné plochy
+  (`-explodecollections`): čo spolu súvisí, je jeden polygón; čo spolu
+  nesúvisí, ostáva samostatné. Keby zlučovanie zlyhalo (pamäť, chýbajúca
+  SpatiaLite), plochy ostanú tak, ako vyšli po častiach – s varovaním, nie
+  s pádom buildu.
+- **Veľkosť plôch neurčuje mriežka, ale prah sklonu.**
   Súvislá stena nad prahom je jedna plocha, nech ju počítaš na akejkoľvek
   mriežke. Namerané na výreze Vysokých Tatier pri mriežke 2 m:
 
@@ -147,37 +197,44 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
 
   Pri 40° má najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
   strmý svah. Preto je predvolený prah 50°.
-- **Mriežka 2 m** (`rock_res`) riadi jemnosť *obrysu*, nie veľkosť plôch:
-  na tom istom území dal 5 m 366 plôch a 2 m 387. Tvary pod 20 m sú
-  dopočítané, nie merané – bunka DEM má 20×20 m.
+- **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
+  najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
+  4 m²) – menší útvar už nie je tvar terénu, ale zubaté rohy jedinej bunky.
+  Skutočný detail je ale stropený zdrojom: **Sonny má pre Slovensko bunku
+  ~20 m**, takže tvary pod 20 m sú dopočítané, nie merané. Jemnejšia mriežka
+  dá hladší a presnejšie umiestnený obrys, novú informáciu však nepridá – na
+  tom istom území dalo 5 m 366 plôch a 2 m 387. Presné čísla za konkrétny beh
+  (počet plôch, najmenšia/priemerná/najväčšia, koľko km² spolu) píše
+  `rock-areas.py` do `contours-out/rock-stats.txt` a build ich vypíše
+  v [súhrne](#12-súhrn-buildu).
 - **Počíta sa po častiach** ([`workers/rock-areas.py`](../workers/rock-areas.py)).
   Bbox kraja má pri 2 m vyše 3 miliardy buniek, čo je ~13 GB na jeden raster –
   viac, než má runner miesta aj pamäte. Územie sa preto krája na kusy
   (`ROCK_CHUNK_CELLS`, default 150 mil. buniek), každý sa spracuje a hneď
   upratá. Sklon sa počíta s presahom niekoľkých pixelov a plochy sa orežú
   presne na hranicu kusa (`-clipsrc`), takže susedné na seba nadväzujú bez
-  medzery aj bez prekryvu. Merané ~1,5 mil. buniek/s → kraj pri 2 m ~35 minút;
-  mriežka 1 m sa oplatí len na `crop_bbox`.
+  medzery aj bez prekryvu – a zlučovanie na konci z nich spraví jednu skalu.
+  Merané ~1,5 mil. buniek/s → kraj pri 2 m ~35 minút; mriežka 1 m sa oplatí
+  len na `crop_bbox`.
 - **Bez zjednodušovania** (`ROCK_SIMPLIFY=0`) – zjednodušenie obrysu by tie
   najmenšie plochy zmazalo úplne.
-- **Najmenšia plocha 1 m²** (`ROCK_MIN_AREA`), teda bez filtra – a aby ich
-  nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`. Overené
-  na hotových dlaždiciach: najmenšie skalné polygóny v nich majú 1,2 m².
-  Pri nižších zoomoch drobnosti odpadnú samé – tam Planetiler prvky menšie
-  než pixel zahadzuje, čo je správne, lebo by z nich boli nečitateľné bodky.
-- **Skutočná rozlišovacia schopnosť dát.** Bunka 1″ DEM má u nás ~20×30 m,
-  takže najmenší *meraný* útvar má rádovo stovky m². Naozajstné 1 m² skaly by
-  potreboval 1 m LiDAR (ÚGKK DMR 5.0), ktorý sa ale z geoportálu sťahuje cez
-  interaktívny export – musel by sa najprv nazrkadliť do releasu ako Sonnyho
-  DTM.
+- **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z9**
+  (predtým z13) a štýl ich kreslí od z9, obrys od z11. Nižšie zoomy to
+  nezaťaží: Planetiler na nich zahadzuje prvky menšie než pixel, takže
+  z prehľadu ostanú len veľké steny a detaily pribúdajú s priblížením. Na
+  najvyššom zoome je ten filter zámerne vypnutý
+  (`--min_feature_size_at_max_zoom=0`), aby neodpadli ani tie najmenšie.
 - **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
   obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
   medzi bunkami, takže je okraj hladký a bodov výrazne menej.
-- **`class`** rozlišuje `steep` (nad prahom `rock_slope`, default 40°) a
-  `cliff` (o 15° viac) – štýl z toho kreslí svetlejšiu a tmavšiu sivú.
-- **Prečo `-explodecollections`.** `gdal_contour -p` zlepí každé pásmo sklonu
-  do jedného multipolygónu; bez rozbitia na kusy by sa nedala merať plocha
-  jednotlivej skaly ani filtrovať tá najmenšia.
+- **`class`** rozlišuje `steep` (nad prahom `rock_slope`, default 50°) a
+  `cliff` (o `ROCK_CLIFF_PLUS` = 15° viac) – štýl z toho kreslí svetlejšiu
+  a tmavšiu sivú. Atribút `area` (plocha v m²) je v dlaždiciach tiež, nech sa
+  dá v štýle rozlíšiť bralo od odrobinky.
+- **Hotové skaly sa neprepočítavajú.** Ukladajú sa do releasu `dem-rocks` ako
+  `rock-{región}-s{prah}-g{mriežka}.gpkg.zst`; ďalší build s tými istými
+  nastaveniami ich len stiahne (sekundy namiesto desiatok minút). Iné
+  nastavenia = iné meno assetu, takže sa nikdy nepomiešajú.
 - **Vrstevnice aj skaly sú vektor** vo vektorových dlaždiciach – žiadne
   rastre. Na najvyššom zoome ide geometria do dlaždíc bez zjednodušovania
   (`--simplify_tolerance_at_max_zoom=0`), takže obrys skaly aj priebeh
@@ -226,6 +283,37 @@ aby sa do cache nedostal už dopečený sprite.
 
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
+
+#### Pregenerovanie
+
+Cache aj release existujú preto, aby sa to isté nepočítalo dvakrát. Keď sa
+zmenia nastavenia, zmení sa kľúč a prepočíta sa to samo. Keď to treba
+prepočítať **nanovo aj pri rovnakých nastaveniach**, slúžia na to inputy:
+
+| input | čo pregeneruje |
+|---|---|
+| `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
+| `rocks_rebuild` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+
+Mechanika je dôležitá, lebo nie je zrejmá: **cache sa v GitHube nedá
+prepísať.** Kľúč, ktorý raz existuje, si drží starý obsah a `cache/save` naň
+len upozorní, že už tam je. Keby sa teda `*_rebuild` len „prepočítal a uložil",
+uloženie by nič nespravilo a ďalší build by dostal späť starú verziu. Preto:
+
+1. build má právo `actions: write`,
+2. krok *Pregenerovanie – zmaž staré cache* zmaže príslušný záznam
+   (`gh cache delete`) hneď na začiatku,
+3. restore sa pri `*_rebuild` **preskočí**, takže výpočet beží,
+4. save uloží novú verziu pod ten istý kľúč.
+
+Kľúče sa počítajú na jednom mieste (krok *Kľúče cache*) a používa ich restore,
+save aj mazanie – keby boli napísané trikrát, stačí ich raz zabudnúť opraviť
+a cache sa ticho rozsype: ukladala by sa pod iným kľúčom, než sa hľadá.
+
+Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy, sprity) sa
+nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
+dátum, alebo otlačok zdroja.
 
 ### 4. PBF → PMTiles (Planetiler)
 
@@ -323,6 +411,40 @@ Po nasadení si pipeline **sama overí, že mapa funguje**: `manifest.json`,
 `style.json`, sprite, glyfy a – najdôležitejšie – `Range` request na
 `.pmtiles`, ktorý musí vrátiť **HTTP 206**. Keby hosting Range requesty
 nepodporoval, `.pmtiles` sa nedá čítať a mapa zostane prázdna.
+
+### 12. Súhrn buildu
+
+Posledný krok napíše do záložky **Summary** prehľad celého behu. Beží
+s `if: always()`, takže je aj (hlavne) vtedy, keď build spadol – z padnutého
+behu je tak vidieť, kam sa dostal a čo stihol.
+
+Meranie funguje tak, že si každý dlhý krok na konci pripíše riadok „názov,
+sekundy, čo spravil" do `/tmp/build-steps.tsv`; súhrn z toho poskladá tabuľku:
+
+| krok | trvanie | výsledok |
+|---|--:|---|
+| PBF regiónu | 0:00:12 | Prešovský kraj, 63M (z cache) |
+| DEM dlaždice (Sonny) | 0:01:44 | 9 z 21 dlaždíc, 412M |
+| Vrstevnice (gdal_contour) | 0:04:31 | interval 10 m, 218M |
+| Skalné plochy | 0:36:07 | 41 802 plôch, sklon ≥ 50°, mriežka 2 m (výpočet) |
+| Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
+| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
+| Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
+| Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
+
+*(Ukážkové čísla – líšia sa podľa regiónu a nastavení.)*
+
+Za tabuľkou nasledujú ešte dve časti:
+
+- **Skalné plochy – aký to je detail.** Počet samostatných plôch, mriežka
+  obrysu, bunka zdrojového DEM (a poznámka, že práve tá je stropom skutočného
+  detailu), najmenšia ponechaná plocha, skutočne najmenšia/priemerná/najväčšia
+  a koľko km² skalného terénu spolu. Čísla píše `rock-areas.py` do
+  `contours-out/rock-stats.txt`; ten je súčasťou cache, takže súhrn ich má aj
+  pri behu, kde sa nič nepočítalo.
+- **Cache.** Riadok za riadkom, čo prišlo z cache a čo sa naozaj počítalo –
+  takže sa hneď vidí, či mal beh trvať hodinu, alebo minútu. Plus návod, ktorý
+  input čo pregeneruje.
 
 ---
 
