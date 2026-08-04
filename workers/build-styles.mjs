@@ -31,6 +31,7 @@ import {
   selectedIconSource,
   MAX_TILE_Z,
   DEFAULT_DEM_TILES,
+  DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
   DEM_SOURCES
 } from "../poc/web/themes.js";
@@ -54,9 +55,11 @@ const hasContours = args.contours === "true" || args.contours === "1";
 const demSource = DEM_SOURCES[args["dem-source"]]
   ? args["dem-source"]
   : DEFAULT_DEM_SOURCE;
-// Tieňovanie reliéfu sa dá vypnúť (--dem-tiles=none).
+// Tieňovanie reliéfu sa dá vypnúť (--dem-tiles=none). Ak pipeline vyrobila
+// vlastné výškové dlaždice, príde sem ich URL šablóna a max zoom.
 const demTiles =
   args["dem-tiles"] === "none" ? null : args["dem-tiles"] || DEFAULT_DEM_TILES;
+const demMaxzoom = Number(args["dem-maxzoom"] || DEFAULT_DEM_MAXZOOM);
 
 if (!baseUrl) {
   console.error("Chýba --base-url (URL GitHub Pages stránky)");
@@ -218,6 +221,7 @@ for (const themeKey of Object.keys(THEMES)) {
     contoursMaxzoom,
     demSource,
     demTiles,
+    demMaxzoom,
     name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
   });
   const file = join(outDir, `${region}-${themeKey}.json`);
@@ -229,6 +233,12 @@ console.log(
   `Vrstevnice a skaly: ${
     hasContours ? `áno (do z${contoursMaxzoom}, výšky: ${DEM_SOURCES[demSource].label})` : "nie"
   }, ` +
-    `výškové dáta (3D terén): ${demTiles ? "áno" : "nie"}, ` +
+    `výškové dáta (3D terén): ${
+      demTiles
+        ? demTiles === DEFAULT_DEM_TILES
+          ? "AWS Terrain Tiles"
+          : `vlastné do z${demMaxzoom}`
+        : "nie"
+    }, ` +
     `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`
 );

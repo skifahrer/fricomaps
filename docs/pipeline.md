@@ -68,7 +68,7 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### 3. Vrstevnice a skaly z DEM
+### 3. Vrstevnice, skaly a tieňovanie z DEM
 
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
@@ -93,11 +93,17 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
   │    ogr2ogr        … dopočíta atribút `level`
   │
-  └─ skaly ──────────────────────────────────────────────────
-       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 5 m
-       gdaldem slope             … sklon v stupňoch
-       gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
-       ogr2ogr                   … rozbitie na kusy, `class`
+  ├─ skaly ──────────────────────────────────────────────────
+  │    workers/rock-areas.py – po častiach, aby sa 2 m mriežka zmestila:
+  │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 2 m
+  │      gdaldem slope             … sklon v stupňoch
+  │      gdal_contour -p -fl 50 65 … izolínie sklonu ako plochy
+  │      ogr2ogr                   … rozbitie na kusy, orez, `class`
+  │
+  └─ tieňovanie a 3D ────────────────────────────────────────
+       workers/build-terrain.py … terrarium PNG dlaždice
+                                 → terrain/{z}/{x}/{y}.png
+                                 → release `dem-terrain` (.tar.zst)
   │
   │  planetiler generate-custom --schema=workers/contours.yml
   ▼
@@ -119,32 +125,38 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Mriežka 5 m** (`rock_res`, 0 = natívne rozlíšenie DEM). Sklon sa počíta
-  na jemnejšej mriežke, než má DEM – DEM sa doň prevzorkuje `cubicspline`.
-  Namerané na celom Žilinskom kraji (prah 40°):
+- **Veľkosť plôch neurčuje mriežka, ale prah sklonu.** Súvislá stena nad
+  prahom je jedna plocha, nech ju počítaš na akejkoľvek mriežke. Namerané na
+  výreze Vysokých Tatier pri mriežke 2 m:
 
-  | mriežka | plôch | z toho pod 100 m² | GPKG | kontúrovanie |
+  | prah | plôch | plocha spolu | priemerná | najväčšia |
   |---|---|---|---|---|
-  | 20 m (natívna) | 10 343 | – | 5 MB | ~1 min |
-  | 10 m | 19 882 | 2 739 | 13 MB | ~3 min |
-  | **5 m** | **24 465** | – | 28 MB | ~14 min |
+  | 40° | 1 299 | 2 931 ha | 22 567 m² | **428 ha** |
+  | 45° | 1 019 | 1 710 ha | 16 788 m² | 82 ha |
+  | **50° (default)** | **719** | **884 ha** | **12 295 m²** | **38 ha** |
+  | 55° | 402 | 389 ha | 9 698 m² | 30 ha |
+  | 60° | 208 | 131 ha | 6 301 m² | 18 ha |
 
-  Tvary pod 20 m sú **dopočítané, nie merané** – interpolácia neprináša novú
-  informáciu, len jemnejšie hrany a viac samostatných plôch. Kto chce čisto
-  to, čo dáta unesú, dá `rock_res=0`.
-- **Bez priemerovania a bez zjednodušovania** (`ROCK_WIN=0`, `ROCK_SIMPLIFY=0`).
-  Priemerovanie sklonu robí súvislejšie plochy, ale zje malé skalky;
-  zjednodušenie obrysu by tie najmenšie zmazalo úplne. Kto chce pokojnejší
-  obraz, oboje si v `env:` zapne späť.
+  Pri 40° má najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
+  strmý svah. Preto je predvolený prah 50°.
+- **Mriežka 2 m** (`rock_res`) riadi jemnosť *obrysu*, nie veľkosť plôch:
+  na tom istom území dal 5 m 366 plôch a 2 m 387. Tvary pod 20 m sú
+  dopočítané, nie merané – bunka DEM má 20×20 m.
+- **Počíta sa po častiach** ([`workers/rock-areas.py`](../workers/rock-areas.py)).
+  Bbox kraja má pri 2 m vyše 3 miliardy buniek, čo je ~13 GB na jeden raster –
+  viac, než má runner miesta aj pamäte. Územie sa preto krája na kusy
+  (`ROCK_CHUNK_CELLS`, default 150 mil. buniek), každý sa spracuje a hneď
+  upratá. Sklon sa počíta s presahom niekoľkých pixelov a plochy sa orežú
+  presne na hranicu kusa (`-clipsrc`), takže susedné na seba nadväzujú bez
+  medzery aj bez prekryvu. Merané ~1,5 mil. buniek/s → kraj pri 2 m ~35 minút;
+  mriežka 1 m sa oplatí len na `crop_bbox`.
+- **Bez zjednodušovania** (`ROCK_SIMPLIFY=0`) – zjednodušenie obrysu by tie
+  najmenšie plochy zmazalo úplne.
 - **Najmenšia plocha 1 m²** (`ROCK_MIN_AREA`), teda bez filtra – a aby ich
   nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`. Overené
   na hotových dlaždiciach: najmenšie skalné polygóny v nich majú 1,2 m².
   Pri nižších zoomoch drobnosti odpadnú samé – tam Planetiler prvky menšie
   než pixel zahadzuje, čo je správne, lebo by z nich boli nečitateľné bodky.
-- **Strop na veľkosť rastra** (`ROCK_MAX_CELLS`, 600 mil. buniek). Bbox kraja
-  má pri 5 m ~520 miliónov, celé Slovensko by malo 3,6 miliardy – tam sa
-  mriežka sama dopočíta na ~12 m a workflow to napíše do logu. Pre plný detail
-  teda kraj alebo `crop_bbox`, nie celá republika.
 - **Skutočná rozlišovacia schopnosť dát.** Bunka 1″ DEM má u nás ~20×30 m,
   takže najmenší *meraný* útvar má rádovo stovky m². Naozajstné 1 m² skaly by
   potreboval 1 m LiDAR (ÚGKK DMR 5.0), ktorý sa ale z geoportálu sťahuje cez
@@ -168,6 +180,31 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   mapy sa nepočítajú znova.
 - **Vlastný `.pmtiles`** (nie súčasť mapových dlaždíc) práve preto, aby sa
   dali cacheovať zvlášť a aby ich štýl vedel vypnúť bez prebuildu mapy.
+
+#### Tieňovanie reliéfu a 3D terén
+
+MapLibre potrebuje výšky ako pyramídu PNG dlaždíc (kódovanie *terrarium*),
+z GeoTIFFu čítať nevie. [`workers/build-terrain.py`](../workers/build-terrain.py)
+ich vyrobí z toho istého Sonny DEM – každý zoom prevzorkuje z DEM nanovo
+priemerom, lebo priemerovať sa musí *výška*, nie zakódovaná farba.
+
+Sú drahé na výpočet, ale závisia len od územia, takže sa raz uložia do releasu
+`dem-terrain` ako jeden `.tar.zst` na región a maxzoom; ďalší build ich už len
+stiahne. Input `terrain_rebuild` ich vynúti prepočítať nanovo.
+
+#### Čo všetko sa cachuje
+
+Build sťahuje viac vecí, než len DEM, a všetky majú vlastnú cache:
+
+| čo | kľúč | prečo |
+|---|---|---|
+| `{región}.osm.pbf` | región + orez + **dátum** | osm.fr exporty sú denné, v ten istý deň netreba sťahovať znova |
+| `planetiler.jar` | dátum | 89 MB pri každom behu |
+| DEM dlaždice | otlačok releasu + bbox | desiatky MB na dlaždicu |
+| výškové dlaždice | otlačok releasu + bbox + maxzoom | drahé na výpočet |
+| vrstevnice a skaly | + interval, prah, mriežka | hodiny výpočtu |
+| glyfy a sprity | hash zoznamu zdrojov | menia sa len so zmenou kódu |
+| zdroje Planetileru | pevný | water polygons, Natural Earth |
 
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
