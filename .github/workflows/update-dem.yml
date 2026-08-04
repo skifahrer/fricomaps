@@ -1,0 +1,211 @@
+name: Update DEM (Sonny's LiDAR DTM → release)
+
+# Zrkadlí výškový model Sonny's LiDAR DTM (https://sonny.4lima.de/) do releasu
+# `dem-sonny`, aby ho vedel použiť workflow "Build map".
+#
+# PREČO ZRKADLENIE: Sonny distribuuje dlaždice cez Google Drive. Drive nemá
+# stabilné priame URL na súbory v zdieľanom priečinku a pri väčšom počte
+# stiahnutí vracia "Too many users have viewed or downloaded this file",
+# takže sa z neho nedá spoľahlivo sťahovať v každom builde mapy. Stiahne sa
+# preto raz sem, prevedie na dlaždice `N49E019.tif` (GeoTIFF, DEFLATE) a
+# publikuje ako assety releasu – build mapy si potom vypýta len tie dlaždice,
+# ktoré pokrývajú jeho bbox (rovnaký princíp ako release `osm-extracts`).
+#
+# Prevod .hgt → GeoTIFF je zámerný: .hgt je surové pole int16 bez hlavičky,
+# takže sa musí interpretovať podľa názvu súboru; hotový GeoTIFF je menší
+# (bezstratová kompresia) a `gdalbuildvrt` ho zlepí bez ďalších pomôcok.
+#
+# Licencia dát: Sonny's LiDAR DTM – CC BY 4.0, zdroj treba uviesť v mape
+# (robí to atribúcia zdroja `contours` v style.json).
+
+on:
+  workflow_dispatch:
+    inputs:
+      drive_folder:
+        description: "Google Drive priečinok so Sonny dlaždicami (default = Slovensko)"
+        required: false
+        default: "https://drive.google.com/drive/folders/1FCXPutDU6DvnTEA4PY6iFOQKiuVd11j4"
+        type: string
+      direct_urls:
+        description: "Náhrada za Drive: priame URL na .zip/.hgt/.tif oddelené medzerou alebo novým riadkom"
+        required: false
+        default: ""
+        type: string
+      release_tag:
+        description: "Tag releasu, do ktorého sa dlaždice uložia"
+        required: false
+        default: "dem-sonny"
+        type: string
+      keep_existing:
+        description: "Nechať v release aj dlaždice, ktoré sa teraz nestiahli"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Nainštaluj GDAL a gdown
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin p7zip-full
+          python3 -m pip install --quiet --upgrade gdown
+
+      - name: Stiahni dlaždice
+        id: fetch
+        run: |
+          set -uo pipefail
+          mkdir -p dl
+
+          URLS='${{ inputs.direct_urls }}'
+          if [ -n "${URLS//[[:space:]]/}" ]; then
+            # Priame URL (napr. mirror) majú prednosť – Drive vie limitovať.
+            for u in $URLS; do
+              echo "── $u"
+              curl -fL --retry 3 --retry-delay 5 -O --output-dir dl "$u" \
+                || echo "::warning::$u sa nepodarilo stiahnuť"
+            done
+          else
+            FOLDER='${{ inputs.drive_folder }}'
+            echo "Sťahujem Google Drive priečinok: $FOLDER"
+            # --remaining-ok: gdown sťahuje naraz najviac 50 súborov a inak
+            # skončí chybou; pre 1°×1° dlaždice jednej krajiny to stačí.
+            gdown --folder --remaining-ok --no-cookies -O dl "$FOLDER" || {
+              echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí skús o pár hodín neskôr, alebo vyplň input direct_urls (mirror)."
+              exit 1
+            }
+          fi
+
+          find dl -type f | head -100
+          echo "Stiahnutých súborov: $(find dl -type f | wc -l)"
+
+      - name: Rozbaľ archívy a preveď na GeoTIFF dlaždice
+        id: convert
+        run: |
+          set -uo pipefail
+          mkdir -p unpacked tiles
+
+          # ---- rozbalenie (Sonny posiela .zip, občas .7z) ----
+          while IFS= read -r a; do
+            case "${a,,}" in
+              *.zip) 7z x -y -o"unpacked" "$a" >/dev/null || echo "::warning::$a sa nepodarilo rozbaliť" ;;
+              *.7z)  7z x -y -o"unpacked" "$a" >/dev/null || echo "::warning::$a sa nepodarilo rozbaliť" ;;
+              *)     cp "$a" unpacked/ 2>/dev/null || true ;;
+            esac
+          done < <(find dl -type f)
+
+          # ---- .hgt / .tif → dlaždica N49E019.tif ----
+          # Meno dlaždice je v názve súboru (konvencia SRTM: juhozápadný roh).
+          # Ak tú istú dlaždicu nájdeme viackrát (1″ aj 3″ verzia), necháme tú
+          # s vyšším rozlíšením.
+          declare -A best_px
+
+          hgt_to_tif() { # $1 = vstup .hgt, $2 = výstup .tif, $3 = meno dlaždice (N49E019)
+            # GDAL pozná SRTMHGT pri štandardných veľkostiach (1201/3601).
+            if gdal_translate -q -of GTiff -a_srs EPSG:4326 \
+                 -co COMPRESS=DEFLATE -co PREDICTOR=2 -co TILED=YES "$1" "$2" 2>/dev/null; then
+              return 0
+            fi
+            # Neštandardná mriežka (napr. 0,5″ = 7201²): .hgt je surové pole
+            # int16 big-endian bez hlavičky, takže georeferenciu poskladáme
+            # sami z mena dlaždice (juhozápadný roh, vzorky sú v uzloch
+            # mriežky – preto polpixelový posun a krok 1/(n−1)).
+            local px n lat lon res ulx uly
+            px=$(stat -c%s "$1")
+            n=$(python3 -c "import math;print(math.isqrt($px//2))")
+            [ $(( n * n * 2 )) -eq "$px" ] || return 1
+            lat=$(( 10#${3:1:2} )); [ "${3:0:1}" = "S" ] && lat=$(( -lat ))
+            lon=$(( 10#${3:4:3} )); [ "${3:3:1}" = "W" ] && lon=$(( -lon ))
+            res=$(python3 -c "print(1/($n-1))")
+            ulx=$(python3 -c "print($lon - 0.5/($n-1))")
+            uly=$(python3 -c "print($lat + 1 + 0.5/($n-1))")
+            printf '%s\n' \
+              "<VRTDataset rasterXSize=\"$n\" rasterYSize=\"$n\">" \
+              "  <SRS>EPSG:4326</SRS>" \
+              "  <GeoTransform>$ulx, $res, 0, $uly, 0, -$res</GeoTransform>" \
+              "  <VRTRasterBand dataType=\"Int16\" band=\"1\" subClass=\"VRTRawRasterBand\">" \
+              "    <SourceFilename relativeToVRT=\"0\">$(readlink -f "$1")</SourceFilename>" \
+              "    <ByteOrder>MSB</ByteOrder>" \
+              "    <NoDataValue>-32768</NoDataValue>" \
+              "  </VRTRasterBand>" \
+              "</VRTDataset>" > /tmp/raw.vrt
+            gdal_translate -q -of GTiff -co COMPRESS=DEFLATE -co PREDICTOR=2 -co TILED=YES \
+              /tmp/raw.vrt "$2"
+          }
+
+          while IFS= read -r f; do
+            base=$(basename "$f")
+            tile=$(printf '%s' "$base" | tr '[:lower:]' '[:upper:]' | grep -oE '[NS][0-9]{2}[EW][0-9]{3}' | head -1)
+            if [ -z "$tile" ]; then
+              echo "::warning::$base nemá v názve meno dlaždice (napr. N49E019) – preskakujem."
+              continue
+            fi
+            out="tiles/$tile.tif"
+            tmp="/tmp/$tile.tif"
+            case "${base,,}" in
+              *.hgt) hgt_to_tif "$f" "$tmp" "$tile" || { echo "::warning::$base sa nepodarilo previesť"; continue; } ;;
+              *.tif|*.tiff)
+                gdal_translate -q -of GTiff -co COMPRESS=DEFLATE -co PREDICTOR=2 -co TILED=YES "$f" "$tmp" \
+                  || { echo "::warning::$base sa nepodarilo previesť"; continue; } ;;
+              *) continue ;;
+            esac
+            px=$(gdalinfo -json "$tmp" | jq -r '.size[0]')
+            if [ -n "${best_px[$tile]:-}" ] && [ "${best_px[$tile]}" -ge "$px" ]; then
+              echo "  $tile: ponechávam ${best_px[$tile]} px (nová verzia má $px px)"
+              rm -f "$tmp"
+              continue
+            fi
+            best_px[$tile]=$px
+            mv "$tmp" "$out"
+            echo "  ✓ $tile (${px}×${px} px, $(du -h "$out" | cut -f1))"
+          done < <(find unpacked dl -type f \( -iname '*.hgt' -o -iname '*.tif' -o -iname '*.tiff' \) 2>/dev/null | sort)
+
+          COUNT=$(find tiles -name '*.tif' | wc -l)
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::Nevznikla ani jedna dlaždica – skontroluj obsah priečinka (očakávajú sa .hgt/.tif s menom typu N49E019)."
+            exit 1
+          fi
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          du -sh tiles
+          ls tiles
+
+      - name: Publikuj ako release assety
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ inputs.release_tag }}'
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Výškový model – Sonny's LiDAR DTM" \
+              --notes "Dlaždice 1°×1° výškového modelu (GeoTIFF, meno = juhozápadný roh). Zdroj: [Sonny's LiDAR Digital Terrain Models of Europe](https://sonny.4lima.de/), licencia CC BY 4.0."
+
+          if [ '${{ inputs.keep_existing }}' != 'true' ]; then
+            for a in $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
+              gh release delete-asset "$TAG" "$a" --repo "$GITHUB_REPOSITORY" --yes || true
+            done
+          fi
+
+          jq -n \
+            --arg src "Sonny's LiDAR DTM (https://sonny.4lima.de/)" \
+            --arg license "CC BY 4.0" \
+            --arg folder '${{ inputs.drive_folder }}' \
+            --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson tiles "$(cd tiles && ls *.tif | sed 's/\.tif$//' | jq -R . | jq -s .)" \
+            '{source: $src, license: $license, drive_folder: $folder, built_at: $built, tiles: $tiles}' \
+            > tiles/meta.json
+          cat tiles/meta.json
+
+          gh release upload "$TAG" tiles/*.tif tiles/meta.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Hotovo – ${{ steps.convert.outputs.count }} dlaždíc v release $TAG."

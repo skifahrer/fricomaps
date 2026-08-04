@@ -13,7 +13,8 @@ poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
 workers/       pipeline: regióny, príprava PBF exportov, generátor štýlov,
                SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
 docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
-.github/workflows/  CI pipeline (extrakty + build mapy + deploy Pages)
+.github/workflows/  CI pipeline (extrakty + výškový model + build mapy
+               + deploy Pages)
 ```
 
 > Podrobne – čo robí každý krok, aké formáty medzi sebou putujú a prečo –
@@ -33,6 +34,9 @@ Update OSM extracts          Geofabrik slovakia.pbf ─► osmium extract -c
 (fallback, raz týždenne)     (všetky kraje po OSM admin. hraniciach naraz)
                              ─► release `osm-extracts`: {kraj}.osm.pbf + meta.json
 
+Update DEM                   Sonny's LiDAR DTM (Google Drive) ─► .hgt ─► GeoTIFF
+(raz, keď treba nový terén)  ─► release `dem-sonny`: N49E019.tif + meta.json
+
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
                              ─► poc/web/style-overrides.json v repozitári
@@ -51,7 +55,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
   a `custom_name`. Bbox sa prečíta z PBF hlavičky (alebo zadaj `custom_bbox`).
 - **Témy a štýlovanie:** [poc/web/themes.js](poc/web/themes.js) – 4 farebné
-  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~110 vrstiev pokrývajúcich celú
+  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~119 vrstiev pokrývajúcich celú
   OpenMapTiles schému: krajinná pokrývka, využitie územia, voda a vodné toky,
   budovy (od z16 v 3D), cesty vrátane chodníkov/cyklotrás/schodov, mosty a
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
@@ -69,7 +73,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   nasadzujú všetky naraz, takže sa dajú v developer móde prepínať naživo.
 - **Developer mode:** ladenie mapy priamo v prehliadači – viď nižšie.
 
-## Nadmorská výška a vrstevnice
+## Nadmorská výška, vrstevnice a skaly
 
 **OpenStreetMap výškové dáta neobsahuje.** Má len bodový tag
 [`ele`](https://wiki.openstreetmap.org/wiki/Key:ele) na vrcholoch, sedlách,
@@ -80,18 +84,47 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | čo | zdroj | kde sa berie |
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
-| vrstevnice | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
+| **vrstevnice a skaly** | **Sonny's LiDAR DTM** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
+| vrstevnice a skaly – záloha | Copernicus GLO-30 | [AWS Open Data](https://registry.opendata.aws/copernicus-dem/), bez autentifikácie |
 | tieňovanie reliéfu, 3D terén | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/) |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
 odtiene plôch a pri malých mierkach z nej robí hnedý šum. Zapína sa
 prepínačom v paneli ⚙ (a takto zapnuté sa aj zapečie do štýlu pre iOS).
 
-Vrstevnice sa počítajú v pipeline a končia vo **vlastnom `.pmtiles`**, takže
-fungujú na webe aj na iOS cez ten istý `style.json`:
+### Zdroj výšok: Sonny's LiDAR DTM
+
+[Sonny's LiDAR DTM](https://sonny.4lima.de/) je **model terénu z LiDARu** –
+na rozdiel od Copernicus GLO-30, ktorý je *DSM*, teda model povrchu vrátane
+stromov a striech. V lese preto vrstevnice sedia na zemi, nie na korunách, a
+skalné steny nie sú rozmazané vegetáciou. Práve preto je predvoleným zdrojom.
+
+Sonny distribuuje dlaždice cez **Google Drive**, z ktorého sa v každom builde
+sťahovať nedá (nemá stabilné priame URL a pri väčšom počte stiahnutí vracia
+limit). Preto je medzi tým **zrkadlo v releasi**:
 
 ```
-Copernicus GLO-30 (1°×1° COG dlaždice pre bbox)
+Google Drive (priečinok krajiny)
+  → gdown        stiahne celý priečinok
+  → 7z / unzip   rozbalí .zip
+  → gdal_translate  .hgt → N49E019.tif (GeoTIFF, DEFLATE)
+  → release `dem-sonny` + meta.json
+```
+
+Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**
+(rovnaký princíp ako `osm-extracts`). Čo v releasi nie je, doplní Copernicus
+GLO-30, takže build bez terénu nikdy nezostane – v logu je varovanie, ktoré
+dlaždice chýbali. Prepnúť sa dá inputom `dem_source` (`sonny` / `copernicus`).
+Licencia Sonny's DTM je CC BY 4.0, zdroj sa uvádza v atribúcii mapy
+(nastavuje ju štýl podľa toho, čo build naozaj použil).
+
+### Vrstevnice
+
+Počítajú sa v pipeline a končia vo **vlastnom `.pmtiles`**, takže fungujú na
+webe aj na iOS cez ten istý `style.json`:
+
+```
+DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → gdalwarp   orez na bbox (zjemnenie DEM je predvolene vypnuté – vrstevnice
                sa trasujú z plného rozlíšenia; `contour_smoothing` v oblúkových
                sekundách ho vie zapnúť, 2 = pôvodné hladenie)
@@ -101,22 +134,83 @@ Copernicus GLO-30 (1°×1° COG dlaždice pre bbox)
   → {región}-contours.pmtiles
 ```
 
+Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
+najvyššom zoome bez zjednodušovania geometrie
+(`--simplify_tolerance_at_max_zoom=0`) a bez zahadzovania drobných prvkov
+(`--min_feature_size_at_max_zoom=0`) – malé uzavreté krúžky na kopčekoch a
+v jamách teda ostávajú. Nižšie zoomy si Planetiler zjednodušuje sám, inak by
+z vrstevníc bola čierna plocha.
+
 `level` riadi, čo je vidieť kedy: hlavné vrstevnice od z10, polovičné od z12,
 základné od z13, popisky výšky pozdĺž hlavných od z13. Výsledok je
-nacacheovaný podľa bboxu a intervalu — vrstevnice závisia len od územia, takže
-sa pri ďalšom builde mapy nepočítajú znova.
+nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia len od
+územia, takže sa pri ďalšom builde mapy nepočítajú znova.
 
 Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m),
 `contour_maxzoom` (default 14) a `contour_smoothing` (default 0 = bez
 zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
 prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 
-> **Kvalita dát:** Copernicus GLO-30 je *DSM*, teda povrchový model vrátane
-> stromov a budov. V lese sú vrstevnice preto mierne posunuté. Lepšie by boli
-> [Sonny's LiDAR DTM](https://sonny.4lima.de/) alebo slovenský
+### Skaly (najstrmšie úseky terénu)
+
+Kde sú vrstevnice husté, je stena. Hustota čiar je ale len **obraz sklonu** –
+a závisí od intervalu vrstevníc aj od zoomu. Skaly sa preto nepočítajú z
+hotových vrstevníc, ale rovno **zo sklonu terénu**, z toho istého DEM:
+
+```
+DEM
+  → gdalwarp -t_srs EPSG:3035     do metrickej projekcie (v stupňoch by sklon
+                                  vyšiel skreslený – 1° po dĺžke je u nás
+                                  o tretinu kratší než 1° po šírke),
+                                  mriežka = natívne rozlíšenie DEM
+  → gdaldem slope                 sklon v stupňoch
+  → gdal_contour -p -fl 40 55     izolínie sklonu ako PLOCHY (hladší okraj
+                                  než polygonizácia po pixeloch)
+  → ogr2ogr                       rozbije na jednotlivé plochy, dopočíta
+                                  `class`: steep (≥40°) / cliff (≥55°)
+  → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
+```
+
+V mape z toho sú **malé tmavosivé plochy** s tenkým obrysom, kreslené *pod*
+vrstevnicami (od z12, obrys od z13), takže ohraničujú strmé úseky a vrstevnice
+nad nimi zostávajú čitateľné. Strmý svah je svetlejší, výrazná stena tmavšia –
+farby `Skalná plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a
+skaly**, takže sa dajú v developer móde doladiť ako čokoľvek iné.
+
+**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na natívnej mriežke
+DEM (bez priemerovania), obrys plochy ide presne po izolínii sklonu (bez
+zjednodušovania) a najmenšia plocha je **5 m²**. Planetiler dostane
+`--min_feature_size_at_max_zoom=0`, takže drobné plochy neodfiltruje – overené
+na dlaždiciach: v testovacom výreze Tatier je 878 plôch, z toho 73 pod 100 m²,
+a najmenšie sa v dlaždiciach naozaj nachádzajú. Pri nižších zoomoch drobnosti
+odpadnú samé (Planetiler zahadzuje prvky menšie než pixel), takže sa objavia až
+tam, kde majú zmysel.
+
+> Poznámka k dátam: jedna bunka 1″ DEM má u nás ~20×30 m, takže najmenší
+> *skutočný* útvar, ktorý z neho vie vzniknúť, má rádovo stovky m². Prah 5 m²
+> teda neznamená, že vidíme päťmetrovú skalku – znamená, že sa nefiltruje nič
+> z toho, čo dáta unesú. Ak by z toho bolo v teréne priveľa bodiek, `ROCK_WIN`
+> (priemerovanie sklonu) a `ROCK_MIN_AREA` v `env:` to vedia stiahnuť.
+
+Ovládanie vo workflowe: `rocks` (zap/vyp) a `rock_slope` – od akého sklonu sa
+terén považuje za skalu (default 40°, menej = viac plôch). Ostatné ladenie je
+v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
+`ROCK_RES` (mriežka, 0 = natívna), `ROCK_WIN` (priemerovanie sklonu, 0 = žiadne),
+`ROCK_MIN_AREA` (5 m²), `ROCK_SIMPLIFY` (0 = presný obrys).
+
+Prah 40° je vyskúšaný na Copernicus DEM tak, aby označil naozaj len steny, nie
+každý strmší svah:
+
+| územie | podiel plochy nad 40° |
+|---|---|
+| Vysoké Tatry (hrebeň, doliny) | 8,0 % |
+| Malá Fatra (lesnaté hory) | 0,7 % |
+| Považie pri Trenčíne (kopce) | 0,7 % |
+
+> **Pozn.:** Presnejší než Sonny by bol už len slovenský
 > [ÚGKK DMR 5.0](https://www.geoportal.sk/) (1 m LiDAR, voľný aj komerčne pri
-> uvedení zdroja) — ani jeden sa však nedá sťahovať priamo v CI, museli by sa
-> nacacheovať do releasu.
+> uvedení zdroja). Ten sa ale sťahuje po mapových listoch cez portál, takže by
+> potreboval vlastné zrkadlo – to isté, čo robí *Update DEM* pre Sonnyho.
 
 ## Developer mode – ladenie mapy v prehliadači
 
@@ -125,8 +219,8 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 
 | záložka | čo sa v nej dá |
 |---|---|
-| **Vrstvy** | všetkých ~115 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
-| **Paleta** | ~67 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Vrstvy** | všetkých ~119 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
+| **Paleta** | ~69 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
 | **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
@@ -287,14 +381,21 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 2. Actions → **Update OSM extracts (PBF exporty regiónov)** → *Run workflow*
    (vyrobí PBF exporty krajov do releasu `osm-extracts`; potom beží sám raz
    týždenne).
-3. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
+3. Actions → **Update DEM (Sonny's LiDAR DTM → release)** → *Run workflow*
+   (stiahne dlaždice výškového modelu z Google Drive priečinka Sonnyho a uloží
+   ich do releasu `dem-sonny`; predvolený priečinok je Slovensko, pre inú
+   krajinu stačí vymeniť odkaz). Stačí raz – kým sa terén nezmení. Bez tohto
+   kroku sa vrstevnice a skaly urobia z Copernicus GLO-30.
+4. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
    - `region`: `slovensko` alebo kraj (`bratislavsky`, `zilinsky`, …)
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
-4. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
+   - `dem_source`: `sonny` (LiDAR terén) alebo `copernicus`
+   - `rocks` + `rock_slope`: skalné plochy a od akého sklonu (default 40°)
+5. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
-   témy, regiónu, vrstevníc, 3D terénu a developer módu.
+   témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
 
 Pipeline si po nasadení sama overí, že mapa naozaj funguje (**smoke test**):
 `manifest.json`, `style.json`, sprite, glyfy a `Range` request na `.pmtiles`

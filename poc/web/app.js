@@ -8,7 +8,9 @@ import {
   CLICKABLE_LAYERS,
   MAX_DISPLAY_Z,
   MAX_TILE_Z,
-  DEFAULT_DEM_TILES
+  DEFAULT_DEM_TILES,
+  DEFAULT_DEM_SOURCE,
+  DEM_SOURCES
 } from "./themes.js";
 import { initDevMode, loadOverrides, saveOverrides } from "./devmode.js";
 import { parsePatternName, renderPattern } from "./patterns.js";
@@ -125,6 +127,7 @@ function styleFor(manifest) {
         ? `pmtiles://${baseUrl}/${region.contours}`
         : null,
     contoursMaxzoom: region.contours_maxzoom || 14,
+    demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
     overrides,
     name: `FricoMaps – ${region.name}`
@@ -145,7 +148,13 @@ function applyStyle(manifest) {
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
-    (region.contours ? `Vrstevnice po ${region.contour_interval || 10} m<br>` : "") +
+    (region.contours
+      ? `Vrstevnice po ${region.contour_interval || 10} m` +
+        (region.rock_slope ? `, skaly od ${region.rock_slope}°` : "") +
+        `<br>Výšky: ${
+          (DEM_SOURCES[region.dem_source] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).label
+        }<br>`
+      : "") +
     (hasOverrides(overrides) ? "Štýl s vlastnými úpravami (developer mode)<br>" : "") +
     `Vygenerované: ${new Date(manifest.built_at).toLocaleString("sk-SK")}<br>` +
     `© OpenStreetMap prispievatelia`;

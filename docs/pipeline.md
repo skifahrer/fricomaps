@@ -72,39 +72,91 @@ všetky kraje naraz).
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### 3. Vrstevnice z Copernicus DEM
+### 3. Vrstevnice a skaly z DEM
 
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
+| zdroj | čo to je | odkiaľ |
+|---|---|---|
+| **Sonny's LiDAR DTM** (default) | *model terénu* z LiDARu – bez stromov a striech | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#tretí-workflow-update-dem)) |
+| Copernicus GLO-30 | *model povrchu* vrátane vegetácie, 1″ (~30 m) | AWS Open Data, bez autentifikácie |
+
+Berie sa to, čo je pre danú dlaždicu k dispozícii: chýbajúce Sonny dlaždice
+doplní Copernicus, takže build nezostane bez terénu (a v logu je varovanie,
+ktoré dlaždice chýbali). Prepínač je input `dem_source`.
+
 ```
-Copernicus GLO-30 (COG dlaždice 1°×1° na AWS Open Data, bez autentifikácie)
+DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │  gdalbuildvrt   … zlepí dlaždice do jedného virtuálneho rastra
-  │  gdalwarp       … oreže na bbox (voliteľne zjemní, viď nižšie)
-  │  gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
-  │  ogr2ogr        … dopočíta atribút `level`
+  │
+  ├─ vrstevnice ─────────────────────────────────────────────
+  │    gdalwarp       … oreže na bbox (voliteľne zjemní, viď nižšie)
+  │    gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
+  │    ogr2ogr        … dopočíta atribút `level`
+  │
+  └─ skaly ──────────────────────────────────────────────────
+       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, natívna mriežka
+       gdaldem slope             … sklon v stupňoch
+       gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
+       ogr2ogr                   … rozbitie na kusy, `class`
+  │
   │  planetiler generate-custom --schema=workers/contours.yml
   ▼
-{región}-contours.pmtiles
+{región}-contours.pmtiles   (vrstvy `contour` a `rock`)
 ```
 
 - **`level`** rozdelí vrstevnice na `major` (po 100 m), `mid` (50 m) a
   `minor` (10 m). Vďaka tomu ich štýl vie zapínať postupne podľa zoomu a
   kresliť rôzne hrubo – inak by na malých mierkach splynuli do plochy.
-- **Zjemnenie (`contour_smoothing`, default 0 = vypnuté).** Copernicus je v
-  1″ (~30 m). Priemerovanie na hrubšiu mriežku (`gdalwarp -tr … -r average`)
+- **Zjemnenie (`contour_smoothing`, default 0 = vypnuté).** DEM je v 1″
+  (~30 m). Priemerovanie na hrubšiu mriežku (`gdalwarp -tr … -r average`)
   vyhladí šum a vrstevnice sú „krajšie", ale zároveň zje detail terénu.
   Predvolene sa preto **netrasuje z ničoho zjemneného**, ale z plného
   rozlíšenia; kto chce hladšie krivky, nastaví napr. `2` (pôvodné správanie).
-- **Cache.** Vrstevnice závisia len od územia, intervalu, maxzoomu a
-  zjemnenia – nie od toho, čo sa zmenilo v OSM. Sú preto nacacheované podľa
-  týchto parametrov a pri ďalšom builde mapy sa nepočítajú znova.
+- **Prečo sa skaly nepočítajú z hustoty vrstevníc.** Husté vrstevnice sú len
+  *dôsledok* veľkého sklonu – ich hustota navyše závisí od zvoleného intervalu
+  a od zoomu, na ktorom sa pozeráš. Rovnaká informácia je v DEM priamo a
+  presnejšie, preto sa počíta sklon (`gdaldem slope`) a prahuje sa on.
+  Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
+  u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
+  smeru svahu.
+- **Mriežka = natívne rozlíšenie DEM** (`ROCK_RES=0`). Jemnejšia by bola len
+  interpolácia – viac bodov, žiadna nová informácia; hrubšia by zahodila
+  skutočný detail. Mriežka DEM je v stupňoch, takže sa po dĺžke prenásobí
+  `cos(šírky)`: z 1″ vyjde u nás ~20 m.
+- **Bez priemerovania a bez zjednodušovania** (`ROCK_WIN=0`, `ROCK_SIMPLIFY=0`).
+  Priemerovanie sklonu robí súvislejšie plochy, ale zje malé skalky;
+  zjednodušenie obrysu by tie najmenšie zmazalo úplne. Kto chce pokojnejší
+  obraz, oboje si v `env:` zapne späť.
+- **Najmenšia plocha 5 m²** (`ROCK_MIN_AREA`), teda prakticky bez filtra – a
+  aby ich nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`.
+  Merané na výreze Vysokých Tatier: 878 plôch, z toho 73 pod 100 m², a
+  v hotových dlaždiciach sa naozaj nachádzajú. Pri nižších zoomoch drobnosti
+  odpadnú samé – tam Planetiler prvky menšie než pixel zahadzuje, čo je
+  správne, lebo by z nich boli nečitateľné bodky.
+- **Aká je vlastne rozlišovacia schopnosť.** Bunka 1″ DEM má u nás ~20×30 m,
+  takže najmenší *skutočný* útvar má rádovo stovky m². Prah 5 m² neznamená,
+  že vidíme päťmetrovú skalku, ale že sa nezahadzuje nič z toho, čo dáta
+  unesú (a že kúsky pri okraji dlaždice prežijú aj po orezaní).
+- **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
+  obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
+  medzi bunkami, takže je okraj hladký a bodov výrazne menej.
+- **`class`** rozlišuje `steep` (nad prahom `rock_slope`, default 40°) a
+  `cliff` (o 15° viac) – štýl z toho kreslí svetlejšiu a tmavšiu sivú.
+- **Prečo `-explodecollections`.** `gdal_contour -p` zlepí každé pásmo sklonu
+  do jedného multipolygónu; bez rozbitia na kusy by sa nedala merať plocha
+  jednotlivej skaly ani filtrovať tá najmenšia.
+- **Vrstevnice aj skaly sú vektor** vo vektorových dlaždiciach – žiadne
+  rastre. Na najvyššom zoome ide geometria do dlaždíc bez zjednodušovania
+  (`--simplify_tolerance_at_max_zoom=0`), takže obrys skaly aj priebeh
+  vrstevnice sedia presne tam, kam ich položil DEM.
+- **Cache.** Vrstevnice aj skaly závisia len od územia, zdroja výšok,
+  intervalu, maxzoomu, zjemnenia a prahu sklonu – nie od toho, čo sa zmenilo
+  v OSM. Sú preto nacacheované podľa týchto parametrov a pri ďalšom builde
+  mapy sa nepočítajú znova.
 - **Vlastný `.pmtiles`** (nie súčasť mapových dlaždíc) práve preto, aby sa
   dali cacheovať zvlášť a aby ich štýl vedel vypnúť bez prebuildu mapy.
-
-> **Kvalita dát:** GLO-30 je *DSM* – povrchový model vrátane stromov a budov.
-> V lese sú preto vrstevnice mierne posunuté. Presnejší by bol LiDAR DTM
-> (Sonny's, ÚGKK DMR 5.0), ani jeden sa však nedá sťahovať priamo v CI.
 
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
@@ -257,7 +309,34 @@ Stiahne Geofabrik export Slovenska a `osmium extract -c` z neho jedným
 priechodom vyreže všetky kraje po administratívnych hraniciach; výsledok
 uloží do releasu `osm-extracts`.
 
-## Tretí workflow: „Uložiť úpravy štýlu do zdrojáku"
+## Tretí workflow: „Update DEM"
+
+Zrkadlí výškový model **Sonny's LiDAR DTM** do releasu `dem-sonny`. Sonny ho
+distribuuje cez Google Drive – ten nemá stabilné priame URL na súbory v
+zdieľanom priečinku a pri väčšom počte stiahnutí odpovedá limitom, takže sa
+z neho nedá sťahovať v každom builde mapy.
+
+```
+Google Drive priečinok (napr. Slovensko)
+  │  gdown --folder     … stiahne celý priečinok naraz
+  │  7z                 … rozbalí .zip / .7z
+  │  gdal_translate     … .hgt → N49E019.tif (GeoTIFF, DEFLATE)
+  ▼
+release `dem-sonny`: N49E019.tif … + meta.json
+```
+
+- **Meno dlaždice** sa berie z názvu súboru (konvencia SRTM: juhozápadný roh),
+  takže je jedno, ako sú súbory v priečinku pomenované navyše.
+- **`.hgt` je surové pole int16 bez hlavičky.** GDAL ho pozná pri štandardných
+  veľkostiach (1201², 3601²); pri neštandardnej mriežke (0,5″ = 7201²) si
+  workflow georeferenciu poskladá sám cez VRT – krok mriežky je `1/(n−1)`,
+  lebo vzorky sú v uzloch, nie v stredoch buniek.
+- **Prevod na GeoTIFF** je zámerný: je menší (bezstratová kompresia) a
+  `gdalbuildvrt` v builde mapy ho zlepí bez ďalších pomôcok.
+- Ak by Drive limitoval, dá sa namiesto neho vyplniť `direct_urls` (priame
+  odkazy na mirror).
+
+## Štvrtý workflow: „Uložiť úpravy štýlu do zdrojáku"
 
 Protikus developer módu – vezme stiahnutý `style-overrides.json`, prežene ho
 **tou istou validáciou ako prehliadač** (`normalizeOverrides`) a commitne do
