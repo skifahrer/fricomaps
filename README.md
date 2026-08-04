@@ -134,6 +134,13 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → {región}-contours.pmtiles
 ```
 
+Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
+najvyššom zoome bez zjednodušovania geometrie
+(`--simplify_tolerance_at_max_zoom=0`) a bez zahadzovania drobných prvkov
+(`--min_feature_size_at_max_zoom=0`) – malé uzavreté krúžky na kopčekoch a
+v jamách teda ostávajú. Nižšie zoomy si Planetiler zjednodušuje sám, inak by
+z vrstevníc bola čierna plocha.
+
 `level` riadi, čo je vidieť kedy: hlavné vrstevnice od z10, polovičné od z12,
 základné od z13, popisky výšky pozdĺž hlavných od z13. Výsledok je
 nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia len od
@@ -154,15 +161,14 @@ hotových vrstevníc, ale rovno **zo sklonu terénu**, z toho istého DEM:
 DEM
   → gdalwarp -t_srs EPSG:3035     do metrickej projekcie (v stupňoch by sklon
                                   vyšiel skreslený – 1° po dĺžke je u nás
-                                  o tretinu kratší než 1° po šírke)
-  → gdaldem slope                 sklon v stupňoch, mriežka 20 m
-  → gdalwarp -r average           priemer na 40 m: skala je súvislý strmý
-                                  úsek, nie jeden strmý pixel
+                                  o tretinu kratší než 1° po šírke),
+                                  mriežka = natívne rozlíšenie DEM
+  → gdaldem slope                 sklon v stupňoch
   → gdal_contour -p -fl 40 55     izolínie sklonu ako PLOCHY (hladší okraj
                                   než polygonizácia po pixeloch)
-  → ogr2ogr                       zahodí plôšky pod 5000 m², zjednoduší obrys,
-                                  dopočíta `class`: steep (≥40°) / cliff (≥55°)
-  → vrstva `rock` v {región}-contours.pmtiles
+  → ogr2ogr                       rozbije na jednotlivé plochy, dopočíta
+                                  `class`: steep (≥40°) / cliff (≥55°)
+  → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
 ```
 
 V mape z toho sú **malé tmavosivé plochy** s tenkým obrysom, kreslené *pod*
@@ -171,10 +177,26 @@ nad nimi zostávajú čitateľné. Strmý svah je svetlejší, výrazná stena t
 farby `Skalná plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a
 skaly**, takže sa dajú v developer móde doladiť ako čokoľvek iné.
 
+**Nič sa nezahladzuje ani nezahadzuje.** Sklon sa počíta na natívnej mriežke
+DEM (bez priemerovania), obrys plochy ide presne po izolínii sklonu (bez
+zjednodušovania) a najmenšia plocha je **5 m²**. Planetiler dostane
+`--min_feature_size_at_max_zoom=0`, takže drobné plochy neodfiltruje – overené
+na dlaždiciach: v testovacom výreze Tatier je 878 plôch, z toho 73 pod 100 m²,
+a najmenšie sa v dlaždiciach naozaj nachádzajú. Pri nižších zoomoch drobnosti
+odpadnú samé (Planetiler zahadzuje prvky menšie než pixel), takže sa objavia až
+tam, kde majú zmysel.
+
+> Poznámka k dátam: jedna bunka 1″ DEM má u nás ~20×30 m, takže najmenší
+> *skutočný* útvar, ktorý z neho vie vzniknúť, má rádovo stovky m². Prah 5 m²
+> teda neznamená, že vidíme päťmetrovú skalku – znamená, že sa nefiltruje nič
+> z toho, čo dáta unesú. Ak by z toho bolo v teréne priveľa bodiek, `ROCK_WIN`
+> (priemerovanie sklonu) a `ROCK_MIN_AREA` v `env:` to vedia stiahnuť.
+
 Ovládanie vo workflowe: `rocks` (zap/vyp) a `rock_slope` – od akého sklonu sa
-terén považuje za skalu (default 40°, menej = viac plôch). Ostatné ladenie
-(mriežka, okno priemerovania, najmenšia plocha, zjednodušenie obrysu) je v
-`env:` na začiatku [build-map.yml](.github/workflows/build-map.yml).
+terén považuje za skalu (default 40°, menej = viac plôch). Ostatné ladenie je
+v `env:` na začiatku [build-map.yml](.github/workflows/build-map.yml):
+`ROCK_RES` (mriežka, 0 = natívna), `ROCK_WIN` (priemerovanie sklonu, 0 = žiadne),
+`ROCK_MIN_AREA` (5 m²), `ROCK_SIMPLIFY` (0 = presný obrys).
 
 Prah 40° je vyskúšaný na Copernicus DEM tak, aby označil naozaj len steny, nie
 každý strmší svah:

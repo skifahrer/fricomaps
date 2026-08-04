@@ -96,11 +96,10 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    ogr2ogr        … dopočíta atribút `level`
   │
   └─ skaly ──────────────────────────────────────────────────
-       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 20 m
+       gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, natívna mriežka
        gdaldem slope             … sklon v stupňoch
-       gdalwarp -r average       … priemer na 40 m (súvislé úseky, nie šum)
        gdal_contour -p -fl 40 55 … izolínie sklonu ako plochy
-       ogr2ogr                   … filter plochy, zjednodušenie, `class`
+       ogr2ogr                   … rozbitie na kusy, `class`
   │
   │  planetiler generate-custom --schema=workers/contours.yml
   ▼
@@ -122,14 +121,36 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   Sklon sa musí počítať v **metrickej projekcii**: v stupňoch je 1° po dĺžke
   u nás asi o tretinu kratší než 1° po šírke, takže by vyšiel skreslený podľa
   smeru svahu.
-- **Prečo priemer na hrubšej mriežke.** Bez neho vzniknú z jednotlivých
-  strmých pixelov roztrúsené bodky („soľ a korenie"). Skala je súvislý strmý
-  úsek, takže sa sklon najprv spriemeruje na 40 m a až potom prahuje.
+- **Mriežka = natívne rozlíšenie DEM** (`ROCK_RES=0`). Jemnejšia by bola len
+  interpolácia – viac bodov, žiadna nová informácia; hrubšia by zahodila
+  skutočný detail. Mriežka DEM je v stupňoch, takže sa po dĺžke prenásobí
+  `cos(šírky)`: z 1″ vyjde u nás ~20 m.
+- **Bez priemerovania a bez zjednodušovania** (`ROCK_WIN=0`, `ROCK_SIMPLIFY=0`).
+  Priemerovanie sklonu robí súvislejšie plochy, ale zje malé skalky;
+  zjednodušenie obrysu by tie najmenšie zmazalo úplne. Kto chce pokojnejší
+  obraz, oboje si v `env:` zapne späť.
+- **Najmenšia plocha 5 m²** (`ROCK_MIN_AREA`), teda prakticky bez filtra – a
+  aby ich nezahodil Planetiler, dostane `--min_feature_size_at_max_zoom=0`.
+  Merané na výreze Vysokých Tatier: 878 plôch, z toho 73 pod 100 m², a
+  v hotových dlaždiciach sa naozaj nachádzajú. Pri nižších zoomoch drobnosti
+  odpadnú samé – tam Planetiler prvky menšie než pixel zahadzuje, čo je
+  správne, lebo by z nich boli nečitateľné bodky.
+- **Aká je vlastne rozlišovacia schopnosť.** Bunka 1″ DEM má u nás ~20×30 m,
+  takže najmenší *skutočný* útvar má rádovo stovky m². Prah 5 m² neznamená,
+  že vidíme päťmetrovú skalku, ale že sa nezahadzuje nič z toho, čo dáta
+  unesú (a že kúsky pri okraji dlaždice prežijú aj po orezaní).
 - **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
   obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
   medzi bunkami, takže je okraj hladký a bodov výrazne menej.
 - **`class`** rozlišuje `steep` (nad prahom `rock_slope`, default 40°) a
   `cliff` (o 15° viac) – štýl z toho kreslí svetlejšiu a tmavšiu sivú.
+- **Prečo `-explodecollections`.** `gdal_contour -p` zlepí každé pásmo sklonu
+  do jedného multipolygónu; bez rozbitia na kusy by sa nedala merať plocha
+  jednotlivej skaly ani filtrovať tá najmenšia.
+- **Vrstevnice aj skaly sú vektor** vo vektorových dlaždiciach – žiadne
+  rastre. Na najvyššom zoome ide geometria do dlaždíc bez zjednodušovania
+  (`--simplify_tolerance_at_max_zoom=0`), takže obrys skaly aj priebeh
+  vrstevnice sedia presne tam, kam ich položil DEM.
 - **Cache.** Vrstevnice aj skaly závisia len od územia, zdroja výšok,
   intervalu, maxzoomu, zjemnenia a prahu sklonu – nie od toho, čo sa zmenilo
   v OSM. Sú preto nacacheované podľa týchto parametrov a pri ďalšom builde

@@ -126,16 +126,14 @@ env:
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
   # Release s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
   DEM_RELEASE: dem-sonny
-  # Skaly = najstrmšie úseky terénu. Ladenie mimo inputov, aby ich nebolo veľa:
-  ROCK_RES: "20" # mriežka na výpočet sklonu (m) – jemnejšie než 30 m DEM
-  ROCK_WIN: "40" # okno na spriemerovanie sklonu (m) – skala je súvislý úsek,
-  #                nie jeden strmý pixel; bez toho vzniká „soľ a korenie"
-  # Najmenšia skalná plocha (m²). Bunka priemerovanej mriežky má 40×40 m =
-  # 1600 m², takže čokoľvek pod ~3 bunky je šum. Merané na Copernicus DEM:
-  # 5000 m² zahodí vo Vysokých Tatrách polovicu plôch, ale len 0,16 % plochy
-  # skál – teda presne tie osamotené bodky.
-  ROCK_MIN_AREA: "5000"
-  ROCK_SIMPLIFY: "12" # zjednodušenie obrysu (m) – menej bodov, rovnaký tvar
+  # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
+  # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
+  # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
+  ROCK_RES: "0" # mriežka na výpočet sklonu (m); 0 = natívne rozlíšenie DEM
+  ROCK_WIN: "0" # okno na spriemerovanie sklonu (m); 0 = žiadne priemerovanie.
+  #               Priemerovanie robí súvislejšie plochy, ale zje malé skalky.
+  ROCK_MIN_AREA: "5" # najmenšia skalná plocha (m²) – prakticky bez filtra
+  ROCK_SIMPLIFY: "0" # zjednodušenie obrysu (m); 0 = presný obrys izolínie
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
 
 jobs:
@@ -403,19 +401,40 @@ jobs:
           # ---------- skaly: najstrmšie úseky terénu ----------
           # „Husté vrstevnice = skala" je len iný pohľad na veľký sklon, preto
           # sa neanalyzuje hustota čiar (tá závisí od intervalu a zoomu), ale
-          # rovno sklon terénu. Postup:
+          # rovno sklon terénu. Výsledok sú vektorové plochy, nie raster:
           #   1. DEM do metrickej projekcie (v stupňoch by sklon vyšiel zle –
           #      1° po dĺžke je u nás o tretinu kratší než 1° po šírke),
+          #      na mriežke v natívnom rozlíšení DEM,
           #   2. gdaldem slope → sklon v stupňoch,
-          #   3. priemer na hrubšej mriežke → skala je súvislý strmý úsek,
-          #      nie jeden pixel šumu,
-          #   4. gdal_contour -p → izolínie sklonu ako plochy (hladšie okraje
+          #   3. gdal_contour -p → izolínie sklonu ako plochy (hladší okraj
           #      než polygonizácia po pixeloch),
-          #   5. zahodenie drobných plôch a zjednodušenie obrysu.
+          #   4. rozbitie na jednotlivé plochy a dopočítanie triedy.
+          # Predvolene sa nič nepriemeruje, nezjednodušuje ani nezahadzuje –
+          # najmenšia plocha je ROCK_MIN_AREA (5 m²).
           ROCK_SLOPE='${{ inputs.rock_slope }}'
           case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=40 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
           ROCKS='${{ inputs.rocks }}'
+
+          # Mriežka na sklon = natívne rozlíšenie DEM. Jemnejšia mriežka by
+          # bola len interpolácia (viac bodov, žiadna nová informácia),
+          # hrubšia by zahodila skutočný detail. Mriežka DEM je v stupňoch,
+          # takže po dĺžke ju treba prenásobiť cos(zemepisnej šírky).
+          if [ "${ROCK_RES:-0}" -le 0 ] 2>/dev/null; then
+            ROCK_RES=$(python3 - "$S" "$N" <<'PY'
+          import json, math, subprocess, sys
+          info = json.loads(
+              subprocess.run(["gdalinfo", "-json", "dem/all.vrt"],
+                             capture_output=True, text=True).stdout)
+          gt = info["geoTransform"]
+          lat = (float(sys.argv[1]) + float(sys.argv[2])) / 2
+          x = abs(gt[1]) * 111320 * math.cos(math.radians(lat))
+          y = abs(gt[5]) * 110540
+          print(max(1, round(min(x, y))))
+          PY
+          )
+          fi
+          [ "${ROCK_WIN:-0}" -gt 0 ] 2>/dev/null || ROCK_WIN="$ROCK_RES"
 
           # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj vtedy,
           # keď sa žiadna skala nenašla alebo sú vypnuté.
@@ -425,9 +444,14 @@ jobs:
               -nlt POLYGON -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
           }
 
+          # -simplify 0 by ogr2ogr bralo ako „zjednodušuj s nulovou toleranciou";
+          # pri presnom obryse ho radšej nedávame vôbec.
+          SIMPLIFY_ARG=""
+          [ "${ROCK_SIMPLIFY:-0}" != "0" ] && SIMPLIFY_ARG="-simplify $ROCK_SIMPLIFY"
+
           rock_sql() { # $1 = podmienka na najmenšiu plochu (môže byť prázdna)
             ogr2ogr -f GPKG dem/rock-m.gpkg dem/rock-parts.gpkg -nln rock \
-              -overwrite -simplify "$ROCK_SIMPLIFY" -dialect SQLITE \
+              -overwrite $SIMPLIFY_ARG -dialect SQLITE \
               -sql "SELECT *, CAST(smin AS INTEGER) AS slope, CASE
                       WHEN smin >= $ROCK_CLIFF THEN 'cliff'
                       ELSE 'steep' END AS class
@@ -442,8 +466,14 @@ jobs:
               -co COMPRESS=DEFLATE -co TILED=YES dem/all.vrt dem/metric.tif || return 1
             gdaldem slope -q -compute_edges -co COMPRESS=DEFLATE -co TILED=YES \
               dem/metric.tif dem/slope.tif || return 1
-            gdalwarp -q -overwrite -tr "$ROCK_WIN" "$ROCK_WIN" -r average \
-              -co COMPRESS=DEFLATE -co TILED=YES dem/slope.tif dem/slope-avg.tif || return 1
+            if [ "$ROCK_WIN" -gt "$ROCK_RES" ]; then
+              gdalwarp -q -overwrite -tr "$ROCK_WIN" "$ROCK_WIN" -r average \
+                -co COMPRESS=DEFLATE -co TILED=YES dem/slope.tif dem/slope-avg.tif || return 1
+            else
+              # Bez priemerovania: izolínia sklonu ide presne cez mriežku DEM,
+              # takže sa zachytí aj skalka veľkosti jednej bunky.
+              mv dem/slope.tif dem/slope-avg.tif
+            fi
 
             # -fl dáva pásma sklonu; nás zaujímajú tie od prahu vyššie.
             gdal_contour -q -p -fl "$ROCK_SLOPE" "$ROCK_CLIFF" \
@@ -476,7 +506,7 @@ jobs:
           }
 
           if [ "$ROCKS" = "true" ]; then
-            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (výrazné steny od ${ROCK_CLIFF}°)"
+            echo "::group::Skaly – sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${ROCK_RES} m, okno ${ROCK_WIN} m, najmenšia plocha ${ROCK_MIN_AREA} m²"
             # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
             # v rovine nič nenašiel), nemá to zhodiť hodinový build – mapa
             # pôjde s prázdnou vrstvou a varovaním.
@@ -511,6 +541,7 @@ jobs:
               --output=contours-out/contours.pmtiles \
               --maxzoom="$CZ" --render_maxzoom="$CZ" \
               --simplify_tolerance_at_max_zoom=0 \
+              --min_feature_size_at_max_zoom=0 \
               --force
 
             CMB=$(( $(stat -c%s contours-out/contours.pmtiles) / 1048576 ))
