@@ -290,8 +290,13 @@ jobs:
         id: day
         run: echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache PBF regiónu
-        uses: actions/cache@v4
+      # POZOR na restore/save: obyčajné `actions/cache` ukladá až v post-kroku
+      # a IBA keď job dobehne úspešne. Keď build spadne o hodinu neskôr, hodiny
+      # výpočtu sa zahodia. Preto restore hore a save hneď po tom, čo dáta
+      # vzniknú, s `if: always()`.
+      - name: Cache PBF regiónu (restore)
+        id: pbf-cache
+        uses: actions/cache/restore@v4
         with:
           path: data/region.osm.pbf
           key: pbf-${{ inputs.region }}-${{ inputs.custom_pbf_url }}-${{ inputs.crop_bbox }}-${{ steps.day.outputs.d }}
@@ -392,8 +397,9 @@ jobs:
           path: data/sources
           key: planetiler-sources-v1
 
-      - name: Cache Planetileru
-        uses: actions/cache@v4
+      - name: Cache Planetileru (restore)
+        id: planetiler-cache
+        uses: actions/cache/restore@v4
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ steps.day.outputs.d }}
@@ -403,6 +409,20 @@ jobs:
           [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
           curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
             https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: Cache PBF regiónu (save)
+        if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: data/region.osm.pbf
+          key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
+
+      - name: Cache Planetileru (save)
+        if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: planetiler.jar
+          key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
       # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
@@ -424,19 +444,20 @@ jobs:
       # sa zmestiť do jedného rozpočtu. Keď sa vrstevnice urobia prvé, vie
       # Planetiler dostať presne toľko miesta, koľko naozaj zvýšilo – inak by
       # sa build po hodine tilovania zabil na tom, že súčet je nad limitom.
-      - name: Cache vrstevníc
+      - name: Cache vrstevníc a skál (restore)
         id: contours-cache
         if: ${{ inputs.contours }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: contours-out
           key: contours-v5-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}p${{ inputs.rock_piece }}z${{ inputs.rock_res }}-${{ hashFiles('workers/contours.yml') }}
 
       # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
       # release – čo je presne to, čo hovorí `demkey`.
-      - name: Cache DEM dlaždíc
+      - name: Cache DEM dlaždíc (restore)
+        id: demtiles-cache
         if: ${{ inputs.contours }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: dem/tiles
           key: demtiles-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}
@@ -660,6 +681,22 @@ jobs:
           fi
           ls -lh contours-out/
 
+      # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
+      # spadol, hodiny výpočtu ostanú v cache.
+      - name: Cache vrstevníc a skál (save)
+        if: ${{ always() && inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: contours-out
+          key: ${{ steps.contours-cache.outputs.cache-primary-key }}
+
+      - name: Cache DEM dlaždíc (save)
+        if: ${{ always() && inputs.contours && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/tiles/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: dem/tiles
+          key: ${{ steps.demtiles-cache.outputs.cache-primary-key }}
+
       - name: Zaraď vrstevnice do webu
         id: contours
         if: ${{ inputs.contours }}
@@ -700,10 +737,10 @@ jobs:
       # Sú drahé na výpočet, ale závisia len od územia – preto sa raz uložia
       # do releasu `dem-terrain` ako jeden .tar.zst a nabudúce sa len stiahnu.
       # `terrain_rebuild` ich prepíše nanovo.
-      - name: Cache výškových dlaždíc
+      - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
         if: ${{ inputs.terrain }}
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: terrain-out
           key: terrain-v1-${{ needs.check-dem.outputs.demkey }}-${{ steps.region.outputs.bboxkey }}-z${{ inputs.terrain_maxzoom }}
@@ -770,6 +807,13 @@ jobs:
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
           echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ, $(du -sm _site/terrain | cut -f1) MB"
+
+      - name: Cache výškových dlaždíc (save)
+        if: ${{ always() && inputs.terrain && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: terrain-out
+          key: ${{ steps.terrain-cache.outputs.cache-primary-key }}
 
       # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
       # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
@@ -873,8 +917,9 @@ jobs:
           echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh _site/tiles/
 
-      - name: Cache glyfov a spritov
-        uses: actions/cache@v4
+      - name: Cache glyfov a spritov (restore)
+        id: assets-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             _site/fonts
@@ -992,6 +1037,18 @@ jobs:
             du -sh _site/fonts
             ls _site/fonts
           fi
+
+      # Sprity sa ukladajú TU, ešte pred zapečením vzorov do atlasu – inak by
+      # sa do cache dostal už dopečený sprite a ďalší build by doň piekol
+      # vzory druhýkrát.
+      - name: Cache glyfov a spritov (save)
+        if: ${{ always() && steps.assets-cache.outputs.cache-hit != 'true' && hashFiles('_site/sprites/**') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            _site/fonts
+            _site/sprites
+          key: ${{ steps.assets-cache.outputs.cache-primary-key }}
 
       - name: Setup Pages
         id: pages

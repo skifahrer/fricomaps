@@ -215,6 +215,15 @@ Build sťahuje viac vecí, než len DEM, a všetky majú vlastnú cache:
 | glyfy a sprity | hash zoznamu zdrojov | menia sa len so zmenou kódu |
 | zdroje Planetileru | pevný | water polygons, Natural Earth |
 
+Všetky okrem zdrojov Planetileru sú rozdelené na `actions/cache/restore` hore
+a `actions/cache/save` hneď za krokom, ktorý dáta vyrobí. Obyčajné
+`actions/cache` totiž zapisuje až v post-kroku a **iba keď celý job dobehne
+úspešne** – keď build spadne o hodinu neskôr na niečom úplne inom, zahodí sa
+aj to, čo sa medzitým vypočítalo, a ďalší beh začína zase od nuly. Save kroky
+majú preto `if: always()` a ukladajú len vtedy, keď restore netrafil a súbory
+naozaj vznikli. Sprity sa ukladajú ešte **pred** zapečením vzorov do atlasu,
+aby sa do cache nedostal už dopečený sprite.
+
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
 
