@@ -1,0 +1,79 @@
+name: Lint workflows
+
+# Chytá chyby, ktoré sa inak prejavia až tým, že beh skončí ako „failure"
+# s nula jobmi – GitHub vtedy workflow ani neprijme a v logu nie je nič.
+#
+# Presne to sa stalo v behu 31012911958: `workflow_dispatch` dovolí najviac
+# 10 inputov, mali sme ich 26. Bez tohto sa to zistí až pri merge do master,
+# keď je neskoro. actionlint to povie do dvoch sekúnd.
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: actionlint
+        run: |
+          set -euo pipefail
+          VER=1.7.7
+          curl -sSL --retry 3 \
+            "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" \
+            | tar xz actionlint
+          # shellcheck aj pyflakes sú na runneri, takže sa skontrolujú aj
+          # `run:` bloky – nie len samotná schéma workflowu.
+          ./actionlint -color
+
+      # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
+      # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
+      # tomto sa dá po rozdelení na joby ticho pomýliť.
+      - name: Odkazy medzi jobmi
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+          errs = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              txt = open(path).read()
+              jobs = (yaml.safe_load(txt) or {}).get("jobs") or {}
+              starts = {}
+              for j in jobs:
+                  m = re.search(r"^  " + re.escape(j) + r":$", txt, re.M)
+                  if m:
+                      starts[j] = m.start()
+              if not starts:
+                  continue
+              def job_of(pos):
+                  return max(((j, p) for j, p in starts.items() if p < pos),
+                             key=lambda x: x[1])[0]
+              for m in re.finditer(r"needs\.([a-zA-Z0-9_-]+)\.(outputs\.([a-zA-Z0-9_]+)|result)", txt):
+                  tgt, cur = m.group(1), job_of(m.start())
+                  needs = jobs[cur].get("needs") or []
+                  if isinstance(needs, str):
+                      needs = [needs]
+                  if tgt not in needs:
+                      print(f"::error file={path}::job '{cur}' používa needs.{tgt}, ale nemá ho v needs")
+                      errs += 1
+                      continue
+                  key = m.group(3)
+                  if key and key not in (jobs[tgt].get("outputs") or {}):
+                      print(f"::error file={path}::job '{tgt}' nemá výstup '{key}' (chce ho '{cur}')")
+                      errs += 1
+          print(f"odkazov medzi jobmi: {errs} chýb")
+          sys.exit(1 if errs else 0)
+          PY

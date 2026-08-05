@@ -872,29 +872,42 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 ## Prvé spustenie
 
 1. **Zapni GitHub Pages:** Settings → Pages → Source: **GitHub Actions**.
-2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*:
-   - `region`: `slovensko` alebo kraj (`bratislavsky`, `zilinsky`, …)
-   - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
-   - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
-   - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
-   - `trails`, `trails_maxzoom`: značené trasy z OSM relácií (zapnuté) –
-     turistické, cyklo, bežky a jazdecké ako farebné pásiky vedľa cesty
-   - `rocks`, `rock_slope`, `rock_res`: skalné plochy – od akého sklonu je
-     terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
-     (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod
-     prahom vnútri steny ostanú nezafarbené
-   - `area`: počítať vrstevnice aj skaly len na výreze (`vysoke_tatry`,
-     `tatry`, `slovensky_raj`… alebo bbox) – z ~40 min sa stane ~2, ale terén
-     bude len tam. Na testovanie
-   - `dem_source`: `sonny` (20 m, celý región) alebo `ugkk` (1 m LiDAR, len
-     s výrezom – zrkadlo si build spustí sám)
-   - `ugkk_urls`: posledná záchrana, keď automatické cesty k ÚGKK zlyhajú –
-     odkazy zo ZBGIS Mapového klienta
-   - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
-     dlaždice (uložia sa do releasu)
-   - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať
-     nanovo aj vtedy, keď je hotová verzia uložená – viď
-     [Pregenerovanie](#pregenerovanie)
+2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*.
+   Formulár má **deväť polí** – GitHub viac než desať `workflow_dispatch`
+   inputov neprijme (workflow s 26 poľami sa prestal načítať a beh skončil ako
+   „failure" s nula jobmi):
+
+   | input | čo robí |
+   |---|---|
+   | `region` | `slovensko` alebo kraj |
+   | `area` | testovací výrez – vrstevnice aj skaly len na jednom pohorí |
+   | `dem_source` | `sonny` (20 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
+   | `maxzoom` | max zoom mapových dlaždíc (16 = max) |
+   | `contours` | vrstevnice a skaly |
+   | `terrain` | tieňovanie a 3D terén |
+   | `trails` | značené trasy |
+   | `rebuild` | čo pregenerovať: `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
+   | `options` | všetko ostatné ako `kľúč=hodnota` |
+
+   Do `options` idú veci, ktoré sa menia zriedka – napíšu sa za sebou,
+   oddelené medzerou:
+
+   ```
+   rock_slope=55 rock_res=1 contour_interval=5
+   ```
+
+   Známe kľúče (s predvolenými hodnotami) sú vo
+   [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
+   `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
+   `contour_interval`, `contour_maxzoom`, `contour_smoothing`,
+   `trails_maxzoom`, `terrain_maxzoom`, `rocks`, `rock_slope`, `rock_res`,
+   `custom_pbf_url`, `custom_name`, `custom_bbox`.
+
+   **Preklep je chyba, nie ticho ignorovaná hodnota.** `rock_slop=55` build
+   zastaví so zoznamom známych kľúčov – inak by bežal hodinu s iným
+   nastavením, než si myslíš. Na začiatku behu sa navyše vypíše tabuľka
+   všetkých nastavení s vyznačením toho, čo si zmenil.
+
 
    Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
    jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*

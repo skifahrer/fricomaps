@@ -32,131 +32,52 @@ on:
           - banskobystricky
           - presovsky
           - kosicky
-      maxzoom:
-        description: "Max zoom dlaždíc – Planetiler zvládne najviac 16 (mapa sa aj tak priblíži na z20 overzoomom)"
-        required: false
-        default: "16"
-        type: string
-      crop_bbox:
-        description: "Orezať na menšie územie: west,south,east,north (odporúčané pre maxzoom 16)"
+      area:
+        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto území: názov pohoria (vysoke_tatry, tatry, slovensky_raj… viď workers/areas.json) alebo bbox W,S,E,N. Prázdne = celý región"
         required: false
         default: ""
         type: string
-      size_limit_mb:
-        description: "Rozpočet na celú stránku v MB – dlaždice + vrstevnice + fonty (GitHub Pages zvládne ~1 GB)"
-        required: false
-        default: "900"
-        type: string
-      auto_shrink:
-        description: "Ak sa dlaždice do rozpočtu nezmestia, automaticky skús nižší zoom"
-        required: false
-        default: true
-        type: boolean
       dem_source:
-        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, overené, celý región. ugkk = 1 m LiDAR ÚGKK, oveľa podrobnejšie, ale LEN s výrezom (input area) – najprv over workflowom Check DEM source"
+        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. ugkk = 1 m LiDAR ÚGKK, podrobnejšie, ale LEN s výrezom (area)"
         required: false
         default: sonny
         type: choice
         options:
           - sonny
           - ugkk
-      ugkk_fallback:
-        description: "Keď 1 m LiDAR od ÚGKK nie je k dispozícii, dopočítať terén zo Sonnyho (20 m) namiesto zlyhania. Mapa sa nasadí, len s hrubším modelom – a je to napísané v súhrne aj v atribúcii"
+      maxzoom:
+        description: "Max zoom mapových dlaždíc – Planetiler zvládne najviac 16"
         required: false
-        default: true
-        type: boolean
-      ugkk_urls:
-        description: "ÚGKK – posledná záchrana: čiarkami oddelené URL na .tif/.zip zo ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0). Použije sa, len keď automatické cesty zlyhajú"
-        required: false
-        default: ""
+        default: "16"
         type: string
       contours:
-        description: "Vygenerovať vrstevnice a skaly z DEM (pozor na veľkosť pri celom Slovensku)"
+        description: "Vrstevnice a skaly z DEM"
         required: false
         default: true
-        type: boolean
-      contour_interval:
-        description: "Interval vrstevníc v metroch (10 = štandard pre 30 m DEM)"
-        required: false
-        default: "10"
-        type: string
-      contour_maxzoom:
-        description: "Max zoom dlaždíc s vrstevnicami (14 stačí, sú to hladké krivky)"
-        required: false
-        default: "14"
-        type: string
-      contour_smoothing:
-        description: "Zjemnenie DEM pred vrstevnicami v oblúkových sekundách (0 = vypnuté, plné rozlíšenie; 2 = pôvodné hladenie)"
-        required: false
-        default: "0"
-        type: string
-      trails:
-        description: "Značené trasy z OSM relácií (turistické, cyklo, bežky, jazdecké) – kreslia sa ako farebné pásiky vedľa cesty"
-        required: false
-        default: true
-        type: boolean
-      trails_maxzoom:
-        description: "Max zoom dlaždíc so značenými trasami (14 stačí – vyššie sa dopočíta overzoomom)"
-        required: false
-        default: "14"
-        type: string
-      rocks:
-        description: "Vygenerovať skalné plochy (najstrmšie úseky terénu z DEM)"
-        required: false
-        default: true
-        type: boolean
-      rock_slope:
-        description: "Od akého sklonu (°) je terén skala – 50 = steny (odporúčané), 40 = aj strmé svahy, teda oveľa väčšie plochy"
-        required: false
-        default: "50"
-        type: string
-      rock_res:
-        description: "Mriežka na obrys skál v metroch (2 = default; 1 dá detail na 1 m², ale 4× dlhšie – len s crop_bbox. Zdrojový DEM má 20 m, jemnejšia mriežka už len hladí)"
-        required: false
-        default: "2"
-        type: string
-      area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto území: názov pohoria (vysoke_tatry, tatry, nizke_tatry, slovensky_raj, mala_fatra… viď workers/areas.json) alebo bbox W,S,E,N. Prázdne = celý región"
-        required: false
-        default: ""
-        type: string
-      rocks_rebuild:
-        description: "PREGENEROVAŤ skaly – zmaže uloženú verziu pre tento región aj cache a počíta odznova"
-        required: false
-        default: false
-        type: boolean
-      contours_rebuild:
-        description: "PREGENEROVAŤ vrstevnice (a s nimi aj skaly) – zmaže cache a trasuje ich z DEM odznova"
-        required: false
-        default: false
         type: boolean
       terrain:
-        description: "Tieňovanie reliéfu a 3D terén zo Sonnyho ako PNG dlaždice"
+        description: "Tieňovanie reliéfu a 3D terén"
         required: false
         default: true
         type: boolean
-      terrain_maxzoom:
-        description: "Max zoom výškových dlaždíc (13 stačí – jemnejšie už 20 m DEM neunesie)"
+      trails:
+        description: "Značené trasy z OSM relácií"
         required: false
-        default: "13"
-        type: string
-      terrain_rebuild:
-        description: "Vždy pregenerovať výškové dlaždice, aj keď sú už uložené v release"
-        required: false
-        default: false
+        default: true
         type: boolean
-      custom_pbf_url:
-        description: "Vlastný región – URL .osm.pbf (napr. https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf)"
+      rebuild:
+        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
         required: false
-        default: ""
-        type: string
-      custom_name:
-        description: "Vlastný región – zobrazované meno (napr. Rakúsko)"
-        required: false
-        default: ""
-        type: string
-      custom_bbox:
-        description: "Vlastný región – bbox west,south,east,north (voliteľné, inak sa prečíta z PBF hlavičky)"
+        default: nic
+        type: choice
+        options:
+          - nic
+          - vrstevnice
+          - skaly
+          - teren
+          - vsetko
+      options:
+        description: "Ostatné nastavenia ako kľúč=hodnota, oddelené medzerou. Napr. `rock_slope=55 rock_res=1 contour_interval=5`. Zoznam kľúčov je vo workers/parse-options.py"
         required: false
         default: ""
         type: string
@@ -332,7 +253,7 @@ jobs:
     with:
       area: ${{ inputs.area }}
       region_bbox: ${{ needs.plan.outputs.bbox }}
-      direct_urls: ${{ inputs.ugkk_urls }}
+      direct_urls: ${{ needs.plan.outputs.opt_ugkk_urls }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
@@ -354,6 +275,25 @@ jobs:
       area_name: ${{ steps.area.outputs.name }}
       area_bbox: ${{ steps.area.outputs.bbox }}
       area_km2: ${{ steps.area.outputs.km2 }}
+      opt_crop_bbox: ${{ steps.opts.outputs.opt_crop_bbox }}
+      opt_size_limit_mb: ${{ steps.opts.outputs.opt_size_limit_mb }}
+      opt_auto_shrink: ${{ steps.opts.outputs.opt_auto_shrink }}
+      opt_ugkk_fallback: ${{ steps.opts.outputs.opt_ugkk_fallback }}
+      opt_ugkk_urls: ${{ steps.opts.outputs.opt_ugkk_urls }}
+      opt_contour_interval: ${{ steps.opts.outputs.opt_contour_interval }}
+      opt_contour_maxzoom: ${{ steps.opts.outputs.opt_contour_maxzoom }}
+      opt_contour_smoothing: ${{ steps.opts.outputs.opt_contour_smoothing }}
+      opt_trails_maxzoom: ${{ steps.opts.outputs.opt_trails_maxzoom }}
+      opt_terrain_maxzoom: ${{ steps.opts.outputs.opt_terrain_maxzoom }}
+      opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
+      opt_rock_slope: ${{ steps.opts.outputs.opt_rock_slope }}
+      opt_rock_res: ${{ steps.opts.outputs.opt_rock_res }}
+      opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
+      opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
+      opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
+      opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
+      opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
+      opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -373,6 +313,17 @@ jobs:
 
       # PBF sa mení denne, tak je v kľúči dátum – v ten istý deň sa už
       # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
+      # `workflow_dispatch` dovolí najviac 10 inputov. Zvyšok príde ako voľné
+      # `kľúč=hodnota` v jednom poli a rozloží sa tu – raz, na jednom mieste,
+      # aby ostatné joby čítali hotové hodnoty a nie surový reťazec.
+      - name: Rozlož voľby
+        id: opts
+        run: |
+          set -euo pipefail
+          python3 workers/parse-options.py \
+            --options='${{ inputs.options }}' \
+            --rebuild='${{ inputs.rebuild }}' --out="$GITHUB_OUTPUT"
+
       - name: Dnešný dátum do kľúča cache
         id: day
         run: |
@@ -393,14 +344,14 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/region.osm.pbf
-          key: pbf-${{ inputs.region }}-${{ inputs.custom_pbf_url }}-${{ inputs.crop_bbox }}-${{ steps.day.outputs.d }}
+          key: pbf-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
 
       - name: Stiahni PBF iba daného regiónu
         id: region
         run: |
           T0=$(date +%s)
           mkdir -p data
-          CUSTOM_URL='${{ inputs.custom_pbf_url }}'
+          CUSTOM_URL='${{ steps.opts.outputs.opt_custom_pbf_url }}'
 
           # Cache: keď PBF (už aj orezané) leží z predošlého behu, sťahovať ani
           # rezať netreba – kľúč nesie región, orez aj dátum.
@@ -418,12 +369,12 @@ jobs:
 
           if [ -n "$CUSTOM_URL" ]; then
             # ----- vlastný región (Európa / svet) -----
-            NAME='${{ inputs.custom_name }}'
+            NAME='${{ steps.opts.outputs.opt_custom_name }}'
             [ -n "$NAME" ] || NAME=$(basename "$CUSTOM_URL" .osm.pbf)
             KEY=$(echo "$NAME" | LC_ALL=C.UTF-8 iconv -f utf8 -t ascii//TRANSLIT | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//;s/_*$//')
             download "$CUSTOM_URL" || { echo "::error::Nepodarilo sa stiahnuť $CUSTOM_URL"; exit 1; }
 
-            BBOX='${{ inputs.custom_bbox }}'
+            BBOX='${{ steps.opts.outputs.opt_custom_bbox }}'
             if [ -z "$BBOX" ]; then
               sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
               BBOX=$(osmium fileinfo -g header.boxes data/region.osm.pbf | head -1 | tr -d '() ')
@@ -455,7 +406,7 @@ jobs:
 
           # ----- voliteľné orezanie na menšie územie -----
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
-          CROP='${{ inputs.crop_bbox }}'
+          CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
           if [ -n "$CROP" ]; then
             if [ -z "$CACHED" ]; then
               command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
@@ -564,9 +515,9 @@ jobs:
             # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
             # vrátili z cache ako keby to boli skaly celého kraja.
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
-            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ inputs.contour_maxzoom }}-s${{ inputs.contour_smoothing }}-r${{ inputs.rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
+            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ needs.plan.outputs.opt_contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ needs.plan.outputs.opt_rock_slope }}g${{ needs.plan.outputs.opt_rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
             echo "demtiles=demtiles-$D-$B"
-            echo "terrain=terrain-v1-$D-$B-z${{ inputs.terrain_maxzoom }}"
+            echo "terrain=terrain-v1-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -574,7 +525,7 @@ jobs:
       # starým obsahom. Pregenerovanie preto starý záznam najprv zmaže; až
       # potom má zmysel počítať nanovo a uložiť to pod ten istý kľúč.
       - name: Pregenerovanie – zmaž staré cache
-        if: ${{ inputs.contours_rebuild || inputs.rocks_rebuild || inputs.terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours_rebuild || needs.plan.outputs.opt_rocks_rebuild || needs.plan.outputs.opt_terrain_rebuild }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -584,10 +535,10 @@ jobs:
               && echo "zmazané: $1" \
               || echo "nebolo v cache: $1"
           }
-          if [ '${{ inputs.contours_rebuild }}' = 'true' ] || [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
+          if [ '${{ needs.plan.outputs.opt_contours_rebuild }}' = 'true' ] || [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
             drop '${{ steps.keys.outputs.contours }}'
           fi
-          if [ '${{ inputs.terrain_rebuild }}' = 'true' ]; then
+          if [ '${{ needs.plan.outputs.opt_terrain_rebuild }}' = 'true' ]; then
             drop '${{ steps.keys.outputs.terrain }}'
           fi
 
@@ -663,7 +614,7 @@ jobs:
       # záznam už zmazal krok „Pregenerovanie", nech sa dá uložiť nový.
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
-        if: ${{ inputs.contours && !inputs.contours_rebuild && !inputs.rocks_rebuild }}
+        if: ${{ inputs.contours && !needs.plan.outputs.opt_contours_rebuild && !needs.plan.outputs.opt_rocks_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: contours-out
@@ -693,7 +644,7 @@ jobs:
 
           BBOX='${{ needs.plan.outputs.bbox }}'
           IFS=, read -r W S E N <<< "$BBOX"
-          INTERVAL='${{ inputs.contour_interval }}'
+          INTERVAL='${{ needs.plan.outputs.opt_contour_interval }}'
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
 
           # ---------- výrez na testovanie ----------
@@ -731,7 +682,7 @@ jobs:
             # ÚGKK nemáme. Buď to zhodíme, alebo dopočítame zo Sonnyho –
             # ale nikdy ticho: `dem-source.txt` nesie, čo sa NAOZAJ použilo,
             # takže atribúcia v mape nebude tvrdiť ÚGKK tam, kde je Sonny.
-            if [ '${{ inputs.ugkk_fallback }}' != 'true' ]; then
+            if [ '${{ needs.plan.outputs.opt_ugkk_fallback }}' != 'true' ]; then
               echo "::error::1 m LiDAR od ÚGKK nie je k dispozícii a ugkk_fallback je vypnutý. Zapni ho, alebo daj dem_source: sonny."
               exit 1
             fi
@@ -747,7 +698,7 @@ jobs:
           # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
           # žiadne zjemnenie, len orez na bbox v plnom rozlíšení.
           T_CONT=$(date +%s)
-          SMOOTH='${{ inputs.contour_smoothing }}'
+          SMOOTH='${{ needs.plan.outputs.opt_contour_smoothing }}'
           case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
           if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
             RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
@@ -781,10 +732,10 @@ jobs:
           # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster), takže naraz
           # sa to spočítať nedá.
           T_ROCK=$(date +%s)
-          ROCK_SLOPE='${{ inputs.rock_slope }}'
+          ROCK_SLOPE='${{ needs.plan.outputs.opt_rock_slope }}'
           case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=50 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
-          RR='${{ inputs.rock_res }}'
+          RR='${{ needs.plan.outputs.opt_rock_res }}'
           case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
           # Najmenšia skala = jedna bunka mriežky. Menší útvar už nie je tvar
           # terénu, ale zubaté rohy jedinej bunky.
@@ -798,7 +749,7 @@ jobs:
               -nlt POLYGON -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
           }
 
-          if [ '${{ inputs.rocks }}' = 'true' ]; then
+          if [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ]; then
             # Hotové skaly pre tento región a tieto nastavenia sú v release –
             # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
             # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
@@ -808,7 +759,7 @@ jobs:
             ROCK_ASSET="rock-${{ needs.plan.outputs.key }}-${AREA_KEY}-${{ inputs.dem_source }}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
             ROCK_READY=""
             ROCK_SRC="výpočet"
-            if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
+            if [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
               echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
               gh release delete-asset "$ROCK_RELEASE" "$ROCK_ASSET" \
                 --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 \
@@ -890,7 +841,7 @@ jobs:
             echo "Skaly: vypnuté (prázdna vrstva)."
           fi
 
-          CZ='${{ inputs.contour_maxzoom }}'
+          CZ='${{ needs.plan.outputs.opt_contour_maxzoom }}'
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
           if [ "$CZ" -gt 16 ]; then CZ=16; fi
 
@@ -898,7 +849,7 @@ jobs:
           # Viac než ~40 % naň nesmú zobrať, inak by na mapu ostalo tak málo,
           # že by sa musela orezať o niekoľko zoomov. Prepočet z hotového GPKG
           # je lacný (sekundy), na rozdiel od sťahovania DEM.
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           CBUDGET_MB=$(( LIMIT_MB * BUDGET_CONTOURS_PCT / 100 ))
 
@@ -929,7 +880,7 @@ jobs:
           # výšok (ide do atribúcie mapy) a prah sklonu skál (do manifestu).
           echo "$CZ" > contours-out/maxzoom.txt
           echo "$DEM_USED" > contours-out/dem-source.txt
-          if [ '${{ inputs.rocks }}' = 'true' ]; then
+          if [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ]; then
             echo "$ROCK_SLOPE" > contours-out/rock-slope.txt
           else
             echo "off" > contours-out/rock-slope.txt
@@ -973,7 +924,7 @@ jobs:
           # Maxzoom berieme z toho, čo sa naozaj vygenerovalo (mohol sa znížiť
           # kvôli veľkosti); ak súbor chýba, padáme späť na vstup.
           CZ=$(cat contours-out/maxzoom.txt 2>/dev/null || echo '')
-          case "$CZ" in ''|*[!0-9]*) CZ='${{ inputs.contour_maxzoom }}' ;; esac
+          case "$CZ" in ''|*[!0-9]*) CZ='${{ needs.plan.outputs.opt_contour_maxzoom }}' ;; esac
           case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
           if [ "$CZ" -gt 16 ]; then CZ=16; fi
           # Zdroj výšok a prah sklonu skál si nesie cache spolu s dlaždicami –
@@ -1003,7 +954,7 @@ jobs:
         if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ inputs.rock_res }}
+          name: teren-${{ needs.plan.outputs.key }}-s${{ needs.plan.outputs.opt_rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
           path: |
             data/rock.gpkg
             data/contours.gpkg
@@ -1082,7 +1033,7 @@ jobs:
 
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
-        if: ${{ inputs.terrain && !inputs.terrain_rebuild }}
+        if: ${{ inputs.terrain && !needs.plan.outputs.opt_terrain_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out
@@ -1097,11 +1048,11 @@ jobs:
           set -euo pipefail
           T_TER=$(date +%s)
           TSRC="výpočet"
-          TZ='${{ inputs.terrain_maxzoom }}'
+          TZ='${{ needs.plan.outputs.opt_terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
           BBOX='${{ needs.plan.outputs.bbox }}'
           ASSET="terrain-${{ needs.plan.outputs.key }}-z${TZ}.tar.zst"
-          REBUILD='${{ inputs.terrain_rebuild }}'
+          REBUILD='${{ needs.plan.outputs.opt_terrain_rebuild }}'
 
           have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
 
@@ -1291,7 +1242,7 @@ jobs:
           fi
 
           # ---- 3. dlaždice ----
-          TZ_='${{ inputs.trails_maxzoom }}'
+          TZ_='${{ needs.plan.outputs.opt_trails_maxzoom }}'
           case "$TZ_" in ''|*[!0-9]*) TZ_=14 ;; esac
           if [ "$TZ_" -gt 16 ]; then TZ_=16; fi
 
@@ -1309,7 +1260,7 @@ jobs:
 
           # Poistka na rozpočet stránky. Trasy sú malé (jednotky MB), ale keby
           # niekedy neboli, nech sa to ozve tu a nie až v `deploy`.
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           TBUDGET_MB=$(( LIMIT_MB * BUDGET_TRAILS_PCT / 100 ))
           if [ "$MB" -gt "$TBUDGET_MB" ]; then
@@ -1445,7 +1396,7 @@ jobs:
           # s týmto, takže tu ešte nikto nevie, aké budú veľké. Namiesto
           # „čo zvýšilo" preto dostanú dlaždice pevný podiel a job `deploy`
           # na konci overí, že súčet naozaj sedí.
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT + BUDGET_TRAILS_PCT) / 100 + BUDGET_ASSETS_MB ))
           BUDGET_MB=$(( LIMIT_MB - OTHERS_MB ))
@@ -1481,7 +1432,7 @@ jobs:
 
             if [ "$BYTES" -le "$LIMIT" ]; then break; fi
 
-            if [ '${{ inputs.auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
+            if [ '${{ needs.plan.outputs.opt_auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
               echo "::error::Dlaždice majú ${MB} MB, ale majú sa zmestiť do ${BUDGET_MB} MB (rozpočet stránky ${LIMIT_MB} MB mínus podiel vrstevníc, terénu a ikoniek). Možnosti: zníž maxzoom, vyber menší región, použi crop_bbox alebo uber vrstevniciam cez BUDGET_CONTOURS_PCT."
               exit 1
             fi
@@ -1826,7 +1777,7 @@ jobs:
             --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
-            --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
+            --argjson cinterval '${{ needs.plan.outputs.opt_contour_interval || '10' }}' \
             --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
             --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \
@@ -1927,7 +1878,7 @@ jobs:
 
           # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
           # overí, že súčet naozaj sedí (Pages zvládne ~1 GB na celú stránku).
-          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
           TOTAL_MB=$(du -sm _site | cut -f1)
           echo "Veľkosť _site: ${TOTAL_MB} MB (rozpočet ${LIMIT_MB} MB)"
@@ -2131,7 +2082,7 @@ jobs:
             for d in tiles terrain sprites fonts; do
               [ -d "_site/$d" ] && echo "| $d | $(du -sm "_site/$d" | cut -f1) MB |"
             done
-            echo "| **spolu** | **$(du -sm _site 2>/dev/null | cut -f1) MB** z ${{ inputs.size_limit_mb }} MB |"
+            echo "| **spolu** | **$(du -sm _site 2>/dev/null | cut -f1) MB** z ${{ needs.plan.outputs.opt_size_limit_mb }} MB |"
             echo
             echo "**Ako pregenerovať:** spusti workflow znova a zaškrtni"
             echo "\`contours_rebuild\` (vrstevnice + skaly), \`rocks_rebuild\` (skaly"
