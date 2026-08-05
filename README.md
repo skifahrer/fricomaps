@@ -671,6 +671,7 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 | záložka | čo sa v nej dá |
 |---|---|
 | **Vrstvy** | všetkých ~135 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **ikona** pri symbolových vrstvách, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
+| **Prvky** | inšpektor: klik do mapy vypíše **všetko, čo je pod kurzorom** – naraz zo všetkých vrstiev, s celým obsahom dlaždice. Viď nižšie |
 | **Paleta** | ~85 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
 | **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
@@ -682,6 +683,22 @@ skupiny má počítadlo `aktívne/všetky`, každý riadok svoj rozsah (`z13–1
 `z9+`, `vždy`) a vrstvy, ktoré sa na danom zoome neorežú, ostávajú výrazné.
 Prepínač **len aktívne** schová zvyšok. Posuvník sleduje aj bežné zoomovanie
 myšou, takže sa dá ísť zoom po zoome a hneď vidieť, čo pribudlo.
+
+**Inšpektor prvkov (záložka Prvky).** Mapa je poskladaná z desiatok vrstiev
+nad sebou: na jednom mieste býva plocha, cesta, jej obrys, vrstevnica, pásik
+trasy aj popisok. Klik do mapy preto nevyberie „ten jeden prvok", ale vypíše
+**všetko, čo je pod kurzorom** – pri každom prvku vrstvu, z ktorej pochádza,
+zdrojovú vrstvu dlaždice a po rozkliknutí **všetky jeho atribúty** tak, ako sú
+v dlaždici. Vybrané prvky sa v mape zvýraznia oranžovo (aj po zmene farieb či
+témy) a každý sa dá skopírovať ako JSON alebo jedným tlačidlom nájsť
+v záložke *Vrstvy* a hneď preštýlovať.
+
+Nad zoznamom je zvlášť sekcia **Značené trasy tadiaľto**: pásiky trás sú
+posunuté vedľa cesty, takže klik do chodníka by ich netrafil – hľadajú sa
+preto v širšom okolí a vypíšu sa všetky relácie, ktoré tadiaľ vedú, s farbou
+značky, sieťou, pruhom a odkazom do OSM. Polomer výberu (predvolene 6 px) sa
+dá zmeniť; k dispozícii sú aj súradnice kliknutého miesta a odkaz naň
+v OpenStreetMape.
 
 **Vzory, okraje a prerušovanie.** Ploche aj čiare sa dá dať opakujúci sa vzor
 (18 predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, tehly,

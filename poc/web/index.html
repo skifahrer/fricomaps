@@ -154,6 +154,21 @@
     .dev-kind.k-3d { background: #f2eedd; color: #6a5a20; }
     .dev-kind.k-raster { background: #e2eef2; color: #35606a; }
 
+    /* inšpektor prvkov: nadpis sekcie, tabuľka atribútov, farebný štvorček */
+    .dev-h4 {
+      margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: #333;
+      border-bottom: 1px solid #e6e6ea; padding-bottom: 3px;
+    }
+    .dev-kv {
+      display: flex; gap: 6px; align-items: baseline; padding: 1px 0;
+      font-size: 11px; word-break: break-word;
+    }
+    .dev-kv b { flex: none; width: 96px; color: #888; font-weight: 500; font-size: 10px; }
+    .dev-kv span, .dev-kv a { flex: 1; font-family: ui-monospace, monospace; min-width: 0; }
+    .dev-swatch {
+      width: 14px; height: 14px; flex: none; border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, .2);
+    }
     .dev-row.inactive .dev-name > span:first-child { opacity: .45; }
     .dev-zrange {
       font-size: 10px; color: #7a8a6a; background: #eef2e8;
@@ -254,6 +269,10 @@
     body.dark .dev-zoombar { background: #24243a; }
     body.dark .dev-zoominfo { color: #999; }
     body.dark .dev-prophead { border-color: #2a2a3c; }
+    body.dark .dev-h4 { color: #ddd; border-color: #2a2a3c; }
+    body.dark .dev-kv b { color: #888; }
+    body.dark .dev-kv a { color: #7aa4ff; }
+    body.dark .dev-swatch { border-color: rgba(255, 255, 255, .3); }
     body.dark .dev-sub { background: #222232; }
     body.dark .dev-sub.changed { background: #342c1c; box-shadow: inset 0 0 0 1px #7a5a2a; }
     body.dark .dev-field { color: #999; }

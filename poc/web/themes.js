@@ -741,6 +741,74 @@ const RANGE_CLASSES = ["ridge", "arete", "massif", "range", "mountain_range"];
 /** Triedy `place`, ktoré nie sú sídlom, ale geografickou oblasťou. */
 const GEO_PLACE_CLASSES = ["island", "archipelago", "peninsula", "region", "sea", "bay"];
 
+/**
+ * Farby značiek, ako ich nesú dlaždice (workers/trail-routes.py normalizuje
+ * `osmc:symbol` a `colour` na tieto mená) → kľúče palety. Meno vo dvojici je
+ * to, čo je v dátach; odtieň dáva až téma.
+ */
+export const TRAIL_MARK_COLOURS = [
+  ["red", "trailRed"],
+  ["blue", "trailBlue"],
+  ["green", "trailGreen"],
+  ["yellow", "trailYellow"],
+  ["black", "trailBlack"],
+  ["white", "trailWhite"],
+  ["orange", "trailOrange"],
+  ["brown", "trailBrown"],
+  ["purple", "trailPurple"],
+  ["gray", "trailGray"]
+];
+
+/**
+ * Druhy značených trás. Jeden zoznam pre štýl (vrstvy, ikony, prerušovanie),
+ * developer mode aj popup vo viewri – inak by sa tri kópie časom rozišli.
+ *
+ * `palette` je farba, ktorá sa použije, keď trasa značku bez farby nemá;
+ * `icons` sú kandidáti na ikonu v poradí, prvý existujúci v sade vyhráva.
+ */
+export const TRAIL_TYPES = [
+  {
+    id: "hiking",
+    label: "Turistické trasy (značené)",
+    short: "turistická trasa",
+    palette: "trailHiking",
+    icons: ["mountain", "triangle"],
+    dash: null
+  },
+  {
+    id: "bicycle",
+    label: "Cyklotrasy",
+    short: "cyklotrasa",
+    palette: "trailCycling",
+    icons: ["bicycle"],
+    dash: [5, 2]
+  },
+  {
+    id: "mtb",
+    label: "Horské cyklotrasy (MTB)",
+    short: "horská cyklotrasa",
+    palette: "trailMtb",
+    icons: ["bicycle"],
+    dash: [2.5, 1.5]
+  },
+  {
+    id: "ski",
+    label: "Lyžiarske a bežkárske trasy",
+    short: "lyžiarska trasa",
+    palette: "trailSki",
+    icons: ["skiing", "mountain"],
+    dash: [7, 2.5]
+  },
+  {
+    id: "horse",
+    label: "Jazdecké trasy",
+    short: "jazdecká trasa",
+    palette: "trailHorse",
+    icons: ["horse", "circle"],
+    dash: [1.5, 1.5]
+  }
+];
+
 const isTunnel = ["==", ["get", "brunnel"], "tunnel"];
 const isBridge = ["==", ["get", "brunnel"], "bridge"];
 const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "brunnel"], "bridge"]];
@@ -1893,23 +1961,10 @@ export function buildStyle({
   // Pruh (`off`) prichádza z dát, `line-offset` ho prepočíta na pixely –
   // preto sa pásiky neprekrývajú ani vtedy, keď po ceste vedie päť trás.
   if (trailsUrl) {
-    // Farby značiek tak, ako ich pozná OSM (`osmc:symbol`, `colour`).
-    // Cez paletu, nie natvrdo z dát: „červená" značka má v každej téme
-    // vyzerať ako červená značka, nie ako presne to `#ff0000`, ktoré do
-    // OSM napísal ten, kto trasu zadával.
-    const MARK_COLOURS = [
-      ["red", "trailRed"],
-      ["blue", "trailBlue"],
-      ["green", "trailGreen"],
-      ["yellow", "trailYellow"],
-      ["black", "trailBlack"],
-      ["white", "trailWhite"],
-      ["orange", "trailOrange"],
-      ["brown", "trailBrown"],
-      ["purple", "trailPurple"],
-      ["gray", "trailGray"]
-    ];
-    const MARK_KEYS = MARK_COLOURS.map(([, key]) => key);
+    // Farby značiek idú cez paletu, nie natvrdo z dát: „červená" značka má
+    // v každej téme vyzerať ako červená značka, nie ako presne to `#ff0000`,
+    // ktoré do OSM napísal ten, kto trasu zadával.
+    const MARK_KEYS = TRAIL_MARK_COLOURS.map(([, key]) => key);
 
     /**
      * Farba pásika: pomenovaná značka → paleta, neznáma farba z OSM → tak,
@@ -1918,7 +1973,7 @@ export function buildStyle({
     const trailColour = (fallbackKey) => [
       "match",
       str("colour"),
-      ...MARK_COLOURS.flatMap(([name, key]) => [name, c[key]]),
+      ...TRAIL_MARK_COLOURS.flatMap(([name, key]) => [name, c[key]]),
       ["coalesce", ["get", "hex"], c[fallbackKey]]
     ];
 
@@ -1987,22 +2042,8 @@ export function buildStyle({
       ["trasy", "Podklad pod pásikmi trás", "line", { "line-color": "trailHalo" }]
     );
 
-    // [id, popis, hodnota `route`, kľúč palety, kandidáti na ikonu, prerušenie]
-    const trailDefs = [
-      ["hiking", "Turistické trasy (značené)", "hiking", "trailHiking",
-        ["mountain", "triangle"], null],
-      ["bicycle", "Cyklotrasy", "bicycle", "trailCycling",
-        ["bicycle"], [5, 2]],
-      ["mtb", "Horské cyklotrasy (MTB)", "mtb", "trailMtb",
-        ["bicycle"], [2.5, 1.5]],
-      ["ski", "Lyžiarske a bežkárske trasy", "ski", "trailSki",
-        ["skiing", "mountain"], [7, 2.5]],
-      ["horse", "Jazdecké trasy", "horse", "trailHorse",
-        ["horse", "circle"], [1.5, 1.5]]
-    ];
-
-    for (const [id, label, route, paletteKey, iconNames, dash] of trailDefs) {
-      const filter = ["==", str("route"), route];
+    for (const { id, label, palette: paletteKey, dash } of TRAIL_TYPES) {
+      const filter = ["==", str("route"), id];
       add(
         {
           id: `trail-${id}`,
@@ -2026,7 +2067,7 @@ export function buildStyle({
 
     // Ikony a popisky idú až za všetky pásiky, aby sa čiara jednej trasy
     // nekreslila cez popisok druhej.
-    for (const [id, label, route, paletteKey, iconNames] of trailDefs) {
+    for (const { id, label, palette: paletteKey, icons: iconNames } of TRAIL_TYPES) {
       const icon = pickIcon(iconNames);
       if (!icon) continue;
       add(
@@ -2036,7 +2077,7 @@ export function buildStyle({
           source: "trails",
           "source-layer": "trail",
           minzoom: 13,
-          filter: ["==", str("route"), route],
+          filter: ["==", str("route"), id],
           layout: {
             "symbol-placement": "line",
             "symbol-spacing": 260,
@@ -2066,7 +2107,7 @@ export function buildStyle({
       );
     }
 
-    for (const [id, label, route, paletteKey] of trailDefs) {
+    for (const { id, label, palette: paletteKey } of TRAIL_TYPES) {
       add(
         {
           id: `trail-${id}-label`,
@@ -2076,7 +2117,7 @@ export function buildStyle({
           minzoom: 12,
           filter: [
             "all",
-            ["==", str("route"), route],
+            ["==", str("route"), id],
             ["any", ["has", "name"], ["has", "ref"]]
           ],
           layout: {

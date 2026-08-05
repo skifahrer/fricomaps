@@ -7,6 +7,10 @@
  *     rozsah zoomu – teda presne definovať, čo sa kedy zobrazuje,
  *   - prezerať mapu po zoomoch: nastavíš zoom a zoznam ukáže, ktoré vrstvy
  *     sú na ňom naozaj povolené a ktoré sa orežú,
+ *   - kliknúť do mapy a dostať **všetko, čo je pod kurzorom** – každý prvok
+ *     zo všetkých vrstiev naraz, aj so všetkými atribútmi z dlaždice, plus
+ *     zoznam značených trás, ktoré tadiaľ vedú (ich pásiky sú posunuté vedľa
+ *     cesty, takže do nich klik netrafí),
  *   - zmeniť farbu ktoréhokoľvek prvku: farby vrstvy zvlášť aj celej palety
  *     naraz, vrátane hromadnej editácie výberu a kopírovania hodnôt – a to aj
  *     tam, kde si vrstva farbu vyberá **výrazom** (pásik trasy podľa značky
@@ -32,13 +36,17 @@ import {
   normalizeOverrides,
   hasOverrides,
   mergedPalette,
-  selectedIconSource
+  selectedIconSource,
+  TRAIL_TYPES,
+  TRAIL_MARK_COLOURS
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS } from "./patterns.js";
 
 const STORAGE_KEY = "fricomaps.overrides";
 const KIND_LABELS = Object.fromEntries(LAYER_KINDS.map((k) => [k.id, k.label]));
 const GROUP_LABELS = Object.fromEntries(LAYER_GROUPS.map((g) => [g.id, g.label]));
+/** Meno značky z dlaždíc → kľúč palety (rovnako ako v štýle). */
+const TRAIL_MARK_KEYS = Object.fromEntries(TRAIL_MARK_COLOURS);
 
 /** Načíta úpravy uložené v prehliadači. */
 export function loadOverrides() {
@@ -171,6 +179,11 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
   let poiClasses = [];
   let applyTimer = null;
   let zoomTimer = null;
+  /** Posledný výber z mapy (záložka Prvky) – `null`, kým sa neklikne. */
+  let picked = null;
+  /** Polomer výberu v pixeloch – čiara má šírku 2 px, trafiť ju treba vedieť. */
+  let pickRadius = 6;
+  const pickOpen = new Set();
 
   // ---------- základná kostra ----------
   const body = el("div", { class: "dev-body" });
@@ -179,6 +192,7 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
 
   const TABS = [
     ["layers", "Vrstvy"],
+    ["pick", "Prvky"],
     ["palette", "Paleta"],
     ["icons", "Ikony"],
     ["poi", "POI"],
@@ -214,6 +228,195 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
       if (zoomTimer) clearTimeout(zoomTimer);
       zoomTimer = setTimeout(renderBody, 120);
     });
+
+    // Inšpektor berie klik len s otvorenou záložkou „Prvky" – inak by
+    // developer mode potichu zobral kliknutie popupu s POI.
+    map.on("click", (ev) => {
+      if (tab !== "pick") return;
+      pickAt(ev.point, ev.lngLat);
+    });
+
+    // Po každej zmene štýlu (farba, vrstva, prepnutie témy) sa vrstvy
+    // zvýraznenia stratia – `setStyle` zmaže všetko, čo v novom štýle nie je.
+    // Doplnenie ide cez timeout, aby prebehlo až po dokončení zmeny; podmienka
+    // `getLayer` v `restoreHighlight` zároveň bráni zacykleniu (`addLayer`
+    // vyvolá `styledata` znova).
+    let restoreTimer = null;
+    map.on("styledata", () => {
+      if (!picked || map.getLayer(`${HL_PREFIX}-line`)) return;
+      if (restoreTimer) clearTimeout(restoreTimer);
+      restoreTimer = setTimeout(restoreHighlight, 60);
+    });
+  }
+
+  // ---------- výber prvkov v mape (záložka Prvky) ----------
+  // Mapa je poskladaná z desiatok vrstiev nad sebou: na jednom mieste býva
+  // plocha, cesta, jej obrys, vrstevnica, pásik trasy aj popisok. Inšpektor
+  // vypíše **všetko**, čo je pod kurzorom, aj so všetkými atribútmi – takže
+  // je vidieť, z ktorej vrstvy to je a čo v dlaždici naozaj stojí.
+  const HL_SOURCE = "__dev-pick";
+  const HL_PREFIX = "__dev-pick";
+  const EMPTY_FC = { type: "FeatureCollection", features: [] };
+
+  /** Vrstvy zvýraznenia. Nie sú v štýle – pridávajú sa priamo do mapy. */
+  const HL_LAYERS = [
+    {
+      id: `${HL_PREFIX}-fill`,
+      type: "fill",
+      source: HL_SOURCE,
+      filter: ["==", ["geometry-type"], "Polygon"],
+      paint: { "fill-color": "#ff7a00", "fill-opacity": 0.25 }
+    },
+    {
+      id: `${HL_PREFIX}-line`,
+      type: "line",
+      source: HL_SOURCE,
+      filter: ["!=", ["geometry-type"], "Point"],
+      paint: { "line-color": "#ff7a00", "line-width": 3.5, "line-opacity": 0.9 }
+    },
+    {
+      id: `${HL_PREFIX}-point`,
+      type: "circle",
+      source: HL_SOURCE,
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#ff7a00",
+        "circle-opacity": 0.35,
+        "circle-stroke-color": "#ff7a00",
+        "circle-stroke-width": 2
+      }
+    }
+  ];
+
+  /**
+   * Zvýraznenie musí prežiť prekreslenie štýlu: `setStyle` porovná starý
+   * a nový štýl a čokoľvek, čo v novom nie je (teda aj tieto vrstvy), zmaže.
+   */
+  function ensureHighlight(m) {
+    if (!m.getSource(HL_SOURCE)) {
+      m.addSource(HL_SOURCE, { type: "geojson", data: EMPTY_FC });
+    }
+    for (const layer of HL_LAYERS) if (!m.getLayer(layer.id)) m.addLayer(layer);
+  }
+
+  /** @returns {boolean} podarilo sa? (počas prekresľovania štýlu nie) */
+  function setHighlight(features) {
+    const m = getMap();
+    if (!m) return false;
+    try {
+      ensureHighlight(m);
+      m.getSource(HL_SOURCE).setData({
+        type: "FeatureCollection",
+        features: features.map((f) => ({
+          type: "Feature",
+          geometry: f.geometry,
+          properties: {}
+        }))
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Vráti zvýraznenie po prekreslení štýlu. Keď mapa práve nie je v stave, kedy
+   * sa dá pridať vrstva (plné načítanie štýlu je asynchrónne), skúsi to znova,
+   * až keď sa mapa upokojí.
+   */
+  function restoreHighlight() {
+    const m = getMap();
+    if (!m || !picked || m.getLayer(`${HL_PREFIX}-line`)) return;
+    if (!setHighlight(picked.features)) m.once("idle", restoreHighlight);
+  }
+
+  /** Ktoré vrstvy v mape patria danému zdroju (a naozaj v nej sú). */
+  const layersOfSource = (m, source, type) =>
+    (getStyle()?.layers || [])
+      .filter((l) => l.source === source && (!type || l.type === type) && m.getLayer(l.id))
+      .map((l) => l.id);
+
+  /** Poradie vrstvy v štýle – podľa neho sa výsledky radia zhora nadol. */
+  function layerOrder() {
+    const order = new Map();
+    (getStyle()?.layers || []).forEach((l, i) => order.set(l.id, i));
+    return order;
+  }
+
+  function pickAt(point, lngLat) {
+    const m = getMap();
+    if (!m) return;
+    const r = pickRadius;
+    const box = [
+      [point.x - r, point.y - r],
+      [point.x + r, point.y + r]
+    ];
+    let all = [];
+    try {
+      all = m.queryRenderedFeatures(box);
+    } catch {
+      all = [];
+    }
+    all = all.filter((f) => !String(f.layer?.id || "").startsWith(HL_PREFIX));
+
+    // Ten istý prvok býva v niekoľkých dlaždiciach (rozrezaný na hranici),
+    // takže by sa v zozname zopakoval.
+    const seen = new Set();
+    const feats = [];
+    for (const f of all) {
+      const key = `${f.layer.id}|${f.id ?? ""}|${JSON.stringify(f.properties)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      feats.push(f);
+    }
+
+    // Pásiky značených trás sú posunuté VEDĽA cesty (`line-offset`), takže
+    // klik do cesty ich netrafí. Hľadajú sa preto v širšom okolí a vypisujú
+    // sa zvlášť: „ktoré trasy tadiaľto vedú" je iná otázka než „na čo som
+    // presne klikol".
+    const trailIds = layersOfSource(m, "trails", "line");
+    const wide = r + 18;
+    let trails = [];
+    if (trailIds.length) {
+      try {
+        trails = m.queryRenderedFeatures(
+          [
+            [point.x - wide, point.y - wide],
+            [point.x + wide, point.y + wide]
+          ],
+          { layers: trailIds }
+        );
+      } catch {
+        trails = [];
+      }
+    }
+    const byRel = new Map();
+    for (const f of trails) {
+      const p = f.properties || {};
+      const key = p.rel ?? `${p.route}|${p.colour}|${p.name}|${p.ref}`;
+      if (!byRel.has(key)) byRel.set(key, p);
+    }
+
+    const order = layerOrder();
+    feats.sort((a, b) => (order.get(b.layer.id) ?? 0) - (order.get(a.layer.id) ?? 0));
+
+    pickOpen.clear();
+    picked = {
+      lngLat: { lng: lngLat.lng, lat: lngLat.lat },
+      zoom: m.getZoom(),
+      features: feats,
+      trails: [...byRel.values()]
+    };
+    setHighlight(feats);
+    if (tab === "pick") renderBody();
+  }
+
+  function clearPick() {
+    picked = null;
+    pickOpen.clear();
+    setHighlight([]);
+    renderBody();
   }
 
   function renderTabs() {
@@ -1002,6 +1205,230 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     return el("div", { class: "dev-details" }, parts);
   }
 
+  // ---------- tab: prvky ----------
+  /** Hodnota atribútu do tabuľky – prázdne a dlhé sa musia dať rozoznať. */
+  const attrText = (v) => {
+    if (v === null || v === undefined) return "—";
+    if (typeof v === "object") return JSON.stringify(v);
+    const s = String(v);
+    return s === "" ? '""' : s;
+  };
+
+  /** Odkaz na prvok v OpenStreetMape, ak vieme jeho id. */
+  function osmLink(props) {
+    if (props.rel != null) {
+      return ["relácia", `https://www.openstreetmap.org/relation/${props.rel}`];
+    }
+    // OpenMapTiles dlaždice id prvkov nenesú; `osm_id` býva len tam, kde si
+    // ho schéma výslovne vypýtala.
+    if (props.osm_id != null) {
+      const id = Number(props.osm_id);
+      if (Number.isFinite(id) && id > 0) {
+        return ["prvok", `https://www.openstreetmap.org/way/${id}`];
+      }
+    }
+    return null;
+  }
+
+  function trailRow(p) {
+    const colours = mergedPalette(getTheme(), overrides);
+    const type = TRAIL_TYPES.find((t) => t.id === p.route);
+    // Tá istá cesta k farbe ako v štýle: pomenovaná značka → paleta,
+    // neznámy hex z OSM → priamo, žiadna farba → podľa druhu trasy.
+    const colour =
+      colours[TRAIL_MARK_KEYS[p.colour]] ||
+      p.hex ||
+      colours[type?.palette] ||
+      "#888888";
+    const title = [p.ref, p.name].filter(Boolean).join(" ") || "(bez názvu)";
+    const detail = [type?.short || p.route, p.colour || p.hex, p.network, p.tier]
+      .filter(Boolean)
+      .join(" · ");
+    const link = osmLink(p);
+    return el("div", { class: "dev-prow" }, [
+      el("span", { class: "dev-swatch", style: `background:${colour}` }),
+      el("span", { class: "dev-name" }, [
+        el("span", { text: title }),
+        el("small", { text: `${detail}${p.off != null ? ` · pruh ${p.off}` : ""}` })
+      ]),
+      link
+        ? el("a", {
+            class: "dev-mini",
+            href: link[1],
+            target: "_blank",
+            rel: "noopener",
+            title: "Otvoriť v OpenStreetMape",
+            text: "↗"
+          })
+        : null
+    ]);
+  }
+
+  function featureItem(f, index) {
+    const meta = (getStyle()?.layers || []).find((l) => l.id === f.layer.id)?.metadata || {};
+    const props = f.properties || {};
+    const keys = Object.keys(props).sort();
+    const open = pickOpen.has(index);
+    const kind = meta["frico:kind"] || "";
+    const link = osmLink(props);
+
+    const head = el("div", { class: "dev-row" }, [
+      el("span", {
+        class: `dev-kind${kind ? ` k-${kind}` : ""}`,
+        text: KIND_LABELS[kind] || f.layer.type
+      }),
+      el("span", {
+        class: "dev-name",
+        onclick: () => {
+          if (open) pickOpen.delete(index);
+          else pickOpen.add(index);
+          renderBody();
+        }
+      }, [
+        el("span", { text: `${open ? "▾ " : "▸ "}${meta["frico:label"] || f.layer.id}` }),
+        el("small", {
+          text: `${f.layer.id}${f.sourceLayer ? ` · ${f.sourceLayer}` : ""} · ${keys.length} atribútov`
+        })
+      ]),
+      el("button", {
+        type: "button",
+        class: "dev-mini",
+        title: "Kopírovať prvok ako JSON",
+        text: "⧉",
+        onclick: (ev) =>
+          copyText(
+            JSON.stringify(
+              { layer: f.layer.id, source: f.source, sourceLayer: f.sourceLayer, properties: props },
+              null,
+              2
+            ),
+            ev.currentTarget
+          )
+      }),
+      el("button", {
+        type: "button",
+        class: "dev-mini",
+        title: "Nájsť vrstvu v zozname vrstiev",
+        text: "✎",
+        onclick: () => {
+          tab = "layers";
+          search = f.layer.id;
+          expanded.add(f.layer.id);
+          render();
+        }
+      })
+    ]);
+
+    if (!open) return el("div", { class: "dev-item" }, [head]);
+
+    const rows = keys.length
+      ? keys.map((k) =>
+          el("div", { class: "dev-kv" }, [
+            el("b", { text: k }),
+            el("span", { text: attrText(props[k]) })
+          ])
+        )
+      : [el("p", { class: "dev-hint", text: "Prvok nemá žiadne atribúty." })];
+    if (link) {
+      rows.push(
+        el("div", { class: "dev-kv" }, [
+          el("b", { text: "v OSM" }),
+          el("a", { href: link[1], target: "_blank", rel: "noopener", text: link[1] })
+        ])
+      );
+    }
+    return el("div", { class: "dev-item" }, [head, el("div", { class: "dev-details" }, rows)]);
+  }
+
+  function renderPick() {
+    const hint = el("p", {
+      class: "dev-hint",
+      html:
+        "Klikni do mapy a tu bude <b>všetko, čo je pod kurzorom</b> – plochy, " +
+        "čiary, body aj popisky zo všetkých vrstiev naraz, s celým obsahom " +
+        "dlaždice. Vypisuje sa len to, čo je na danom zoome naozaj vykreslené; " +
+        "vybraté prvky sú v mape zvýraznené oranžovo."
+    });
+
+    const radius = numberField({
+      label: "polomer (px)",
+      value: pickRadius,
+      min: 1,
+      max: 40,
+      step: 1,
+      onChange: (v) => {
+        pickRadius = Math.min(40, Math.max(1, v ?? 6));
+        renderBody();
+      }
+    });
+
+    if (!picked) {
+      return el("div", {}, [
+        hint,
+        el("div", { class: "dev-bulk on" }, [radius]),
+        el("p", { class: "dev-hint", text: "Zatiaľ nič – klikni do mapy." })
+      ]);
+    }
+
+    const { lng, lat } = picked.lngLat;
+    const coords = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    const osmUrl = `https://www.openstreetmap.org/#map=${Math.round(picked.zoom)}/${lat.toFixed(5)}/${lng.toFixed(5)}`;
+
+    const head = el("div", { class: "dev-bulk on" }, [
+      el("span", { class: "dev-bulklabel", text: coords }),
+      el("button", {
+        type: "button",
+        class: "dev-mini",
+        title: "Kopírovať súradnice",
+        text: "⧉",
+        onclick: (ev) => copyText(coords, ev.currentTarget)
+      }),
+      el("a", {
+        class: "dev-btn",
+        href: osmUrl,
+        target: "_blank",
+        rel: "noopener",
+        text: "Toto miesto v OSM"
+      }),
+      radius,
+      el("button", {
+        type: "button",
+        class: "dev-btn danger",
+        text: "Vyčistiť",
+        onclick: clearPick
+      })
+    ]);
+
+    const parts = [hint, head];
+
+    // Značené trasy sa vypisujú zvlášť: pásiky sú posunuté vedľa cesty, takže
+    // klik do cesty ich netrafí – a práve „ktoré trasy tadiaľto vedú" je to,
+    // čo človek pri chodníku hľadá.
+    if (picked.trails.length) {
+      parts.push(
+        el("h4", { class: "dev-h4", text: `Značené trasy tadiaľto (${picked.trails.length})` }),
+        el("div", { class: "dev-list" }, picked.trails.map(trailRow))
+      );
+    }
+
+    parts.push(
+      el("h4", {
+        class: "dev-h4",
+        text: `Prvky pod kurzorom (${picked.features.length})`
+      })
+    );
+    parts.push(
+      picked.features.length
+        ? el("div", { class: "dev-list" }, picked.features.map(featureItem))
+        : el("p", {
+            class: "dev-hint",
+            text: "Na tomto mieste nie je vykreslený žiadny prvok – skús väčší polomer alebo iný zoom."
+          })
+    );
+
+    return el("div", {}, parts);
+  }
+
   // ---------- tab: paleta ----------
   function renderPalette() {
     const theme = getTheme();
@@ -1428,6 +1855,8 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     const view =
       tab === "layers"
         ? renderLayers()
+        : tab === "pick"
+        ? renderPick()
         : tab === "palette"
         ? renderPalette()
         : tab === "icons"
@@ -1451,6 +1880,8 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
   return {
     getOverrides: () => overrides,
     refresh: render,
+    /** Beží inšpektor? Viewer vtedy nevyskakuje s vlastným popupom. */
+    isPicking: () => tab === "pick",
     setOverrides(next) {
       overrides = normalizeOverrides(next).overrides;
       apply({ immediate: true });
