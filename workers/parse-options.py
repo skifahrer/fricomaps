@@ -27,22 +27,24 @@ import sys
 # kľúč: (predvolená hodnota, popis)
 DEFAULTS = {
     "crop_bbox": ("", "orezať región na west,south,east,north"),
+    "area_bbox": ("", "vlastný výrez W,S,E,N namiesto pohoria z výberu"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
     "ugkk_fallback": ("true", "keď 1 m LiDAR nie je, počítať zo Sonnyho"),
     "ugkk_urls": ("", "priame URL na ÚGKK dáta (posledná záchrana)"),
-    "contour_interval": ("10", "interval vrstevníc v metroch"),
     "contour_maxzoom": ("14", "max zoom dlaždíc s vrstevnicami"),
     "contour_smoothing": ("0", "zjemnenie DEM v oblúkových sekundách"),
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
     "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),
     "rocks": ("true", "počítať skalné plochy"),
-    "rock_slope": ("50", "od akého sklonu (°) je terén skala"),
-    "rock_res": ("2", "mriežka na obrys skál v metroch"),
     "custom_pbf_url": ("", "vlastný región – URL na .osm.pbf"),
     "custom_name": ("", "vlastný región – zobrazované meno"),
     "custom_bbox": ("", "vlastný región – bbox W,S,E,N"),
 }
+
+# Čo sa má generovať. Tri zaškrtávatka by boli tri inputy z desiatich, takže
+# je to jedno pole – ale s čitateľnými menami, nie ako skryté kľúče.
+LAYERS = ("contours", "terrain", "trails")
 
 # `rebuild` je jeden výber namiesto troch zaškrtávatiek – tri booleany boli
 # tri inputy a limit je desať.
@@ -59,6 +61,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--options", default="")
     ap.add_argument("--rebuild", default="nic")
+    ap.add_argument("--layers", default=",".join(LAYERS),
+                    help="čo generovať, oddelené čiarkou")
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
@@ -80,6 +84,15 @@ def main():
         values[k] = v
         changed[k] = v
 
+    want = {x.strip().lower() for x in args.layers.split(",") if x.strip()}
+    unknown = want - set(LAYERS)
+    if unknown:
+        print(f"::error::Neznáme vrstvy: {', '.join(sorted(unknown))}. "
+              f"Známe: {', '.join(LAYERS)}", file=sys.stderr)
+        return 1
+    for lay in LAYERS:
+        values[lay] = "true" if lay in want else "false"
+
     if args.rebuild not in REBUILD:
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
               f"{', '.join(REBUILD)}", file=sys.stderr)
@@ -95,7 +108,7 @@ def main():
     print("Nastavenia:")
     for k in sorted(values):
         mark = "  ←" if k in changed else ""
-        d = DEFAULTS.get(k, ("", "z rebuild"))[1]
+        d = DEFAULTS.get(k, ("", "z rebuild / layers"))[1]
         print(f"  {k:<20} {values[k] or '(prázdne)':<24} {d}{mark}")
     if changed:
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")

@@ -873,46 +873,46 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
 1. **Zapni GitHub Pages:** Settings → Pages → Source: **GitHub Actions**.
 2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*.
-   Formulár má **deväť polí** – GitHub viac než desať `workflow_dispatch`
-   inputov neprijme (workflow s 26 poľami sa prestal načítať a beh skončil ako
-   „failure" s nula jobmi):
+   Formulár má **desať polí** – viac `workflow_dispatch` inputov GitHub
+   neprijme (pri 26 sa workflow prestal načítať a beh skončil ako „failure"
+   s nula jobmi). Vo formulári sú preto veci, ktoré sa naozaj menia:
 
-   | input | čo robí |
-   |---|---|
-   | `region` | `slovensko` alebo kraj |
-   | `area` | testovací výrez – vrstevnice aj skaly len na jednom pohorí |
-   | `dem_source` | `sonny` (20 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
-   | `maxzoom` | max zoom mapových dlaždíc (16 = max) |
-   | `contours` | vrstevnice a skaly |
-   | `terrain` | tieňovanie a 3D terén |
-   | `trails` | značené trasy |
-   | `rebuild` | čo pregenerovať: `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
-   | `options` | všetko ostatné ako `kľúč=hodnota` |
+   | input | typ | čo robí |
+   |---|---|---|
+   | `region` | výber | `slovensko` alebo kraj |
+   | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
+   | `dem_source` | výber | `sonny` (20 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
+   | `layers` | text | čo generovať: `contours,terrain,trails` |
+   | `contour_interval` | text | interval vrstevníc v metroch |
+   | `rock_slope` | text | od akého sklonu (°) je terén skala |
+   | `rock_res` | text | mriežka na obrys skál (2 m; `1` dá detail na 1 m²) |
+   | `maxzoom` | text | max zoom mapových dlaždíc |
+   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
+   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` |
+
+   Zoznam pohorí v `area` sa berie z
+   [workers/areas.json](workers/areas.json) – keď tam pribudne pohorie, treba
+   ho dopísať aj do výberu vo workflowe. Vlastný bbox ide cez
+   `options: area_bbox=W,S,E,N`.
 
    Do `options` idú veci, ktoré sa menia zriedka – napíšu sa za sebou,
    oddelené medzerou:
 
    ```
-   rock_slope=55 rock_res=1 contour_interval=5
+   crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200 contour_maxzoom=15
    ```
 
-   Známe kľúče (s predvolenými hodnotami) sú vo
+   Známe kľúče s predvolenými hodnotami sú vo
    [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
-   `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
-   `contour_interval`, `contour_maxzoom`, `contour_smoothing`,
-   `trails_maxzoom`, `terrain_maxzoom`, `rocks`, `rock_slope`, `rock_res`,
-   `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
+   `contour_maxzoom`, `contour_smoothing`, `trails_maxzoom`,
+   `terrain_maxzoom`, `rocks`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
 
-   **Preklep je chyba, nie ticho ignorovaná hodnota.** `rock_slop=55` build
+   **Preklep je chyba, nie ticho ignorovaná hodnota.** `size_limit=1200` build
    zastaví so zoznamom známych kľúčov – inak by bežal hodinu s iným
-   nastavením, než si myslíš. Na začiatku behu sa navyše vypíše tabuľka
-   všetkých nastavení s vyznačením toho, čo si zmenil.
+   nastavením, než si myslíš. Na začiatku behu sa vypíše tabuľka všetkých
+   nastavení s vyznačením toho, čo si zmenil.
 
-
-   Výškový model si build **doplní sám**: keď v release `dem-sonny` nie je pre
-   jeho územie ani jedna dlaždica, spustí pred sebou workflow *Update DEM*
-   (v behu je to samostatná úloha „Doplniť výškový model"). Ručne ho teda
-   treba spúšťať len vtedy, keď chceš iný priečinok alebo iný model.
 3. Mapa je na `https://<user>.github.io/fricomaps/` – ovládanie je zbalené pod
    tlačidlom ⚙ vľavo hore, aby bolo vidieť hlavne mapu. V paneli je prepínač
    témy, regiónu, vrstevníc a skál, 3D terénu a developer módu.
