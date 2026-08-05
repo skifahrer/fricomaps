@@ -269,19 +269,23 @@ def area_stats(metric_gpkg):
     return st
 
 
-def chunk_plan(x0, y0, x1, y1, res, chunk_cells, bbox):
+def chunk_plan(x0, y0, x1, y1, res, chunk_cells, bbox, side_m=0):
     """Rozdelenie na časti + zoznam tých, ktoré naozaj ležia v území.
 
     EPSG:3035 je pootočená voči poludníkom, takže obdĺžnik opísaný bboxu
     regiónu je v metroch výrazne väčší než samotný región – pri Prešovskom
     kraji 208×111 km namiesto 200×82 km, teda o tretinu buniek navyše.
     Časti, ktoré do bboxu vôbec nezasahujú, sa preto preskočia.
+
+    `side_m` prebije veľkosť časti (v metroch). Používa to `pick_res`, ktorý
+    potrebuje len zistiť, koľko plochy naozaj leží v území – nezávisle od
+    toho, akú jemnú mriežku nakoniec vyberie.
     """
     snap = lambda v, up: (math.ceil(v / res) if up else math.floor(v / res)) * res
     x0, y0, x1, y1 = snap(x0, False), snap(y0, False), snap(x1, True), snap(y1, True)
     width_m, height_m = x1 - x0, y1 - y0
 
-    side = math.sqrt(chunk_cells) * res
+    side = side_m or math.sqrt(chunk_cells) * res
     nx = max(1, math.ceil(width_m / side))
     ny = max(1, math.ceil(height_m / side))
     step_x = math.ceil(width_m / nx / res) * res
@@ -316,6 +320,64 @@ def intersects_bbox(cx0, cy0, cx1, cy1, bbox):
     ys = [float(v) for v in out[1::3]]
     return not (max(xs) < bbox[0] or min(xs) > bbox[2]
                 or max(ys) < bbox[1] or min(ys) > bbox[3])
+
+
+# Z čoho `--res=auto` vyberá. Jemnejšie než 0,5 m nemá zmysel ani pri 1 m
+# LiDARe – obrys by sa už len leštil a buniek by pribudlo štvornásobne.
+RES_LADDER = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0, 15.0, 20.0)
+
+
+def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
+    """Najjemnejšia mriežka, ktorá sa ešte zmestí do rozpočtu času.
+
+    „Čo najpodrobnejšie" nie je jedno číslo: pre jedno pohorie sa zmestí
+    polmetrová mriežka, pre celý kraj ani dvojmetrová. Namiesto toho, aby
+    to musel užívateľ hádať (a buď dostal hrubé skaly, alebo beh, ktorý
+    padne na timeout), sa to spočíta – z toho istého odhadu, ktorý potom
+    strážia rozpočtové hlášky.
+
+    Dva stropy zdola:
+      * desatina bunky zdrojového DEM – jemnejšia mriežka už nové detaily
+        terénu nevymyslí, len interpoluje medzi tými istými výškami,
+      * 0,5 m absolútne.
+    """
+    # Koľko plochy naozaj leží v území, zistené na hrubom rastri častí –
+    # nezávisí to od mriežky, tak sa to počíta raz a lacno.
+    side = max(2000.0, math.sqrt((x1 - x0) * (y1 - y0) / 50.0))
+    probe, _, _, _ = chunk_plan(x0, y0, x1, y1, 10.0, chunk_cells, bbox,
+                                side_m=side)
+    area_m2 = sum((c[4] - c[2]) * (c[5] - c[3]) for c in probe)
+    if not area_m2:
+        return RES_LADDER[3]  # nič sa netrafilo – nech to povie až chunk_plan
+
+    floor = max(0.5, round((dem_cell_m or 0) / 10.0, 1))
+    per_s = 1.0 / (1.0 / SLOPE_CELLS_PER_S + 1.0 / CONTOUR_CELLS_PER_S)
+    budget_s = budget_min * 60 if budget_min else float("inf")
+
+    print("── Výber mriežky (rock_res=auto) ────────────────────")
+    print(f"  plocha územia   {area_m2/1e6:.0f} km²")
+    if dem_cell_m:
+        print(f"  bunka DEM       {dem_cell_m:.0f} m → jemnejšie než "
+              f"{floor:g} m nemá zmysel")
+    else:
+        print(f"  bunka DEM       neznáma → dolný strop {floor:g} m")
+    chosen = None
+    for res in RES_LADDER:
+        if res < floor:
+            continue
+        est = area_m2 / (res * res) / per_s
+        fits = est <= budget_s
+        print(f"  {res:>4g} m  {area_m2/(res*res)/1e9:6.2f} mld. buniek  "
+              f"~{hms(est)}  {'✓' if fits else '× nad rozpočet'}")
+        if fits and chosen is None:
+            chosen = res
+    if chosen is None:
+        chosen = RES_LADDER[-1]
+        print(f"::warning::Ani najhrubšia mriežka {chosen:g} m sa do rozpočtu "
+              f"{hms(budget_s)} nezmestí – skús menší výrez (input „area“).")
+    print(f"  vybrané         {chosen:g} m")
+    print("─────────────────────────────────────────────────────", flush=True)
+    return chosen
 
 
 def print_plan(cells, res, n_chunks, n_all, geom, budget_min):
@@ -422,13 +484,20 @@ def main():
     ap.add_argument("--dem", required=True)
     ap.add_argument("--bbox", required=True, help="west,south,east,north v stupňoch")
     ap.add_argument("--out", required=True, help="výstupný GeoPackage (vrstva rock)")
-    ap.add_argument("--res", type=float, default=2.0, help="mriežka na sklon v metroch")
+    ap.add_argument("--res", default="auto",
+                    help="mriežka na sklon v metroch, alebo `auto` = "
+                         "najjemnejšia, ktorá sa zmestí do rozpočtu času")
     ap.add_argument("--slope", type=float, default=50.0, help="prah sklonu v stupňoch")
     ap.add_argument("--cliff", type=float, default=65.0, help="prah triedy `cliff`")
-    ap.add_argument("--min-area", type=float, default=4.0, help="najmenšia plocha v m²")
+    ap.add_argument("--min-area", type=float, default=-1.0,
+                    help="najmenšia plocha v m²; -1 = jedna bunka mriežky "
+                         "(menší útvar už nie je tvar terénu, ale jedna bunka)")
     ap.add_argument("--simplify", type=float, default=-1.0,
                     help="tolerancia zjednodušenia obrysu v metroch; "
                          "-1 = štvrtina mriežky (odstráni schodíky), 0 = vypnuté")
+    ap.add_argument("--smooth", type=int, default=2,
+                    help="koľkokrát zaobliť rohy obrysu (Chaikin); "
+                         "0 = vypnuté, 2 = odporúčané")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
     ap.add_argument("--budget-min", type=float, default=100.0,
@@ -444,13 +513,23 @@ def main():
 
     bbox = tuple(float(v) for v in args.bbox.split(","))
     x0, y0, x1, y1 = to_metric(bbox)
-    res = args.res
+    dem_dx, dem_dy = dem_cell_metres(args.dem, (bbox[1] + bbox[3]) / 2)
+
+    if str(args.res).strip().lower() in ("auto", "", "0"):
+        res = pick_res(x0, y0, x1, y1, args.chunk_cells, bbox,
+                       args.budget_min, dem_dx)
+    else:
+        res = float(args.res)
     # Štvrtina bunky: zmaže schodíky po hranách buniek, ale obrys neposunie
     # o viac než štvrtinu mriežky. Namerané: bodov na obrys klesne 5,7×
-    # (423 763 → 74 395) a počet plôch sa nezmení vôbec.
+    # (423 763 → 74 395) a počet plôch sa nezmení vôbec. Ostré rohy, ktoré
+    # po ňom ostanú, zaobli `--smooth` na konci.
     if args.simplify < 0:
         args.simplify = res / 4.0
-    dem_dx, dem_dy = dem_cell_metres(args.dem, (bbox[1] + bbox[3]) / 2)
+    # Najmenšia skala = jedna bunka mriežky. Pri `--res=auto` sa mriežka
+    # vyberá až tu, takže sa to nedá spočítať v shelli pred spustením.
+    if args.min_area < 0:
+        args.min_area = round(res * res, 2)
     if dem_dx:
         print(f"Zdrojový DEM má bunku ~{dem_dx:.0f}×{dem_dy:.0f} m – to je "
               f"strop skutočného detailu; mriežka {res:g} m len hladší obrys.")
@@ -541,6 +620,26 @@ def main():
             run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln", "rock",
                  "-dialect", "SQLITE", "-sql", sql] + simplify)
 
+        # ---------- 5. zaoblenie obrysu ----------
+        # Zjednodušenie vyššie zmaže schodíky, ale to, čo po ňom ostane, sú
+        # ostré rohy – priemerný lom medzi segmentmi vyskočí zo 4,6° na 28,5°
+        # a práve tak vyzerá skala pri max zoome „zubatá". Chaikin ich zaobli
+        # (2 prechody → 7,7°). Robí sa to ešte v metroch, aby tolerancie
+        # sedeli, a pred prepočtom do EPSG:4326.
+        if args.smooth > 0:
+            smoothed = os.path.join(tmp, "rock-smooth.gpkg")
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "smooth-polygons.py")
+            try:
+                out = run([sys.executable, script, f"--in={final_metric}",
+                           f"--out={smoothed}", "--layer=rock",
+                           f"--passes={args.smooth}"])
+                print(out.stdout.rstrip(), flush=True)
+                final_metric = smoothed
+            except subprocess.CalledProcessError as exc:
+                print("::warning::Zaoblenie obrysu zlyhalo, skaly idú zubaté: "
+                      f"{(exc.stderr or '').strip()[:300]}")
+
         st = area_stats(final_metric)
         run(["ogr2ogr", "-f", "GPKG", args.out, final_metric, "-nln", "rock",
              "-overwrite", "-t_srs", "EPSG:4326"])
@@ -566,6 +665,7 @@ def main():
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
                 f.write(f"simplify_m={args.simplify:g}\n")
+                f.write(f"smooth_passes={args.smooth}\n")
                 f.write(f"cells_g={cells/1e9:.2f}\n")
                 f.write(f"took={hms(took)}\n")
                 if dem_dx:

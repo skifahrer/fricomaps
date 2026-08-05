@@ -68,7 +68,7 @@ on:
         default: "contours,terrain,trails"
         type: string
       contour_interval:
-        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie)"
+        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie, 20 = redšie). Každá 10. sa kreslí ako hlavná, každá 5. ako polovičná"
         required: false
         default: "10"
         type: string
@@ -78,9 +78,9 @@ on:
         default: "50"
         type: string
       rock_res:
-        description: "Mriežka na obrys skál v metroch (2 = default; 1 dá detail na 1 m², ale 4× dlhšie)"
+        description: "Mriežka na obrys skál v metroch. auto = najjemnejšia, ktorá sa zmestí do času a má pri danom DEM ešte zmysel (odporúčané). Alebo číslo, napr. 1"
         required: false
-        default: "2"
+        default: auto
         type: string
       maxzoom:
         description: "Max zoom mapových dlaždíc – Planetiler zvládne najviac 16"
@@ -130,15 +130,21 @@ env:
   # od územia a nastavení – tie sú preto v mene assetu a hotové skaly sa
   # nabudúce len stiahnu.
   ROCK_RELEASE: dem-rocks
-  ROCK_RES: "2" # záložná mriežka na sklon (m), keď input rock_res chýba
+  ROCK_RES: auto # záložná mriežka na sklon (m), keď input rock_res chýba
   # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
   # 4 m²) – menšie útvary sú už len zubaté artefakty jednej bunky, nie skala.
   # Zjednodušenie obrysu (m). -1 = štvrtina mriežky: zmaže schodíky po hranách
   # buniek, ale obrys neposunie o viac než štvrtinu bunky. 0 = vypnuté.
   ROCK_SIMPLIFY: "-1"
+  # Koľkokrát zaobliť rohy obrysu (Chaikin). Zjednodušenie vyššie zmaže
+  # schodíky, ale to, čo po ňom ostane, sú ostré rohy – priemerný lom medzi
+  # segmentmi vyskočí zo 4,6° na 28,5° a presne tak vyzerá skala pri max
+  # zoome zubatá. Dva prechody dajú 7,7° pri 43 % menej bodov, než má
+  # nezjednodušený originál. Podrobnosti a čísla vo workers/smooth-polygons.py.
+  ROCK_SMOOTH: "2"
   # Verzia algoritmu v mene uloženého assetu. Zmena algoritmu = iné skaly,
-  # takže sa nesmú použiť tie staré uložené.
-  ROCK_ALGO: v2
+  # takže sa nesmú použiť tie staré uložené. v3 = zaoblený obrys + auto mriežka.
+  ROCK_ALGO: v3
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
   # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
   # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster) – naraz sa to do
@@ -550,7 +556,7 @@ jobs:
             # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
             # vrátili z cache ako keby to boli skaly celého kraja.
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
-            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
+            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
             echo "demtiles=demtiles-$D-$B"
             echo "terrain=terrain-v1-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
@@ -749,11 +755,19 @@ jobs:
             dem/clip.tif dem/raw.gpkg
 
           # `level` rozdelí vrstevnice na hlavné/polovičné/základné, aby sa
-          # dali zapínať podľa zoomu a kresliť rôzne hrubo.
+          # dali zapínať podľa zoomu a kresliť rôzne hrubo. Hranice sa počítajú
+          # z intervalu, nie natvrdo zo 100/50 – pri interval=5 by inak bola
+          # zvýraznená každá dvadsiata čiara namiesto každej desiatej a pri
+          # interval=25 by sa `mid` netrafilo nikdy. Zvýrazňuje sa každá
+          # desiata (major) a každá piata (mid) vrstevnica, čo je pri
+          # štandardných 10 m presne doterajších 100 a 50 m.
+          MAJOR=$(( INTERVAL * 10 ))
+          MID=$(( INTERVAL * 5 ))
+          echo "Vrstevnice: interval ${INTERVAL} m, zvýraznená každá ${MAJOR} m (major) a ${MID} m (mid)"
           ogr2ogr -f GPKG data/contours.gpkg dem/raw.gpkg -nln contours \
             -dialect SQLITE -sql "SELECT *, CASE
-                 WHEN CAST(ele AS INTEGER) % 100 = 0 THEN 'major'
-                 WHEN CAST(ele AS INTEGER) % 50  = 0 THEN 'mid'
+                 WHEN CAST(ele AS INTEGER) % $MAJOR = 0 THEN 'major'
+                 WHEN CAST(ele AS INTEGER) % $MID  = 0 THEN 'mid'
                  ELSE 'minor' END AS level
                FROM contours WHERE ele IS NOT NULL"
           ls -lh data/contours.gpkg
@@ -770,11 +784,16 @@ jobs:
           ROCK_SLOPE='${{ inputs.rock_slope }}'
           case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=50 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
+          # `auto` = mriežku vyberie rock-areas.py: najjemnejšiu, ktorá sa
+          # zmestí do rozpočtu času a má pri danom DEM ešte zmysel. Nedá sa
+          # to spočítať tu, lebo to závisí od plochy výrezu aj od bunky DEM.
           RR='${{ inputs.rock_res }}'
-          case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
-          # Najmenšia skala = jedna bunka mriežky. Menší útvar už nie je tvar
-          # terénu, ale zubaté rohy jedinej bunky.
-          MIN_AREA=$(python3 -c "print(round($RR * $RR, 2))")
+          case "$RR" in
+            auto|'') RR=auto ;;
+            *[!0-9.]*) RR="$ROCK_RES" ;;
+          esac
+          # Najmenšiu skalu (= jedna bunka mriežky) dopočíta rock-areas.py,
+          # lebo pri `auto` sa mriežka vyberá až tam.
 
           make_empty_rock() {
             # Schéma na skaly odkazuje vždy, takže súbor musí existovať aj
@@ -807,7 +826,7 @@ jobs:
             fi
 
             if [ -z "$ROCK_READY" ]; then
-              echo "::group::Skaly – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
+              echo "::group::Skaly – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR}, zaoblenie ${ROCK_SMOOTH}×"
               # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
               # v rovine nič nenašiel), nemá to zhodiť hodinový build.
               # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
@@ -818,7 +837,8 @@ jobs:
               set +e
               python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$AREA_BBOX" \
                 --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
-                --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
+                --smooth="$ROCK_SMOOTH" \
                 --stats=contours-out/rock-stats.txt \
                 --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
                 --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
@@ -1610,11 +1630,11 @@ jobs:
             });
           ")
           if [ ! -s "_site/sprites/$WANT.json" ]; then
-            WANT=$(echo $ok | awk '{print $1}')
+            WANT=$(printf '%s' "$ok" | awk '{print $1}')
             echo "::warning::Zvolená sada ikoniek nie je k dispozícii – používam $WANT."
           fi
           echo "name=$WANT" >> "$GITHUB_OUTPUT"
-          echo "available=$(echo $ok | xargs)" >> "$GITHUB_OUTPUT"
+          echo "available=$(printf '%s' "$ok" | xargs)" >> "$GITHUB_OUTPUT"
           echo "Nasadené sady:$ok, štýl použije $WANT"
           printf '%s\t%s\t%s\t%s\n' "80" "Ikonky (SDF sprity)" "$(( $(date +%s) - T_SPR ))" \
             "sady:$ok, štýl používa $WANT$([ "$CACHED_SPRITES" -gt 0 ] && echo ' (z cache)')" \
@@ -1943,6 +1963,7 @@ jobs:
 
           check() { # $1 = URL, $2 = očakávaný kód, $3 = popis, $4 = extra curl args
             for attempt in 1 2 3 4 5; do
+              # shellcheck disable=SC2086  # $4 sú zámerne rozdelené argumenty curlu
               code=$(curl -s -o /dev/null -w '%{http_code}' ${4:-} "$1" || echo 000)
               [ "$code" = "$2" ] && break
               sleep $(( attempt * 5 ))
@@ -2027,7 +2048,8 @@ jobs:
           } >> "$S"
 
           if [ -d steps-out ] && [ -n "$(find steps-out -name '*.tsv' 2>/dev/null)" ]; then
-            cat steps-out/*.tsv | sort -n | while IFS=$'\t' read -r ord name secs detail; do
+            # Prvé pole je len na zoradenie (`sort -n`), ďalej sa nepoužíva.
+            cat steps-out/*.tsv | sort -n | while IFS=$'\t' read -r _ord name secs detail; do
               [ -n "$name" ] || continue
               printf '| %s | %s | %s |\n' "$name" "$(hms "${secs:-0}")" "$detail" >> "$S"
             done
@@ -2060,6 +2082,8 @@ jobs:
               echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°, krok ${slope_step_deg:-?}°) |"
               echo "| plôch s dierou (miesto pod prahom vnútri skaly) | ${with_holes:-0} |"
               echo "| vykrojené dierami | ${holes_km2:-0} km² |"
+              echo "| zjednodušenie obrysu | ${simplify_m:-?} m |"
+              echo "| zaoblenie rohov (Chaikin) | ${smooth_passes:-0}× |"
               echo
               echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
               echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
@@ -2076,7 +2100,14 @@ jobs:
               echo "> Mriežka ${grid_m:-?} m hovorí, ako jemne je obrys odkrokovaný;"
               echo "> ale zdrojový DEM má bunku ~${dem_cell_m:-?} m, takže nové detaily"
               echo "> terénu jemnejšia mriežka nevymyslí – len obrys vyhladí a presnejšie"
-              echo "> umiestni. Jemnejší DEM pre Slovensko Sonny neponúka."
+              echo "> umiestni. Preto \`rock_res=auto\` nejde pod desatinu bunky DEM:"
+              echo "> ďalšie zjemňovanie by stálo štvornásobok času za nulový detail."
+              echo
+              echo "> Zubatosť rieši zaoblenie rohov, nie hrubšia mriežka. Samotná"
+              echo "> izolínia zubatá nie je (priemerný lom 4,6°), zubatou ju robí až"
+              echo "> zjednodušenie obrysu (28,5°). Chaikin každý roh nahradí dvomi"
+              echo "> polovičnými, takže dva prechody dajú 7,7° – hladší obrys, než má"
+              echo "> nezjednodušený originál, a stále o 43 % menej bodov."
             } >> "$S"
           fi
 

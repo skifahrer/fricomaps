@@ -29,15 +29,67 @@ jobs:
         uses: actions/checkout@v4
 
       - name: actionlint
+        env:
+          # shellcheck nevie o `${{ }}` – GitHub výrazy mu vyzerajú ako
+          # rozbitá syntax (SC1083/1073/1072/1009/1089) a slovenské „úvodzovky"
+          # v hláškach ako preklep (SC1111). To sú falošné poplachy, nie chyby;
+          # skutočnú syntax kontroluje `bash -n` v ďalšom kroku, ktorý výrazy
+          # najprv nahradí. SC2129 a SC2015 sú štýlové názory na `>>` a `&&`.
+          SHELLCHECK_OPTS: "-e SC1083,SC1073,SC1072,SC1009,SC1089,SC1111,SC2129,SC2015"
         run: |
           set -euo pipefail
           VER=1.7.7
           curl -sSL --retry 3 \
             "https://github.com/rhysd/actionlint/releases/download/v${VER}/actionlint_${VER}_linux_amd64.tar.gz" \
             | tar xz actionlint
-          # shellcheck aj pyflakes sú na runneri, takže sa skontrolujú aj
-          # `run:` bloky – nie len samotná schéma workflowu.
           ./actionlint -color
+
+      # Skutočná kontrola syntaxe: `${{ }}` sa nahradí zástupným textom
+      # a `run:` blok sa dá bashu. Toto chytí naozajstný preklep tam, kde
+      # shellcheck len nerozumel GitHub výrazu.
+      - name: Syntax run blokov
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, subprocess, sys, yaml
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              for job, jd in ((yaml.safe_load(open(path)) or {}).get("jobs") or {}).items():
+                  for st in jd.get("steps") or []:
+                      script = st.get("run")
+                      if not script:
+                          continue
+                      clean = re.sub(r"\$\{\{[^}]*\}\}", "X", script)
+                      p = subprocess.run(["bash", "-n"], input=clean, text=True,
+                                         capture_output=True)
+                      if p.returncode:
+                          print(f"::error file={path}::{job} / {st.get('name')}: {p.stderr.strip()}")
+                          bad += 1
+          print(f"run blokov s chybnou syntaxou: {bad}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # Výber pohorí vo formulári musí sedieť s workers/areas.json. Choice
+      # options musia byť v YAML doslovne, takže sa to nedá generovať – ale
+      # dá sa to strážiť, aby zoznam nezostarol.
+      - name: Výber pohorí sedí s areas.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys, yaml
+          d = yaml.safe_load(open(".github/workflows/build-map.yml"))
+          on = d[[k for k in d if k is True or k == "on"][0]]
+          opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
+          areas = [k for k in json.load(open("workers/areas.json"))
+                   if not k.startswith("_")]
+          want = ["cely_region"] + areas
+          if opts != want:
+              print("::error::Výber `area` vo workflowe nesedí s workers/areas.json")
+              print(f"  vo workflowe: {opts}")
+              print(f"  malo by byť:  {want}")
+              sys.exit(1)
+          print(f"výber pohorí sedí ({len(opts)} položiek)")
+          PY
 
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
       # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
@@ -50,6 +102,11 @@ jobs:
           errs = 0
           for path in sorted(glob.glob(".github/workflows/*.yml")):
               txt = open(path).read()
+              # Komentáre preč – kontrola je textová, takže by inak našla
+              # `needs.…` aj v komentári, ktorý JU SAMU popisuje. (Presne
+              # to sa aj stalo.) Zahadzujú sa len celé zakomentované riadky,
+              # nie `#` uprostred príkazu, kde môže byť súčasťou textu.
+              txt = re.sub(r"^[ \t]*#.*$", "", txt, flags=re.M)
               jobs = (yaml.safe_load(txt) or {}).get("jobs") or {}
               starts = {}
               for j in jobs:

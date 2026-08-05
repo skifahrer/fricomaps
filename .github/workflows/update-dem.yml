@@ -248,7 +248,7 @@ jobs:
             --arg license "CC BY 4.0" \
             --arg folder '${{ inputs.drive_folder }}' \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --argjson tiles "$(cd tiles && ls *.tif | sed 's/\.tif$//' | jq -R . | jq -s .)" \
+            --argjson tiles "$(cd tiles && find . -maxdepth 1 -name '*.tif' -printf '%f\n' | sed 's/\.tif$//' | jq -R . | jq -s .)" \
             '{source: $src, license: $license, drive_folder: $folder, built_at: $built, tiles: $tiles}' \
             > tiles/meta.json
           cat tiles/meta.json
