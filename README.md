@@ -262,9 +262,10 @@ veľké steny a s približovaním pribúdajú detaily.
 | vec | hodnota |
 |---|---|
 | mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`; `1` dá 1 m²) |
+| krok sklonu v mozaike | **0,01°** (Int16) – hrubší krok robil obrys zubatý |
+| zjednodušenie obrysu | štvrtina mriežky (`ROCK_SIMPLIFY: -1`) – zmaže schodíky |
 | bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
 | najmenšia ponechaná plocha | jedna bunka mriežky: **4 m²** pri 2 m, **1 m²** pri 1 m |
-| krok sklonu v mozaike | 0,5° |
 | zjednodušovanie obrysu | žiadne (`ROCK_SIMPLIFY: 0`) |
 | filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
 
@@ -286,13 +287,72 @@ má 20 m, takže sú to jemnejšie *obrysy a diery*, nie nové merania terénu.
 > interaktívny export, takže by sa musel najprv nazrkadliť do releasu rovnako
 > ako Sonnyho DTM.
 
-#### Skaly len na výreze (rýchly beh)
+#### Zdroj výšok sa dá prepnúť
 
-Skaly sú najdrahšia časť buildu. Pri ladení prahu, mriežky alebo farieb nemá
-zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno pohorie – na to je
-input **`rock_area`**:
+Input **`dem_source`**:
 
-| `rock_area` | územie | plocha | skaly trvajú |
+| hodnota | model | mriežka | pokrytie | stav |
+|---|---|--:|---|---|
+| **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
+| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **neoverené** |
+
+Platí pre **vrstevnice aj skaly** – oboje sa počíta z toho istého modelu, nech
+obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
+
+**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
+release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,
+čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič.
+
+```
+Build map
+  └─ check-dem        je výrez v release dem-ugkk?
+       └─ (nie) → Doplniť ÚGKK 1 m LiDAR      ← spustí sa sám
+                    1. priame URL (ak si ich dal)
+                    2. ArcGIS ImageServer  (+ objaví služby v ich adresári)
+                    3. WCS GetCoverage
+                    → jeden COG do releasu dem-ugkk
+       └─ contours    stiahne COG z releasu a počíta
+```
+
+> **ÚGKK sa mi overiť nepodarilo a treba to povedať rovno.** Sieťová politika
+> prostredia, v ktorom to píšem, blokuje `*.skgeodesy.sk`, takže som sa k ich
+> službám nedostal. Isté je, že majú verejný ArcGIS adresár služieb
+> ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services));
+> ktorá z nich je DMR 5.0 v plnom rozlíšení, zdokumentované nie je.
+>
+> Preto má zrkadlo **tri cesty za sebou** a berie prvú, ktorá dá skutočný
+> výškový raster (kontroluje sa veľkosť bunky aj dátový typ – 10 m model ani
+> obrázok neprejde):
+>
+> | # | cesta | kedy zaberie |
+> |--:|---|---|
+> | 1 | **priame URL** (`ugkk_urls`) | vždy – toto je istota |
+> | 2 | ArcGIS `exportImage` | ak majú DMR 5.0 ako ImageServer |
+> | 3 | WCS `GetCoverage` | ak majú OGC službu |
+>
+> Keď zlyhajú obe automatické, build to povie a odkáže na cestu 1: v ZBGIS
+> Mapovom klientovi *Terén → Export údajov → DMR 5.0* si vyberieš územie (do
+> 400 km²), odkazy vložíš do inputu `ugkk_urls` a zrkadlo ich stiahne, zlepí
+> a odloží do releasu. Odvtedy je to tam a ďalší build ich len stiahne.
+
+**1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
+vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.
+Build to preto odmietne **v prvej minúte**, v prípravnom jobe, nie po hodine
+sťahovania. Preto ide `ugkk` ruka v ruke s inputom `area`:
+
+| výrez | plocha | 1 m raster (Float32) |
+|---|--:|--:|
+| Belianske Tatry | 177 km² | ~0,7 GB |
+| Vysoké Tatry | 541 km² | ~2,2 GB (COG ~0,6 GB) |
+| celý kraj | 16 103 km² | ~64 GB → **odmietne** |
+
+#### Testovací výrez – vrstevnice aj skaly len na pohorí
+
+Terén je najdrahšia časť buildu. Pri ladení prahu, mriežky, zdroja alebo
+farieb nemá zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno pohorie
+– na to je input **`area`**. Platí na **vrstevnice aj skaly**:
+
+| `area` | územie | plocha | terén trvá |
 |---|---|--:|--:|
 | *(prázdne)* | celý región | 16 103 km² | ~30 min |
 | `tatry` | Západné + Vysoké + Belianske | 1 032 km² | ~2 min |
@@ -314,8 +374,8 @@ tam ani DEM, ani mapa). Keď sa neprekrývajú vôbec (napr. `mala_fatra`
 s Prešovským krajom), build to povie rovno a zastaví sa, namiesto aby
 polhodinu počítal prázdno.
 
-> **Vo zvyšku regiónu potom skaly nie sú.** Nie je to orez mapy, len skál –
-> vrstevnice, terén aj dlaždice sú za celý región. Build to hlási ako
+> **Vo zvyšku regiónu potom nie sú ani vrstevnice, ani skaly.** Mapa a
+> tieňovanie sú za celý región – toto je beh na testovanie, nie na nasadenie. Build to hlási ako
 > `::warning::` aj v súhrne, aby sa taký beh omylom nenasadil ako finálny.
 > Výrez je aj v mene uloženého assetu (`rock-{región}-{výrez}-…`) a v kľúči
 > cache, takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja.
@@ -661,9 +721,13 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
      terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
      (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod
      prahom vnútri steny ostanú nezafarbené
-   - `rock_area`: počítať skaly len na výreze (`vysoke_tatry`, `tatry`,
-     `slovensky_raj`… alebo bbox) – z ~30 min sa stane ~1 min, ale skaly
-     budú len tam
+   - `area`: počítať vrstevnice aj skaly len na výreze (`vysoke_tatry`,
+     `tatry`, `slovensky_raj`… alebo bbox) – z ~40 min sa stane ~2, ale terén
+     bude len tam. Na testovanie
+   - `dem_source`: `sonny` (20 m, celý región) alebo `ugkk` (1 m LiDAR, len
+     s výrezom – zrkadlo si build spustí sám)
+   - `ugkk_urls`: posledná záchrana, keď automatické cesty k ÚGKK zlyhajú –
+     odkazy zo ZBGIS Mapového klienta
    - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
      dlaždice (uložia sa do releasu)
    - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať

@@ -5,8 +5,13 @@
 # jeden veľký job, stačilo to raz. Po rozdelení na joby by sa to inak
 # kopírovalo dvakrát a jedna kópia by časom zaostala za druhou.
 #
+# Zdroj hovorí, z ktorého releasu: `sonny` = 1°×1° dlaždice 20 m modelu
+# (release `dem-sonny`), `ugkk` = jeden COG s 1 m LiDARom pre výrez
+# (release `dem-ugkk`). Oboje sú zrkadlá – build nikdy nesiaha priamo na
+# cudzí server, to robia workflowy `Update DEM` a `Update DEM (ÚGKK 1 m)`.
+#
 # Použitie:
-#   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv na meranie]
+#   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv] [zdroj] [kľúč výrezu]
 # Výstup:
 #   <adresár>/tiles/N49E019.tif …   stiahnuté dlaždice
 #   <adresár>/all.vrt               mozaika na čítanie
@@ -17,7 +22,31 @@ set -euo pipefail
 BBOX="$1"
 DIR="${2:-dem}"
 STEPS_TSV="${3:-}"
+SOURCE="${4:-sonny}"
+AREA_KEY="${5:-cely}"
 T0=$(date +%s)
+
+if [ "$SOURCE" = "ugkk" ]; then
+  # 1 m LiDAR je v release ako jeden COG na výrez. Doplniť ho tam mal job
+  # `mirror-dem-ugkk`; keď tam nie je, niečo v tom reťazci zlyhalo a build
+  # to má povedať, nie ticho pokračovať so zlým modelom.
+  mkdir -p "$DIR"
+  UASSET="ugkk-${AREA_KEY}.tif"
+  if ! gh release download "${UGKK_RELEASE:-dem-ugkk}" --repo "$GITHUB_REPOSITORY" \
+        --pattern "$UASSET" --dir "$DIR" --clobber >/dev/null 2>&1; then
+    echo "::error::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET. Doplniť ho mal job 'Doplniť ÚGKK 1 m LiDAR' – pozri jeho log. Keď automatické cesty k ÚGKK zlyhali, vyplň input ugkk_urls odkazmi zo ZBGIS Mapového klienta."
+    exit 1
+  fi
+  gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
+  SIZE=$(du -h "$DIR/$UASSET" | cut -f1)
+  echo "ÚGKK DMR 5.0 z releasu: $UASSET, $SIZE"
+  gdalinfo "$DIR/$UASSET" | grep -E "Pixel Size|Size is" || true
+  if [ -n "$STEPS_TSV" ]; then
+    printf '%s\t%s\t%s\t%s\n' 20 "DEM (ÚGKK 1 m)" "$(( $(date +%s) - T0 ))" \
+      "$UASSET z releasu, $SIZE" >> "$STEPS_TSV"
+  fi
+  exit 0
+fi
 
 IFS=, read -r W S E N <<< "$BBOX"
 # Stiahnuté dlaždice majú vlastný podadresár: medzivýsledky (clip, slope…)

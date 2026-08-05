@@ -71,6 +71,14 @@ export const DEM_SOURCES = {
     attribution:
       '<a href="https://sonny.4lima.de/">Sonny\'s LiDAR DTM</a> (CC BY 4.0)'
   },
+  ugkk: {
+    label: "ÚGKK DMR 5.0 (1 m LiDAR)",
+    note: "slovenský 1 m LiDAR – najpodrobnejší dostupný model terénu",
+    // Licencia ÚGKK je voľná vrátane komerčného použitia, ale PODMIENENÁ
+    // uvedením zdroja – preto to tu je natvrdo, nie voliteľne.
+    attribution:
+      '<a href="https://www.geoportal.sk/">ÚGKK SR</a> – DMR 5.0'
+  },
   copernicus: {
     label: "Copernicus GLO-30",
     note: "model povrchu vrátane stromov a budov",

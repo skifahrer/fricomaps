@@ -1,0 +1,65 @@
+{
+  "_comment": [
+    "Zdroje výškových dát pre input `dem_source`.",
+    "",
+    "`sonny` je overený a je predvolený: zrkadlíme ho do releasu `dem-sonny`",
+    "a build si z neho sťahuje 1°×1° dlaždice. Mriežka 20 m.",
+    "",
+    "`ugkk` je 1 m LiDAR od ÚGKK/GKÚ (DMR 5.0). Oficiálne sa distribuuje cez",
+    "ZBGIS Mapový klient (interaktívny export do 400 km²) a cez vládny cloud,",
+    "čo sa v pipeline použiť nedá. Použiteľný by bol ArcGIS ImageServer –",
+    "rovnaký spôsob, akým to má český ČÚZK (ags.cuzk.cz/arcgis2/rest/services/",
+    "dmr5g/ImageServer/exportImage). Že ÚGKK taký server má, je isté:",
+    "https://zbgis.skgeodesy.sk/zbgis/rest/services je verejný adresár služieb.",
+    "Ktorá z nich je DMR 5.0 v plnom rozlíšení, sa ale musí ZISTIŤ – kandidáti",
+    "nižšie sú tipy podľa názvov a workflow `Check DEM source` ich otestuje",
+    "a napíše, ktorý funguje.",
+    "",
+    "Poradie v `candidates` je poradie skúšania. Keď sonda potvrdí víťaza,",
+    "stačí ho dať na prvé miesto (alebo ostatné zmazať).",
+    "",
+    "Licencia ÚGKK: voľné použitie vrátane komerčného pri uvedení zdroja",
+    "(ÚGKK SR). To musí byť v atribúcii mapy – viď poc/web/themes.js."
+  ],
+  "sonny": {
+    "label": "Sonny's LiDAR DTM 20m",
+    "kind": "release",
+    "release": "dem-sonny",
+    "cell_m": 20,
+    "attribution": "Sonny's LiDAR DTM",
+    "verified": true
+  },
+  "ugkk": {
+    "label": "ÚGKK DMR 5.0 (1 m LiDAR)",
+    "kind": "arcgis-image",
+    "cell_m": 1,
+    "attribution": "ÚGKK SR – DMR 5.0",
+    "verified": false,
+    "directory": "https://zbgis.skgeodesy.sk/zbgis/rest/services",
+    "candidates": [
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5_0/ImageServer",
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/DMR_hres/ImageServer",
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5/ImageServer",
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/DMR5_0/ImageServer",
+      "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer",
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr3_5_10/ImageServer"
+    ],
+    "wcs": [
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5_0/ImageServer/WCSServer",
+      "https://www.geoportal.sk/inspire/sk/wcs",
+      "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer/WCSServer"
+    ],
+    "wcs_coverages": [
+      "1",
+      "Coverage1",
+      "dmr5_0",
+      "DMR5_0"
+    ],
+    "_comment_fallback": [
+      "Cesty sa skúšajú po poradí: priame URL (ak sú zadané) → ArcGIS ImageServer",
+      "→ WCS. Posledná záchrana sú priame URL z vládneho cloudu alebo zo ZBGIS",
+      "Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²) – tá",
+      "nezávisí od žiadnej služby a funguje vždy."
+    ]
+  }
+}

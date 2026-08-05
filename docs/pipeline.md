@@ -95,6 +95,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **check-dem** | sú v release `dem-sonny` dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
 | **mirror-dem** | keď chýbajú, spustí *Update DEM* | — | tiles, assets |
 | **keys** | poskladá kľúče cache, pri `*_rebuild` zmaže staré záznamy | 10 min | tiles, assets |
+| **mirror-dem-ugkk** | doplní 1 m LiDAR do releasu, keď chýba | 120 min | tiles, assets |
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
 | **tiles** | PBF → `{región}.pmtiles` (Planetiler) | 150 min | contours, terrain, assets |
@@ -151,9 +152,34 @@ Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
-| zdroj | čo to je | odkiaľ |
-|---|---|---|
-| **Sonny's LiDAR DTM, model 20m** | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) |
+| zdroj | `dem_source` | čo to je | odkiaľ | stav |
+|---|---|---|---|---|
+| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) | overené |
+| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | ArcGIS ImageServer, len s výrezom (`area`) | **neoverené**, viď nižšie |
+
+Zdroj platí pre **vrstevnice aj skaly** – oboje z toho istého modelu, nech
+obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
+
+> **ÚGKK je zatiaľ otvorená otázka.** Že majú verejný ArcGIS adresár služieb
+> (`zbgis.skgeodesy.sk/zbgis/rest/services`), je isté. Ktorá z tých služieb je
+> DMR 5.0 v plnom rozlíšení – a či vôbec nejaká – zdokumentované nie je;
+> oficiálne sa DMR 5.0 dáva cez ZBGIS Mapový klient (interaktívny export do
+> 400 km²) a cez vládny cloud, čo sa v pipeline použiť nedá.
+>
+> Hádať sa to nedá, tak to zrkadlo skúša **tri cesty za sebou** a berie prvú,
+> ktorá dá skutočný výškový raster (kontroluje sa veľkosť bunky aj dátový typ,
+> takže 10 m model ani obrázok neprejdú): priame URL → ArcGIS `exportImage`
+> (vrátane služieb objavených v ich adresári) → WCS `GetCoverage`. Priame URL
+> sú istota: v ZBGIS Mapovom klientovi *Terén → Export údajov → DMR 5.0* si
+> vyberieš územie do 400 km², odkazy vložíš do `ugkk_urls` a zrkadlo ich
+> stiahne, zlepí a odloží.
+>
+> **1 m ide len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, teda 64 GB
+> vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB). Build to
+> odmietne v prípravnom jobe, nie po hodine sťahovania.
+>
+> Licencia ÚGKK je voľná aj komerčne, ale **podmienená uvedením zdroja** –
+> atribúcia je preto v `poc/web/themes.js` natvrdo.
 
 Iný zdroj sa nepoužíva. **Copernicus GLO-30 ako záloha je zámerne vypnutý** –
 je to model *povrchu*, takže vrstevnice by v lese viedli po korunách stromov
@@ -235,11 +261,25 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   časť – zapíše sa na disk a `gdal_contour` ide jedným priechodom nad celou
   mozaikou. Výsledok potom nezávisí od toho, na koľko častí sa počítalo:
   overené pri 1, 12 aj 60 častiach je zhodný do posledného m².
-- **Mozaika sklonu je Byte s krokom 0,5°.** Vo `Float32` by mala pre kraj pri
-  2 m ~13 GB, čo sa na disk runnera nezmestí; ako `Byte` (hodnota = 2×
-  stupne, 0–180) je 4× menšia a ešte sa komprimuje `DEFLATE`+`PREDICTOR`.
-  Presnosť 0,5° je na prahovanie viac než dosť – prahy sú aj tak celé stupne.
-  Prahy sa preto do `gdal_contour` dávajú vynásobené dvomi (`-fl 100 130`).
+- **Mozaika sklonu je Int16 v stotinách stupňa – a to je dôvod, prečo obrys
+  nie je zubatý.** Pôvodne to bol `Byte` s krokom 0,5°, čo je na prahovanie
+  „dosť" len na prvý pohľad: pri hrubom kroku vznikajú v poli sklonu plošiny
+  a izolínia po nich chodí po hranách buniek, teda schodíkmi. Namerané na tom
+  istom území:
+
+  | kvantizácia | plôch | bodov na plochu | raster |
+  |---|--:|--:|--:|
+  | Byte 0,5° | 481 | 844 | 5,5 MB |
+  | **Int16 0,01°** | **319** | **1 328** | **26,6 MB** |
+  | Float32 (presne) | 321 | 1 320 | 122,1 MB |
+
+  Byte navyše plochy *rozbíjal* – 481 namiesto 319, lebo plošiny na prahu
+  vyrábajú falošné úlomky. Int16 je prakticky zhodný s presným `Float32` pri
+  štvrtinovej veľkosti. Prahy sa do `gdal_contour` dávajú vynásobené stovkou.
+- **Obrys sa zjednodušuje o štvrtinu bunky** (`ROCK_SIMPLIFY: -1`). To zmaže
+  schodíky po hranách buniek, ale čiaru neposunie o viac než štvrtinu mriežky:
+  bodov na obrys klesne 5,7× (423 763 → 74 395) a **počet plôch sa nezmení
+  vôbec**. `0` to vypne.
 - **Časti sa počítajú s presahom** niekoľkých pixelov, aby sklon na okraji
   nebol zrezaný, a zapisujú sa až orezané presne na svoju hranicu. Hranice sú
   prichytené na mriežku, takže dlaždice mozaiky na seba sadnú bez medzery aj
@@ -258,9 +298,12 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
 
   Pri 40° má najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
   strmý svah. Preto je predvolený prah 50°.
-- **Skaly len na výreze** (`rock_area`). Skaly sú najdrahšia časť buildu, tak
-  sa dajú počítať len na kuse regiónu – pri ladení prahu alebo mriežky netreba
-  čakať polhodinu na celý kraj. Input berie buď názov pohoria zo
+- **Testovací výrez** (`area`). Terén je najdrahšia časť buildu, tak sa dá
+  počítať len na kuse regiónu – pri ladení prahu, mriežky alebo zdroja netreba
+  čakať polhodinu na celý kraj. Platí na **vrstevnice aj skaly**; sťahovanie
+  Sonnyho sa neobmedzuje (dlaždice sú v cache pod kľúčom celého regiónu
+  a čiastočné stiahnutie by sa nabudúce vrátilo ako keby bolo úplné), ÚGKK
+  naopak ide len na výrez. Input berie buď názov pohoria zo
   [`workers/areas.json`](../workers/areas.json) (`vysoke_tatry`, `tatry`,
   `slovensky_raj`, …), alebo bbox `W,S,E,N`. Po orezaní na Prešovský kraj:
 
