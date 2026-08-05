@@ -1,0 +1,81 @@
+# Planetiler custom schema – značené trasy (turistické, cyklo, bežky, jazdecké).
+#
+# Prečo vlastné dlaždice a nie OpenMapTiles: trasa je v OSM `type=route`
+# **relácia** nad cudzími cestami a schéma OpenMapTiles relácie trás nemá –
+# v dlaždiciach je len cesta, bez značenia. Značenie (farba pásika, sieť,
+# názov) sa preto vyťahuje samostatne a ide do vlastného `.pmtiles`.
+#
+# Vstup vyrába workflow build-map.yml:
+#   osmium tags-filter (r/route=…) → workers/trail-routes.py → data/trails.geojson
+#
+# Jedna línia = jedna trasa na jednej ceste. Po ceste ich vedie aj päť naraz,
+# takže každá dostane svoj **pruh** `off` (0,5 · 1,5 · 2,5 …) a štýl ju
+# podľa neho posunie (`line-offset`) vedľa cesty. Samotná cesta tak zostane
+# vidieť aj s tým, aká je.
+#
+# `tier` je dôležitosť trasy podľa siete (iwn/nwn/rwn/lwn). Riadi, od akého
+# zoomu je trasa v dlaždiciach: diaľkovú trasu má zmysel vidieť aj
+# z prehľadu, miestny okruh až keď je vidieť aj cesta pod ním.
+schema_name: FricoMaps značené trasy
+schema_description: Turistické chodníky, cyklotrasy, bežky a jazdecké trasy z OSM relácií
+attribution: <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap prispievatelia</a>
+
+sources:
+  trails:
+    type: geojson
+    local_path: data/trails.geojson
+
+layers:
+  - id: trail
+    features:
+      # diaľkové trasy (E-cesty, národné magistrály) – vidieť ich už z diaľky
+      - source: trails
+        geometry: line
+        min_zoom: 8
+        include_when:
+          tier:
+            - international
+            - national
+        attributes: &trail_attributes
+          # druh trasy – štýl podľa neho volí farbu, hrúbku aj ikonu
+          - key: route
+          # farba značky: pomenovaná (red, blue, …) → prefarbiteľná paletou
+          - key: colour
+          # surový hex z OSM, keď farba nie je žiadna z pomenovaných
+          - key: hex
+          - key: network
+          - key: tier
+          - key: name
+          - key: ref
+          # pruh vedľa cesty a koľko ich na tej ceste je
+          - key: off
+            type: double
+          - key: cnt
+            type: integer
+          # id relácie – v mape sa dá kliknúť a dohľadať trasu v OSM
+          - key: rel
+            type: long
+
+      # regionálne značenie – väčšina turistických trás u nás
+      - source: trails
+        geometry: line
+        min_zoom: 10
+        include_when:
+          tier: regional
+        attributes: *trail_attributes
+
+      # miestne okruhy a náučné chodníky – až keď je vidieť aj cesta pod nimi
+      - source: trails
+        geometry: line
+        min_zoom: 12
+        include_when:
+          tier: local
+        attributes: *trail_attributes
+
+    # Trasa je v OSM poskladaná z desiatok krátkych ciest. Zlepenie úsekov
+    # s rovnakými atribútmi (teda tej istej trasy v tom istom pruhu) je tu
+    # kvôli popiskom: názov sa kreslí pozdĺž línie a na 200-metrovom úseku
+    # sa nezmestí ani slovo. Zlepené línie sú aj menšie.
+    tile_post_process:
+      merge_line_strings:
+        min_length: 0

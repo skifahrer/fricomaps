@@ -51,9 +51,9 @@ zoomu 6". Zmena farieb preto nevyžaduje prepočet dlaždíc – to je celý zá
 
 ---
 
-## Workflow „Build map": osem jobov
+## Workflow „Build map": deväť jobov
 
-Build nie je jeden dlhý job, ale **osem samostatných**. Dôvod je praktický:
+Build nie je jeden dlhý job, ale **deväť samostatných**. Dôvod je praktický:
 kým bolo všetko v jednom, [beh 30948662582](https://github.com/skifahrer/fricomaps/actions/runs/30948662582)
 strávil tri hodiny na skalách, narazil na `timeout-minutes` a zahodil aj mapu,
 tieňovanie aj ikonky – hoci s nimi nebolo nič zlé. Teraz má každá časť vlastný
@@ -62,27 +62,27 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 ```
                     ┌──────────────┐
                     │  plan        │  región, bbox, PBF
-                    └──┬────────┬──┘
-              ┌────────┘        └────────────────┐
-              ▼                                  ▼
-      ┌──────────────┐                    ┌─────────────┐
-      │ check-dem    │  je DEM v release? │ tiles       │  Planetiler
-      └──────┬───────┘                    │             │  → .pmtiles
-             ▼                            └──────┬──────┘
-      ┌──────────────┐                           │
-      │ mirror-dem   │  doplní DEM               │   ┌─────────────┐
-      └──────┬───────┘                           │   │ assets      │
-             ▼                                   │   │ ikonky+fonty│
-      ┌──────────────┐                           │   └──────┬──────┘
-      │ keys         │  kľúče cache              │          │
-      └──┬────────┬──┘                           │          │
-         ▼        ▼                              │          │
-  ┌───────────┐ ┌──────────┐                     │          │
-  │ contours  │ │ terrain  │                     │          │
-  │ vrstevnice│ │ tieňovanie                     │          │
-  │ + skaly   │ │ + 3D     │                     │          │
-  └─────┬─────┘ └────┬─────┘                     │          │
-        └────────────┴───────────┬───────────────┴──────────┘
+                    └──┬────┬───┬──┘
+              ┌────────┘    │   └───────────────┐
+              ▼             ▼                   ▼
+      ┌──────────────┐ ┌──────────┐      ┌─────────────┐
+      │ check-dem    │ │ trails   │      │ tiles       │  Planetiler
+      └──────┬───────┘ │ značené  │      │             │  → .pmtiles
+             ▼         │ trasy    │      └──────┬──────┘
+      ┌──────────────┐ └────┬─────┘             │
+      │ mirror-dem   │      │                   │   ┌─────────────┐
+      └──────┬───────┘      │                   │   │ assets      │
+             ▼              │                   │   │ ikonky+fonty│
+      ┌──────────────┐      │                   │   └──────┬──────┘
+      │ keys         │      │                   │          │
+      └──┬────────┬──┘      │                   │          │
+         ▼        ▼         │                   │          │
+  ┌───────────┐ ┌──────────┐│                   │          │
+  │ contours  │ │ terrain  ││                   │          │
+  │ vrstevnice│ │ tieňovanie                    │          │
+  │ + skaly   │ │ + 3D     ││                   │          │
+  └─────┬─────┘ └────┬─────┘│                   │          │
+        └────────────┴──────┴────┬──────────────┴──────────┘
                                  ▼
                           ┌─────────────┐
                           │ deploy      │  zloží _site, nasadí, súhrn
@@ -98,6 +98,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **mirror-dem-ugkk** | doplní 1 m LiDAR do releasu, keď chýba | 120 min | tiles, assets |
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
+| **trails** | OSM relácie trás → `{región}-trails.pmtiles` | 60 min | úplne so všetkým |
 | **tiles** | PBF → `{región}.pmtiles` (Planetiler) | 150 min | contours, terrain, assets |
 | **assets** | SDF sprity a glyfy | 30 min | úplne so všetkým |
 | **deploy** | zlepí `_site`, štýly, manifest, kontrola, Pages, smoke test, súhrn | 45 min | — |
@@ -117,7 +118,8 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
   dostali dlaždice „čo zvýšilo po vrstevniciach". Teraz v čase, keď Planetiler
   rozhoduje o zoome, ešte nikto nevie, aké budú vrstevnice veľké – tak sa
   rozpočet delí **podielom** (`BUDGET_CONTOURS_PCT` 25 %, `BUDGET_TERRAIN_PCT`
-  12 %, `BUDGET_ASSETS_MB` 40 MB, zvyšok dlaždiciam). Podiely sú s rezervou
+  12 %, `BUDGET_TRAILS_PCT` 3 %, `BUDGET_ASSETS_MB` 40 MB, zvyšok
+  dlaždiciam). Podiely sú s rezervou
   nad namerané hodnoty (vrstevnice 187 MB = 21 %, terén 96 MB = 11 % z 900 MB)
   a `deploy` na konci aj tak overí, že súčet naozaj sedí.
 - **Meranie krokov.** Každý job si píše riadky do `steps-out/<job>.tsv`
@@ -460,6 +462,74 @@ Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy, sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
 dátum, alebo otlačok zdroja.
 
+### `trails` – značené trasy z OSM relácií
+
+**Trasa nie je cesta.** V OSM je značená trasa `type=route` **relácia**, ktorá
+zbiera cudzie cesty a sama nesie značenie: farbu pásika (`osmc:symbol`,
+`colour`), sieť (`network=rwn` a spol.), názov, `ref`. Schéma OpenMapTiles
+relácie trás **nemá** – v dlaždiciach ostane iba cesta (`class=path`), a z tej
+sa nedá zistiť, či po nej vedie červená turistická, dve cyklotrasy, alebo nič.
+Preto majú trasy vlastný krok a vlastný `.pmtiles`:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter r/route=hiking,foot,…   len relácie trás a ich členovia
+  → workers/trail-routes.py (pyosmium)         relácie → línie s pruhmi
+  → data/trails.geojson
+  → planetiler generate-custom --schema=workers/trails.yml
+  → {región}-trails.pmtiles
+```
+
+**Prečo predfilter.** Index polôh uzlov nad celým Slovenskom (~380 MB PBF) by
+zobral niekoľko GB pamäte. `osmium tags-filter` nechá len relácie trás **aj
+s členmi** (cesty vrátane ich uzlov), čo je zlomok veľkosti – a až nad tým
+beží pyosmium.
+
+**Jedna línia na dvojicu (cesta, trasa).** Po jednej ceste vedie bežne viac
+trás naraz. Každá dostane vlastnú kópiu geometrie a vlastný **pruh** (`off`
+= 0,5 · 1,5 · 2,5 …), takže štýl ich cez `line-offset` rozostrie **vedľa**
+cesty:
+
+```
+── cesta ────────────────    zostane vidieť, aká to je cesta
+━━ červená (off 0,5) ━━━━
+━━ modrá   (off 1,5) ━━━━    druhá trasa po tej istej ceste
+```
+
+Poradie pruhov závisí len od vlastností trasy (sieť → druh → farba → id
+relácie), nie od poradia členov v relácii – dôležitejšia trasa je vždy bližšie
+k ceste a dve trasy si na susedných úsekoch pruhy neprehodia.
+
+**Smer čiary sa normalizuje.** `line-offset` posúva podľa smeru geometrie,
+takže dva susedné úseky nakreslené proti sebe by mali pásik raz vľavo a raz
+vpravo. Každá línia sa preto otočí tak, aby začínala na západnejšom konci.
+
+**Duplikáty sa zahadzujú.** Nadradená trasa (superroute) a jej časť sú v OSM
+dve relácie na tých istých cestách. Bez toho by vedľa seba boli dva rovnaké
+pásiky – čo nie je informácia, ale chyba v mape.
+
+**Farba.** Berie sa z `osmc:symbol` (prvé pole je farba pásika na strome), inak
+z `colour`/`color`. Pomenované farby (`red`, `blue`, …) idú do dlaždíc ako
+meno, nie ako hex – štýl si k nim priradí farbu z palety, takže „červená
+značka" vyzerá v každej téme ako červená značka a v developer móde sa dá
+doladiť. Hex sa na pomenovanú farbu zaokrúhli, keď je dosť blízko (`#e01b24`
+je červená), inak ide do dlaždíc tak, ako je, a štýl ho použije priamo.
+
+**`tier` riadi, od akého zoomu je trasa v dlaždiciach:** medzinárodná
+a národná od z8, regionálna od z10, miestna od z12. Diaľkovú trasu má zmysel
+vidieť aj z prehľadu, miestny okruh až vtedy, keď je vidieť aj cesta pod ním.
+Keď trasa sieť nemá, rozhodne `distance` (nad 150 km = národná, nad 50 km =
+regionálna).
+
+**Zlepovanie úsekov.** Schéma má `tile_post_process: merge_line_strings` –
+trasa je poskladaná z desiatok krátkych ciest a na 200-metrovom úseku sa
+nezmestí ani slovo názvu. Zlepia sa len úseky s **rovnakými atribútmi**, teda
+tej istej trasy v tom istom pruhu.
+
+Job sa **necachuje**: celé je to pár minút a závisí od PBF, ktoré sa mení
+denne – cache by sa trafila len v ten istý deň. Vypína sa inputom `trails`,
+zoom dlaždíc riadi `trails_maxzoom` (default 14).
+
 ### `tiles` – PBF → PMTiles (Planetiler)
 
 Jadro pipeline. [Planetiler](https://github.com/onthegomap/planetiler) prečíta
@@ -547,8 +617,9 @@ sa mapa vygenerovala.
 ### `deploy` – kontrola pred nasadením
 
 Prejde sa hotový `style.json` a overí sa, že **všetko, na čo odkazuje, naozaj
-existuje**: sprite, fontstacky, pevne zadané mená ikon, vzory, `.pmtiles`
-a vrstevnice. Bez toho by sa chyba prejavila až ako biela mapa v prehliadači.
+existuje**: sprite, fontstacky, pevne zadané mená ikon, vzory, `.pmtiles`,
+vrstevnice a značené trasy. Bez toho by sa chyba prejavila až ako biela mapa
+v prehliadači.
 
 ### `deploy` – nasadenie a smoke test
 
@@ -576,6 +647,8 @@ bol rýchlejší:
 | Vrstevnice (gdal_contour) | 0:04:31 | interval 10 m, 218M |
 | Skalné plochy | 0:36:07 | 41 802 plôch, sklon ≥ 50°, mriežka 2 m (výpočet) |
 | Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
+| Značené trasy z OSM | 0:01:38 | ~1 400 trás, ~39 000 úsekov, ~6 000 ciest s viac trasami |
+| Značené trasy → PMTiles | 0:00:44 | maxzoom 14, ~9M |
 | Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
 | Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
 | Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
@@ -590,6 +663,10 @@ Za tabuľkou nasledujú ešte dve časti:
   a koľko km² skalného terénu spolu. Čísla píše `rock-areas.py` do
   `contours-out/rock-stats.txt`; ten je súčasťou cache, takže súhrn ich má aj
   pri behu, kde sa nič nepočítalo.
+- **Značené trasy – čo sa našlo v OSM.** Koľko relácií trás územie má, koľko
+  z nich je pomenovaných, po koľkých cestách vedú, koľko z tých ciest nesie
+  viac trás naraz (a koľko najviac), rozdelenie na turistické/cyklo/MTB/
+  lyžiarske/jazdecké a zoznam farieb značiek. Čísla píše `trail-routes.py`.
 - **Cache.** Riadok za riadkom, čo prišlo z cache a čo sa naozaj počítalo –
   takže sa hneď vidí, či mal beh trvať hodinu, alebo minútu. Plus návod, ktorý
   input čo pregeneruje.
