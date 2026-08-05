@@ -102,6 +102,11 @@ jobs:
           errs = 0
           for path in sorted(glob.glob(".github/workflows/*.yml")):
               txt = open(path).read()
+              # Komentáre preč – kontrola je textová, takže by inak našla
+              # `needs.…` aj v komentári, ktorý JU SAMU popisuje. (Presne
+              # to sa aj stalo.) Zahadzujú sa len celé zakomentované riadky,
+              # nie `#` uprostred príkazu, kde môže byť súčasťou textu.
+              txt = re.sub(r"^[ \t]*#.*$", "", txt, flags=re.M)
               jobs = (yaml.safe_load(txt) or {}).get("jobs") or {}
               starts = {}
               for j in jobs:
