@@ -51,57 +51,93 @@ zoomu 6". Zmena farieb preto nevyžaduje prepočet dlaždíc – to je celý zá
 
 ---
 
-## Workflow „Build map" krok po kroku
+## Workflow „Build map": osem jobov
 
-Najprv prehľad – **každý krok behu v poradí**, aj tie, ktoré nič nepočítajú.
-Kroky s cache sú rozdelené na *restore* (hore, hneď ako je známy kľúč)
-a *save* (hneď ako dáta vzniknú, s `if: always()`), aby pád o hodinu neskôr
-nezahodil to, čo je už hotové.
+Build nie je jeden dlhý job, ale **osem samostatných**. Dôvod je praktický:
+kým bolo všetko v jednom, [beh 30948662582](https://github.com/skifahrer/fricomaps/actions/runs/30948662582)
+strávil tri hodiny na skalách, narazil na `timeout-minutes` a zahodil aj mapu,
+tieňovanie aj ikonky – hoci s nimi nebolo nič zlé. Teraz má každá časť vlastný
+timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 
-| # | krok | čo robí | čo z toho vypadne |
-|--:|---|---|---|
-| — | *Kontrola výškového modelu* (vlastný job) | pozrie sa, či sú v release `dem-sonny` dlaždice pre bbox; spočíta otlačok obsahu releasu | `needed`, `demkey` (ide do kľúčov cache) |
-| — | *Doplniť výškový model* (vlastný job) | keď dlaždice chýbajú, spustí workflow **Update DEM** | naplnený release `dem-sonny` |
-| 1 | Over, že GitHub Pages je zapnuté | `gh api repos/…/pages` | rýchly pád namiesto pádu po hodinách |
-| 2 | Dnešný dátum do kľúča cache | dátum + štart merania času | `steps.day.outputs.d`, `BUILD_T0` |
-| 3 | Cache PBF (restore) | skúsi vytiahnuť už stiahnutý `.osm.pbf` | `data/region.osm.pbf` |
-| 4 | Stiahni PBF iba daného regiónu | osm.fr export, voliteľný `osmium extract` orez | PBF + `key`, `name`, `bbox`, `bboxkey` |
-| 5 | **Kľúče cache** | poskladá kľúče pre vrstevnice, DEM dlaždice a terén na jednom mieste | `steps.keys.outputs.*` |
-| 6 | **Pregenerovanie – zmaž staré cache** | pri `*_rebuild` zmaže príslušný záznam (`gh cache delete`) | prázdny kľúč, pod ktorý sa dá uložiť nová verzia |
-| 7 | Setup Java 21 | JDK pre Planetiler | — |
-| 8 | Cache zdrojov Planetileru | water polygons, Natural Earth (1,4 GB, pevný kľúč) | `data/sources` |
-| 9 | Cache Planetileru (restore) + stiahnutie | `planetiler.jar` (89 MB, kľúč = dátum) | `planetiler.jar` |
-| 10 | Cache PBF a Planetileru (save) | uloží oboje **ešte pred** dlhými výpočtami | — |
-| 11 | Cache vrstevníc a DEM dlaždíc (restore) | pri `*_rebuild` sa preskočí | `contours-out`, `dem/tiles` |
-| 12 | **Vrstevnice a skaly z DEM** | stiahne DEM dlaždice, `gdal_contour`, `rock-areas.py` (voliteľne len na výreze `rock_area`), Planetiler `generate-custom` | `data/contours.gpkg`, `data/rock.gpkg`, `contours-out/contours.pmtiles` |
-| 13 | Cache vrstevníc a DEM dlaždíc (save) | `if: always()` – uloží aj keď build ďalej spadne | — |
-| 14 | Zaraď vrstevnice do webu | kópia do `_site/tiles`, prečíta skutočný maxzoom | `steps.contours.outputs.*` |
-| 15 | Cache terénu (restore) + **Tieňovanie reliéfu** | `build-terrain.py` alebo stiahnutie z release `dem-terrain` | `_site/terrain/{z}/{x}/{y}.png` |
-| 16 | Cache terénu (save) | `if: always()` | — |
-| 17 | Odlož skaly a vrstevnice ako artefakt | GPKG + PMTiles + `rock-stats.txt`, 90 dní | artefakt behu |
-| 18 | **PBF → PMTiles (Planetiler)** | mapové dlaždice, s `auto_shrink` do rozpočtu | `_site/tiles/{región}.pmtiles` |
-| 19 | Cache glyfov a spritov (restore) | kľúč = hash zoznamu zdrojov | `_site/fonts`, `_site/sprites` |
-| 20 | Stiahni a priprav sady ikoniek | SDF sprity z maki/temaki/… | `_site/sprites/*.json`, `*.png` |
-| 21 | Stiahni glyfy (fonty) | Noto Sans z balíka openmaptiles | `_site/fonts/{fontstack}/…` |
-| 22 | Cache glyfov a spritov (save) | **pred** zapečením vzorov do atlasu | — |
-| 23 | Setup Pages | zistí `base_url` | `steps.pages.outputs.base_url` |
-| 24 | Vygeneruj `style.json` | `build-styles.mjs` pre web aj iOS | `_site/styles/*.json` |
-| 25 | Dopeč vzory plôch a čiar do spritu | vzory z developer módu do atlasu | upravený sprite |
-| 26 | Poskladaj web | viewer + `manifest.json` | `_site/*` |
-| 27 | Kontrola pred nasadením | overí, že štýl odkazuje len na existujúce súbory a že sa všetko zmestí do rozpočtu | pád s konkrétnou hláškou |
-| 28 | Deploy na GitHub Pages | `upload-pages-artifact` + `deploy-pages` | živá mapa |
-| 29 | Smoke test | HTTP kontrola manifestu, štýlu, spritu, glyfov a `Range` na `.pmtiles` | istota, že mapa naozaj beží |
-| 30 | **Súhrn buildu** | tabuľka „čo sa robilo, ako dlho, s akým výsledkom" | záložka Summary |
+```
+                    ┌──────────────┐
+                    │  plan        │  región, bbox, PBF
+                    └──┬────────┬──┘
+              ┌────────┘        └────────────────┐
+              ▼                                  ▼
+      ┌──────────────┐                    ┌─────────────┐
+      │ check-dem    │  je DEM v release? │ tiles       │  Planetiler
+      └──────┬───────┘                    │             │  → .pmtiles
+             ▼                            └──────┬──────┘
+      ┌──────────────┐                           │
+      │ mirror-dem   │  doplní DEM               │   ┌─────────────┐
+      └──────┬───────┘                           │   │ assets      │
+             ▼                                   │   │ ikonky+fonty│
+      ┌──────────────┐                           │   └──────┬──────┘
+      │ keys         │  kľúče cache              │          │
+      └──┬────────┬──┘                           │          │
+         ▼        ▼                              │          │
+  ┌───────────┐ ┌──────────┐                     │          │
+  │ contours  │ │ terrain  │                     │          │
+  │ vrstevnice│ │ tieňovanie                     │          │
+  │ + skaly   │ │ + 3D     │                     │          │
+  └─────┬─────┘ └────┬─────┘                     │          │
+        └────────────┴───────────┬───────────────┴──────────┘
+                                 ▼
+                          ┌─────────────┐
+                          │ deploy      │  zloží _site, nasadí, súhrn
+                          └─────────────┘
+```
+
+| job | čo robí | timeout | beží súbežne s |
+|---|---|--:|---|
+| **plan** | overí Pages, vyrieši región/bbox, stiahne (a nacacheuje) PBF | 30 min | — |
+| **check-dem** | sú v release `dem-sonny` dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
+| **mirror-dem** | keď chýbajú, spustí *Update DEM* | — | tiles, assets |
+| **keys** | poskladá kľúče cache, pri `*_rebuild` zmaže staré záznamy | 10 min | tiles, assets |
+| **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
+| **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
+| **tiles** | PBF → `{región}.pmtiles` (Planetiler) | 150 min | contours, terrain, assets |
+| **assets** | SDF sprity a glyfy | 30 min | úplne so všetkým |
+| **deploy** | zlepí `_site`, štýly, manifest, kontrola, Pages, smoke test, súhrn | 45 min | — |
+
+Čo tým vzniklo a čo to stálo:
+
+- **Kratší beh.** Skaly (~40 min), tieňovanie (~10) a mapa (~20) bežali za
+  sebou, teraz naraz – z ~85 minút je ~55.
+- **Pád nezahodí zvyšok.** Keď spadnú skaly, mapa aj tieňovanie sú hotové
+  a `deploy` nasadí mapu bez skál. `deploy` beží s `!cancelled()` a trvá len
+  na tom, aby prešli **dlaždice a ikonky** – bez nich by mapa nebola mapa.
+- **Cena: artefakty.** Joby si kusy `_site` posielajú cez
+  `upload-artifact`/`download-artifact`, čo je pri ~500 MB dlaždíc pár minút
+  navyše. Balenie je vypnuté (`compression-level: 0`), lebo `.pmtiles` aj
+  `.png` sú už komprimované.
+- **Cena: rozpočet sa musí deliť dopredu.** Kým bolo všetko v jednom jobe,
+  dostali dlaždice „čo zvýšilo po vrstevniciach". Teraz v čase, keď Planetiler
+  rozhoduje o zoome, ešte nikto nevie, aké budú vrstevnice veľké – tak sa
+  rozpočet delí **podielom** (`BUDGET_CONTOURS_PCT` 25 %, `BUDGET_TERRAIN_PCT`
+  12 %, `BUDGET_ASSETS_MB` 40 MB, zvyšok dlaždiciam). Podiely sú s rezervou
+  nad namerané hodnoty (vrstevnice 187 MB = 21 %, terén 96 MB = 11 % z 900 MB)
+  a `deploy` na konci aj tak overí, že súčet naozaj sedí.
+- **Meranie krokov.** Každý job si píše riadky do `steps-out/<job>.tsv`
+  a odloží ich artefaktom; `deploy` ich zlepí a zoradí podľa **poradového
+  čísla**, nie podľa času – joby bežia súbežne, takže čas by hovoril len
+  o tom, ktorý runner bol rýchlejší.
+- **Spoločné sťahovanie DEM.** Vrstevnice aj tieňovanie potrebujú tie isté
+  dlaždice; kým to bol jeden job, stačilo raz. Teraz je to
+  [`workers/fetch-dem.sh`](../workers/fetch-dem.sh) – jedna kópia pre oba,
+  aby sa časom nerozišli. Dlaždice majú spoločnú cache, takže druhý job ich
+  väčšinou už len vytiahne.
 
 Ďalej detailne, čo z toho je zaujímavé a **prečo** je to tak.
 
-### 1. Kontrola, či je GitHub Pages zapnuté
+### `plan` – kontrola Pages
 
 `GITHUB_TOKEN` nemá práva Pages zapnúť, takže sa to musí raz spraviť ručne.
 Kontrola je **hneď na začiatku** zámerne: keby bola na konci, zistili by sme
 to až po hodinách tilovania.
 
-### 2. Stiahnutie PBF iba daného regiónu
+### `plan` – stiahnutie PBF iba daného regiónu
 
 Zdrojom sú regionálne exporty [osm.fr](https://download.openstreetmap.fr/extracts/),
 rezané po **skutočných administratívnych hraniciach** a aktualizované denne.
@@ -110,7 +146,7 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### 3. Vrstevnice, skaly a tieňovanie z DEM
+### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
@@ -241,6 +277,37 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja. Že sú skaly
   len na výreze, hlási build ako `::warning::` aj v súhrne – taký beh nie je
   na nasadenie, je na ladenie.
+- **Koľko to bude trvať, sa povie dopredu.** Skript ešte pred prvým
+  `gdalwarp`om vypíše plán – rozmer územia, počet buniek, koľko častí sa
+  preskočí, odhad času sklonu aj obrysov, veľkosť mozaiky a špičku pamäte –
+  a keď je odhad nad rozpočtom (`ROCK_BUDGET_MIN`, default 100 min), **vôbec
+  sa nezačne** a povie, čo zmenšiť. Trojhodinový beh, ktorý spadne na timeout
+  jobu, minie celý rozpočet a nevyrobí nič; toto to zastaví za pár sekúnd.
+  Konštanty sú namerané na runneri: sklon 5,1 mil. buniek/s, obrysy
+  3,5 mil./s.
+
+  | územie | `rock_res` | buniek | odhad |
+  |---|--:|--:|--:|
+  | Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 ✗ |
+  | Prešovský kraj | **2 m** | 5,27 mld. | 0:42:18 ✓ |
+  | Prešovský kraj | 3 m | 2,57 mld. | 0:20:38 ✓ |
+  | Tatry | 1 m | 1,34 mld. | 0:10:46 ✓ |
+  | Vysoké Tatry | 1 m | 0,71 mld. | 0:05:44 ✓ |
+  | Belianske Tatry | 1 m | 0,23 mld. | 0:01:49 ✓ |
+
+- **Počas výpočtu je vidieť, čo sa deje.** Pri počítaní sklonu ide po každej
+  časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky;
+  `gdal_contour` hlási percentá a nezávisle od neho beží *tep* každých 30 s
+  (`ROCK_HEARTBEAT_S`) s časom behu, pamäťou procesu a miestom na disku.
+  Predtým bola vektorizácia hodinu a pol úplne ticho a z logu sa nedalo
+  odlíšiť „počíta" od „zaseklo sa".
+- **Časti mimo územia sa preskočia.** EPSG:3035 je pootočená voči poludníkom,
+  takže obdĺžnik opísaný bboxu je v metroch väčší než región – pri Prešovskom
+  kraji 208×111 km namiesto 200×82 km. Časti, ktoré do bboxu vôbec
+  nezasahujú, sa nepočítajú (26 zo 170 pri 1 m).
+- **Poistka na pamäť.** Keď `gdal_contour` prekročí `ROCK_MAX_RSS_GB`
+  (default 12 GB), tep ho zastaví s hláškou – lepšie než tiché zabitie
+  runnera na OOM, po ktorom v logu nie je nič.
 - **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
   najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
   4 m², pri 1 m rovno 1 m²) – menší útvar už nie je tvar terénu, ale zubaté
@@ -250,7 +317,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   informáciu o teréne však nepridá. Cena za `rock_res: 1` je 4× viac buniek
   (kraj ~2 hodiny), takže má zmysel len s `crop_bbox`. Presné čísla za
   konkrétny beh píše `rock-areas.py` do `contours-out/rock-stats.txt` a build
-  ich vypíše v [súhrne](#12-súhrn-buildu).
+  ich vypíše v [súhrne](#súhrn-buildu).
 - **Bez zjednodušovania** (`ROCK_SIMPLIFY=0`) – zjednodušenie obrysu by tie
   najmenšie plochy zmazalo úplne.
 - **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z9**
@@ -350,7 +417,7 @@ Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy, sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
 dátum, alebo otlačok zdroja.
 
-### 4. PBF → PMTiles (Planetiler)
+### `tiles` – PBF → PMTiles (Planetiler)
 
 Jadro pipeline. [Planetiler](https://github.com/onthegomap/planetiler) prečíta
 `.osm.pbf`, aplikuje **profil OpenMapTiles** a vygeneruje dlaždice pre zoomy
@@ -374,7 +441,7 @@ Parametre, ktoré tu používame, a prečo:
 | `--building_merge_z13=false` | samostatné budovy namiesto zlepencov – potrebné pre 3D |
 | `--languages=sk,en` | do dlaždíc idú len tie jazykové varianty názvov, ktoré naozaj použijeme |
 
-### 5. Sady ikoniek → SDF sprity
+### `assets` – sady ikoniek → SDF sprity
 
 Z každého zdroja v [`poc/web/icon-sources.js`](../poc/web/icon-sources.js) sa
 stiahne hotový sprite (PNG + JSON) a prerobí sa
@@ -401,13 +468,13 @@ stiahne hotový sprite (PNG + JSON) a prerobí sa
 Nasadzujú sa **všetky** sady naraz (sú malé), takže sa dajú v developer móde
 prepínať naživo; vybraná sa zapečie do statického štýlu pre iOS.
 
-### 6. Glyfy (fonty)
+### `assets` – glyfy (fonty)
 
 Balík predpočítaných glyfov Noto Sans sa kopíruje **na naše Pages**. Verejná
 služba `fonts.openmaptiles.org` je jediný bod zlyhania, pri ktorom by sa mapa
 vykreslila úplne bez nápisov – to sa nechce.
 
-### 7. Generovanie `style.json`
+### `deploy` – generovanie `style.json`
 
 [`workers/build-styles.mjs`](../workers/build-styles.mjs) zavolá ten istý
 generátor ([`poc/web/themes.js`](../poc/web/themes.js)), aký používa web, a
@@ -420,7 +487,7 @@ módu](../README.md#cesta-úprav-do-zdrojáku) (`poc/web/style-overrides.json`)
 – farby, viditeľnosť vrstiev, rozsahy zoomu, vzory, okraje, sada ikoniek a
 tieňovanie reliéfu.
 
-### 8. Vzory do spritu
+### `deploy` – vzory do spritu
 
 Vzory plôch a čiar sú **generované z predpisu, ktorý je zároveň názvom
 obrázka** (`pat:trees:2f5a28:22:12`). Web si ich dokreslí sám cez
@@ -428,33 +495,36 @@ obrázka** (`pat:trees:2f5a28:22:12`). Web si ich dokreslí sám cez
 [`workers/add-sprite-patterns.mjs`](../workers/add-sprite-patterns.mjs) preto
 prejde hotové štýly, pozbiera použité názvy a dopečie ich do atlasu.
 
-### 9. Manifest a viewer
+### `deploy` – manifest a viewer
 
 `tiles/manifest.json` je to jediné, čo si web načíta na začiatku: kde sú
 dlaždice, aký majú maxzoom, bbox regiónu, aké sady ikoniek sú nasadené a kedy
 sa mapa vygenerovala.
 
-### 10. Kontrola pred nasadením
+### `deploy` – kontrola pred nasadením
 
 Prejde sa hotový `style.json` a overí sa, že **všetko, na čo odkazuje, naozaj
 existuje**: sprite, fontstacky, pevne zadané mená ikon, vzory, `.pmtiles`
 a vrstevnice. Bez toho by sa chyba prejavila až ako biela mapa v prehliadači.
 
-### 11. Deploy a smoke test
+### `deploy` – nasadenie a smoke test
 
 Po nasadení si pipeline **sama overí, že mapa funguje**: `manifest.json`,
 `style.json`, sprite, glyfy a – najdôležitejšie – `Range` request na
 `.pmtiles`, ktorý musí vrátiť **HTTP 206**. Keby hosting Range requesty
 nepodporoval, `.pmtiles` sa nedá čítať a mapa zostane prázdna.
 
-### 12. Súhrn buildu
+### `deploy` – súhrn buildu
 
 Posledný krok napíše do záložky **Summary** prehľad celého behu. Beží
 s `if: always()`, takže je aj (hlavne) vtedy, keď build spadol – z padnutého
 behu je tak vidieť, kam sa dostal a čo stihol.
 
-Meranie funguje tak, že si každý dlhý krok na konci pripíše riadok „názov,
-sekundy, čo spravil" do `/tmp/build-steps.tsv`; súhrn z toho poskladá tabuľku:
+Meranie funguje tak, že si každý dlhý krok pripíše riadok „poradie, názov,
+sekundy, čo spravil" do `steps-out/<job>.tsv`, job to odloží artefaktom
+a `deploy` z toho poskladá tabuľku. Radí sa podľa **poradia v pipeline**, nie
+podľa času – joby bežia súbežne, takže čas by hovoril len o tom, ktorý runner
+bol rýchlejší:
 
 | krok | trvanie | výsledok |
 |---|--:|---|

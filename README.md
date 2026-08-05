@@ -22,11 +22,13 @@ docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 ## Ako funguje pipeline
 
 ```
-Build map                    stiahne IBA {región}.osm.pbf z osm.fr exportov
-(manuálne, výber regiónu)    (download.openstreetmap.fr/extracts – Európa aj
-                             svet, rezané po admin. hraniciach, denné)
-                             ─► Planetiler ─► {región}.pmtiles
-                             ─► GitHub Pages (viewer + dlaždice + style.json)
+Build map                    osem jobov, tie dlhé bežia súbežne:
+(manuálne, výber regiónu)      plan     región + PBF z osm.fr exportov
+                               tiles    Planetiler ─► {región}.pmtiles
+                               contours vrstevnice + skaly z DEM
+                               terrain  tieňovanie a 3D ako PNG dlaždice
+                               assets   SDF sprity a glyfy
+                               deploy   zloží _site ─► GitHub Pages
 
 Update DEM                   Sonny's LiDAR DTM 20m (Google Drive) ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
@@ -317,6 +319,64 @@ polhodinu počítal prázdno.
 > `::warning::` aj v súhrne, aby sa taký beh omylom nenasadil ako finálny.
 > Výrez je aj v mene uloženého assetu (`rock-{región}-{výrez}-…`) a v kľúči
 > cache, takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja.
+
+#### Koľko to bude trvať sa povie dopredu
+
+Skaly sa **nezačnú počítať**, kým sa nevypíše plán a neoverí, že sa zmestí do
+rozpočtu (`ROCK_BUDGET_MIN`, default 100 min):
+
+```
+── Plán výpočtu skál ────────────────────────────────
+  územie          208×111 km (obdĺžnik v EPSG:3035)
+  mriežka         1 m
+  buniek          19.60 mld.
+  častí           144 z 170 (26 mimo územia sa preskočí), po 12.2×11.1 km
+  odhad sklon     1:04:02
+  odhad obrysy    1:33:19
+  odhad SPOLU     2:37:21  (rozpočet 1:40:00)
+  mozaika na disk ~1.0 GB
+  špička pamäte   ~13.4 GB
+─────────────────────────────────────────────────────
+::error::Skaly by trvali 2:37:21 …
+::error::Zmestí sa: (1) rock_res aspoň 1.3 m na tomto území, alebo
+(2) rock_area na výrez s ~64 % plochy – napr. vysoke_tatry, tatry, …
+```
+
+| územie | `rock_res` | buniek | odhad | |
+|---|--:|--:|--:|---|
+| Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 | ✗ odmietne |
+| Prešovský kraj | **2 m (default)** | 5,27 mld. | 0:42:18 | ✓ |
+| Prešovský kraj | 3 m | 2,57 mld. | 0:20:38 | ✓ |
+| Tatry | 1 m | 1,34 mld. | 0:10:46 | ✓ |
+| Vysoké Tatry | 1 m | 0,71 mld. | 0:05:44 | ✓ |
+| Belianske Tatry | 1 m | 0,23 mld. | 0:01:49 | ✓ |
+
+Konštanty odhadu sú **namerané na runneri**, nie odhadnuté: sklon
+5,1 mil. buniek/s, obrysy 3,5 mil./s.
+
+Trojhodinový beh, ktorý spadne na timeout jobu, minie celý rozpočet
+a nevyrobí nič. Toto to zastaví za pár sekúnd a povie, čo zmenšiť.
+
+#### Počas výpočtu je vidieť, čo sa deje
+
+```
+  [12/144] sklon – 0:07:41 za sebou, zostáva ~0:84:26, mozaika 96 MB
+  … sklon: beží 0:07:52, na disku 0.1 GB
+Vektorizujem sklon jedným priechodom nad celým územím (5.27 mld. buniek, odhad 0:25:05)…
+  … gdal_contour: 30 % (beží 0:07:14)
+  … gdal_contour: beží 0:07:30, pamäť 2.4 GB, na disku 1.1 GB
+```
+
+Pri sklone ide riadok po každej časti s odpracovaným časom a odhadom zvyšku,
+`gdal_contour` hlási percentá a nezávisle od oboch beží **tep** každých 30 s
+(`ROCK_HEARTBEAT_S`) s časom, pamäťou procesu a miestom na disku. Keď pamäť
+prekročí `ROCK_MAX_RSS_GB` (12 GB), tep výpočet zastaví s hláškou – to je
+lepšie než tiché zabitie runnera na OOM, po ktorom v logu nie je nič.
+
+**Časti mimo územia sa preskočia.** EPSG:3035 je pootočená voči poludníkom,
+takže obdĺžnik opísaný bboxu je v metroch väčší než región – pri Prešovskom
+kraji 208×111 km namiesto 200×82 km. Čo do bboxu nezasahuje, sa nepočíta
+(26 zo 170 častí pri 1 m).
 
 #### Veľkosť plôch určuje prah sklonu, nie mriežka
 

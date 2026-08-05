@@ -173,6 +173,20 @@ env:
   # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
   # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
+  # Koľko minút smú skaly trvať. Celý job má na runneri 3 hodiny a musí sa
+  # doň zmestiť aj mapa. Nad odhad sa výpočet vôbec nezačne – build to povie
+  # v prvých sekundách aj s tým, čo zmenšiť, namiesto trojhodinového behu do
+  # prázdna. (Prešovský kraj: pri 2 m ~40 min, pri 1 m ~2 h 40 min.)
+  ROCK_BUDGET_MIN: "100"
+  ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
+  ROCK_HEARTBEAT_S: "30" # ako často hlásiť, že sa stále počíta
+  # Rozpočet stránky si joby delia podielom, nie „čo zvýšilo" – bežia
+  # súbežne, takže v čase, keď Planetiler rozhoduje o zoome, ešte nikto
+  # nevie, aké veľké budú vrstevnice. Podiely sú s rezervou nad namerané
+  # hodnoty (vrstevnice 187 MB = 21 %, terén 96 MB = 11 % z 900 MB).
+  BUDGET_CONTOURS_PCT: "25"
+  BUDGET_TERRAIN_PCT: "12"
+  BUDGET_ASSETS_MB: "40"
 
 jobs:
   # ---------- je v release terén pre toto územie? ----------
@@ -181,8 +195,9 @@ jobs:
   # niečo pre náš bbox je – a keď nie, doplní ho `mirror-dem` ešte predtým.
   check-dem:
     name: Kontrola výškového modelu
+    needs: plan
     runs-on: ubuntu-latest
-    if: ${{ inputs.contours }}
+    if: ${{ inputs.contours || inputs.terrain }}
     outputs:
       needed: ${{ steps.check.outputs.needed }}
       demkey: ${{ steps.check.outputs.demkey }}
@@ -196,13 +211,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BBOX=''
-          if [ -n '${{ inputs.custom_pbf_url }}' ]; then
-            BBOX='${{ inputs.custom_bbox }}'
-          else
-            BBOX=$(jq -r --arg r '${{ inputs.region }}' '.[$r].bbox // [] | join(",")' workers/regions.json)
-          fi
-          if [ -n '${{ inputs.crop_bbox }}' ]; then BBOX='${{ inputs.crop_bbox }}'; fi
+          # Bbox už raz vyriešila príprava (vrátane orezu a custom regiónu),
+          # takže sa tu nepočíta druhý raz – dva výpočty toho istého sa vždy
+          # raz rozídu.
+          BBOX='${{ needs.plan.outputs.bbox }}'
 
           ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
             --json assets -q '.assets[].name' 2>/dev/null || echo '')
@@ -257,25 +269,22 @@ jobs:
       contents: write
     uses: ./.github/workflows/update-dem.yml
 
-  build:
-    needs: [check-dem, mirror-dem]
-    # `contents: write` kvôli ukladaniu hotových výškových dlaždíc do releasu,
-    # `actions: write` kvôli mazaniu cache pri pregenerovaní (`*_rebuild`).
-    permissions:
-      contents: write
-      actions: write
-      pages: write
-      id-token: write
-    # Kontrola aj doplnenie sa môžu preskočiť (vypnuté vrstevnice, terén už
-    # v release) – build musí bežať aj tak. Keď doplnenie zlyhá (napr. Drive
-    # limituje sťahovanie), build sa spustí tiež a zastaví sa až na kroku
-    # s DEM, kde presne napíše, ktoré dlaždice chýbajú.
-    if: ${{ !cancelled() }}
+  # ---------- príprava: región, kľúče, PBF ----------
+  # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
+  # PBF. Beží pár minút a všetko ďalšie z neho vychádza.
+  plan:
+    name: Príprava (región, kľúče, PBF)
     runs-on: ubuntu-latest
-    timeout-minutes: 180
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pages: read      # kontrola, či je Pages vôbec zapnuté
+    outputs:
+      key: ${{ steps.region.outputs.key }}
+      name: ${{ steps.region.outputs.name }}
+      bbox: ${{ steps.region.outputs.bbox }}
+      bboxkey: ${{ steps.region.outputs.bboxkey }}
+      day: ${{ steps.day.outputs.d }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -300,10 +309,11 @@ jobs:
         run: |
           echo "d=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
           # Meranie krokov: každý dlhý krok si na konci pripíše riadok
-          # „názov, sekundy, čo spravil" a posledný krok z toho poskladá
-          # súhrn buildu (Summary v GitHub Actions).
-          echo "BUILD_T0=$(date +%s)" >> "$GITHUB_ENV"
-          : > /tmp/build-steps.tsv
+          # „poradie, názov, sekundy, čo spravil" do súboru svojho jobu.
+          # Joby bežia súbežne, takže sa v súhrne zoradia podľa poradia, nie
+          # podľa času – ten by hovoril len o tom, ktorý runner bol rýchlejší.
+          mkdir -p steps-out
+          : > steps-out/plan.tsv
 
       # POZOR na restore/save: obyčajné `actions/cache` ukladá až v post-kroku
       # a IBA keď job dobehne úspešne. Keď build spadne o hodinu neskôr, hodiny
@@ -400,11 +410,59 @@ jobs:
           echo "bboxkey=$(echo "$BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
           echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
           ls -lh data/region.osm.pbf
-          printf '%s\t%s\t%s\n' "PBF regiónu" "$(( $(date +%s) - T0 ))" \
+          printf '%s\t%s\t%s\t%s\n' "10" "PBF regiónu" "$(( $(date +%s) - T0 ))" \
             "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/plan.tsv
 
-      # ---------- kľúče cache na jednom mieste ----------
+      - name: Cache PBF regiónu (save)
+        if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: data/region.osm.pbf
+          key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
+
+      # PBF potrebuje už len job s dlaždicami. Ide artefaktom, nie cache:
+      # v rámci behu je to isté, cache by sa mohla minúť s iným behom.
+      - name: Odlož PBF pre job s dlaždicami
+        uses: actions/upload-artifact@v4
+        with:
+          name: pbf
+          path: data/region.osm.pbf
+          retention-days: 1
+          compression-level: 0
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-plan
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ---------- kľúče cache ----------
+  # Vlastný job, lebo kľúč potrebuje OBOJE: bbox z prípravy a otlačok releasu
+  # s DEM z kontroly. A potrebuje ho restore, save aj mazanie pri
+  # pregenerovaní – keby bol napísaný trikrát, stačí ho raz zabudnúť opraviť
+  # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
+  keys:
+    name: Kľúče cache
+    needs: [plan, check-dem, mirror-dem]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write   # mazanie cache pri pregenerovaní
+    outputs:
+      contours: ${{ steps.keys.outputs.contours }}
+      demtiles: ${{ steps.keys.outputs.demtiles }}
+      terrain: ${{ steps.keys.outputs.terrain }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       # Kľúč potrebuje restore, save aj mazanie pri pregenerovaní. Keby bol
       # napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho
       # rozsype (uloží sa pod iným kľúčom, než sa hľadá).
@@ -412,7 +470,7 @@ jobs:
         id: keys
         run: |
           set -euo pipefail
-          B='${{ steps.region.outputs.bboxkey }}'
+          B='${{ needs.plan.outputs.bboxkey }}'
           D='${{ needs.check-dem.outputs.demkey }}'
           {
             # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
@@ -445,24 +503,44 @@ jobs:
             drop '${{ steps.keys.outputs.terrain }}'
           fi
 
+  # ---------- vrstevnice a skaly ----------
+  # Najdlhší job (skaly sú desiatky minút). Vlastný job znamená vlastný
+  # timeout a hlavne: keď spadne, mapa, tieňovanie ani ikonky sa nezahodia.
+  contours:
+    name: Vrstevnice a skaly
+    needs: [plan, keys]
+    if: ${{ !cancelled() && inputs.contours }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: write   # ukladanie hotových skál do releasu dem-rocks
+    outputs:
+      enabled: ${{ steps.contours.outputs.enabled }}
+      maxzoom: ${{ steps.contours.outputs.maxzoom }}
+      dem_source: ${{ steps.contours.outputs.dem_source }}
+      rock_slope: ${{ steps.contours.outputs.rock_slope }}
+      size_mb: ${{ steps.contours.outputs.size_mb }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
+      # nevidí, takže by sa artefakt nikdy neodložil.
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+
       - name: Setup Java 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Cache – zdrojové dáta Planetileru (water polygons, Natural Earth)
-        uses: actions/cache@v4
-        with:
-          path: data/sources
-          key: planetiler-sources-v1
-
       - name: Cache Planetileru (restore)
         id: planetiler-cache
         uses: actions/cache/restore@v4
         with:
           path: planetiler.jar
-          key: planetiler-latest-${{ steps.day.outputs.d }}
+          key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
         run: |
@@ -470,23 +548,8 @@ jobs:
           curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
             https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
 
-      - name: Cache PBF regiónu (save)
-        if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: data/region.osm.pbf
-          key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
-
-      - name: Cache Planetileru (save)
-        if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        with:
-          path: planetiler.jar
-          key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
-
-      # ---------- vrstevnice a skaly ----------
+      # ---------- kľúče cache ----------
+  # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
       # ide z externého DEM: **Sonny's LiDAR DTM** z releasu `dem-sonny`
       # (napĺňa ho workflow "Update DEM"). Je to LiDAR *model terénu*, teda
@@ -516,7 +579,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: contours-out
-          key: ${{ steps.keys.outputs.contours }}
+          key: ${{ needs.keys.outputs.contours }}
 
       # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
       # release – čo je presne to, čo hovorí `demkey`. Tie sa nepregenerúvajú
@@ -527,7 +590,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: dem/tiles
-          key: ${{ steps.keys.outputs.demtiles }}
+          key: ${{ needs.keys.outputs.demtiles }}
 
       - name: Vrstevnice a skaly z DEM
         if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
@@ -535,81 +598,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          T_DEM=$(date +%s)
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite zstd
           python3 -m pip install --quiet numpy
-          # Stiahnuté DEM dlaždice majú vlastný adresár: medzivýsledky
-          # (clip, slope…) sú tiež .tif a nesmú sa dostať do mozaiky.
           mkdir -p dem/tiles data contours-out
 
-          BBOX='${{ steps.region.outputs.bbox }}'
+          BBOX='${{ needs.plan.outputs.bbox }}'
           IFS=, read -r W S E N <<< "$BBOX"
           INTERVAL='${{ inputs.contour_interval }}'
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
-          # Dlaždice sú 1°×1°, pomenované podľa juhozápadného rohu
-          # (konvencia SRTM): N49E019.
-          python3 - "$W" "$S" "$E" "$N" > dem/list.txt <<'PY'
-          import math, sys
-          w, s, e, n = map(float, sys.argv[1:5])
-          for lat in range(math.floor(s), math.floor(n) + 1):
-              for lon in range(math.floor(w), math.floor(e) + 1):
-                  ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-                  print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
-          PY
-          echo "DEM dlaždíc pre bbox: $(wc -l < dem/list.txt)"
 
-          # Zoznam dlaždíc v release si vypýtame naraz – nemá zmysel skúšať
-          # sťahovať to, čo tam nie je.
-          SONNY_ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
-            --json assets -q '.assets[].name' 2>/dev/null || echo '')
-
-          sonny_ok=0
-          missing=""
-          while IFS= read -r t; do
-            if printf '%s\n' "$SONNY_ASSETS" | grep -qx "$t.tif" && \
-               gh release download "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$t.tif" --dir dem/tiles --clobber >/dev/null 2>&1; then
-              sonny_ok=$(( sonny_ok + 1 ))
-            else
-              missing="$missing $t"
-            fi
-          done < dem/list.txt
-
+          # Sťahovanie DEM je v samostatnom skripte – potrebuje ho aj job
+          # s tieňovaním a dve kópie by časom zaostali jedna za druhou.
+          workers/fetch-dem.sh "$BBOX" dem steps-out/contours.tsv
           DEM_USED=sonny
-          if [ "$sonny_ok" -eq 0 ]; then
-            echo "::error::V release $DEM_RELEASE nie je pre toto územie ani jedna dlaždica."
-            echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
-            echo "Spusti workflow 'Update DEM' s priečinkom, ktorý toto územie pokrýva – alebo mu vyplň direct_urls."
-            exit 1
-          fi
-          if [ -n "$missing" ]; then
-            # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za
-            # hranicou v ňom byť nemusia. Tam jednoducho nebude terén; radšej
-            # diera, ktorú vidno, než výplň z modelu povrchu.
-            echo "::warning::V release $DEM_RELEASE nie sú dlaždice:$missing – tam vrstevnice ani skaly nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
-          fi
-          echo "Sonny's LiDAR DTM: $sonny_ok z $(wc -l < dem/list.txt) dlaždíc z release $DEM_RELEASE ✓"
-          printf '%s\t%s\t%s\n' "DEM dlaždice (Sonny)" "$(( $(date +%s) - T_DEM ))" \
-            "$sonny_ok z $(wc -l < dem/list.txt) dlaždíc, $(du -sh dem/tiles | cut -f1)" \
-            >> /tmp/build-steps.tsv
-
-          shopt -s nullglob
-          tifs=(dem/tiles/*.tif)
-          if [ ${#tifs[@]} -eq 0 ]; then
-            echo "::error::Nepodarilo sa získať žiadnu DEM dlaždicu pre bbox $BBOX."
-            exit 1
-          fi
-          echo "DEM dlaždíc k dispozícii: ${#tifs[@]} (zdroj: $DEM_USED)"
-
-          # -resolution highest: dlaždice môžu mať rôznu mriežku (20m model má
-          # obdĺžnikové pixely) – mozaika ide na to jemnejšie.
-          gdalbuildvrt -q -resolution highest dem/all.vrt "${tifs[@]}"
 
           # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
-          # mriežku vyhladí šum, ale
-          # zároveň zje detail terénu. Default 0 = žiadne zjemnenie, len orez
-          # na bbox v plnom rozlíšení.
+          # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
+          # žiadne zjemnenie, len orez na bbox v plnom rozlíšení.
           T_CONT=$(date +%s)
           SMOOTH='${{ inputs.contour_smoothing }}'
           case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
@@ -635,9 +641,9 @@ jobs:
                  ELSE 'minor' END AS level
                FROM contours WHERE ele IS NOT NULL"
           ls -lh data/contours.gpkg
-          printf '%s\t%s\t%s\n' "Vrstevnice (gdal_contour)" "$(( $(date +%s) - T_CONT ))" \
+          printf '%s\t%s\t%s\t%s\n' "30" "Vrstevnice (gdal_contour)" "$(( $(date +%s) - T_CONT ))" \
             "interval ${INTERVAL} m, $(du -h data/contours.gpkg | cut -f1)" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/contours.tsv
 
           # ---------- skaly: najstrmšie úseky terénu ----------
           # Celý výpočet je vo workers/rock-areas.py – po častiach, aby sa
@@ -714,7 +720,7 @@ jobs:
             # asset zahodí a počíta odznova.
             # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
             # vydávať za skaly celého kraja.
-            ROCK_ASSET="rock-${{ steps.region.outputs.key }}-${ROCK_AREA_KEY}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+            ROCK_ASSET="rock-${{ needs.plan.outputs.key }}-${ROCK_AREA_KEY}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
             ROCK_READY=""
             ROCK_SRC="výpočet"
             if [ '${{ inputs.rocks_rebuild }}' = 'true' ]; then
@@ -733,11 +739,27 @@ jobs:
               echo "::group::Skaly – $ROCK_AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
               # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
               # v rovine nič nenašiel), nemá to zhodiť hodinový build.
-              if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$ROCK_BBOX" \
-                   --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
-                   --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
-                   --stats=contours-out/rock-stats.txt \
-                   --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
+              # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
+              # pamäť). To nie je bonus, ktorý sa dá preskočiť – je to zlé
+              # zadanie a build sa má zastaviť hneď, nie nasadiť mapu bez
+              # skál po hodine práce. Iný nenulový kód je skutočné zlyhanie
+              # výpočtu a tam prázdna vrstva stačí.
+              set +e
+              python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$ROCK_BBOX" \
+                --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+                --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                --stats=contours-out/rock-stats.txt \
+                --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
+                --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
+                --out=data/rock.gpkg
+              RC=$?
+              set -e
+              if [ "$RC" -eq 2 ]; then
+                echo "::endgroup::"
+                echo "::error::Výpočet skál sa nezačal – zadanie je nad možnosti runnera (viď hlášky vyššie). Uprav rock_res alebo rock_area a spusti znova."
+                exit 1
+              fi
+              if [ "$RC" -eq 0 ]; then
                 ls -lh data/rock.gpkg
                 # Ulož ich, nech ich nabudúce netreba počítať znova.
                 zstd -q -19 -T0 -f -o "/tmp/$ROCK_ASSET" data/rock.gpkg
@@ -760,9 +782,9 @@ jobs:
             # cache hite sa tento krok vôbec nespustí, ale súhrn čísla má.
             ROCK_N=$(ogrinfo -so data/rock.gpkg rock 2>/dev/null \
               | awk -F': ' '/^Feature Count/ {print $2}')
-            printf '%s\t%s\t%s\n' "Skalné plochy" "$(( $(date +%s) - T_ROCK ))" \
+            printf '%s\t%s\t%s\t%s\n' "40" "Skalné plochy" "$(( $(date +%s) - T_ROCK ))" \
               "${ROCK_N:-0} plôch, $ROCK_AREA_NAME, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m ($ROCK_SRC)" \
-              >> /tmp/build-steps.tsv
+              >> steps-out/contours.tsv
             # Keď skaly prišli z releasu, script nebežal a štatistiku nemá kto
             # napísať – aspoň to základné, nech súhrn nie je plný otáznikov.
             if [ ! -s contours-out/rock-stats.txt ]; then
@@ -793,7 +815,7 @@ jobs:
           # je lacný (sekundy), na rozdiel od sťahovania DEM.
           LIMIT_MB='${{ inputs.size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          CBUDGET_MB=$(( LIMIT_MB * 40 / 100 ))
+          CBUDGET_MB=$(( LIMIT_MB * BUDGET_CONTOURS_PCT / 100 ))
 
           T_PM=$(date +%s)
           while : ; do
@@ -828,9 +850,9 @@ jobs:
             echo "off" > contours-out/rock-slope.txt
           fi
           ls -lh contours-out/
-          printf '%s\t%s\t%s\n' "Vrstevnice a skaly → PMTiles" "$(( $(date +%s) - T_PM ))" \
+          printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly → PMTiles" "$(( $(date +%s) - T_PM ))" \
             "maxzoom $CZ, $(du -h contours-out/contours.pmtiles | cut -f1)" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/contours.tsv
 
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
@@ -840,7 +862,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: contours-out
-          key: ${{ steps.keys.outputs.contours }}
+          key: ${{ needs.keys.outputs.contours }}
 
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && inputs.contours && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/tiles/**') != '' }}
@@ -848,7 +870,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: dem/tiles
-          key: ${{ steps.keys.outputs.demtiles }}
+          key: ${{ needs.keys.outputs.demtiles }}
 
       - name: Zaraď vrstevnice do webu
         id: contours
@@ -862,7 +884,7 @@ jobs:
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          cp "$SRC" "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+          cp "$SRC" "_site/tiles/${{ needs.plan.outputs.key }}-contours.pmtiles"
           # Maxzoom berieme z toho, čo sa naozaj vygenerovalo (mohol sa znížiť
           # kvôli veľkosti); ak súbor chýba, padáme späť na vstup.
           CZ=$(cat contours-out/maxzoom.txt 2>/dev/null || echo '')
@@ -880,14 +902,81 @@ jobs:
           echo "rock_slope=$RSLOPE" >> "$GITHUB_OUTPUT"
           echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
           echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
-          ls -lh "_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+          ls -lh "_site/tiles/${{ needs.plan.outputs.key }}-contours.pmtiles"
           # Keď cache trafila, celý výpočet vyššie sa preskočil – v súhrne to
           # má byť vidieť ako riadok, nie ako chýbajúce kroky.
           if [ '${{ steps.contours-cache.outputs.cache-hit }}' = 'true' ]; then
-            printf '%s\t%s\t%s\n' "Vrstevnice a skaly" "0" \
+            printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly" "0" \
               "z cache (nič sa nepočítalo), maxzoom $CZ, $(du -h "$SRC" | cut -f1)" \
-              >> /tmp/build-steps.tsv
+              >> steps-out/contours.tsv
           fi
+
+      # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
+      # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
+      # pre artefakty dovolí.
+      - name: Odlož skaly a vrstevnice ako artefakt
+        if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ inputs.rock_res }}
+          path: |
+            data/rock.gpkg
+            data/contours.gpkg
+            contours-out/contours.pmtiles
+            contours-out/rock-stats.txt
+          retention-days: 90
+          compression-level: 9
+          if-no-files-found: ignore
+
+      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
+      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
+      # aj .png sú už komprimované, balenie by len ukradlo minúty.
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-contours
+          path: _site
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+
+      # Štatistika skál ide k meraniu krokov, nie na stránku – súhrn ju
+      # potrebuje, prehliadač nie.
+      - name: Pribal štatistiku skál k meraniu
+        if: ${{ always() }}
+        run: cp contours-out/rock-stats.txt steps-out/ 2>/dev/null || true
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-contours
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ---------- tieňovanie a 3D terén ----------
+  # Nezávislé od vrstevníc – oboje potrebuje len DEM, takže môžu bežať naraz.
+  terrain:
+    name: Tieňovanie a 3D terén
+    needs: [plan, keys]
+    if: ${{ !cancelled() && inputs.terrain }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write   # ukladanie hotových dlaždíc do releasu dem-terrain
+    outputs:
+      enabled: ${{ steps.terrain.outputs.enabled }}
+      maxzoom: ${{ steps.terrain.outputs.maxzoom }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
+      # nevidí, takže by sa artefakt nikdy neodložil.
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
 
       # ---------- tieňovanie reliéfu a 3D terén ----------
       # MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc
@@ -897,13 +986,22 @@ jobs:
       # Sú drahé na výpočet, ale závisia len od územia – preto sa raz uložia
       # do releasu `dem-terrain` ako jeden .tar.zst a nabudúce sa len stiahnu.
       # `terrain_rebuild` ich prepíše nanovo.
+      # Tie isté DEM dlaždice ako pri vrstevniciach a ten istý kľúč – keď si
+      # ich stiahol druhý job, tento ich už len vytiahne z cache.
+      - name: Cache DEM dlaždíc (restore)
+        id: demtiles-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: dem/tiles
+          key: ${{ needs.keys.outputs.demtiles }}
+
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
         if: ${{ inputs.terrain && !inputs.terrain_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out
-          key: ${{ steps.keys.outputs.terrain }}
+          key: ${{ needs.keys.outputs.terrain }}
 
       - name: Tieňovanie reliéfu (PNG dlaždice zo Sonnyho)
         id: terrain
@@ -916,8 +1014,8 @@ jobs:
           TSRC="výpočet"
           TZ='${{ inputs.terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
-          BBOX='${{ steps.region.outputs.bbox }}'
-          ASSET="terrain-${{ steps.region.outputs.key }}-z${TZ}.tar.zst"
+          BBOX='${{ needs.plan.outputs.bbox }}'
+          ASSET="terrain-${{ needs.plan.outputs.key }}-z${TZ}.tar.zst"
           REBUILD='${{ inputs.terrain_rebuild }}'
 
           have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
@@ -940,13 +1038,12 @@ jobs:
           fi
 
           if ! have_tiles; then
-            if [ ! -s dem/all.vrt ]; then
-              echo "::warning::DEM nie je k dispozícii (vrstevnice sa brali z cache) – tieňovanie sa preskočí."
-              echo "enabled=false" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sudo apt-get install -y -qq zstd >/dev/null 2>&1 || true
+            # Vlastný job = vlastný DEM. Vrstevnice si ho sťahujú tiež, ale
+            # bežia súbežne, takže sa oň nedá oprieť; skript je spoločný.
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq gdal-bin zstd
             python3 -m pip install --quiet numpy
+            workers/fetch-dem.sh "$BBOX" dem steps-out/terrain.tsv
             echo "::group::Výškové dlaždice do z$TZ"
             python3 workers/build-terrain.py --dem=dem/all.vrt --bbox="$BBOX" \
               --minzoom=5 --maxzoom="$TZ" --out=terrain-out
@@ -971,9 +1068,9 @@ jobs:
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
           echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ, $(du -sm _site/terrain | cut -f1) MB"
-          printf '%s\t%s\t%s\n' "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
+          printf '%s\t%s\t%s\t%s\n' "60" "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
             "$(find _site/terrain -name '*.png' | wc -l) PNG dlaždíc do z$TZ, $(du -sm _site/terrain | cut -f1) MB ($TSRC)" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/terrain.tsv
 
       - name: Cache výškových dlaždíc (save)
         if: ${{ always() && inputs.terrain && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
@@ -981,24 +1078,89 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: terrain-out
-          key: ${{ steps.keys.outputs.terrain }}
+          key: ${{ needs.keys.outputs.terrain }}
 
-      # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
-      # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
-      # pre artefakty dovolí.
-      - name: Odlož skaly a vrstevnice ako artefakt
-        if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
+      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
+      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
+      # aj .png sú už komprimované, balenie by len ukradlo minúty.
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: teren-${{ steps.region.outputs.key }}-s${{ inputs.rock_slope }}-g${{ inputs.rock_res }}
-          path: |
-            data/rock.gpkg
-            data/contours.gpkg
-            contours-out/contours.pmtiles
-            contours-out/rock-stats.txt
-          retention-days: 90
-          compression-level: 9
+          name: site-terrain
+          path: _site
+          retention-days: 1
+          compression-level: 0
           if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-terrain
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ---------- mapové dlaždice ----------
+  # Beží súbežne s vrstevnicami aj tieňovaním – z nich nič nepotrebuje,
+  # len PBF z prípravy.
+  tiles:
+    name: Mapové dlaždice (Planetiler)
+    needs: plan
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    outputs:
+      maxzoom: ${{ steps.tiles.outputs.maxzoom }}
+      size_mb: ${{ steps.tiles.outputs.size_mb }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
+      # nevidí, takže by sa artefakt nikdy neodložil.
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+      - name: Stiahni PBF z prípravy
+        uses: actions/download-artifact@v4
+        with:
+          name: pbf
+          path: data
+
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache – zdrojové dáta Planetileru (water polygons, Natural Earth)
+        uses: actions/cache@v4
+        with:
+          path: data/sources
+          key: planetiler-sources-v1
+
+      - name: Cache Planetileru (restore)
+        id: planetiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: planetiler.jar
+          key: planetiler-latest-${{ needs.plan.outputs.day }}
+
+      - name: Stiahni Planetiler
+        run: |
+          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
+          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
+            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: Cache Planetileru (save)
+        if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: planetiler.jar
+          key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
@@ -1006,7 +1168,7 @@ jobs:
           set -euo pipefail
           T_TILES=$(date +%s)
           mkdir -p _site/tiles
-          OUT="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
+          OUT="_site/tiles/${{ needs.plan.outputs.key }}.pmtiles"
 
           # Planetiler: PlanetilerConfig.MAX_MAXZOOM = 16 → vyššie hodnoty
           # zhodia build s "Max zoom must be <= 16". Radšej orežeme s hláškou.
@@ -1018,23 +1180,21 @@ jobs:
           fi
           if [ "$MAXZOOM" -lt 8 ]; then MAXZOOM=8; fi
 
-          # Rozpočet je na CELÚ stránku, nielen na tieto dlaždice: Pages zvládne
-          # ~1 GB a do toho sa musia zmestiť aj vrstevnice, fonty a sprity.
-          # Vrstevnice sú už v _site, fonty a sprity pribudnú neskôr – na tie
-          # sa nechá rezerva.
+          # Rozpočet je na CELÚ stránku, nielen na tieto dlaždice: Pages
+          # zvládne ~1 GB a do toho sa musia zmestiť aj vrstevnice, terén,
+          # fonty a sprity. Tie sa ale počítajú v INÝCH JOBOCH a súbežne
+          # s týmto, takže tu ešte nikto nevie, aké budú veľké. Namiesto
+          # „čo zvýšilo" preto dostanú dlaždice pevný podiel a job `deploy`
+          # na konci overí, že súčet naozaj sedí.
           LIMIT_MB='${{ inputs.size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          RESERVE_MB=40
-          USED_MB=$(du -sm _site 2>/dev/null | cut -f1 || echo 0)
-          BUDGET_MB=$(( LIMIT_MB - USED_MB - RESERVE_MB ))
-          echo "Rozpočet stránky ${LIMIT_MB} MB − obsadené ${USED_MB} MB − rezerva ${RESERVE_MB} MB = ${BUDGET_MB} MB na dlaždice"
+          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT) / 100 + BUDGET_ASSETS_MB ))
+          BUDGET_MB=$(( LIMIT_MB - OTHERS_MB ))
+          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
 
           if [ "$BUDGET_MB" -lt 50 ]; then
-            echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB – ${USED_MB} MB už zaberajú vrstevnice. Zväčš contour_interval, zníž contour_maxzoom, vypni contours alebo zdvihni size_limit_mb."
+            echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB. Zdvihni size_limit_mb alebo uber podiel vrstevniciam a terénu (BUDGET_*_PCT v env)."
             exit 1
-          fi
-          if [ "$USED_MB" -gt $(( LIMIT_MB / 2 )) ]; then
-            echo "::warning::Vrstevnice zaberajú ${USED_MB} MB z rozpočtu ${LIMIT_MB} MB – na mapu ostáva málo. Zvážiť sa dá contour_interval 20 alebo contour_maxzoom 12."
           fi
           LIMIT=$(( BUDGET_MB * 1024 * 1024 ))
 
@@ -1063,7 +1223,7 @@ jobs:
             if [ "$BYTES" -le "$LIMIT" ]; then break; fi
 
             if [ '${{ inputs.auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
-              echo "::error::Dlaždice majú ${MB} MB, na stránku sa ich zmestí ${BUDGET_MB} MB (rozpočet ${LIMIT_MB} MB, vrstevnice ${USED_MB} MB). Možnosti: zníž maxzoom, vyber menší región, použi crop_bbox alebo uber vrstevniciam."
+              echo "::error::Dlaždice majú ${MB} MB, ale majú sa zmestiť do ${BUDGET_MB} MB (rozpočet stránky ${LIMIT_MB} MB mínus podiel vrstevníc, terénu a ikoniek). Možnosti: zníž maxzoom, vyber menší región, použi crop_bbox alebo uber vrstevniciam cez BUDGET_CONTOURS_PCT."
               exit 1
             fi
 
@@ -1086,9 +1246,49 @@ jobs:
           echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
           echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
           ls -lh _site/tiles/
-          printf '%s\t%s\t%s\n' "Mapové dlaždice (Planetiler)" "$(( $(date +%s) - T_TILES ))" \
+          printf '%s\t%s\t%s\t%s\n' "70" "Mapové dlaždice (Planetiler)" "$(( $(date +%s) - T_TILES ))" \
             "maxzoom $Z, $(( $(stat -c%s "$OUT") / 1048576 )) MB" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/tiles.tsv
+
+      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
+      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
+      # aj .png sú už komprimované, balenie by len ukradlo minúty.
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-tiles
+          path: _site
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-tiles
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ---------- ikonky a fonty ----------
+  # Nezávisí od ničoho okrem kódu, takže beží od začiatku súbežne so všetkým.
+  assets:
+    name: Ikonky a fonty
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      name: ${{ steps.sprite.outputs.name }}
+      available: ${{ steps.sprite.outputs.available }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
+      # nevidí, takže by sa artefakt nikdy neodložil.
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
 
       - name: Cache glyfov a spritov (restore)
         id: assets-cache
@@ -1171,9 +1371,9 @@ jobs:
           echo "name=$WANT" >> "$GITHUB_OUTPUT"
           echo "available=$(echo $ok | xargs)" >> "$GITHUB_OUTPUT"
           echo "Nasadené sady:$ok, štýl použije $WANT"
-          printf '%s\t%s\t%s\n' "Ikonky (SDF sprity)" "$(( $(date +%s) - T_SPR ))" \
+          printf '%s\t%s\t%s\t%s\n' "80" "Ikonky (SDF sprity)" "$(( $(date +%s) - T_SPR ))" \
             "sady:$ok, štýl používa $WANT$([ "$CACHED_SPRITES" -gt 0 ] && echo ' (z cache)')" \
-            >> /tmp/build-steps.tsv
+            >> steps-out/assets.tsv
 
       - name: Stiahni glyfy (fonty) k sebe na Pages
         run: |
@@ -1228,6 +1428,76 @@ jobs:
             _site/sprites
           key: ${{ steps.assets-cache.outputs.cache-primary-key }}
 
+      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
+      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
+      # aj .png sú už komprimované, balenie by len ukradlo minúty.
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-assets
+          path: _site
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-assets
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # ---------- zloženie a nasadenie ----------
+  # Pozbiera kusy `_site` od ostatných jobov, dogeneruje štýly a manifest,
+  # skontroluje a nasadí. `!cancelled()` a nie `success()`: keď vrstevnice
+  # alebo tieňovanie spadnú alebo sú vypnuté, mapa sa má nasadiť aj tak –
+  # bez nich, ale nasadiť.
+  deploy:
+    name: Zloženie a nasadenie
+    needs: [plan, contours, terrain, tiles, assets]
+    if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Každý job odložil svoj kus `_site` (dlaždice, vrstevnice, terén,
+      # ikonky). `merge-multiple` ich rozbalí do jedného stromu presne tam,
+      # odkiaľ pochádzali. Vzor `site-*`, nie mená: keď je nejaký job vypnutý
+      # alebo spadol, jeho artefakt jednoducho nie je a nič sa nedeje.
+      - name: Pozbieraj kusy stránky
+        uses: actions/download-artifact@v4
+        with:
+          pattern: site-*
+          path: _site
+          merge-multiple: true
+
+      - name: Stiahni meranie krokov od ostatných jobov
+        if: ${{ always() }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: steps-*
+          path: steps-out
+          merge-multiple: true
+
+      - name: Čo prišlo od ostatných jobov
+        run: |
+          set -uo pipefail
+          echo "Výsledky jobov: vrstevnice=${{ needs.contours.result }}, terén=${{ needs.terrain.result }}, dlaždice=${{ needs.tiles.result }}, ikonky=${{ needs.assets.result }}"
+          find _site -maxdepth 2 -mindepth 1 -type d -exec du -sh {} \; 2>/dev/null || true
+          du -sm _site | cut -f1 | xargs -I{} echo "_site spolu: {} MB"
+
+
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
@@ -1236,13 +1506,13 @@ jobs:
         run: |
           node workers/build-styles.mjs \
             --base-url='${{ steps.pages.outputs.base_url }}' \
-            --region='${{ steps.region.outputs.key }}' \
-            --name='${{ steps.region.outputs.name }}' \
-            --maxzoom='${{ steps.tiles.outputs.maxzoom }}' \
-            --contours='${{ steps.contours.outputs.enabled || 'false' }}' \
-            --contours-maxzoom='${{ steps.contours.outputs.maxzoom || '14' }}' \
-            --dem-source='${{ steps.contours.outputs.dem_source || 'sonny' }}' \
-            ${{ steps.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, steps.terrain.outputs.maxzoom) || '' }} \
+            --region='${{ needs.plan.outputs.key }}' \
+            --name='${{ needs.plan.outputs.name }}' \
+            --maxzoom='${{ needs.tiles.outputs.maxzoom }}' \
+            --contours='${{ needs.contours.outputs.enabled || 'false' }}' \
+            --contours-maxzoom='${{ needs.contours.outputs.maxzoom || '14' }}' \
+            --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
+            ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -1253,7 +1523,7 @@ jobs:
           # Vzory z developer módu sú generované z predpisu v názve obrázka.
           # Web si ich dokreslí sám, statický štýl pre iOS ich potrebuje
           # priamo v sprite.
-          for id in ${{ steps.sprite.outputs.available }}; do
+          for id in ${{ needs.assets.outputs.available }}; do
             node workers/add-sprite-patterns.mjs \
               --sprite="_site/sprites/$id" --styles=_site/styles
           done
@@ -1274,29 +1544,29 @@ jobs:
           fi
 
           jq -n \
-            --arg region '${{ steps.region.outputs.key }}' \
-            --arg name '${{ steps.region.outputs.name }}' \
-            --arg bbox '${{ steps.region.outputs.bbox }}' \
+            --arg region '${{ needs.plan.outputs.key }}' \
+            --arg name '${{ needs.plan.outputs.name }}' \
+            --arg bbox '${{ needs.plan.outputs.bbox }}' \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --arg glyphs "$GLYPHS" \
-            --arg sprite "$BASE/sprites/${{ steps.sprite.outputs.name }}" \
+            --arg sprite "$BASE/sprites/${{ needs.assets.outputs.name }}" \
             --argjson icon_sources "$(node -e "
               import('./poc/web/icon-sources.js').then((m) => {
-                const ok = '${{ steps.sprite.outputs.available }}'.split(/\s+/).filter(Boolean);
+                const ok = '${{ needs.assets.outputs.available }}'.split(/\s+/).filter(Boolean);
                 console.log(JSON.stringify(m.ICON_SOURCES.filter((s) => ok.includes(s.id))
                   .map((s) => ({ id: s.id, label: s.label, sprite: 'sprites/' + s.id,
                                  license: s.license, source: s.source, suffix: s.suffix, note: s.note }))));
               });
             ")" \
-            --argjson maxzoom '${{ steps.tiles.outputs.maxzoom }}' \
-            --argjson size_mb '${{ steps.tiles.outputs.size_mb }}' \
-            --argjson contours '${{ steps.contours.outputs.enabled || 'false' }}' \
-            --argjson cmaxzoom '${{ steps.contours.outputs.maxzoom || '14' }}' \
+            --argjson maxzoom '${{ needs.tiles.outputs.maxzoom }}' \
+            --argjson size_mb '${{ needs.tiles.outputs.size_mb }}' \
+            --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
+            --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
-            --arg demsource '${{ steps.contours.outputs.dem_source || 'sonny' }}' \
-            --arg dem '${{ steps.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
-            --argjson demmaxzoom '${{ steps.terrain.outputs.maxzoom || 15 }}' \
-            --arg rockslope '${{ steps.contours.outputs.rock_slope || 'off' }}' \
+            --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
+            --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
+            --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \
+            --arg rockslope '${{ needs.contours.outputs.rock_slope || 'off' }}' \
             '{
               default_region: $region,
               built_at: $built,
@@ -1304,7 +1574,7 @@ jobs:
               glyphs: $glyphs,
               sprite: $sprite,
               icon_sources: $icon_sources,
-              default_icons: "${{ steps.sprite.outputs.name }}",
+              default_icons: "${{ needs.assets.outputs.name }}",
               dem: $dem,
               dem_maxzoom: $demmaxzoom,
               regions: {
@@ -1339,7 +1609,7 @@ jobs:
           echo "Kontrolujem $STYLE"
 
           # sprite (ten, na ktorý štýl naozaj odkazuje)
-          SPRITE='${{ steps.sprite.outputs.name }}'
+          SPRITE='${{ needs.assets.outputs.name }}'
           for ext in .json .png; do
             [ -s "_site/sprites/$SPRITE$ext" ] || { echo "::error::chýba sprites/$SPRITE$ext"; fail=1; }
           done
@@ -1371,12 +1641,12 @@ jobs:
           done < <(jq -r '[.layers[].paint["fill-pattern"]?, .layers[].paint["line-pattern"]? | strings] | unique | .[]' "$STYLE")
 
           # dlaždice
-          PM="_site/tiles/${{ steps.region.outputs.key }}.pmtiles"
+          PM="_site/tiles/${{ needs.plan.outputs.key }}.pmtiles"
           [ -s "$PM" ] || { echo "::error::chýba $PM"; fail=1; }
 
           # vrstevnice, ak ich štýl používa
           if jq -e '.sources.contours' "$STYLE" >/dev/null; then
-            CPM="_site/tiles/${{ steps.region.outputs.key }}-contours.pmtiles"
+            CPM="_site/tiles/${{ needs.plan.outputs.key }}-contours.pmtiles"
             [ -s "$CPM" ] || { echo "::error::štýl používa vrstevnice, ale chýba $CPM"; fail=1; }
           fi
 
@@ -1407,7 +1677,7 @@ jobs:
           set -uo pipefail
           BASE='${{ steps.deployment.outputs.page_url }}'
           BASE="${BASE%/}"
-          REGION='${{ steps.region.outputs.key }}'
+          REGION='${{ needs.plan.outputs.key }}'
           fail=0
 
           check() { # $1 = URL, $2 = očakávaný kód, $3 = popis, $4 = extra curl args
@@ -1426,7 +1696,7 @@ jobs:
 
           echo "Kontrolujem $BASE"
           check "$BASE/tiles/manifest.json" 200 "manifest.json"
-          SPRITE='${{ steps.sprite.outputs.name }}'
+          SPRITE='${{ needs.assets.outputs.name }}'
           check "$BASE/sprites/$SPRITE.json" 200 "sprite index"
           check "$BASE/sprites/$SPRITE.png" 200 "sprite bitmapa"
           check "$BASE/styles/$REGION-svetla.json" 200 "style.json"
@@ -1441,7 +1711,7 @@ jobs:
           # PMTiles sa číta HTTP Range requestmi – bez 206 sa mapa nenačíta.
           check "$BASE/tiles/$REGION.pmtiles" 206 "pmtiles (Range request)" "-H Range:bytes=0-1023"
 
-          if [ '${{ steps.contours.outputs.enabled }}' = 'true' ]; then
+          if [ '${{ needs.contours.outputs.enabled }}' = 'true' ]; then
             check "$BASE/tiles/$REGION-contours.pmtiles" 206 "vrstevnice (Range request)" "-H Range:bytes=0-1023"
           fi
 
@@ -1449,20 +1719,40 @@ jobs:
 
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
-      # mieste v záložke Summary, nech sa to nemusí lúštiť z logov.
-      # `always()`, aby súhrn bol aj vtedy (hlavne vtedy), keď build spadol.
+      # mieste v záložke Summary. Riadky si každý job odložil do svojho
+      # `steps-*` artefaktu; tu sa zlejú a zoradia podľa poradového čísla,
+      # lebo joby bežia súbežne a poradie v čase nič nehovorí.
       - name: Súhrn buildu
         if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           S="$GITHUB_STEP_SUMMARY"
-          TOTAL=$(( $(date +%s) - ${BUILD_T0:-$(date +%s)} ))
           hms() { printf '%d:%02d:%02d' $(( $1 / 3600 )) $(( $1 % 3600 / 60 )) $(( $1 % 60 )); }
 
+          # Celkový čas behu je čas celého workflowu, nie tohto jobu – joby
+          # bežia súbežne, takže súčet ich časov by klamal.
+          STARTED=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -q .run_started_at 2>/dev/null || echo '')
+          if [ -n "$STARTED" ]; then
+            TOTAL=$(( $(date +%s) - $(date -d "$STARTED" +%s) ))
+          else
+            TOTAL=0
+          fi
+
           {
-            echo "# ${{ steps.region.outputs.name || inputs.region }}"
+            echo "# ${{ needs.plan.outputs.name || inputs.region }}"
             echo
-            echo "Celý build: **$(hms "$TOTAL")**"
+            echo "Celý beh: **$(hms "$TOTAL")** (joby bežali súbežne, súčet nižšie je väčší)"
+            echo
+            echo "| job | výsledok |"
+            echo "|---|---|"
+            echo "| Príprava | ${{ needs.plan.result }} |"
+            echo "| Vrstevnice a skaly | ${{ needs.contours.result }} |"
+            echo "| Tieňovanie a 3D terén | ${{ needs.terrain.result }} |"
+            echo "| Mapové dlaždice | ${{ needs.tiles.result }} |"
+            echo "| Ikonky a fonty | ${{ needs.assets.result }} |"
             echo
             echo "## Čo sa robilo"
             echo
@@ -1470,21 +1760,21 @@ jobs:
             echo "|---|--:|---|"
           } >> "$S"
 
-          if [ -s /tmp/build-steps.tsv ]; then
-            while IFS=$'\t' read -r name secs detail; do
+          if [ -d steps-out ] && [ -n "$(find steps-out -name '*.tsv' 2>/dev/null)" ]; then
+            cat steps-out/*.tsv | sort -n | while IFS=$'\t' read -r ord name secs detail; do
               [ -n "$name" ] || continue
-              printf '| %s | %s | %s |\n' "$name" "$(hms "$secs")" "$detail" >> "$S"
-            done < /tmp/build-steps.tsv
+              printf '| %s | %s | %s |\n' "$name" "$(hms "${secs:-0}")" "$detail" >> "$S"
+            done
           else
-            echo "| — | — | build sa nedostal ani po prvý meraný krok |" >> "$S"
+            echo "| — | — | žiadny job sa nedostal po prvý meraný krok |" >> "$S"
           fi
 
           # ---- detail skál ----
-          # Čísla píše workers/rock-areas.py; sú v contours-out, takže ich
-          # nesie aj cache a súhrn ich má aj pri behu bez výpočtu.
-          if [ -s contours-out/rock-stats.txt ]; then
+          # Čísla píše workers/rock-areas.py; job s vrstevnicami ich pribalil
+          # k meraniu krokov, takže ich súhrn má aj pri behu bez výpočtu.
+          if [ -s steps-out/rock-stats.txt ]; then
             # shellcheck disable=SC1091
-            . contours-out/rock-stats.txt
+            . steps-out/rock-stats.txt
             {
               echo
               echo "## Skalné plochy – aký to je detail"
@@ -1494,6 +1784,7 @@ jobs:
               echo "| územie | ${area_name:-celý región}${area_bbox:+ (\`$area_bbox\`)} |"
               echo "| počet samostatných plôch | ${count:-?} |"
               echo "| obrys sa počíta na mriežke | ${grid_m:-?} m |"
+              echo "| buniek sklonu / čas výpočtu | ${cells_g:-?} mld. / ${took:-?} |"
               echo "| bunka zdrojového DEM (Sonny) | ~${dem_cell_m:-?} m → **strop skutočného detailu** |"
               echo "| najmenšia ponechaná plocha | ${min_area_m2:-?} m² |"
               echo "| skutočne najmenšia plocha | ${min_m2:-?} m² |"
@@ -1507,8 +1798,7 @@ jobs:
               echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
               echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
               echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
-              echo "všade sklon nad prahom. Vektorizuje sa jedným priechodom nad"
-              echo "celým územím, takže na hraniciach počítaných častí nie sú švy."
+              echo "všade sklon nad prahom."
               if [ "${area_key:-cely}" != "cely" ]; then
                 echo
                 echo "> ⚠️ **Skaly sú len na výreze „${area_name}“.** Vo zvyšku"
@@ -1523,25 +1813,25 @@ jobs:
             } >> "$S"
           fi
 
-          # ---- čo je v cache a čo sa počítalo ----
           {
             echo
-            echo "## Cache"
+            echo "## Rozpočet stránky"
             echo
-            echo "| čo | stav |"
-            echo "|---|---|"
-            echo "| PBF regiónu | ${{ steps.pbf-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté' }} |"
-            echo "| Planetiler | ${{ steps.planetiler-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnutý' }} |"
-            echo "| DEM dlaždice | ${{ steps.demtiles-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté z releasu' }} |"
-            echo "| vrstevnice a skaly | ${{ steps.contours-cache.outputs.cache-hit == 'true' && 'z cache' || 'počítané' }} |"
-            echo "| výškové dlaždice | ${{ steps.terrain-cache.outputs.cache-hit == 'true' && 'z cache' || 'počítané / z releasu' }} |"
-            echo "| glyfy a sprity | ${{ steps.assets-cache.outputs.cache-hit == 'true' && 'z cache' || 'stiahnuté' }} |"
+            echo "| časť | veľkosť |"
+            echo "|---|--:|"
+            for d in tiles terrain sprites fonts; do
+              [ -d "_site/$d" ] && echo "| $d | $(du -sm "_site/$d" | cut -f1) MB |"
+            done
+            echo "| **spolu** | **$(du -sm _site 2>/dev/null | cut -f1) MB** z ${{ inputs.size_limit_mb }} MB |"
             echo
             echo "**Ako pregenerovať:** spusti workflow znova a zaškrtni"
             echo "\`contours_rebuild\` (vrstevnice + skaly), \`rocks_rebuild\` (skaly"
             echo "vrátane uloženej verzie v release \`dem-rocks\`) alebo"
             echo "\`terrain_rebuild\` (tieňovanie). Každý z nich najprv zmaže"
             echo "príslušnú cache – inak by sa stará verzia len vrátila späť."
+            echo
+            echo "**Rýchly beh:** \`rock_area\` (napr. \`vysoke_tatry\`) počíta skaly"
+            echo "len na výreze – z ~30 minút sa stane ~1 minúta."
           } >> "$S"
 
           if [ '${{ steps.deployment.outputs.page_url }}' != '' ]; then
