@@ -22,11 +22,13 @@ docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 ## Ako funguje pipeline
 
 ```
-Build map                    stiahne IBA {región}.osm.pbf z osm.fr exportov
-(manuálne, výber regiónu)    (download.openstreetmap.fr/extracts – Európa aj
-                             svet, rezané po admin. hraniciach, denné)
-                             ─► Planetiler ─► {región}.pmtiles
-                             ─► GitHub Pages (viewer + dlaždice + style.json)
+Build map                    osem jobov, tie dlhé bežia súbežne:
+(manuálne, výber regiónu)      plan     región + PBF z osm.fr exportov
+                               tiles    Planetiler ─► {región}.pmtiles
+                               contours vrstevnice + skaly z DEM
+                               terrain  tieňovanie a 3D ako PNG dlaždice
+                               assets   SDF sprity a glyfy
+                               deploy   zloží _site ─► GitHub Pages
 
 Update DEM                   Sonny's LiDAR DTM 20m (Google Drive) ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
