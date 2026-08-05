@@ -202,14 +202,17 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   ├─ skaly ──────────────────────────────────────────────────
   │    workers/rock-areas.py
   │    a) sklon PO ČASTIACH (pamäťovo drahé), na disk:
-  │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka 2 m
+  │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka `rock_res`
   │      gdaldem slope             … sklon v stupňoch
-  │      gdal_translate -ot Byte   … krok 0,5°, aby sa mozaika zmestila
+  │      gdal_translate -ot Int16  … stotiny °, aby sa mozaika zmestila
   │      gdalbuildvrt              … mozaika sklonu celého územia
   │    b) vektorizácia NARAZ nad mozaikou:
-  │      gdal_contour -p -fl 100 130 … izolínie sklonu ako plochy (s dierami)
+  │      gdal_contour -p -fl …     … izolínie sklonu ako plochy (s dierami)
   │      -explodecollections       … samostatné skaly
   │      filter najmenšej plochy   … + `class`, `slope`, `area`
+  │      -simplify                 … preč so schodíkmi po hranách buniek
+  │      smooth-polygons.py        … zaoblenie rohov, čo po zjednodušení
+  │                                  ostali ostré (Chaikin, 2 prechody)
   │
   └─ tieňovanie a 3D ────────────────────────────────────────
        workers/build-terrain.py … terrarium PNG dlaždice
@@ -282,6 +285,28 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   schodíky po hranách buniek, ale čiaru neposunie o viac než štvrtinu mriežky:
   bodov na obrys klesne 5,7× (423 763 → 74 395) a **počet plôch sa nezmení
   vôbec**. `0` to vypne.
+- **…a potom sa rohy zaoblia** (`ROCK_SMOOTH: 2`, `workers/smooth-polygons.py`).
+  Zjednodušenie má vedľajší účinok, ktorý bolo vidieť pri max zoome: schodíky
+  zmizli, ale to, čo po nich ostalo, sú **ostré rohy**. Zubatosť teda nerobil
+  raster, ale práve to zjednodušenie. Namerané na jednom území (326 plôch,
+  mriežka 4 m, prah 50°):
+
+  | úprava | bodov | priemerný lom | lomov > 60° |
+  |---|--:|--:|--:|
+  | bez úprav | 640 021 | 4,6° | 0,1 % |
+  | `-simplify 0,5 m` | 91 256 | **28,5°** | 0,9 % |
+  | + 1× Chaikin | 181 975 | 14,3° | 0,4 % |
+  | **+ 2× Chaikin (default)** | **363 341** | **7,7°** | **0,1 %** |
+
+  Chaikinovo orezávanie rohov nahradí každý roh dvomi bodmi v 1/4 a 3/4 hrany,
+  takže sa jeden lom rozdelí na dva polovičné. Dva prechody dajú hladší obrys
+  než pôvodný raster a stále o 43 % menej bodov než nezjednodušený originál.
+  Diery ostávajú dierami – zaobľuje sa každý prstenec zvlášť.
+
+  **Čo sa neosvedčilo:** vyhladiť raster sklonu (priemer 3×3) pred
+  vektorizáciou. Obrys sa síce zjemní, ale priemerovanie zrazí špičky sklonu
+  a okolo prahu z toho vznikne množstvo drobných úlomkov – z 326 plôch bolo
+  naraz **1668**. Preto sa hladí až hotová geometria, nie raster.
 - **Časti sa počítajú s presahom** niekoľkých pixelov, aby sklon na okraji
   nebol zrezaný, a zapisujú sa až orezané presne na svoju hranicu. Hranice sú
   prichytené na mriežku, takže dlaždice mozaiky na seba sadnú bez medzery aj
@@ -353,18 +378,28 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
 - **Poistka na pamäť.** Keď `gdal_contour` prekročí `ROCK_MAX_RSS_GB`
   (default 12 GB), tep ho zastaví s hláškou – lepšie než tiché zabitie
   runnera na OOM, po ktorom v logu nie je nič.
-- **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
-  najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
-  4 m², pri 1 m rovno 1 m²) – menší útvar už nie je tvar terénu, ale zubaté
-  rohy jedinej bunky. Skutočný detail je ale stropený zdrojom: **Sonny má pre
-  Slovensko bunku ~20 m**, takže tvary pod 20 m sú dopočítané, nie merané.
-  Jemnejšia mriežka dá hladší a presnejšie umiestnený obrys a viac dier, novú
-  informáciu o teréne však nepridá. Cena za `rock_res: 1` je 4× viac buniek
-  (kraj ~2 hodiny), takže má zmysel len s `crop_bbox`. Presné čísla za
-  konkrétny beh píše `rock-areas.py` do `contours-out/rock-stats.txt` a build
-  ich vypíše v [súhrne](#súhrn-buildu).
-- **Bez zjednodušovania** (`ROCK_SIMPLIFY=0`) – zjednodušenie obrysu by tie
-  najmenšie plochy zmazalo úplne.
+- **Aký je to detail a kto ho vyberá.** `rock_res: auto` (default) nechá
+  mriežku vybrať `rock-areas.py`: zoberie najjemnejšiu z rebríčka
+  0,5 / 1 / 1,5 / 2 / 3 / 4 / 5 / 8 / 10 / 15 / 20 m, ktorá naraz
+
+  1. **sa zmestí do rozpočtu času** (`ROCK_BUDGET_MIN`, default 100 min) – to
+     je ten istý odhad, ktorý inak beh zastaví, len použitý dopredu, a
+  2. **má pri danom DEM ešte zmysel** – dolný strop je desatina bunky
+     zdrojového modelu, najmenej 0,5 m.
+
+  Ten druhý strop je dôležitejší, než sa zdá: **Sonny má pre Slovensko bunku
+  ~20 m**, takže pri ňom auto vždy skončí na 2 m. Jemnejšia mriežka by len
+  interpolovala medzi tými istými výškami – stála by štvornásobok času a
+  nepridala ani jeden nový tvar terénu. Reálny skok v detaile prinesie až iný
+  zdroj (`dem_source: ugkk`, 1 m LiDAR → auto ide na 0,5 m).
+
+  Výber sa celý vypíše do logu, aj s tým, koľko by ktorá mriežka trvala.
+  Namiesto čísla sa dá `rock_res` zadať aj natvrdo (`1`, `2`, …).
+
+  Najmenšia ponechaná plocha je **jedna bunka vybranej mriežky** (pri 2 m
+  teda 4 m²) – menší útvar už nie je tvar terénu, ale rohy jedinej bunky.
+  Presné čísla za konkrétny beh píše `rock-areas.py` do
+  `contours-out/rock-stats.txt` a build ich vypíše v [súhrne](#súhrn-buildu).
 - **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z9**
   (predtým z13) a štýl ich kreslí od z9, obrys od z11. Nižšie zoomy to
   nezaťaží: Planetiler na nich zahadzuje prvky menšie než pixel, takže

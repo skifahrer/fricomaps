@@ -184,9 +184,10 @@ základné od z13, popisky výšky pozdĺž hlavných od z13. Výsledok je
 nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia len od
 územia, takže sa pri ďalšom builde mapy nepočítajú znova.
 
-Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default 10 m),
-`contour_maxzoom` (default 14) a `contour_smoothing` (default 0 = bez
-zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
+Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default
+10 m; zvýrazňuje sa každá 10. čiara ako hlavná a každá 5. ako polovičná, čiže
+pri 10 m sú to doterajších 100 a 50 m), `contour_maxzoom` (default 14) a
+`contour_smoothing` (default 0 = bez zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
 prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 
 ### Tieňovanie reliéfu a 3D terén
@@ -215,22 +216,35 @@ DEM
   → gdalwarp -t_srs EPSG:3035     do metrickej projekcie (v stupňoch by sklon
                                   vyšiel skreslený – 1° po dĺžke je u nás
                                   o tretinu kratší než 1° po šírke),
-                                  mriežka 2 m (`rock_res`)
+                                  mriežka `rock_res` (auto = najjemnejšia,
+                                  ktorá sa zmestí do času a má pri danom
+                                  DEM ešte zmysel)
   → gdaldem slope                 sklon v stupňoch
-  → gdal_translate -ot Byte       sklon s krokom 0,5° na disk (mozaika celého
+  → gdal_translate -ot Int16      sklon v stotinách ° na disk (mozaika celého
                                   územia sa vo Float32 nezmestí)
   → gdalbuildvrt                  mozaika sklonu, a až nad ňou NARAZ:
-  → gdal_contour -p -fl 100 130   izolínie sklonu ako PLOCHY, aj s dierami
+  → gdal_contour -p -fl …         izolínie sklonu ako PLOCHY, aj s dierami
                                   (hladší okraj než polygonizácia po pixeloch)
   → -explodecollections           samostatné skaly
   → filter najmenšej plochy       + `class`: steep (≥50°) / cliff (≥65°)
+  → -simplify                     preč so schodíkmi po hranách buniek
+  → smooth-polygons.py            zaoblenie rohov, ktoré po zjednodušení
+                                  ostali ostré (Chaikin, 2 prechody)
   → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
 ```
 
 **Tvar plôch je tvar terénu.** Obrys je izolínia sklonu, teda presne tá čiara,
-kde svah prekročí prah – zubatý pás pod hrebeňom, oblúk okolo žľabu, ostrov
+kde svah prekročí prah – členitý pás pod hrebeňom, oblúk okolo žľabu, ostrov
 brala v suti. Žiadna mriežka štvorčekov (tá tu bola do augusta 2026 a je
 preč).
+
+**Obrys je zaoblený, nie zubatý.** Samotná izolínia zubatá nie je (priemerný
+lom medzi segmentmi 4,6°) – zubatou ju robilo až zjednodušenie, ktoré tie
+státisíce bodov zredukuje (28,5°). Preto sa po zjednodušení rohy ešte zaoblia
+Chaikinovým orezávaním: dva prechody dajú 7,7°, čo je hladšie než pôvodný
+raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
+neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
+v `workers/smooth-polygons.py`.
 
 **Čo nie je nad prahom, sa nezafarbí.** Keď je vnútri steny miesto s menším
 sklonom – polica, terasa, zarastený stupeň – vypadne z plochy **diera**, aj
@@ -265,22 +279,26 @@ veľké steny a s približovaním pribúdajú detaily.
 
 | vec | hodnota |
 |---|---|
-| mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`; `1` dá 1 m²) |
+| mriežka, na ktorej sa obrys počíta | **auto** (`rock_res`) – najjemnejšia, ktorá sa zmestí do času a má pri danom DEM zmysel |
 | krok sklonu v mozaike | **0,01°** (Int16) – hrubší krok robil obrys zubatý |
 | zjednodušenie obrysu | štvrtina mriežky (`ROCK_SIMPLIFY: -1`) – zmaže schodíky |
+| zaoblenie rohov | **2× Chaikin** (`ROCK_SMOOTH: 2`) – priemerný lom 28,5° → 7,7° |
 | bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
 | najmenšia ponechaná plocha | jedna bunka mriežky: **4 m²** pri 2 m, **1 m²** pri 1 m |
-| zjednodušovanie obrysu | žiadne (`ROCK_SIMPLIFY: 0`) |
 | filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
 
 Presné čísla za konkrétny beh (počet plôch, najmenšia/priemerná/najväčšia
 plocha, koľko km² skál, koľko plôch má dieru a koľko km² diery vykrojili) píše
 build do **Summary** – viď [Súhrn buildu](#súhrn-buildu).
 
-**Detail na 1 m² sa dá zapnúť** – `rock_res: 1`. Najmenšia ponechaná plocha je
-potom naozaj 1 m². Cena: 4× viac buniek, teda pre celý kraj okolo dvoch hodín,
-takže to má zmysel len s `crop_bbox`. A platí to isté ako vyššie: zdrojový DEM
-má 20 m, takže sú to jemnejšie *obrysy a diery*, nie nové merania terénu.
+**Mriežku vyberá `auto` a vypíše prečo.** Prejde rebríček 0,5 / 1 / 1,5 / 2 /
+3 / 4 / 5 / 8 / 10 / 15 / 20 m a zoberie najjemnejšiu, ktorá sa zmestí do
+rozpočtu času (`ROCK_BUDGET_MIN`) a nie je jemnejšia než desatina bunky
+zdrojového DEM. Pri Sonnym (20 m) z toho vždy vyjde **2 m** – jemnejšia
+mriežka by len interpolovala medzi tými istými výškami, stála 4× viac času a
+nepridala ani jeden nový tvar terénu. Skutočný skok v detaile prinesie až
+`dem_source: ugkk` (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
+natvrdo (`rock_res: 1`).
 
 > **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
 > obrys odkrokovaný. Skutočný detail je ale stropený zdrojom: Sonny má pre
@@ -423,10 +441,14 @@ rozpočtu (`ROCK_BUDGET_MIN`, default 100 min):
 (2) rock_area na výrez s ~64 % plochy – napr. vysoke_tatry, tatry, …
 ```
 
+Presne z tohto odhadu vyberá aj `rock_res: auto` – len ho použije **dopredu**
+a zoberie najjemnejšiu mriežku so ✓ (zdola stropenú desatinou bunky DEM),
+namiesto toho, aby beh po hodine odmietol.
+
 | územie | `rock_res` | buniek | odhad | |
 |---|--:|--:|--:|---|
 | Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 | ✗ odmietne |
-| Prešovský kraj | **2 m (default)** | 5,27 mld. | 0:42:18 | ✓ |
+| Prešovský kraj | **2 m (auto pri Sonnym)** | 5,27 mld. | 0:42:18 | ✓ |
 | Prešovský kraj | 3 m | 2,57 mld. | 0:20:38 | ✓ |
 | Tatry | 1 m | 1,34 mld. | 0:10:46 | ✓ |
 | Vysoké Tatry | 1 m | 0,71 mld. | 0:05:44 | ✓ |
@@ -487,10 +509,11 @@ hranicu časti, takže susedné kusy na seba nadväzujú bez medzery ani prekryv
 ~2 hodiny.**
 
 Ovládanie vo workflowe: `rocks` (zap/vyp), `rock_slope` (od akého sklonu je
-terén skala, default 50°) a `rock_res` (mriežka obrysu v metroch, default 2).
-Ostatné ladenie je v `env:` na začiatku
+terén skala, default 50°) a `rock_res` (mriežka obrysu v metroch alebo
+`auto`, default `auto`). Ostatné ladenie je v `env:` na začiatku
 [build-map.yml](.github/workflows/build-map.yml): `ROCK_SIMPLIFY` (0 = presný
-obrys), `ROCK_CLIFF_PLUS` (o koľko ° nad prahom začína trieda `cliff`),
+obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
+`ROCK_CLIFF_PLUS` (o koľko ° nad prahom začína trieda `cliff`),
 `ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
 (verzia algoritmu v mene uloženého assetu).
 
@@ -883,9 +906,9 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
    | `dem_source` | výber | `sonny` (20 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
    | `layers` | text | čo generovať: `contours,terrain,trails` |
-   | `contour_interval` | text | interval vrstevníc v metroch |
+   | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
-   | `rock_res` | text | mriežka na obrys skál (2 m; `1` dá detail na 1 m²) |
+   | `rock_res` | text | mriežka na obrys skál – `auto` (odporúčané) alebo číslo v metroch |
    | `maxzoom` | text | max zoom mapových dlaždíc |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` |
