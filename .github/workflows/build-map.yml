@@ -33,38 +33,60 @@ on:
           - presovsky
           - kosicky
       area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto území: názov pohoria (vysoke_tatry, tatry, slovensky_raj… viď workers/areas.json) alebo bbox W,S,E,N. Prázdne = celý región"
+        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Vlastný bbox cez options: area_bbox=W,S,E,N"
         required: false
-        default: ""
-        type: string
+        default: cely_region
+        type: choice
+        options:
+          - cely_region
+          - tatry
+          - vysoke_tatry
+          - belianske_tatry
+          - zapadne_tatry
+          - nizke_tatry
+          - slovensky_raj
+          - pieniny
+          - mala_fatra
+          - velka_fatra
+          - sulovske_skaly
+          - slovensky_kras
+          - muranska_planina
+          - vihorlat
+          - strazovske_vrchy
+          - male_karpaty
       dem_source:
-        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. ugkk = 1 m LiDAR ÚGKK, podrobnejšie, ale LEN s výrezom (area)"
+        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. ugkk = 1 m LiDAR ÚGKK, podrobnejšie, ale LEN s výrezom"
         required: false
         default: sonny
         type: choice
         options:
           - sonny
           - ugkk
+      layers:
+        description: "Čo generovať, oddelené čiarkou: contours (vrstevnice a skaly), terrain (tieňovanie a 3D), trails (značené trasy)"
+        required: false
+        default: "contours,terrain,trails"
+        type: string
+      contour_interval:
+        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie)"
+        required: false
+        default: "10"
+        type: string
+      rock_slope:
+        description: "Od akého sklonu (°) je terén skala – 50 = steny, 40 = aj strmé svahy (oveľa väčšie plochy)"
+        required: false
+        default: "50"
+        type: string
+      rock_res:
+        description: "Mriežka na obrys skál v metroch (2 = default; 1 dá detail na 1 m², ale 4× dlhšie)"
+        required: false
+        default: "2"
+        type: string
       maxzoom:
         description: "Max zoom mapových dlaždíc – Planetiler zvládne najviac 16"
         required: false
         default: "16"
         type: string
-      contours:
-        description: "Vrstevnice a skaly z DEM"
-        required: false
-        default: true
-        type: boolean
-      terrain:
-        description: "Tieňovanie reliéfu a 3D terén"
-        required: false
-        default: true
-        type: boolean
-      trails:
-        description: "Značené trasy z OSM relácií"
-        required: false
-        default: true
-        type: boolean
       rebuild:
         description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
         required: false
@@ -77,7 +99,7 @@ on:
           - teren
           - vsetko
       options:
-        description: "Ostatné nastavenia ako kľúč=hodnota, oddelené medzerou. Napr. `rock_slope=55 rock_res=1 contour_interval=5`. Zoznam kľúčov je vo workers/parse-options.py"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Zoznam kľúčov je vo workers/parse-options.py"
         required: false
         default: ""
         type: string
@@ -151,7 +173,7 @@ jobs:
     name: Kontrola výškového modelu
     needs: plan
     runs-on: ubuntu-latest
-    if: ${{ inputs.contours || inputs.terrain }}
+    if: ${{ needs.plan.outputs.opt_contours == 'true' || needs.plan.outputs.opt_terrain == 'true' }}
     outputs:
       needed: ${{ steps.check.outputs.needed }}
       demkey: ${{ steps.check.outputs.demkey }}
@@ -275,19 +297,22 @@ jobs:
       area_name: ${{ steps.area.outputs.name }}
       area_bbox: ${{ steps.area.outputs.bbox }}
       area_km2: ${{ steps.area.outputs.km2 }}
+      opt_contours: ${{ steps.opts.outputs.opt_contours }}
+      opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
+      opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_crop_bbox: ${{ steps.opts.outputs.opt_crop_bbox }}
       opt_size_limit_mb: ${{ steps.opts.outputs.opt_size_limit_mb }}
       opt_auto_shrink: ${{ steps.opts.outputs.opt_auto_shrink }}
       opt_ugkk_fallback: ${{ steps.opts.outputs.opt_ugkk_fallback }}
       opt_ugkk_urls: ${{ steps.opts.outputs.opt_ugkk_urls }}
-      opt_contour_interval: ${{ steps.opts.outputs.opt_contour_interval }}
+      opt_contour_interval: ${{ inputs.contour_interval }}
       opt_contour_maxzoom: ${{ steps.opts.outputs.opt_contour_maxzoom }}
       opt_contour_smoothing: ${{ steps.opts.outputs.opt_contour_smoothing }}
       opt_trails_maxzoom: ${{ steps.opts.outputs.opt_trails_maxzoom }}
       opt_terrain_maxzoom: ${{ steps.opts.outputs.opt_terrain_maxzoom }}
       opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
-      opt_rock_slope: ${{ steps.opts.outputs.opt_rock_slope }}
-      opt_rock_res: ${{ steps.opts.outputs.opt_rock_res }}
+      opt_rock_slope: ${{ inputs.rock_slope }}
+      opt_rock_res: ${{ inputs.rock_res }}
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
@@ -322,7 +347,8 @@ jobs:
           set -euo pipefail
           python3 workers/parse-options.py \
             --options='${{ inputs.options }}' \
-            --rebuild='${{ inputs.rebuild }}' --out="$GITHUB_OUTPUT"
+            --rebuild='${{ inputs.rebuild }}' \
+            --layers='${{ inputs.layers }}' --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
         id: day
@@ -441,14 +467,23 @@ jobs:
         id: area
         run: |
           set -euo pipefail
-          python3 workers/resolve-area.py \
+          # Vlastný bbox z options prebije výber pohoria – výber je na
+          # bežné použitie, bbox na to, čo v zozname nie je.
+          AREA='${{ inputs.area }}'
+          AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
+          [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
+          # stdout aj do premennej: kľúč výrezu treba hneď na kontrolu nižšie
+          # a na vlastné výstupy sa krok odkazovať nemôže.
+          RESOLVED=$(python3 workers/resolve-area.py \
             --region-bbox='${{ steps.region.outputs.bbox }}' \
-            --area='${{ inputs.area }}' --out="$GITHUB_OUTPUT"
+            --area="$AREA" --out="$GITHUB_OUTPUT")
+          echo "$RESOLVED"
+          AREA_KEY=$(printf '%s\n' "$RESOLVED" | sed -n 's/^key=//p')
 
           # 1 m model na celý kraj je 16 miliárd buniek (64 GB) – to sa
           # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
           # zistiť to po hodine sťahovania nie.
-          if [ '${{ inputs.dem_source }}' = 'ugkk' ] && [ -z '${{ inputs.area }}' ]; then
+          if [ '${{ inputs.dem_source }}' = 'ugkk' ] && [ "$AREA_KEY" = 'cely' ]; then
             echo "::error::dem_source: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry) alebo použi dem_source: sonny."
             exit 1
           fi
@@ -515,7 +550,7 @@ jobs:
             # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
             # vrátili z cache ako keby to boli skaly celého kraja.
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
-            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ needs.plan.outputs.opt_contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ needs.plan.outputs.opt_rock_slope }}g${{ needs.plan.outputs.opt_rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
+            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py') }}"
             echo "demtiles=demtiles-$D-$B"
             echo "terrain=terrain-v1-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
@@ -548,7 +583,7 @@ jobs:
   contours:
     name: Vrstevnice a skaly
     needs: [plan, keys]
-    if: ${{ !cancelled() && inputs.contours }}
+    if: ${{ !cancelled() && needs.plan.outputs.opt_contours == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
@@ -614,7 +649,7 @@ jobs:
       # záznam už zmazal krok „Pregenerovanie", nech sa dá uložiť nový.
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
-        if: ${{ inputs.contours && !needs.plan.outputs.opt_contours_rebuild && !needs.plan.outputs.opt_rocks_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && !needs.plan.outputs.opt_contours_rebuild && !needs.plan.outputs.opt_rocks_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: contours-out
@@ -625,14 +660,14 @@ jobs:
       # nikdy: sú to stiahnuté dáta, nie výpočet.
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
-        if: ${{ inputs.contours }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: dem/tiles
           key: ${{ needs.keys.outputs.demtiles }}
 
       - name: Vrstevnice a skaly z DEM
-        if: ${{ inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -644,7 +679,7 @@ jobs:
 
           BBOX='${{ needs.plan.outputs.bbox }}'
           IFS=, read -r W S E N <<< "$BBOX"
-          INTERVAL='${{ needs.plan.outputs.opt_contour_interval }}'
+          INTERVAL='${{ inputs.contour_interval }}'
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
 
           # ---------- výrez na testovanie ----------
@@ -732,10 +767,10 @@ jobs:
           # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster), takže naraz
           # sa to spočítať nedá.
           T_ROCK=$(date +%s)
-          ROCK_SLOPE='${{ needs.plan.outputs.opt_rock_slope }}'
+          ROCK_SLOPE='${{ inputs.rock_slope }}'
           case "$ROCK_SLOPE" in ''|*[!0-9]*) ROCK_SLOPE=50 ;; esac
           ROCK_CLIFF=$(( ROCK_SLOPE + ROCK_CLIFF_PLUS ))
-          RR='${{ needs.plan.outputs.opt_rock_res }}'
+          RR='${{ inputs.rock_res }}'
           case "$RR" in ''|*[!0-9.]*) RR="$ROCK_RES" ;; esac
           # Najmenšia skala = jedna bunka mriežky. Menší útvar už nie je tvar
           # terénu, ale zubaté rohy jedinej bunky.
@@ -893,7 +928,7 @@ jobs:
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
       - name: Cache vrstevníc a skál (save)
-        if: ${{ always() && inputs.contours && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
+        if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -901,7 +936,7 @@ jobs:
           key: ${{ needs.keys.outputs.contours }}
 
       - name: Cache DEM dlaždíc (save)
-        if: ${{ always() && inputs.contours && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/tiles/**') != '' }}
+        if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/tiles/**') != '' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -910,7 +945,7 @@ jobs:
 
       - name: Zaraď vrstevnice do webu
         id: contours
-        if: ${{ inputs.contours }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' }}
         run: |
           set -euo pipefail
           mkdir -p _site/tiles
@@ -951,10 +986,10 @@ jobs:
       # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
       # pre artefakty dovolí.
       - name: Odlož skaly a vrstevnice ako artefakt
-        if: ${{ inputs.contours && hashFiles('data/rock.gpkg') != '' }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: teren-${{ needs.plan.outputs.key }}-s${{ needs.plan.outputs.opt_rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
+          name: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ inputs.rock_res }}
           path: |
             data/rock.gpkg
             data/contours.gpkg
@@ -997,7 +1032,7 @@ jobs:
   terrain:
     name: Tieňovanie a 3D terén
     needs: [plan, keys]
-    if: ${{ !cancelled() && inputs.terrain }}
+    if: ${{ !cancelled() && needs.plan.outputs.opt_terrain == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -1033,7 +1068,7 @@ jobs:
 
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
-        if: ${{ inputs.terrain && !needs.plan.outputs.opt_terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_terrain == 'true' && !needs.plan.outputs.opt_terrain_rebuild }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out
@@ -1041,7 +1076,7 @@ jobs:
 
       - name: Tieňovanie reliéfu (PNG dlaždice zo Sonnyho)
         id: terrain
-        if: ${{ inputs.terrain }}
+        if: ${{ needs.plan.outputs.opt_terrain == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1109,7 +1144,7 @@ jobs:
             >> steps-out/terrain.tsv
 
       - name: Cache výškových dlaždíc (save)
-        if: ${{ always() && inputs.terrain && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
+        if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
@@ -1151,7 +1186,7 @@ jobs:
   trails:
     name: Značené trasy
     needs: plan
-    if: ${{ !cancelled() && inputs.trails }}
+    if: ${{ !cancelled() && needs.plan.outputs.opt_trails == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -1777,7 +1812,7 @@ jobs:
             --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
-            --argjson cinterval '${{ needs.plan.outputs.opt_contour_interval || '10' }}' \
+            --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
             --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
             --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \

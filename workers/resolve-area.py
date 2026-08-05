@@ -32,6 +32,10 @@ def main():
 
     region = [float(v) for v in args.region_bbox.split(",")]
     raw = (args.area or "").strip()
+    # Vo formulári sa „celý región" nedá vyjadriť prázdnou položkou výberu,
+    # tak má vlastný názov. Tu je to to isté ako prázdno.
+    if raw == "cely_region":
+        raw = ""
 
     if not raw:
         key, name, bbox = "cely", "celý región", region
