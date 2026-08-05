@@ -88,17 +88,30 @@ def try_arcgis(bbox, tmp, sources, tile_px=4000):
     src = json.load(open(sources))["ugkk"]
     # Keď hostiteľ neodpovedá, nemá zmysel skúšať šesť ciest na tom istom
     # stroji – je to šesťkrát ten istý timeout a tá istá odpoveď.
-    ok, why = _probe.host_reachable(src["directory"])
-    if not ok:
-        print(f"  ✗ {urllib.parse.urlparse(src['directory']).hostname} neodpovedá "
-              f"({why}) – ArcGIS cesty preskakujem.")
-        return None
     candidates = list(src["candidates"])
-    # Adresár služieb doplní, čo sme nevedeli – názvy nie sú zdokumentované.
-    try:
-        candidates += _probe.probe_directory(src["directory"])
-    except Exception:
-        pass
+
+    # Katalóg najprv: je to iný hostiteľ a dáva SKUTOČNÉ URL služieb namiesto
+    # uhádnutých názvov. Keď prejde, ďalej sa už nehádá.
+    if src.get("catalog"):
+        print("  hľadám služby v metadátovom katalógu…")
+        try:
+            found = _probe.discover_from_catalog(src["catalog"])
+            candidates = [u for u in found if "ImageServer" in u or "WCS" in u.upper()] + candidates
+        except Exception as exc:
+            print(f"   – katalóg zlyhal: {type(exc).__name__}")
+
+    for d in src.get("directories", src.get("directory") and [src["directory"]] or []):
+        ok, why = _probe.host_reachable(d)
+        if not ok:
+            print(f"  ✗ {urllib.parse.urlparse(d).hostname} neodpovedá ({why})")
+            continue
+        try:
+            candidates += _probe.probe_directory(d)
+        except Exception:
+            pass
+
+    if not candidates:
+        return None
 
     service = None
     for url in dict.fromkeys(candidates):

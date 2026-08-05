@@ -318,33 +318,43 @@ Build map
        └─ contours    stiahne COG z releasu a počíta
 ```
 
-> **ÚGKK služby z GitHub runnera nefungujú – zmerané, nie odhadnuté.**
-> V behu [30997189220](https://github.com/skifahrer/fricomaps/actions/runs/30997189220)
-> neodpovedal ani adresár služieb, ani jeden z ImageServerov, ani WCS:
-> HTTPS požiadavka na `skgeodesy.sk` z runnera jednoducho neprejde. Nie sú to
-> zle uhádnuté názvy služieb – na ten stroj sa odtiaľ nedá dostať vôbec.
-> Odkazy zo ZBGIS Mapového klienta v `ugkk_urls` preto tiež nepomôžu, sú na
-> tej istej doméne.
+> **Zrkadlo skúša štyri cesty a v každej sa tvári ako prehliadač.**
+> Geoportály za WAF-om bežne zahadzujú požiadavky, ktoré nevyzerajú ako
+> prehliadač – a nezahadzujú ich chybou, ale **tichom**, čo v logu vyzerá
+> presne ako výpadok siete. V behu
+> [30997189220](https://github.com/skifahrer/fricomaps/actions/runs/30997189220)
+> to bol práve timeout, takže to stálo za skúšku.
 >
-> Zisťuje sa to teraz za **2 sekundy** (predtým to bolo 6 min 50 s čakania na
-> timeouty) a build sa kvôli tomu **nezastaví**: s `ugkk_fallback` (default
-> zapnuté) dopočíta terén zo Sonnyho 20 m a napíše to do súhrnu aj do
-> atribúcie mapy. Nikdy netvrdí ÚGKK tam, kde je Sonny.
+> | # | cesta | poznámka |
+> |--:|---|---|
+> | 1 | priame URL (`ugkk_urls`) | čo si zadal ručne |
+> | 2 | **metadátový katalóg RPI** | dá *skutočné* URL služieb namiesto uhádnutých názvov – a je to iný hostiteľ |
+> | 3 | ArcGIS `exportImage` | kandidáti + čo sa nájde v adresári služieb |
+> | 4 | WCS `GetCoverage` | |
 >
-> **Čo naozaj funguje** – raz ručne, potom to už len sťahuje:
+> Každá požiadavka ide postupne ako **Safari 17 → Chrome 124 → ArcGIS Pro →
+> fricomaps**, a keď neprejde ani jeden, ešte raz cez **`curl` s HTTP/2** –
+> lebo časť WAF-ov blokuje podľa TLS odtlačku spojenia, nie podľa hlavičiek,
+> a curl má iný TLS stack než Python.
 >
-> 1. ZBGIS Mapový klient → *Terén → Export údajov → DMR 5.0*, vyber územie
->    (do 400 km²)
-> 2. ```
->    gdalbuildvrt all.vrt *.tif
->    gdal_translate -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 \
->      all.vrt ugkk-vysoke_tatry.tif
->    gh release upload dem-ugkk ugkk-vysoke_tatry.tif --clobber
->    ```
+> **Prvý krok zrkadla je diagnostika**, ktorá to celé zmeria a napíše do
+> Summary maticu hostiteľ × profil:
 >
-> Odvtedy `check-dem` výrez v release nájde, zrkadlo sa vôbec nespustí
-> a `dem_source: ugkk` funguje. Presne ten istý postup ako pri Sonnym, len
-> ten sa dá stiahnuť automaticky a tento nie.
+> ```
+>    zbgis.skgeodesy.sk                     URL!      URL!      URL!      URL!       000
+>    rpi.gov.sk                             URL!      URL!      URL!      URL!       000
+>    pypi.org                                200       200       200       200       200
+>                                         Safari    Chrome    ArcGIS  fricomaps      curl
+> ```
+>
+> Riadok `pypi.org` je kontrolný: keď je 200 a ÚGKK riadky nie, problém je na
+> ich strane. Keď nie je 200 ani pypi, je rozbitá sieť runnera. Bez tohto sa
+> „nefunguje to" nedá odlíšiť od „nefunguje to takto".
+
+> **Testované som to však nemal kde.** Sieť prostredia, v ktorom sa to písalo,
+> blokuje `*.skgeodesy.sk`, `geoportal.sk` aj `rpi.gov.sk`. Overená je
+> mechanika (rotácia profilov prešla proti dostupnému hostiteľovi), nie to,
+> či ÚGKK pustí Safari. To povie prvý beh – v matici vyššie.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.

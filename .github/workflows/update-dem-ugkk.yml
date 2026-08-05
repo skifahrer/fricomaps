@@ -74,6 +74,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin
 
+      # Diagnostika ako PRVÁ vec: matica hostiteľ × profil prehliadača.
+      # Odpovedá na otázku „pomôže tváriť sa ako Safari?" dátami, nie dohadmi,
+      # a je z nej hneď vidieť, či je problém na strane ÚGKK, alebo v sieti
+      # runnera (kontrolný riadok pypi.org musí byť 200).
+      - name: Odkiaľ sa kam dá dostať
+        continue-on-error: true
+        run: |
+          python3 workers/probe-dem-source.py --diagnose | tee /tmp/diag.txt
+          {
+            echo "## Dostupnosť zdrojov z runnera"
+            echo
+            echo '```'
+            cat /tmp/diag.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Vyrieš výrez
         id: area
         run: |

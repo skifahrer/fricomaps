@@ -22,12 +22,55 @@ Použitie:
 import argparse
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 
-UA = {"User-Agent": "fricomaps-dem-probe/1 (+https://github.com/skifahrer/fricomaps)"}
+# Geoportály za WAF-om (Imperva, F5, Cloudflare) bežne zahadzujú požiadavky,
+# ktoré nevyzerajú ako prehliadač – a nezahadzujú ich chybou, ale tichom, čo
+# vyzerá presne ako výpadok siete. V behu 30997189220 to bol práve timeout,
+# takže sa oplatí vyskúšať aj toto, než to odpíšeme.
+#
+# Skúša sa viac profilov, lebo blokovanie býva podľa celej sady hlavičiek,
+# nie len podľa User-Agenta.
+BROWSERS = [
+    ("Safari 17 / macOS", {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                      "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                      "Version/17.4 Safari/605.1.15",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "sk-SK,sk;q=0.9,en;q=0.8",
+        "Connection": "keep-alive",
+    }),
+    ("Chrome 124 / Windows", {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                  "image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "sk-SK,sk;q=0.9,en-US;q=0.8",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Upgrade-Insecure-Requests": "1",
+    }),
+    ("ArcGIS klient", {
+        # Niektoré ArcGIS servery naopak púšťajú len „svojich" klientov.
+        "User-Agent": "ArcGIS Pro 3.2 (Esri)",
+        "Accept": "*/*",
+        "Referer": "https://zbgis.skgeodesy.sk/mkzbgis/",
+    }),
+    ("fricomaps", {
+        "User-Agent": "fricomaps-dem/1 (+https://github.com/skifahrer/fricomaps)",
+        "Accept": "*/*",
+    }),
+]
+
+# Predvolené hlavičky sú prvý profil – tvárime sa ako prehliadač, nie ako
+# script. Ktorý profil naozaj prešiel, hlási `smart_get`.
+UA = dict(BROWSERS[0][1])
 # Malý výrez vo Vysokých Tatrách – Gerlachovský štít a okolie. Musí byť
 # niekde, kde LiDAR určite je, inak by prázdna odpoveď vyzerala ako chyba.
 TEST_BBOX = (20.12, 49.15, 20.16, 49.18)
@@ -52,24 +95,100 @@ def host_reachable(url, timeout=8):
     """
     p = urllib.parse.urlparse(url)
     root = f"{p.scheme}://{p.netloc}/"
+    for name, headers in BROWSERS:
+        try:
+            req = urllib.request.Request(root, headers=headers, method="GET")
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return True, f"HTTP {r.status} ({name})"
+        except urllib.error.HTTPError as exc:
+            # 403/404 na koreni je v poriadku – server existuje a odpovedá.
+            return True, f"HTTP {exc.code} ({name})"
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+    # Ešte curl – iný TLS stack prejde cez niektoré WAF-y tam, kde python nie.
     try:
-        req = urllib.request.Request(root, headers=UA, method="HEAD")
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return True, f"HTTP {r.status}"
-    except urllib.error.HTTPError as exc:
-        # 403/404 na koreni je v poriadku – server existuje a odpovedá.
-        return True, f"HTTP {exc.code}"
+        r = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+                            "--http2", "--max-time", str(timeout), "-A",
+                            BROWSERS[0][1]["User-Agent"], root],
+                           capture_output=True, timeout=timeout + 5)
+        code = r.stdout.decode(errors="replace").strip()
+        if code and code != "000":
+            return True, f"HTTP {code} (curl)"
+        last = "curl: " + r.stderr[:80].decode(errors="replace").strip().replace("\n", " ")
     except Exception as exc:
-        return False, f"{type(exc).__name__}: {exc}"
+        last = f"curl: {type(exc).__name__}"
+    return False, last
+
+
+def smart_get(url, timeout=DEFAULT_TIMEOUT, want_binary=True):
+    """Stiahne URL a skúša pritom vyzerať ako prehliadač.
+
+    Vracia (dáta, čím sa to podarilo) alebo (None, zoznam pokusov). Skúša:
+      1. každý profil hlavičiek cez urllib,
+      2. `curl` s tými istými hlavičkami – iný TLS stack a HTTP/2, čo prejde
+         cez WAF-y, ktoré blokujú podľa TLS odtlačku (JA3), nie podľa hlavičiek.
+    """
+    tried = []
+    for name, headers in BROWSERS:
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read(), f"urllib / {name}"
+        except Exception as exc:
+            tried.append(f"urllib/{name}: {type(exc).__name__}")
+
+    # curl má vlastný TLS stack a vie HTTP/2 – tam, kde blokujú podľa
+    # odtlačku spojenia, python neprejde a curl áno (alebo naopak).
+    name, headers = BROWSERS[0]
+    cmd = ["curl", "-sS", "--fail", "--http2", "--compressed",
+           "--max-time", str(int(timeout * 2)), "-L"]
+    for k, v in headers.items():
+        cmd += ["-H", f"{k}: {v}"]
+    cmd.append(url)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=timeout * 3)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout, f"curl / {name}"
+        tried.append(f"curl: rc={r.returncode} {r.stderr[:60].decode(errors='replace')}")
+    except Exception as exc:
+        tried.append(f"curl: {type(exc).__name__}")
+    return None, tried
 
 
 def fetch(url, params=None, timeout=DEFAULT_TIMEOUT, binary=False):
     if params:
         url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = r.read()
+    data, how = smart_get(url, timeout=timeout)
+    if data is None:
+        raise urllib.error.URLError("; ".join(how))
     return data if binary else json.loads(data.decode("utf-8", "replace"))
+
+
+def discover_from_catalog(urls, timeout=DEFAULT_TIMEOUT):
+    """Vytiahne URL služieb z metadátového katalógu (RPI / geoportal.gov.sk).
+
+    Hádať názvy služieb je slabé. Slovenský Register priestorových informácií
+    má pre DMR 5.0 metadátové záznamy a v nich `distributionInfo` s URL na
+    služby – to je to isté, čo by človek našiel klikaním, len bez klikania.
+    Navyše je to iný hostiteľ, takže to môže prejsť aj tam, kde skgeodesy nie.
+    """
+    import re
+    found = []
+    for url in urls:
+        data, how = smart_get(url, timeout=timeout)
+        if data is None:
+            print(f"   – katalóg {url}: {how[0] if isinstance(how, list) else how}")
+            continue
+        text = data.decode("utf-8", "replace")
+        hits = re.findall(
+            r'https?://[^\s"\'<>\\]+?(?:ImageServer|MapServer|/wcs|/wms|WCSServer|'
+            r'WMSServer|\.tif|\.zip)[^\s"\'<>\\]*', text, re.I)
+        uniq = list(dict.fromkeys(hits))
+        print(f"   ✓ katalóg {url} ({how}) – {len(uniq)} odkazov na služby")
+        for u in uniq[:20]:
+            print(f"       {u}")
+        found += uniq
+    return found
 
 
 def probe_directory(url):
@@ -149,13 +268,65 @@ def probe_export(url, bbox):
     return {"ok": True, "bytes": len(raw), "px": f"{px}×{py}"}
 
 
+def diagnose(sources):
+    """Matica hostiteľ × profil prehliadača – odkiaľ sa kam dá dostať.
+
+    Toto je jediný spôsob, ako na otázku „pomôže tváriť sa ako Safari?"
+    odpovedať dátami. Beží to na runneri, kde je sieť, ktorá o to ide.
+    """
+    src = json.load(open(sources))["ugkk"]
+    hosts = []
+    for u in (src.get("directories", []) + src.get("candidates", [])
+              + src.get("wcs", []) + src.get("catalog", [])):
+        h = urllib.parse.urlparse(u).netloc
+        if h and h not in hosts:
+            hosts.append(h)
+    # Kontrolný hostiteľ: keď neprejde ani ten, problém je v sieti runnera,
+    # nie na strane ÚGKK.
+    hosts.append("pypi.org")
+
+    print("── Dostupnosť hostiteľov (GET na koreň, každý profil zvlášť)")
+    rows = []
+    for h in hosts:
+        cells = []
+        for name, headers in BROWSERS:
+            try:
+                req = urllib.request.Request(f"https://{h}/", headers=headers)
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    cells.append(f"{r.status}")
+            except urllib.error.HTTPError as exc:
+                cells.append(f"{exc.code}")
+            except Exception as exc:
+                cells.append(type(exc).__name__.replace("Error", "!"))
+        try:
+            r = subprocess.run(["curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+                                "--http2", "--max-time", "10", "-A",
+                                BROWSERS[0][1]["User-Agent"], f"https://{h}/"],
+                               capture_output=True, timeout=15)
+            cells.append(r.stdout.decode(errors="replace").strip() or "000")
+        except Exception:
+            cells.append("000")
+        rows.append((h, cells))
+        print(f"   {h:<34} " + "  ".join(f"{c:>8}" for c in cells))
+    print("   " + " " * 34 + "  ".join(f"{n.split()[0]:>8}" for n, _ in BROWSERS)
+          + f"  {'curl':>8}")
+    print("\n   (číslo = HTTP kód, teda server odpovedal; skratka = výnimka)")
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--diagnose", action="store_true",
+                    help="len matica dostupnosti hostiteľov, nič nesťahuj")
     ap.add_argument("--sources", default="workers/dem-sources.json")
     ap.add_argument("--bbox", default=",".join(str(v) for v in TEST_BBOX))
     ap.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY", ""))
     args = ap.parse_args()
     bbox = tuple(float(v) for v in args.bbox.split(","))
+
+    if args.diagnose:
+        diagnose(args.sources)
+        return 0
 
     src = json.load(open(args.sources))["ugkk"]
     print(f"Hľadám: {src['label']}")

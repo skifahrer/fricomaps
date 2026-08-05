@@ -42,6 +42,7 @@
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5/ImageServer",
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/DMR5_0/ImageServer",
       "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer",
+      "https://mapy.geoportal.sk/arcgis/rest/services/dmr5_0/ImageServer",
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr3_5_10/ImageServer"
     ],
     "wcs": [
@@ -56,10 +57,22 @@
       "DMR5_0"
     ],
     "_comment_fallback": [
-      "Cesty sa skúšajú po poradí: priame URL (ak sú zadané) → ArcGIS ImageServer",
-      "→ WCS. Posledná záchrana sú priame URL z vládneho cloudu alebo zo ZBGIS",
-      "Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²) – tá",
-      "nezávisí od žiadnej služby a funguje vždy."
+      "Cesty sa skúšajú po poradí: priame URL (ak sú zadané) → objavenie služieb",
+      "z metadátového katalógu RPI (iný hostiteľ, môže prejsť aj tam, kde",
+      "skgeodesy nie) → ArcGIS ImageServer → WCS. Každá požiadavka ide s hlavičkami",
+      "prehliadača (Safari, potom Chrome, potom ArcGIS klient) a nakoniec cez curl",
+      "s HTTP/2 – WAF-y blokujú aj podľa TLS odtlačku, nie len podľa User-Agenta.",
+      "Posledná záchrana ostáva stiahnuť DMR 5.0 raz ručne a nahrať do releasu."
+    ],
+    "catalog": [
+      "https://rpi.gov.sk/rpi_csw/service.svc/get?SERVICE=CSW&VERSION=2.0.2&REQUEST=GetRecordById&ID=c310bf1e-68a0-43b9-9955-c7dad13a93aa&outputSchema=http://www.isotc211.org/2005/gmd&ElementSetName=full",
+      "https://rpi.gov.sk/rpi_csw/service.svc/get?SERVICE=CSW&VERSION=2.0.2&REQUEST=GetRecordById&ID=2a5ce05d-2223-4f0e-8764-f43ab881f586&outputSchema=http://www.isotc211.org/2005/gmd&ElementSetName=full",
+      "https://rpi.gov.sk/api/metadata/c310bf1e-68a0-43b9-9955-c7dad13a93aa",
+      "https://geoportal.gov.sk/gallery/datasets/detail/2a5ce05d-2223-4f0e-8764-f43ab881f586"
+    ],
+    "directories": [
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services",
+      "https://mapy.geoportal.sk/arcgis/rest/services"
     ]
   }
 }
