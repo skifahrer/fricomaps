@@ -241,6 +241,37 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja. Že sú skaly
   len na výreze, hlási build ako `::warning::` aj v súhrne – taký beh nie je
   na nasadenie, je na ladenie.
+- **Koľko to bude trvať, sa povie dopredu.** Skript ešte pred prvým
+  `gdalwarp`om vypíše plán – rozmer územia, počet buniek, koľko častí sa
+  preskočí, odhad času sklonu aj obrysov, veľkosť mozaiky a špičku pamäte –
+  a keď je odhad nad rozpočtom (`ROCK_BUDGET_MIN`, default 100 min), **vôbec
+  sa nezačne** a povie, čo zmenšiť. Trojhodinový beh, ktorý spadne na timeout
+  jobu, minie celý rozpočet a nevyrobí nič; toto to zastaví za pár sekúnd.
+  Konštanty sú namerané na runneri: sklon 5,1 mil. buniek/s, obrysy
+  3,5 mil./s.
+
+  | územie | `rock_res` | buniek | odhad |
+  |---|--:|--:|--:|
+  | Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 ✗ |
+  | Prešovský kraj | **2 m** | 5,27 mld. | 0:42:18 ✓ |
+  | Prešovský kraj | 3 m | 2,57 mld. | 0:20:38 ✓ |
+  | Tatry | 1 m | 1,34 mld. | 0:10:46 ✓ |
+  | Vysoké Tatry | 1 m | 0,71 mld. | 0:05:44 ✓ |
+  | Belianske Tatry | 1 m | 0,23 mld. | 0:01:49 ✓ |
+
+- **Počas výpočtu je vidieť, čo sa deje.** Pri počítaní sklonu ide po každej
+  časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky;
+  `gdal_contour` hlási percentá a nezávisle od neho beží *tep* každých 30 s
+  (`ROCK_HEARTBEAT_S`) s časom behu, pamäťou procesu a miestom na disku.
+  Predtým bola vektorizácia hodinu a pol úplne ticho a z logu sa nedalo
+  odlíšiť „počíta" od „zaseklo sa".
+- **Časti mimo územia sa preskočia.** EPSG:3035 je pootočená voči poludníkom,
+  takže obdĺžnik opísaný bboxu je v metroch väčší než región – pri Prešovskom
+  kraji 208×111 km namiesto 200×82 km. Časti, ktoré do bboxu vôbec
+  nezasahujú, sa nepočítajú (26 zo 170 pri 1 m).
+- **Poistka na pamäť.** Keď `gdal_contour` prekročí `ROCK_MAX_RSS_GB`
+  (default 12 GB), tep ho zastaví s hláškou – lepšie než tiché zabitie
+  runnera na OOM, po ktorom v logu nie je nič.
 - **Aký je to detail.** Obrys sa počíta na mriežke `rock_res` (default 2 m),
   najmenšia ponechaná plocha je **jedna bunka tejto mriežky** (pri 2 m teda
   4 m², pri 1 m rovno 1 m²) – menší útvar už nie je tvar terénu, ale zubaté

@@ -173,6 +173,13 @@ env:
   # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
   # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
+  # Koľko minút smú skaly trvať. Celý job má na runneri 3 hodiny a musí sa
+  # doň zmestiť aj mapa. Nad odhad sa výpočet vôbec nezačne – build to povie
+  # v prvých sekundách aj s tým, čo zmenšiť, namiesto trojhodinového behu do
+  # prázdna. (Prešovský kraj: pri 2 m ~40 min, pri 1 m ~2 h 40 min.)
+  ROCK_BUDGET_MIN: "100"
+  ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
+  ROCK_HEARTBEAT_S: "30" # ako často hlásiť, že sa stále počíta
 
 jobs:
   # ---------- je v release terén pre toto územie? ----------
@@ -733,11 +740,27 @@ jobs:
               echo "::group::Skaly – $ROCK_AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR} m, najmenšia plocha ${MIN_AREA} m²"
               # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
               # v rovine nič nenašiel), nemá to zhodiť hodinový build.
-              if python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$ROCK_BBOX" \
-                   --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
-                   --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
-                   --stats=contours-out/rock-stats.txt \
-                   --chunk-cells="$ROCK_CHUNK_CELLS" --out=data/rock.gpkg; then
+              # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
+              # pamäť). To nie je bonus, ktorý sa dá preskočiť – je to zlé
+              # zadanie a build sa má zastaviť hneď, nie nasadiť mapu bez
+              # skál po hodine práce. Iný nenulový kód je skutočné zlyhanie
+              # výpočtu a tam prázdna vrstva stačí.
+              set +e
+              python3 workers/rock-areas.py --dem=dem/all.vrt --bbox="$ROCK_BBOX" \
+                --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+                --min-area="$MIN_AREA" --simplify="$ROCK_SIMPLIFY" \
+                --stats=contours-out/rock-stats.txt \
+                --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
+                --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
+                --out=data/rock.gpkg
+              RC=$?
+              set -e
+              if [ "$RC" -eq 2 ]; then
+                echo "::endgroup::"
+                echo "::error::Výpočet skál sa nezačal – zadanie je nad možnosti runnera (viď hlášky vyššie). Uprav rock_res alebo rock_area a spusti znova."
+                exit 1
+              fi
+              if [ "$RC" -eq 0 ]; then
                 ls -lh data/rock.gpkg
                 # Ulož ich, nech ich nabudúce netreba počítať znova.
                 zstd -q -19 -T0 -f -o "/tmp/$ROCK_ASSET" data/rock.gpkg
@@ -1494,6 +1517,7 @@ jobs:
               echo "| územie | ${area_name:-celý región}${area_bbox:+ (\`$area_bbox\`)} |"
               echo "| počet samostatných plôch | ${count:-?} |"
               echo "| obrys sa počíta na mriežke | ${grid_m:-?} m |"
+              echo "| buniek sklonu / čas výpočtu | ${cells_g:-?} mld. / ${took:-?} |"
               echo "| bunka zdrojového DEM (Sonny) | ~${dem_cell_m:-?} m → **strop skutočného detailu** |"
               echo "| najmenšia ponechaná plocha | ${min_area_m2:-?} m² |"
               echo "| skutočne najmenšia plocha | ${min_m2:-?} m² |"

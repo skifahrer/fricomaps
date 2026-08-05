@@ -49,13 +49,142 @@ import argparse
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 METRIC = "EPSG:3035"  # LAEA Európa – pre naše šírky skresľuje plochy minimálne
 SCALE = 2  # sklon sa ukladá ako Byte v krokoch 0,5° (hodnota = 2× stupne)
+
+# Namerané na GitHub runneri (ubuntu-latest, 4 jadrá). Slúžia len na odhad
+# dopredu – aby sa dalo povedať „toto potrvá tri hodiny" PRED tým, než sa tri
+# hodiny minú, nie po nich.
+# Slope: 170 častí / 23,1 mld. buniek za 75 min v behu 30948662582.
+SLOPE_CELLS_PER_S = 5.1e6    # gdalwarp + gdaldem slope + gdal_translate
+# Contour: ten istý beh mal po 105 min ešte nedokončených 23,1 mld., takže
+# rýchlosť je NAJVIAC 3,7 mil./s. Berieme 3,5 – odhad má radšej prestreliť.
+CONTOUR_CELLS_PER_S = 3.5e6  # gdal_contour -p nad hotovou mozaikou
+# Ten istý beh na OOM NEspadol, čiže pri 23,1 mld. buniek bol pod 16 GB.
+# Pamäť teda nie je to, o čo sa zadanie zabije – zabije sa o čas.
+CONTOUR_MB_PER_GCELL = 700   # špička pamäte gdal_contour na miliardu buniek
+MOSAIC_MB_PER_GCELL = 50     # Byte + DEFLATE + PREDICTOR, merané 1142 MB / 23,1 mld.
+
+
+def hms(sec):
+    sec = int(sec)
+    return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}"
+
+
+def dir_mb(path):
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total / 1048576
+
+
+def proc_rss_mb(pid):
+    try:
+        with open(f"/proc/{pid}/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except OSError:
+        pass
+    return 0.0
+
+
+class Heartbeat(threading.Thread):
+    """Každých `every` sekúnd povie, že sa stále niečo deje – a čo.
+
+    Bez toho je `gdal_contour` nad krajom hodinu a pol úplne ticho a z logu
+    sa nedá odlíšiť „počíta" od „zaseklo sa".
+    """
+
+    def __init__(self, label, pid=None, tmp=None, every=30, max_rss_mb=0):
+        super().__init__(daemon=True)
+        self.label, self.pid, self.tmp = label, pid, tmp
+        self.every, self.max_rss_mb = every, max_rss_mb
+        self.t0 = time.time()
+        self.stop_flag = threading.Event()
+        self.killed_for_memory = False
+
+    def run(self):
+        while not self.stop_flag.wait(self.every):
+            parts = [f"beží {hms(time.time() - self.t0)}"]
+            rss = proc_rss_mb(self.pid) if self.pid else 0
+            if rss:
+                parts.append(f"pamäť {rss / 1024:.1f} GB")
+            if self.tmp:
+                parts.append(f"na disku {dir_mb(self.tmp) / 1024:.1f} GB")
+            print(f"  … {self.label}: {', '.join(parts)}", flush=True)
+            if self.max_rss_mb and rss > self.max_rss_mb:
+                self.killed_for_memory = True
+                print(f"::error::{self.label} zabral {rss / 1024:.1f} GB pamäte "
+                      f"(strop {self.max_rss_mb / 1024:.1f} GB) – zastavujem, "
+                      f"inak by runner spadol na OOM bez hlášky.", flush=True)
+                try:
+                    os.kill(self.pid, 9)
+                except OSError:
+                    pass
+                return
+
+    def stop(self):
+        self.stop_flag.set()
+
+
+def run_watched(cmd, label, tmp=None, max_rss_mb=0):
+    """Spustí príkaz, priebežne hlási, že žije, a prekladá progress GDALu.
+
+    GDAL píše progress ako „0...10...20..." bez konca riadku, čo sa v logu
+    GitHub Actions neukáže, kým sa príkaz neskončí. Preto sa číta po bajtoch
+    a každá nová desiatka sa vypíše ako samostatný riadok.
+    """
+    t0 = time.time()
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    hb = Heartbeat(label, proc.pid, tmp, max_rss_mb=max_rss_mb)
+    hb.start()
+    tail, line, last = b"", b"", -1
+    try:
+        while True:
+            chunk = proc.stdout.read(1)
+            if not chunk:
+                break
+            line += chunk
+            tail = (tail + chunk)[-8:]  # posledných pár znakov stačí na percentá
+            if chunk == b"\n":
+                # Riadok, ktorý nie je len meradlo postupu (napr. Warning) –
+                # ten sa nesmie stratiť.
+                txt = re.sub(rb"[\d.\s]|- done\.", b"", line)
+                if txt.strip():
+                    print(f"  {label}: {line.decode(errors='replace').strip()}",
+                          flush=True)
+                line = b""
+                continue
+            m = re.findall(rb"(\d+)", tail)
+            if m:
+                pct = int(m[-1])
+                # Musí rásť: „100" sa počas čítania po bajtoch objaví najprv
+                # ako „1" a „10", a to nie je krok späť na 10 %.
+                if pct > last and pct % 10 == 0 and pct <= 100:
+                    last = pct
+                    print(f"  … {label}: {pct} % (beží {hms(time.time() - t0)})",
+                          flush=True)
+    finally:
+        proc.wait()
+        hb.stop()
+    if hb.killed_for_memory:
+        raise MemoryError(label)
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd)
+    print(f"  {label}: hotovo za {hms(time.time() - t0)}", flush=True)
 
 
 def run(cmd, **kw):
@@ -132,14 +261,14 @@ def area_stats(metric_gpkg):
     return st
 
 
-def slope_tiles(dem, x0, y0, x1, y1, res, chunk_cells, tmp):
-    """Raster sklonu po častiach na disk (Byte, krok 0,5°) → zoznam dlaždíc.
+def chunk_plan(x0, y0, x1, y1, res, chunk_cells, bbox):
+    """Rozdelenie na časti + zoznam tých, ktoré naozaj ležia v území.
 
-    Toto je jediná časť, ktorá sa musí krájať: bbox kraja má pri 2 m vyše
-    3 miliardy buniek, čo je vo Float32 ~13 GB na jeden raster. Vektorizuje
-    sa až mozaika, naraz – inak by sa diery prerezané hranicou časti stratili.
+    EPSG:3035 je pootočená voči poludníkom, takže obdĺžnik opísaný bboxu
+    regiónu je v metroch výrazne väčší než samotný región – pri Prešovskom
+    kraji 208×111 km namiesto 200×82 km, teda o tretinu buniek navyše.
+    Časti, ktoré do bboxu vôbec nezasahujú, sa preto preskočia.
     """
-    # Hranice častí prichytené na mriežku, nech dlaždice mozaiky sadnú presne.
     snap = lambda v, up: (math.ceil(v / res) if up else math.floor(v / res)) * res
     x0, y0, x1, y1 = snap(x0, False), snap(y0, False), snap(x1, True), snap(y1, True)
     width_m, height_m = x1 - x0, y1 - y0
@@ -149,22 +278,101 @@ def slope_tiles(dem, x0, y0, x1, y1, res, chunk_cells, tmp):
     ny = max(1, math.ceil(height_m / side))
     step_x = math.ceil(width_m / nx / res) * res
     step_y = math.ceil(height_m / ny / res) * res
-    margin = 8 * res  # presah, aby sklon na okraji časti nebol zrezaný
 
-    total = (width_m / res) * (height_m / res)
-    print(f"Územie {width_m/1000:.0f}×{height_m/1000:.0f} km, mriežka sklonu "
-          f"{res:g} m → {total/1e6:.0f} mil. buniek, {nx}×{ny} častí "
-          f"po {step_x/1000:.1f}×{step_y/1000:.1f} km", flush=True)
-
-    tiles = []
-    dem_tif = os.path.join(tmp, "chunk.tif")
-    slope_tif = os.path.join(tmp, "slope.tif")
+    chunks = []
     for iy in range(ny):
         for ix in range(nx):
             cx0, cy0 = x0 + ix * step_x, y0 + iy * step_y
             cx1, cy1 = min(cx0 + step_x, x1), min(cy0 + step_y, y1)
             if cx1 <= cx0 or cy1 <= cy0:
                 continue
+            chunks.append((iy, ix, cx0, cy0, cx1, cy1))
+
+    keep = [c for c in chunks if intersects_bbox(c[2], c[3], c[4], c[5], bbox)]
+    cells = sum(((c[4] - c[2]) / res) * ((c[5] - c[3]) / res) for c in keep)
+    return keep, len(chunks), cells, (nx, ny, step_x, step_y, width_m, height_m)
+
+
+def intersects_bbox(cx0, cy0, cx1, cy1, bbox):
+    """Zasahuje časť (v metroch) do bboxu územia (v stupňoch)?"""
+    pts = "\n".join(f"{x} {y}" for x, y in
+                     [(cx0, cy0), (cx1, cy0), (cx0, cy1), (cx1, cy1),
+                      ((cx0 + cx1) / 2, cy0), ((cx0 + cx1) / 2, cy1),
+                      (cx0, (cy0 + cy1) / 2), (cx1, (cy0 + cy1) / 2)])
+    try:
+        out = run(["gdaltransform", "-s_srs", METRIC, "-t_srs", "EPSG:4326"],
+                  input=pts).stdout.split()
+    except subprocess.CalledProcessError:
+        return True  # keď sa to nedá zistiť, radšej počítať než vynechať
+    xs = [float(v) for v in out[0::3]]
+    ys = [float(v) for v in out[1::3]]
+    return not (max(xs) < bbox[0] or min(xs) > bbox[2]
+                or max(ys) < bbox[1] or min(ys) > bbox[3])
+
+
+def print_plan(cells, res, n_chunks, n_all, geom, budget_min):
+    """Čo to bude stáť – PRED tým, než sa to začne počítať.
+
+    Trojhodinový beh, ktorý spadne na timeout, je najhorší možný výsledok:
+    minie celý rozpočet a nevyrobí nič. Toto to povie za pár sekúnd.
+    """
+    nx, ny, step_x, step_y, width_m, height_m = geom
+    slope_s = cells / SLOPE_CELLS_PER_S
+    contour_s = cells / CONTOUR_CELLS_PER_S
+    total_s = slope_s + contour_s
+    mosaic_mb = cells / 1e9 * MOSAIC_MB_PER_GCELL
+    peak_mb = cells / 1e9 * CONTOUR_MB_PER_GCELL
+
+    print("── Plán výpočtu skál ────────────────────────────────")
+    print(f"  územie          {width_m/1000:.0f}×{height_m/1000:.0f} km "
+          f"(obdĺžnik v EPSG:3035)")
+    print(f"  mriežka         {res:g} m")
+    print(f"  buniek          {cells/1e9:.2f} mld.")
+    print(f"  častí           {n_chunks} z {n_all} "
+          f"({n_all - n_chunks} mimo územia sa preskočí), "
+          f"po {step_x/1000:.1f}×{step_y/1000:.1f} km")
+    print(f"  odhad sklon     {hms(slope_s)}")
+    print(f"  odhad obrysy    {hms(contour_s)}")
+    print(f"  odhad SPOLU     {hms(total_s)}  (rozpočet {hms(budget_min * 60)})")
+    print(f"  mozaika na disk ~{mosaic_mb/1024:.1f} GB")
+    print(f"  špička pamäte   ~{peak_mb/1024:.1f} GB")
+    print("─────────────────────────────────────────────────────", flush=True)
+
+    if budget_min and total_s > budget_min * 60:
+        # Čo by sa zmestilo: čas rastie lineárne s počtom buniek a ten
+        # kvadraticky s jemnosťou mriežky, takže hrubšia mriežka pomôže
+        # druhou mocninou, menšie územie priamo úmerne.
+        share = budget_min * 60 / total_s
+        ok_res = res / math.sqrt(share)
+        print(f"::error::Skaly by trvali {hms(total_s)} ({cells/1e9:.2f} mld. "
+              f"buniek), rozpočet je {hms(budget_min * 60)}. Celý job má na "
+              f"runneri 3 hodiny a musí sa doň zmestiť aj mapa – takto by "
+              f"spadol na timeout a nevyrobil NIČ.")
+        print(f"::error::Zmestí sa: (1) rock_res aspoň "
+              f"{math.ceil(ok_res * 10) / 10:g} m na tomto území, alebo "
+              f"(2) rock_area na výrez s ~{share*100:.0f} % plochy – napr. "
+              f"vysoke_tatry, tatry, slovensky_raj (viď workers/areas.json). "
+              f"Rozpočet sa dá zdvihnúť cez ROCK_BUDGET_MIN v env.")
+        return False
+    return True
+
+
+def slope_tiles(dem, chunks, res, tmp, heartbeat_every):
+    """Raster sklonu po častiach na disk (Byte, krok 0,5°) → zoznam dlaždíc.
+
+    Toto je jediná časť, ktorá sa musí krájať: bbox kraja má pri 2 m miliardy
+    buniek, čo je vo Float32 desiatky GB na jeden raster. Vektorizuje sa až
+    mozaika, naraz – inak by sa diery prerezané hranicou časti stratili.
+    """
+    margin = 8 * res  # presah, aby sklon na okraji časti nebol zrezaný
+    tiles = []
+    dem_tif = os.path.join(tmp, "chunk.tif")
+    slope_tif = os.path.join(tmp, "slope.tif")
+    t0 = time.time()
+    hb = Heartbeat("sklon", tmp=tmp, every=heartbeat_every)
+    hb.start()
+    try:
+        for iy, ix, cx0, cy0, cx1, cy1 in chunks:
             out = os.path.join(tmp, f"slope-{iy:03d}-{ix:03d}.tif")
             for f in (dem_tif, slope_tif):
                 if os.path.exists(f):
@@ -186,7 +394,14 @@ def slope_tiles(dem, x0, y0, x1, y1, res, chunk_cells, tmp):
                  "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "TILED=YES",
                  slope_tif, out])
             tiles.append(out)
-            print(f"  [{len(tiles)}/{nx*ny}] sklon spočítaný", flush=True)
+
+            done, total = len(tiles), len(chunks)
+            elapsed = time.time() - t0
+            eta = elapsed / done * (total - done)
+            print(f"  [{done}/{total}] sklon – {hms(elapsed)} za sebou, "
+                  f"zostáva ~{hms(eta)}, mozaika {dir_mb(tmp):.0f} MB", flush=True)
+    finally:
+        hb.stop()
 
     for f in (dem_tif, slope_tif):
         if os.path.exists(f):
@@ -206,6 +421,13 @@ def main():
     ap.add_argument("--simplify", type=float, default=0.0, help="0 = presný obrys")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
+    ap.add_argument("--budget-min", type=float, default=100.0,
+                    help="koľko minút smie výpočet trvať; nad odhad sa "
+                         "nezačne počítať a povie sa, čo zmenšiť (0 = bez stropu)")
+    ap.add_argument("--max-rss-gb", type=float, default=12.0,
+                    help="strop pamäte pre gdal_contour (0 = bez stropu)")
+    ap.add_argument("--heartbeat", type=float, default=30.0,
+                    help="ako často hlásiť, že sa stále počíta (s)")
     ap.add_argument("--stats", default="", help="kam zapísať štatistiku (key=value)")
     ap.add_argument("--keep-temp", action="store_true")
     args = ap.parse_args()
@@ -218,15 +440,28 @@ def main():
         print(f"Zdrojový DEM má bunku ~{dem_dx:.0f}×{dem_dy:.0f} m – to je "
               f"strop skutočného detailu; mriežka {res:g} m len hladší obrys.")
 
+    # Plán a strážca ešte pred prvým gdalwarpom: trojhodinový beh, ktorý
+    # spadne na timeout, je horší než beh, ktorý sa vôbec nezačne.
+    chunks, n_all, cells, geom = chunk_plan(x0, y0, x1, y1, res,
+                                            args.chunk_cells, bbox)
+    if not chunks:
+        print("::error::Ani jedna počítaná časť nezasahuje do územia "
+              f"{args.bbox} – skontroluj bbox.")
+        return 2
+    if not print_plan(cells, res, len(chunks), n_all, geom, args.budget_min):
+        return 2
+
+    t_start = time.time()
     tmp = tempfile.mkdtemp(prefix="rock-", dir=os.path.dirname(args.out) or ".")
     try:
         # ---------- 1. sklon po častiach na disk ----------
-        tiles = slope_tiles(args.dem, x0, y0, x1, y1, res, args.chunk_cells, tmp)
+        tiles = slope_tiles(args.dem, chunks, res, tmp, args.heartbeat)
         if not tiles:
             print("::warning::Nepodarilo sa spočítať sklon ani pre jednu časť.")
             return 1
         mb = sum(os.path.getsize(t) for t in tiles) / 1048576
-        print(f"Mozaika sklonu: {len(tiles)} dlaždíc, {mb:.0f} MB na disku")
+        print(f"Mozaika sklonu: {len(tiles)} dlaždíc, {mb:.0f} MB na disku, "
+              f"sklon trval {hms(time.time() - t_start)}")
 
         vrt = os.path.join(tmp, "slope.vrt")
         run(["gdalbuildvrt", "-q", vrt] + tiles)
@@ -235,11 +470,20 @@ def main():
         # Jediný priechod = žiadne švy a diery ostanú dierami. Prahy sú
         # v jednotkách uloženého rastra (0,5° na krok).
         bands = os.path.join(tmp, "bands.gpkg")
-        print("Vektorizujem sklon (jedným priechodom nad celým územím)…", flush=True)
-        run(["gdal_contour", "-q", "-p",
-             "-fl", repr(args.slope * SCALE), repr(args.cliff * SCALE),
-             "-amin", "smin", "-amax", "smax",
-             "-f", "GPKG", "-nln", "band", vrt, bands])
+        print(f"Vektorizujem sklon jedným priechodom nad celým územím "
+              f"({cells/1e9:.2f} mld. buniek, odhad "
+              f"{hms(cells / CONTOUR_CELLS_PER_S)})…", flush=True)
+        try:
+            run_watched(["gdal_contour", "-p",
+                         "-fl", repr(args.slope * SCALE), repr(args.cliff * SCALE),
+                         "-amin", "smin", "-amax", "smax",
+                         "-f", "GPKG", "-nln", "band", vrt, bands],
+                        "gdal_contour", tmp=tmp,
+                        max_rss_mb=args.max_rss_gb * 1024)
+        except MemoryError:
+            print("::error::Vektorizácia sa nezmestila do pamäte. Zmenši "
+                  "územie cez rock_area alebo zvoľ hrubšiu mriežku rock_res.")
+            return 2
 
         for t in tiles:  # mozaika je vyše gigabajtu, ďalej ju netreba
             os.remove(t)
@@ -286,7 +530,10 @@ def main():
         run(["ogr2ogr", "-f", "GPKG", args.out, final_metric, "-nln", "rock",
              "-overwrite", "-t_srs", "EPSG:4326"])
         n = int(st.get("n", ogr_count(args.out)))
-        print(f"Skalných plôch: {n}")
+        took = time.time() - t_start
+        print(f"Skalných plôch: {n} (celý výpočet {hms(took)}, "
+              f"{cells/1e9:.2f} mld. buniek → "
+              f"{cells/max(took, 1)/1e6:.1f} mil. buniek/s)")
         if st:
             print(f"  spolu {st['total']/1e6:.2f} km², najväčšia "
                   f"{st['max']/10000:.1f} ha, najmenšia {st['min']:.0f} m², "
@@ -303,6 +550,8 @@ def main():
                 f.write(f"min_area_m2={args.min_area:g}\n")
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
+                f.write(f"cells_g={cells/1e9:.2f}\n")
+                f.write(f"took={hms(took)}\n")
                 if dem_dx:
                     f.write(f"dem_cell_m={dem_dx:.0f}\n")
                 if st:
