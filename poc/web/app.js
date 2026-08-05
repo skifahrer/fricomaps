@@ -11,7 +11,8 @@ import {
   DEFAULT_DEM_TILES,
   DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
-  DEM_SOURCES
+  DEM_SOURCES,
+  TRAIL_TYPES
 } from "./themes.js";
 import { initDevMode, loadOverrides, saveOverrides } from "./devmode.js";
 import { parsePatternName, renderPattern } from "./patterns.js";
@@ -89,14 +90,8 @@ async function loadJson(url, { optional = false } = {}) {
   }
 }
 
-/** Druhy značených trás – ľudsky, do popupu. */
-const TRAIL_LABELS = {
-  hiking: "turistická trasa",
-  bicycle: "cyklotrasa",
-  mtb: "horská cyklotrasa",
-  ski: "lyžiarska trasa",
-  horse: "jazdecká trasa"
-};
+/** Druhy značených trás – ľudsky, do popupu (zoznam je v themes.js). */
+const TRAIL_LABELS = Object.fromEntries(TRAIL_TYPES.map((t) => [t.id, t.short]));
 
 let map;
 let dev = null;
@@ -226,7 +221,10 @@ function applyStyle(manifest) {
     map.on("style.load", applyTerrain);
 
     // Klik na POI / vrchol / letisko / trasu zobrazí popup s detailom.
+    // Kým je v developer móde otvorený inšpektor prvkov, klik patrí jemu –
+    // vypíše všetko, čo je pod kurzorom, nielen jeden vybraný prvok.
     map.on("click", (ev) => {
+      if (dev?.isPicking?.()) return;
       const layers = CLICKABLE_LAYERS.filter((id) => map.getLayer(id));
       const [f] = map.queryRenderedFeatures(ev.point, { layers });
       if (!f) return;
