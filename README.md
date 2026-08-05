@@ -299,27 +299,52 @@ Input **`dem_source`**:
 Platí pre **vrstevnice aj skaly** – oboje sa počíta z toho istého modelu, nech
 obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
 
-> **ÚGKK zatiaľ nie je overené a treba to povedať rovno.** Že ÚGKK má verejný
-> ArcGIS adresár služieb ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services)),
-> je isté. Ktorá z tých služieb je DMR 5.0 v plnom rozlíšení – a či vôbec
-> nejaká – zdokumentované nie je. Oficiálne sa DMR 5.0 dáva cez ZBGIS Mapový
-> klient (interaktívny export do 400 km²) a cez vládny cloud, čo sa v pipeline
-> použiť nedá.
+**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
+release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,
+čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič.
+
+```
+Build map
+  └─ check-dem        je výrez v release dem-ugkk?
+       └─ (nie) → Doplniť ÚGKK 1 m LiDAR      ← spustí sa sám
+                    1. priame URL (ak si ich dal)
+                    2. ArcGIS ImageServer  (+ objaví služby v ich adresári)
+                    3. WCS GetCoverage
+                    → jeden COG do releasu dem-ugkk
+       └─ contours    stiahne COG z releasu a počíta
+```
+
+> **ÚGKK sa mi overiť nepodarilo a treba to povedať rovno.** Sieťová politika
+> prostredia, v ktorom to píšem, blokuje `*.skgeodesy.sk`, takže som sa k ich
+> službám nedostal. Isté je, že majú verejný ArcGIS adresár služieb
+> ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services));
+> ktorá z nich je DMR 5.0 v plnom rozlíšení, zdokumentované nie je.
 >
-> Preto je na to **workflow `Check DEM source`**: spustí sa z Actions, vypíše
-> celý adresár služieb, otestuje kandidátov z
-> [`workers/dem-sources.json`](workers/dem-sources.json) a napíše tabuľku
-> „funguje / nefunguje a prečo". Keď nájde službu s mriežkou ≤ 2 m, stačí ju
-> dať v tom súbore na prvé miesto a `dem_source: ugkk` funguje. Keď nenájde,
-> ostáva jednorazové zrkadlo do releasu – presne to, čo robí *Update DEM* pre
-> Sonnyho.
+> Preto má zrkadlo **tri cesty za sebou** a berie prvú, ktorá dá skutočný
+> výškový raster (kontroluje sa veľkosť bunky aj dátový typ – 10 m model ani
+> obrázok neprejde):
 >
-> Licencia ÚGKK je voľná aj komerčne, ale **podmienená uvedením zdroja**;
-> atribúcia je preto v štýle natvrdo.
+> | # | cesta | kedy zaberie |
+> |--:|---|---|
+> | 1 | **priame URL** (`ugkk_urls`) | vždy – toto je istota |
+> | 2 | ArcGIS `exportImage` | ak majú DMR 5.0 ako ImageServer |
+> | 3 | WCS `GetCoverage` | ak majú OGC službu |
+>
+> Keď zlyhajú obe automatické, build to povie a odkáže na cestu 1: v ZBGIS
+> Mapovom klientovi *Terén → Export údajov → DMR 5.0* si vyberieš územie (do
+> 400 km²), odkazy vložíš do inputu `ugkk_urls` a zrkadlo ich stiahne, zlepí
+> a odloží do releasu. Odvtedy je to tam a ďalší build ich len stiahne.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
-vo Float32 – `fetch-dem-ugkk.py` to odmietne dopredu (strop 1,5 mld.) a povie
-to. Preto ide `ugkk` ruka v ruke s inputom `area`.
+vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.
+Build to preto odmietne **v prvej minúte**, v prípravnom jobe, nie po hodine
+sťahovania. Preto ide `ugkk` ruka v ruke s inputom `area`:
+
+| výrez | plocha | 1 m raster (Float32) |
+|---|--:|--:|
+| Belianske Tatry | 177 km² | ~0,7 GB |
+| Vysoké Tatry | 541 km² | ~2,2 GB (COG ~0,6 GB) |
+| celý kraj | 16 103 km² | ~64 GB → **odmietne** |
 
 #### Testovací výrez – vrstevnice aj skaly len na pohorí
 
@@ -699,8 +724,10 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `area`: počítať vrstevnice aj skaly len na výreze (`vysoke_tatry`,
      `tatry`, `slovensky_raj`… alebo bbox) – z ~40 min sa stane ~2, ale terén
      bude len tam. Na testovanie
-   - `dem_source`: `sonny` (20 m, overené) alebo `ugkk` (1 m LiDAR, len
-     s výrezom, najprv over workflowom *Check DEM source*)
+   - `dem_source`: `sonny` (20 m, celý región) alebo `ugkk` (1 m LiDAR, len
+     s výrezom – zrkadlo si build spustí sám)
+   - `ugkk_urls`: posledná záchrana, keď automatické cesty k ÚGKK zlyhajú –
+     odkazy zo ZBGIS Mapového klienta
    - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
      dlaždice (uložia sa do releasu)
    - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať

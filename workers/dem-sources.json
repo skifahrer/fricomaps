@@ -43,6 +43,23 @@
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/DMR5_0/ImageServer",
       "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer",
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr3_5_10/ImageServer"
+    ],
+    "wcs": [
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5_0/ImageServer/WCSServer",
+      "https://www.geoportal.sk/inspire/sk/wcs",
+      "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer/WCSServer"
+    ],
+    "wcs_coverages": [
+      "1",
+      "Coverage1",
+      "dmr5_0",
+      "DMR5_0"
+    ],
+    "_comment_fallback": [
+      "Cesty sa skúšajú po poradí: priame URL (ak sú zadané) → ArcGIS ImageServer",
+      "→ WCS. Posledná záchrana sú priame URL z vládneho cloudu alebo zo ZBGIS",
+      "Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²) – tá",
+      "nezávisí od žiadnej služby a funguje vždy."
     ]
   }
 }

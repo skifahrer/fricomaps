@@ -95,6 +95,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **check-dem** | sú v release `dem-sonny` dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
 | **mirror-dem** | keď chýbajú, spustí *Update DEM* | — | tiles, assets |
 | **keys** | poskladá kľúče cache, pri `*_rebuild` zmaže staré záznamy | 10 min | tiles, assets |
+| **mirror-dem-ugkk** | doplní 1 m LiDAR do releasu, keď chýba | 120 min | tiles, assets |
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
 | **tiles** | PBF → `{región}.pmtiles` (Planetiler) | 150 min | contours, terrain, assets |
@@ -165,17 +166,17 @@ obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
 > oficiálne sa DMR 5.0 dáva cez ZBGIS Mapový klient (interaktívny export do
 > 400 km²) a cez vládny cloud, čo sa v pipeline použiť nedá.
 >
-> Hádať sa to nedá, tak sa treba spýtať: workflow **`Check DEM source`**
-> ([`workers/probe-dem-source.py`](../workers/probe-dem-source.py)) vypíše celý
-> adresár služieb, otestuje kandidátov z
-> [`workers/dem-sources.json`](../workers/dem-sources.json) a napíše tabuľku
-> „funguje / nefunguje a prečo". Keď nájde službu s mriežkou ≤ 2 m, stačí ju
-> dať v tom súbore na prvé miesto. Keď nenájde, ostáva jednorazové zrkadlo do
-> releasu – to isté, čo robí *Update DEM* pre Sonnyho.
+> Hádať sa to nedá, tak to zrkadlo skúša **tri cesty za sebou** a berie prvú,
+> ktorá dá skutočný výškový raster (kontroluje sa veľkosť bunky aj dátový typ,
+> takže 10 m model ani obrázok neprejdú): priame URL → ArcGIS `exportImage`
+> (vrátane služieb objavených v ich adresári) → WCS `GetCoverage`. Priame URL
+> sú istota: v ZBGIS Mapovom klientovi *Terén → Export údajov → DMR 5.0* si
+> vyberieš územie do 400 km², odkazy vložíš do `ugkk_urls` a zrkadlo ich
+> stiahne, zlepí a odloží.
 >
 > **1 m ide len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, teda 64 GB
-> vo Float32; [`workers/fetch-dem-ugkk.py`](../workers/fetch-dem-ugkk.py) to
-> odmietne dopredu (strop 1,5 mld.). Preto ide `ugkk` ruka v ruke s `area`.
+> vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB). Build to
+> odmietne v prípravnom jobe, nie po hodine sťahovania.
 >
 > Licencia ÚGKK je voľná aj komerčne, ale **podmienená uvedením zdroja** –
 > atribúcia je preto v `poc/web/themes.js` natvrdo.

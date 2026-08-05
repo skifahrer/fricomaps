@@ -60,6 +60,11 @@ on:
         options:
           - sonny
           - ugkk
+      ugkk_urls:
+        description: "ÚGKK – posledná záchrana: čiarkami oddelené URL na .tif/.zip zo ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0). Použije sa, len keď automatické cesty zlyhajú"
+        required: false
+        default: ""
+        type: string
       contours:
         description: "Vygenerovať vrstevnice a skaly z DEM (pozor na veľkosť pri celom Slovensku)"
         required: false
@@ -211,6 +216,7 @@ jobs:
     outputs:
       needed: ${{ steps.check.outputs.needed }}
       demkey: ${{ steps.check.outputs.demkey }}
+      ugkk_needed: ${{ steps.check.outputs.ugkk_needed }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -225,6 +231,21 @@ jobs:
           # takže sa tu nepočíta druhý raz – dva výpočty toho istého sa vždy
           # raz rozídu.
           BBOX='${{ needs.plan.outputs.bbox }}'
+
+          # ÚGKK sa zrkadlí po výrezoch (pri 1 m má jedna 1° dlaždica ~48 GB),
+          # takže sa hľadá jeden asset podľa kľúča výrezu.
+          UGKK_NEED=false
+          if [ '${{ inputs.dem_source }}' = 'ugkk' ]; then
+            UASSET="ugkk-${{ needs.plan.outputs.area_key }}.tif"
+            if gh release view dem-ugkk --repo "$GITHUB_REPOSITORY" \
+                 --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$UASSET"; then
+              echo "ÚGKK: $UASSET je v release dem-ugkk ✓"
+            else
+              echo "ÚGKK: $UASSET v release dem-ugkk nie je → doplní sa"
+              UGKK_NEED=true
+            fi
+          fi
+          echo "ugkk_needed=$UGKK_NEED" >> "$GITHUB_OUTPUT"
 
           ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
             --json assets -q '.assets[].name' 2>/dev/null || echo '')
@@ -279,6 +300,22 @@ jobs:
       contents: write
     uses: ./.github/workflows/update-dem.yml
 
+  # ---------- doplnenie 1 m LiDARu od ÚGKK ----------
+  # To isté, čo `mirror-dem` robí pre Sonnyho: keď výrez v release nie je,
+  # build si ho doplní SÁM. Netreba teda spúšťať druhý workflow ručne –
+  # `Build map` je jediné, čo púšťaš.
+  mirror-dem-ugkk:
+    name: Doplniť ÚGKK 1 m LiDAR
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && needs.check-dem.outputs.ugkk_needed == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem-ugkk.yml
+    with:
+      area: ${{ inputs.area }}
+      region_bbox: ${{ needs.plan.outputs.bbox }}
+      direct_urls: ${{ inputs.ugkk_urls }}
+
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
   # PBF. Beží pár minút a všetko ďalšie z neho vychádza.
@@ -295,6 +332,10 @@ jobs:
       bbox: ${{ steps.region.outputs.bbox }}
       bboxkey: ${{ steps.region.outputs.bboxkey }}
       day: ${{ steps.day.outputs.d }}
+      area_key: ${{ steps.area.outputs.key }}
+      area_name: ${{ steps.area.outputs.name }}
+      area_bbox: ${{ steps.area.outputs.bbox }}
+      area_km2: ${{ steps.area.outputs.km2 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -424,6 +465,25 @@ jobs:
             "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')" \
             >> steps-out/plan.tsv
 
+      # Výrez (input `area`) potrebuje vedieť aj kontrola DEM, aj zrkadlo
+      # ÚGKK, aj samotný výpočet – preto sa rieši raz, tu, a ide ďalej ako
+      # výstup jobu.
+      - name: Vyrieš testovací výrez
+        id: area
+        run: |
+          set -euo pipefail
+          python3 workers/resolve-area.py \
+            --region-bbox='${{ steps.region.outputs.bbox }}' \
+            --area='${{ inputs.area }}' --out="$GITHUB_OUTPUT"
+
+          # 1 m model na celý kraj je 16 miliárd buniek (64 GB) – to sa
+          # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
+          # zistiť to po hodine sťahovania nie.
+          if [ '${{ inputs.dem_source }}' = 'ugkk' ] && [ -z '${{ inputs.area }}' ]; then
+            echo "::error::dem_source: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input `area` (napr. vysoke_tatry) alebo použi dem_source: sonny."
+            exit 1
+          fi
+
       - name: Cache PBF regiónu (save)
         if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
         continue-on-error: true
@@ -458,7 +518,7 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-dem]
+    needs: [plan, check-dem, mirror-dem, mirror-dem-ugkk]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -619,56 +679,17 @@ jobs:
           case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
 
           # ---------- výrez na testovanie ----------
-          # Vrstevnice aj skaly sa dajú počítať len na kuse regiónu. Pri
-          # ladení prahu, mriežky alebo farieb nemá zmysel čakať na celý kraj,
-          # keď zaujíma jedno pohorie: Prešovský kraj má 16 400 km², Vysoké
-          # Tatry 540 km² – tridsaťkrát menej. Sťahovanie DEM sa NEobmedzuje:
-          # dlaždice sú lacné, sú v cache pod kľúčom celého regiónu a čiastočné
-          # stiahnutie by sa nabudúce vrátilo ako keby bolo úplné.
-          AREA_BBOX="$BBOX"
-          AREA_KEY="cely"
-          AREA_NAME="celý región"
-          RA='${{ inputs.area }}'
-          if [ -n "$RA" ]; then
-            case "$RA" in
-              *,*)
-                AREA_BBOX="$RA"
-                AREA_KEY="vyrez"
-                AREA_NAME="vlastný výrez $RA"
-                ;;
-              *)
-                AB=$(jq -r --arg a "$RA" '.[$a].bbox // [] | join(",")' workers/areas.json)
-                if [ -z "$AB" ]; then
-                  echo "::error::Neznámy výrez '$RA'. Známe výrezy (workers/areas.json): $(jq -r 'to_entries|map(select(.key|startswith("_")|not))|map(.key)|join(", ")' workers/areas.json). Alebo zadaj bbox west,south,east,north."
-                  exit 1
-                fi
-                AREA_BBOX="$AB"
-                AREA_KEY=$(printf '%s' "$RA" | tr -c 'a-zA-Z0-9' '_')
-                AREA_NAME=$(jq -r --arg a "$RA" '.[$a].name' workers/areas.json)
-                ;;
-            esac
-
-            # Prienik s bboxom regiónu: mimo neho nie sú ani DEM dlaždice, ani
-            # mapa – počítať tam skaly by bola len stratená polhodina.
-            AREA_BBOX=$(python3 - "$BBOX" "$AREA_BBOX" <<'PY'
-          import sys
-          a = [float(v) for v in sys.argv[1].split(",")]
-          b = [float(v) for v in sys.argv[2].split(",")]
-          w, s = max(a[0], b[0]), max(a[1], b[1])
-          e, n = min(a[2], b[2]), min(a[3], b[3])
-          print(f"{w},{s},{e},{n}" if e > w and n > s else "")
-          PY
-          )
-            if [ -z "$AREA_BBOX" ]; then
-              echo "::error::Výrez '$RA' neleží v regióne (bbox $BBOX) – neprekrývajú sa. Vyber iný región alebo iný výrez."
-              exit 1
-            fi
-            echo "::warning::Vrstevnice AJ skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región nechaj input `area` prázdny."
+          # Vyriešila ho príprava (workers/resolve-area.py), tu sa už len
+          # preberá – aby check-dem, zrkadlo ÚGKK aj tento výpočet pracovali
+          # s tým istým územím a nie s tromi mierne odlišnými.
+          AREA_KEY='${{ needs.plan.outputs.area_key }}'
+          AREA_NAME='${{ needs.plan.outputs.area_name }}'
+          AREA_BBOX='${{ needs.plan.outputs.area_bbox }}'
+          if [ "$AREA_KEY" != "cely" ]; then
+            echo "::warning::Vrstevnice AJ skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX, ${{ needs.plan.outputs.area_km2 }} km²). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región nechaj input `area` prázdny."
             # Vrstevnice sa ďalej trasujú z výrezu, nie z celého regiónu.
             IFS=, read -r W S E N <<< "$AREA_BBOX"
           fi
-
-
 
           # Sťahovanie DEM je v samostatnom skripte – potrebuje ho aj job
           # s tieňovaním a dve kópie by časom zaostali jedna za druhou.
@@ -683,7 +704,8 @@ jobs:
           else
             FETCH_BBOX="$BBOX"
           fi
-          workers/fetch-dem.sh "$FETCH_BBOX" dem steps-out/contours.tsv "$DEM_USED"
+          AREA_KEY_IN='${{ needs.plan.outputs.area_key }}'
+          workers/fetch-dem.sh "$FETCH_BBOX" dem steps-out/contours.tsv "$DEM_USED" "$AREA_KEY_IN"
 
           # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
           # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
