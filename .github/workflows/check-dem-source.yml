@@ -1,0 +1,48 @@
+name: Check DEM source (je ÚGKK 1 m LiDAR dostupný?)
+
+# Zistí, či sa dá 1 m LiDAR od ÚGKK (DMR 5.0) sťahovať z pipeline, alebo nie.
+#
+# Prečo vlastný workflow: `*.skgeodesy.sk` nie je vidieť z každej siete a názvy
+# služieb v ich ArcGIS adresári nie sú nikde zdokumentované. Hádať sa to nedá –
+# treba sa spýtať priamo, a to z runnera, ktorý má neobmedzenú sieť.
+#
+# Výsledok je tabuľka v záložke Summary: ktorá služba odpovedala, akú má
+# mriežku a či z nej naozaj vypadne GeoTIFF. Podľa nej sa `dem_source: ugkk`
+# zapne s istotou.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Testovací výrez west,south,east,north (default: Vysoké Tatry)"
+        required: false
+        default: "20.12,49.15,20.16,49.18"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Sonda na ÚGKK DMR 5.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Sonda vracia nenulový kód, keď nič použiteľné nenašla. To nie je
+      # chyba workflowu – je to odpoveď na otázku, kvôli ktorej beží.
+      # Preto `continue-on-error` a vlastné vyhodnotenie nižšie.
+      - name: Skús ÚGKK služby
+        id: probe
+        continue-on-error: true
+        run: python3 workers/probe-dem-source.py --bbox='${{ inputs.bbox }}'
+
+      - name: Verdikt
+        run: |
+          if [ '${{ steps.probe.outcome }}' = 'success' ]; then
+            echo "✓ ÚGKK 1 m LiDAR je dostupný – detaily v Summary."
+          else
+            echo "::warning::ÚGKK 1 m LiDAR sa cez ArcGIS služby stiahnuť nedá (detaily v Summary). Ostáva Sonny 20 m, alebo jednorazové zrkadlo do releasu."
+          fi

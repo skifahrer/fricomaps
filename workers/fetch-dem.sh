@@ -5,8 +5,12 @@
 # jeden veľký job, stačilo to raz. Po rozdelení na joby by sa to inak
 # kopírovalo dvakrát a jedna kópia by časom zaostala za druhou.
 #
+# Zdroj hovorí, odkiaľ: `sonny` = naše zrkadlo v releasi (20 m, overené),
+# `ugkk` = 1 m LiDAR od ÚGKK cez ich ArcGIS ImageServer (viď
+# workers/fetch-dem-ugkk.py a workflow „Check DEM source").
+#
 # Použitie:
-#   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv na meranie]
+#   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv na meranie] [zdroj]
 # Výstup:
 #   <adresár>/tiles/N49E019.tif …   stiahnuté dlaždice
 #   <adresár>/all.vrt               mozaika na čítanie
@@ -17,7 +21,14 @@ set -euo pipefail
 BBOX="$1"
 DIR="${2:-dem}"
 STEPS_TSV="${3:-}"
+SOURCE="${4:-sonny}"
 T0=$(date +%s)
+
+if [ "$SOURCE" = "ugkk" ]; then
+  # 1 m LiDAR sa nesťahuje po 1° dlaždiciach, ale po výrezoch cez ImageServer.
+  exec python3 workers/fetch-dem-ugkk.py --bbox="$BBOX" --out="$DIR" \
+    ${STEPS_TSV:+--steps-tsv="$STEPS_TSV"}
+fi
 
 IFS=, read -r W S E N <<< "$BBOX"
 # Stiahnuté dlaždice majú vlastný podadresár: medzivýsledky (clip, slope…)

@@ -262,9 +262,10 @@ veľké steny a s približovaním pribúdajú detaily.
 | vec | hodnota |
 |---|---|
 | mriežka, na ktorej sa obrys počíta | **2 m** (`rock_res`; `1` dá 1 m²) |
+| krok sklonu v mozaike | **0,01°** (Int16) – hrubší krok robil obrys zubatý |
+| zjednodušenie obrysu | štvrtina mriežky (`ROCK_SIMPLIFY: -1`) – zmaže schodíky |
 | bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
 | najmenšia ponechaná plocha | jedna bunka mriežky: **4 m²** pri 2 m, **1 m²** pri 1 m |
-| krok sklonu v mozaike | 0,5° |
 | zjednodušovanie obrysu | žiadne (`ROCK_SIMPLIFY: 0`) |
 | filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
 
@@ -286,13 +287,47 @@ má 20 m, takže sú to jemnejšie *obrysy a diery*, nie nové merania terénu.
 > interaktívny export, takže by sa musel najprv nazrkadliť do releasu rovnako
 > ako Sonnyho DTM.
 
-#### Skaly len na výreze (rýchly beh)
+#### Zdroj výšok sa dá prepnúť
 
-Skaly sú najdrahšia časť buildu. Pri ladení prahu, mriežky alebo farieb nemá
-zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno pohorie – na to je
-input **`rock_area`**:
+Input **`dem_source`**:
 
-| `rock_area` | územie | plocha | skaly trvajú |
+| hodnota | model | mriežka | pokrytie | stav |
+|---|---|--:|---|---|
+| **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
+| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **neoverené** |
+
+Platí pre **vrstevnice aj skaly** – oboje sa počíta z toho istého modelu, nech
+obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
+
+> **ÚGKK zatiaľ nie je overené a treba to povedať rovno.** Že ÚGKK má verejný
+> ArcGIS adresár služieb ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services)),
+> je isté. Ktorá z tých služieb je DMR 5.0 v plnom rozlíšení – a či vôbec
+> nejaká – zdokumentované nie je. Oficiálne sa DMR 5.0 dáva cez ZBGIS Mapový
+> klient (interaktívny export do 400 km²) a cez vládny cloud, čo sa v pipeline
+> použiť nedá.
+>
+> Preto je na to **workflow `Check DEM source`**: spustí sa z Actions, vypíše
+> celý adresár služieb, otestuje kandidátov z
+> [`workers/dem-sources.json`](workers/dem-sources.json) a napíše tabuľku
+> „funguje / nefunguje a prečo". Keď nájde službu s mriežkou ≤ 2 m, stačí ju
+> dať v tom súbore na prvé miesto a `dem_source: ugkk` funguje. Keď nenájde,
+> ostáva jednorazové zrkadlo do releasu – presne to, čo robí *Update DEM* pre
+> Sonnyho.
+>
+> Licencia ÚGKK je voľná aj komerčne, ale **podmienená uvedením zdroja**;
+> atribúcia je preto v štýle natvrdo.
+
+**1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
+vo Float32 – `fetch-dem-ugkk.py` to odmietne dopredu (strop 1,5 mld.) a povie
+to. Preto ide `ugkk` ruka v ruke s inputom `area`.
+
+#### Testovací výrez – vrstevnice aj skaly len na pohorí
+
+Terén je najdrahšia časť buildu. Pri ladení prahu, mriežky, zdroja alebo
+farieb nemá zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno pohorie
+– na to je input **`area`**. Platí na **vrstevnice aj skaly**:
+
+| `area` | územie | plocha | terén trvá |
 |---|---|--:|--:|
 | *(prázdne)* | celý región | 16 103 km² | ~30 min |
 | `tatry` | Západné + Vysoké + Belianske | 1 032 km² | ~2 min |
@@ -314,8 +349,8 @@ tam ani DEM, ani mapa). Keď sa neprekrývajú vôbec (napr. `mala_fatra`
 s Prešovským krajom), build to povie rovno a zastaví sa, namiesto aby
 polhodinu počítal prázdno.
 
-> **Vo zvyšku regiónu potom skaly nie sú.** Nie je to orez mapy, len skál –
-> vrstevnice, terén aj dlaždice sú za celý región. Build to hlási ako
+> **Vo zvyšku regiónu potom nie sú ani vrstevnice, ani skaly.** Mapa a
+> tieňovanie sú za celý región – toto je beh na testovanie, nie na nasadenie. Build to hlási ako
 > `::warning::` aj v súhrne, aby sa taký beh omylom nenasadil ako finálny.
 > Výrez je aj v mene uloženého assetu (`rock-{región}-{výrez}-…`) a v kľúči
 > cache, takže sa skaly z Tatier nikdy nevydávajú za skaly celého kraja.
@@ -661,9 +696,11 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
      terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
      (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod
      prahom vnútri steny ostanú nezafarbené
-   - `rock_area`: počítať skaly len na výreze (`vysoke_tatry`, `tatry`,
-     `slovensky_raj`… alebo bbox) – z ~30 min sa stane ~1 min, ale skaly
-     budú len tam
+   - `area`: počítať vrstevnice aj skaly len na výreze (`vysoke_tatry`,
+     `tatry`, `slovensky_raj`… alebo bbox) – z ~40 min sa stane ~2, ale terén
+     bude len tam. Na testovanie
+   - `dem_source`: `sonny` (20 m, overené) alebo `ugkk` (1 m LiDAR, len
+     s výrezom, najprv over workflowom *Check DEM source*)
    - `terrain`, `terrain_maxzoom`: tieňovanie a 3D terén zo Sonnyho ako PNG
      dlaždice (uložia sa do releasu)
    - `contours_rebuild`, `rocks_rebuild`, `terrain_rebuild`: prepočítať

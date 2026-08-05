@@ -27,9 +27,11 @@ prerezaná hranicou časti sa zmenila na zárez v okraji a späť sa už nezlepi
 na disk a `gdal_contour` potom ide **jedným priechodom nad celou mozaikou**.
 Žiadne švy, žiadne zlepovanie, diery na správnych miestach.
 
-Aby sa mozaika zmestila na disk, ukladá sa sklon ako **Byte s krokom 0,5°**
-(hodnota = 2× stupne, 0–180). Float32 by bol 4× väčší a 0,5° je na prahovanie
-viac než dosť – prahy sú aj tak celé stupne.
+Sklon sa ukladá ako **Int16 v stotinách stupňa**. Byte s krokom 0,5° by bol
+polovičný, ale robil obrys zubatý: pri hrubom kroku vznikajú v poli sklonu
+plošiny a izolínia po nich chodí po hranách buniek, teda schodíkmi. Int16
+0,01° dáva prakticky zhodný výsledok ako presný Float32 pri štvrtinovej
+veľkosti rastra.
 
 Aby sklon na okraji časti nebol zrezaný, každá sa počíta s presahom
 niekoľkých pixelov a zapíše sa až orezaná presne na svoju hranicu. Hranice
@@ -58,7 +60,13 @@ import threading
 import time
 
 METRIC = "EPSG:3035"  # LAEA Európa – pre naše šírky skresľuje plochy minimálne
-SCALE = 2  # sklon sa ukladá ako Byte v krokoch 0,5° (hodnota = 2× stupne)
+# Sklon sa ukladá ako Int16 v stotinách stupňa. Predtým to bol Byte s krokom
+# 0,5° a práve ten robil obrys zubatý: pri hrubom kroku vznikajú v poli sklonu
+# plošiny a izolínia po nich chodí po hranách buniek, teda schodíkmi. Namerané
+# na tom istom území – Byte 0,5° dal 481 plôch a 844 bodov na plochu,
+# Int16 0,01° dal 319 plôch a 1328 bodov, čo je zhodné s presným Float32
+# (321 plôch, 1320 bodov) pri štvrtinovej veľkosti rastra.
+SCALE = 100
 
 # Namerané na GitHub runneri (ubuntu-latest, 4 jadrá). Slúžia len na odhad
 # dopredu – aby sa dalo povedať „toto potrvá tri hodiny" PRED tým, než sa tri
@@ -71,7 +79,7 @@ CONTOUR_CELLS_PER_S = 3.5e6  # gdal_contour -p nad hotovou mozaikou
 # Ten istý beh na OOM NEspadol, čiže pri 23,1 mld. buniek bol pod 16 GB.
 # Pamäť teda nie je to, o čo sa zadanie zabije – zabije sa o čas.
 CONTOUR_MB_PER_GCELL = 700   # špička pamäte gdal_contour na miliardu buniek
-MOSAIC_MB_PER_GCELL = 50     # Byte + DEFLATE + PREDICTOR, merané 1142 MB / 23,1 mld.
+MOSAIC_MB_PER_GCELL = 240    # Int16 + DEFLATE + PREDICTOR (Byte bol 50, ale zubatý)
 
 
 def hms(sec):
@@ -388,7 +396,7 @@ def slope_tiles(dem, chunks, res, tmp, heartbeat_every):
                  "-co", "COMPRESS=DEFLATE", "-co", "TILED=YES", dem_tif, slope_tif])
             # Presah preč a Float32 → Byte s krokom 0,5°: mozaika celého kraja
             # sa vo Float32 na disk runnera nezmestí.
-            run(["gdal_translate", "-q", "-ot", "Byte",
+            run(["gdal_translate", "-q", "-ot", "Int16",
                  "-scale", "0", repr(90.0), "0", repr(90.0 * SCALE),
                  "-projwin", repr(cx0), repr(cy1), repr(cx1), repr(cy0),
                  "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "TILED=YES",
@@ -418,7 +426,9 @@ def main():
     ap.add_argument("--slope", type=float, default=50.0, help="prah sklonu v stupňoch")
     ap.add_argument("--cliff", type=float, default=65.0, help="prah triedy `cliff`")
     ap.add_argument("--min-area", type=float, default=4.0, help="najmenšia plocha v m²")
-    ap.add_argument("--simplify", type=float, default=0.0, help="0 = presný obrys")
+    ap.add_argument("--simplify", type=float, default=-1.0,
+                    help="tolerancia zjednodušenia obrysu v metroch; "
+                         "-1 = štvrtina mriežky (odstráni schodíky), 0 = vypnuté")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
     ap.add_argument("--budget-min", type=float, default=100.0,
@@ -435,6 +445,11 @@ def main():
     bbox = tuple(float(v) for v in args.bbox.split(","))
     x0, y0, x1, y1 = to_metric(bbox)
     res = args.res
+    # Štvrtina bunky: zmaže schodíky po hranách buniek, ale obrys neposunie
+    # o viac než štvrtinu mriežky. Namerané: bodov na obrys klesne 5,7×
+    # (423 763 → 74 395) a počet plôch sa nezmení vôbec.
+    if args.simplify < 0:
+        args.simplify = res / 4.0
     dem_dx, dem_dy = dem_cell_metres(args.dem, (bbox[1] + bbox[3]) / 2)
     if dem_dx:
         print(f"Zdrojový DEM má bunku ~{dem_dx:.0f}×{dem_dy:.0f} m – to je "
@@ -550,6 +565,7 @@ def main():
                 f.write(f"min_area_m2={args.min_area:g}\n")
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
+                f.write(f"simplify_m={args.simplify:g}\n")
                 f.write(f"cells_g={cells/1e9:.2f}\n")
                 f.write(f"took={hms(took)}\n")
                 if dem_dx:
