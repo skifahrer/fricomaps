@@ -318,26 +318,43 @@ Build map
        └─ contours    stiahne COG z releasu a počíta
 ```
 
-> **ÚGKK sa mi overiť nepodarilo a treba to povedať rovno.** Sieťová politika
-> prostredia, v ktorom to píšem, blokuje `*.skgeodesy.sk`, takže som sa k ich
-> službám nedostal. Isté je, že majú verejný ArcGIS adresár služieb
-> ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services));
-> ktorá z nich je DMR 5.0 v plnom rozlíšení, zdokumentované nie je.
+> **Zrkadlo skúša štyri cesty a v každej sa tvári ako prehliadač.**
+> Geoportály za WAF-om bežne zahadzujú požiadavky, ktoré nevyzerajú ako
+> prehliadač – a nezahadzujú ich chybou, ale **tichom**, čo v logu vyzerá
+> presne ako výpadok siete. V behu
+> [30997189220](https://github.com/skifahrer/fricomaps/actions/runs/30997189220)
+> to bol práve timeout, takže to stálo za skúšku.
 >
-> Preto má zrkadlo **tri cesty za sebou** a berie prvú, ktorá dá skutočný
-> výškový raster (kontroluje sa veľkosť bunky aj dátový typ – 10 m model ani
-> obrázok neprejde):
->
-> | # | cesta | kedy zaberie |
+> | # | cesta | poznámka |
 > |--:|---|---|
-> | 1 | **priame URL** (`ugkk_urls`) | vždy – toto je istota |
-> | 2 | ArcGIS `exportImage` | ak majú DMR 5.0 ako ImageServer |
-> | 3 | WCS `GetCoverage` | ak majú OGC službu |
+> | 1 | priame URL (`ugkk_urls`) | čo si zadal ručne |
+> | 2 | **metadátový katalóg RPI** | dá *skutočné* URL služieb namiesto uhádnutých názvov – a je to iný hostiteľ |
+> | 3 | ArcGIS `exportImage` | kandidáti + čo sa nájde v adresári služieb |
+> | 4 | WCS `GetCoverage` | |
 >
-> Keď zlyhajú obe automatické, build to povie a odkáže na cestu 1: v ZBGIS
-> Mapovom klientovi *Terén → Export údajov → DMR 5.0* si vyberieš územie (do
-> 400 km²), odkazy vložíš do inputu `ugkk_urls` a zrkadlo ich stiahne, zlepí
-> a odloží do releasu. Odvtedy je to tam a ďalší build ich len stiahne.
+> Každá požiadavka ide postupne ako **Safari 17 → Chrome 124 → ArcGIS Pro →
+> fricomaps**, a keď neprejde ani jeden, ešte raz cez **`curl` s HTTP/2** –
+> lebo časť WAF-ov blokuje podľa TLS odtlačku spojenia, nie podľa hlavičiek,
+> a curl má iný TLS stack než Python.
+>
+> **Prvý krok zrkadla je diagnostika**, ktorá to celé zmeria a napíše do
+> Summary maticu hostiteľ × profil:
+>
+> ```
+>    zbgis.skgeodesy.sk                     URL!      URL!      URL!      URL!       000
+>    rpi.gov.sk                             URL!      URL!      URL!      URL!       000
+>    pypi.org                                200       200       200       200       200
+>                                         Safari    Chrome    ArcGIS  fricomaps      curl
+> ```
+>
+> Riadok `pypi.org` je kontrolný: keď je 200 a ÚGKK riadky nie, problém je na
+> ich strane. Keď nie je 200 ani pypi, je rozbitá sieť runnera. Bez tohto sa
+> „nefunguje to" nedá odlíšiť od „nefunguje to takto".
+
+> **Testované som to však nemal kde.** Sieť prostredia, v ktorom sa to písalo,
+> blokuje `*.skgeodesy.sk`, `geoportal.sk` aj `rpi.gov.sk`. Overená je
+> mechanika (rotácia profilov prešla proti dostupnému hostiteľovi), nie to,
+> či ÚGKK pustí Safari. To povie prvý beh – v matici vyššie.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.

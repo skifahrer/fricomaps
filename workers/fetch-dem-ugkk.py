@@ -86,12 +86,32 @@ def is_elevation_raster(path, min_cell_m=2.5):
 # ---------------------------------------------------------------- 1. ArcGIS
 def try_arcgis(bbox, tmp, sources, tile_px=4000):
     src = json.load(open(sources))["ugkk"]
+    # Keď hostiteľ neodpovedá, nemá zmysel skúšať šesť ciest na tom istom
+    # stroji – je to šesťkrát ten istý timeout a tá istá odpoveď.
     candidates = list(src["candidates"])
-    # Adresár služieb doplní, čo sme nevedeli – názvy nie sú zdokumentované.
-    try:
-        candidates += _probe.probe_directory(src["directory"])
-    except Exception:
-        pass
+
+    # Katalóg najprv: je to iný hostiteľ a dáva SKUTOČNÉ URL služieb namiesto
+    # uhádnutých názvov. Keď prejde, ďalej sa už nehádá.
+    if src.get("catalog"):
+        print("  hľadám služby v metadátovom katalógu…")
+        try:
+            found = _probe.discover_from_catalog(src["catalog"])
+            candidates = [u for u in found if "ImageServer" in u or "WCS" in u.upper()] + candidates
+        except Exception as exc:
+            print(f"   – katalóg zlyhal: {type(exc).__name__}")
+
+    for d in src.get("directories", src.get("directory") and [src["directory"]] or []):
+        ok, why = _probe.host_reachable(d)
+        if not ok:
+            print(f"  ✗ {urllib.parse.urlparse(d).hostname} neodpovedá ({why})")
+            continue
+        try:
+            candidates += _probe.probe_directory(d)
+        except Exception:
+            pass
+
+    if not candidates:
+        return None
 
     service = None
     for url in dict.fromkeys(candidates):
@@ -145,10 +165,15 @@ def try_wcs(bbox, tmp, sources):
     src = json.load(open(sources))["ugkk"]
     w, s, e, n = bbox
     for base in src.get("wcs", []):
+        ok, why = _probe.host_reachable(base)
+        if not ok:
+            print(f"  – WCS {base}: hostiteľ neodpovedá ({why})")
+            continue
         try:
             caps = urllib.request.urlopen(urllib.request.Request(
                 base + ("&" if "?" in base else "?") +
-                "service=WCS&request=GetCapabilities", headers=UA), timeout=45).read()
+                "service=WCS&request=GetCapabilities", headers=UA),
+                timeout=_probe.DEFAULT_TIMEOUT).read()
         except Exception as exc:
             print(f"  – WCS {base}: {type(exc).__name__}")
             continue
@@ -245,11 +270,38 @@ def main():
             tiles, how = try_wcs(bbox, tmp, args.sources), "WCS"
 
         if not tiles:
+            host_ok, _ = _probe.host_reachable(
+                json.load(open(args.sources))["ugkk"]["directory"])
             print("::error::Ani jedna cesta k ÚGKK DMR 5.0 nevyšla.")
-            print("Čo s tým: otvor ZBGIS Mapový klient (https://zbgis.skgeodesy.sk),")
-            print("téma Terén → Export údajov → DMR 5.0, vyber územie (do 400 km²),")
-            print("a odkazy na stiahnutie vlož do inputu `direct_urls`. Tá cesta")
-            print("nezávisí od žiadnej služby a funguje vždy.")
+            print()
+            if not host_ok:
+                # Toto je to podstatné zistenie: nie sú to zlé názvy služieb,
+                # ale celý hostiteľ je z GitHub runnera nedostupný. Sťahovanie
+                # priamo v pipeline teda nepomôže ani s inými URL na tej istej
+                # doméne – dáta musia prísť inou cestou.
+                print("PRÍČINA: hostiteľ skgeodesy.sk z GitHub runnera vôbec")
+                print("neodpovedá – HTTPS požiadavka na jeho koreň neprejde.")
+                print("Nie sú to zle uhádnuté názvy služieb, nedá sa tam dostať.")
+                print("Odkazy zo ZBGIS Mapového klienta preto v ugkk_urls tiež")
+                print("nepomôžu, sú na tej istej doméne.")
+                print()
+                print("ČO FUNGUJE: stiahnuť DMR 5.0 raz ručne a nahrať do releasu.")
+                print("  1. ZBGIS Mapový klient → Terén → Export údajov → DMR 5.0")
+                print(f"     (vyber územie, do 400 km²)")
+                print("  2. rozbaľ a zlep do jedného GeoTIFFu, napr.:")
+                print("       gdalbuildvrt all.vrt *.tif")
+                print("       gdal_translate -of COG -co COMPRESS=DEFLATE \\")
+                print("         -co PREDICTOR=3 all.vrt " + os.path.basename(args.out))
+                print(f"  3. nahraj do releasu:")
+                print(f"       gh release upload dem-ugkk {os.path.basename(args.out)} --clobber")
+                print("  Odvtedy si to build berie z releasu a nič nesťahuje.")
+                print()
+                print("Alebo: ugkk_urls s odkazom, ktorý JE z GitHubu dostupný")
+                print("(napr. súbor nahratý do iného releasu alebo na S3).")
+            else:
+                print("Hostiteľ odpovedá, ale ani jedna služba nedala 1 m raster.")
+                print("Skús ugkk_urls s priamymi odkazmi zo ZBGIS Mapového klienta")
+                print("(Terén → Export údajov → DMR 5.0, do 400 km²).")
             return 1
 
         # Zlepiť a uložiť ako COG – jeden súbor na výrez, aby sa dal odložiť

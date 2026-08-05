@@ -74,6 +74,22 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin
 
+      # Diagnostika ako PRVÁ vec: matica hostiteľ × profil prehliadača.
+      # Odpovedá na otázku „pomôže tváriť sa ako Safari?" dátami, nie dohadmi,
+      # a je z nej hneď vidieť, či je problém na strane ÚGKK, alebo v sieti
+      # runnera (kontrolný riadok pypi.org musí byť 200).
+      - name: Odkiaľ sa kam dá dostať
+        continue-on-error: true
+        run: |
+          python3 workers/probe-dem-source.py --diagnose | tee /tmp/diag.txt
+          {
+            echo "## Dostupnosť zdrojov z runnera"
+            echo
+            echo '```'
+            cat /tmp/diag.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Vyrieš výrez
         id: area
         run: |
@@ -106,7 +122,12 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # `continue-on-error`: keď sa ÚGKK nedá stiahnuť, nie je to dôvod zhodiť
+      # celý build. Build sa podľa výsledku rozhodne sám – buď spadne, alebo
+      # dopočíta terén zo Sonnyho (input `ugkk_fallback`).
       - name: Stiahni DMR 5.0
+        id: fetch
+        continue-on-error: true
         if: ${{ steps.have.outputs.skip != 'true' }}
         run: |
           set -euo pipefail
@@ -117,7 +138,7 @@ jobs:
             --direct-urls='${{ inputs.direct_urls }}'
 
       - name: Ulož do releasu
-        if: ${{ steps.have.outputs.skip != 'true' }}
+        if: ${{ steps.have.outputs.skip != 'true' && steps.fetch.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -150,5 +171,26 @@ jobs:
             echo "| plocha | ${{ steps.area.outputs.km2 }} km² |"
             echo "| buniek pri 1 m | ${{ steps.area.outputs.cells_1m }} |"
             echo "| asset | \`${{ steps.have.outputs.asset }}\` v release \`$UGKK_RELEASE\` |"
-            echo "| stav | ${{ steps.have.outputs.skip == 'true' && 'už tam bolo, nesťahovalo sa' || 'sťahovalo sa' }} |"
+            if [ '${{ steps.have.outputs.skip }}' = 'true' ]; then
+              echo "| stav | **už v release – nesťahovalo sa** |"
+            elif [ '${{ steps.fetch.outcome }}' = 'success' ]; then
+              echo "| stav | **stiahnuté a uložené** |"
+            else
+              echo "| stav | **nepodarilo sa** – viď log |"
+              echo
+              echo "ÚGKK dáta sa z GitHub runnera stiahnuť nepodarilo. Build"
+              echo "z toho nespadne: s \`ugkk_fallback\` (default zapnuté)"
+              echo "dopočíta terén zo Sonnyho 20 m a povie to v atribúcii."
+              echo
+              echo "**Ako to doplniť natrvalo** (raz, potom to už len sťahuje):"
+              echo
+              echo "1. ZBGIS Mapový klient → Terén → Export údajov → DMR 5.0,"
+              echo "   vyber územie (do 400 km²)"
+              echo "2. \`\`\`"
+              echo "   gdalbuildvrt all.vrt *.tif"
+              echo "   gdal_translate -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 \\"
+              echo "     all.vrt ${{ steps.have.outputs.asset }}"
+              echo "   gh release upload $UGKK_RELEASE ${{ steps.have.outputs.asset }} --clobber"
+              echo "   \`\`\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
