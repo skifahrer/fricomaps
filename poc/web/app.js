@@ -27,6 +27,7 @@ const $ = (id) => document.getElementById(id);
 const themeSelect = $("theme");
 const regionSelect = $("region");
 const contoursCheck = $("contours");
+const trailsCheck = $("trails");
 const terrainCheck = $("terrain");
 const hillshadeCheck = $("hillshade");
 const devCheck = $("devmode");
@@ -88,6 +89,15 @@ async function loadJson(url, { optional = false } = {}) {
   }
 }
 
+/** Druhy značených trás – ľudsky, do popupu. */
+const TRAIL_LABELS = {
+  hiking: "turistická trasa",
+  bicycle: "cyklotrasa",
+  mtb: "horská cyklotrasa",
+  ski: "lyžiarska trasa",
+  horse: "jazdecká trasa"
+};
+
 let map;
 let dev = null;
 /** Úpravy štýlu z developer módu (prehliadač > zdroják > žiadne). */
@@ -128,6 +138,11 @@ function styleFor(manifest) {
         ? `pmtiles://${baseUrl}/${region.contours}`
         : null,
     contoursMaxzoom: region.contours_maxzoom || 14,
+    trailsUrl:
+      region.trails && trailsCheck.checked
+        ? `pmtiles://${baseUrl}/${region.trails}`
+        : null,
+    trailsMaxzoom: region.trails_maxzoom || 14,
     demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
     demMaxzoom: manifest.dem_maxzoom || DEFAULT_DEM_MAXZOOM,
@@ -156,6 +171,10 @@ function applyStyle(manifest) {
         `<br>Výšky: ${
           (DEM_SOURCES[region.dem_source] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).label
         }<br>`
+      : "") +
+    (region.trails
+      ? `Značené trasy: ${region.trail_count || "?"} ` +
+        `(pásiky vedľa cesty, farba podľa značky)<br>`
       : "") +
     (hasOverrides(overrides) ? "Štýl s vlastnými úpravami (developer mode)<br>" : "") +
     `Vygenerované: ${new Date(manifest.built_at).toLocaleString("sk-SK")}<br>` +
@@ -206,12 +225,30 @@ function applyStyle(manifest) {
     map.on("load", updateZoom);
     map.on("style.load", applyTerrain);
 
-    // Klik na POI / vrchol / letisko zobrazí popup s detailom.
+    // Klik na POI / vrchol / letisko / trasu zobrazí popup s detailom.
     map.on("click", (ev) => {
       const layers = CLICKABLE_LAYERS.filter((id) => map.getLayer(id));
       const [f] = map.queryRenderedFeatures(ev.point, { layers });
       if (!f) return;
       const p = f.properties;
+      // Po jednej ceste vedie aj päť trás – popup povie, do ktorej sa trafil.
+      if (f.layer.id.startsWith("trail-")) {
+        const title = [p.ref, p.name].filter(Boolean).join(" ") || "(bez názvu)";
+        const detail = [TRAIL_LABELS[p.route] || p.route, p.colour, p.network]
+          .filter(Boolean)
+          .join(" · ");
+        new maplibregl.Popup()
+          .setLngLat(ev.lngLat)
+          .setHTML(
+            `<b>${title}</b><br><small>${detail}</small>` +
+              (p.rel
+                ? `<br><small><a href="https://www.openstreetmap.org/relation/${p.rel}"` +
+                  ` target="_blank" rel="noopener">trasa v OSM</a></small>`
+                : "")
+          )
+          .addTo(map);
+        return;
+      }
       const title = p["name:sk"] || p.name || "(bez názvu)";
       const detail = [p.subclass, p.class].filter(Boolean).join(" · ");
       const ele = p.ele ? `<br><small>${p.ele} m n. m.</small>` : "";
@@ -320,6 +357,7 @@ async function main() {
   const syncControls = () => {
     const region = manifest.regions[regionSelect.value];
     $("row-contours").hidden = !region.contours;
+    $("row-trails").hidden = !region.trails;
     $("row-terrain").hidden = manifest.dem === null;
     $("row-hillshade").hidden = manifest.dem === null;
   };
@@ -330,6 +368,10 @@ async function main() {
     dev?.refresh();
   });
   contoursCheck.addEventListener("change", () => {
+    applyStyle(manifest);
+    dev?.refresh();
+  });
+  trailsCheck.addEventListener("change", () => {
     applyStyle(manifest);
     dev?.refresh();
   });

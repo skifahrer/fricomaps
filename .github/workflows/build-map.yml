@@ -85,6 +85,16 @@ on:
         required: false
         default: "0"
         type: string
+      trails:
+        description: "Značené trasy z OSM relácií (turistické, cyklo, bežky, jazdecké) – kreslia sa ako farebné pásiky vedľa cesty"
+        required: false
+        default: true
+        type: boolean
+      trails_maxzoom:
+        description: "Max zoom dlaždíc so značenými trasami (14 stačí – vyššie sa dopočíta overzoomom)"
+        required: false
+        default: "14"
+        type: string
       rocks:
         description: "Vygenerovať skalné plochy (najstrmšie úseky terénu z DEM)"
         required: false
@@ -201,6 +211,9 @@ env:
   # hodnoty (vrstevnice 187 MB = 21 %, terén 96 MB = 11 % z 900 MB).
   BUDGET_CONTOURS_PCT: "25"
   BUDGET_TERRAIN_PCT: "12"
+  # Značené trasy sú len línie s pár atribútmi – celé Slovensko je jednotky
+  # MB. 3 % z rozpočtu je s veľkou rezervou.
+  BUDGET_TRAILS_PCT: "3"
   BUDGET_ASSETS_MB: "40"
 
 jobs:
@@ -1151,9 +1164,183 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # ---------- značené trasy ----------
+  # Trasa nie je cesta: je to `type=route` relácia nad cudzími cestami, ktorá
+  # nesie značenie (farbu pásika, sieť, názov). Schéma OpenMapTiles relácie
+  # trás nepozná – v hlavných dlaždiciach po nich nezostane ani stopa, takže
+  # z mapy sa nedá zistiť, či po chodníku vedie červená turistická, dve
+  # cyklotrasy, alebo nič.
+  #
+  # Vlastný job, lebo je to vlastný `.pmtiles` a bežať môže súbežne s mapou.
+  # Necachuje sa: celé je to pár minút a závisí to na PBF, ktoré sa mení
+  # denne – cache by sa aj tak trafila len v ten istý deň.
+  trails:
+    name: Značené trasy
+    needs: plan
+    if: ${{ !cancelled() && inputs.trails }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      enabled: ${{ steps.trails.outputs.enabled }}
+      maxzoom: ${{ steps.trails.outputs.maxzoom }}
+      count: ${{ steps.trails.outputs.count }}
+      size_mb: ${{ steps.trails.outputs.size_mb }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
+      # nevidí, takže by sa artefakt nikdy neodložil.
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+      - name: Stiahni PBF z prípravy
+        uses: actions/download-artifact@v4
+        with:
+          name: pbf
+          path: data
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Planetileru (restore)
+        id: planetiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: planetiler.jar
+          key: planetiler-latest-${{ needs.plan.outputs.day }}
+
+      - name: Stiahni Planetiler
+        run: |
+          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
+          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
+            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: Cache Planetileru (save)
+        if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: planetiler.jar
+          key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
+
+      - name: Trasy z OSM relácií → PMTiles
+        id: trails
+        run: |
+          set -euo pipefail
+          mkdir -p _site/tiles data
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osmium-tool
+          # pyosmium je v Ubuntu ako balík; keď tam nie je (iný obraz
+          # runnera), doinštaluje sa z PyPI. Verzia 3 aj 4 majú `SimpleHandler`,
+          # ktorý workers/trail-routes.py používa.
+          python3 -c 'import osmium' 2>/dev/null \
+            || sudo apt-get install -y -qq python3-pyosmium \
+            || python3 -m pip install --quiet --break-system-packages 'osmium>=3.6,<5'
+
+          # ---- 1. predfilter ----
+          # Celé Slovensko je ~380 MB a index polôh uzlov nad ním by zobral
+          # niekoľko GB pamäte. `tags-filter` nechá len relácie trás a ich
+          # členov (cesty aj s uzlami), čo je zlomok veľkosti.
+          T_F=$(date +%s)
+          osmium tags-filter --overwrite -o data/trails.osm.pbf \
+            data/region.osm.pbf \
+            r/route=hiking,foot,walking,bicycle,mtb,ski,nordic,skitour,horse
+          echo "Predfilter: $(du -h data/region.osm.pbf | cut -f1) → $(du -h data/trails.osm.pbf | cut -f1)"
+
+          # ---- 2. relácie → línie s pruhmi ----
+          python3 workers/trail-routes.py \
+            --pbf=data/trails.osm.pbf \
+            --out=data/trails.geojson \
+            --stats=steps-out/trail-stats.txt
+          # shellcheck disable=SC1091
+          . steps-out/trail-stats.txt
+          printf '%s\t%s\t%s\t%s\n' "55" "Značené trasy z OSM" "$(( $(date +%s) - T_F ))" \
+            "${routes:-0} trás, ${features:-0} úsekov, ${multi:-0} ciest s viac trasami" \
+            >> steps-out/trails.tsv
+
+          if [ "${features:-0}" -eq 0 ]; then
+            echo "::warning::V tomto území nie je ani jedna značená trasa – mapa pôjde bez nich."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ---- 3. dlaždice ----
+          TZ_='${{ inputs.trails_maxzoom }}'
+          case "$TZ_" in ''|*[!0-9]*) TZ_=14 ;; esac
+          if [ "$TZ_" -gt 16 ]; then TZ_=16; fi
+
+          T_PM=$(date +%s)
+          java -Xmx4g -jar planetiler.jar generate-custom \
+            --schema=workers/trails.yml \
+            --output="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles" \
+            --maxzoom="$TZ_" --render_maxzoom="$TZ_" \
+            --simplify_tolerance_at_max_zoom=0 \
+            --min_feature_size_at_max_zoom=0 \
+            --force
+
+          OUT="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles"
+          MB=$(( $(stat -c%s "$OUT") / 1048576 ))
+
+          # Poistka na rozpočet stránky. Trasy sú malé (jednotky MB), ale keby
+          # niekedy neboli, nech sa to ozve tu a nie až v `deploy`.
+          LIMIT_MB='${{ inputs.size_limit_mb }}'
+          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
+          TBUDGET_MB=$(( LIMIT_MB * BUDGET_TRAILS_PCT / 100 ))
+          if [ "$MB" -gt "$TBUDGET_MB" ]; then
+            echo "::warning::Trasy majú ${MB} MB, čo je nad podielom ${TBUDGET_MB} MB z rozpočtu stránky. Zníž trails_maxzoom alebo zdvihni BUDGET_TRAILS_PCT."
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "maxzoom=$TZ_" >> "$GITHUB_OUTPUT"
+          echo "count=${routes:-0}" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$MB" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+          printf '%s\t%s\t%s\t%s\n' "56" "Značené trasy → PMTiles" "$(( $(date +%s) - T_PM ))" \
+            "maxzoom $TZ_, $(du -h "$OUT" | cut -f1)" \
+            >> steps-out/trails.tsv
+
+      # Hotové trasy ako artefakt behu – dajú sa otvoriť v QGISe a pozrieť,
+      # čo v nich naozaj je, bez ďalšieho buildu.
+      - name: Odlož trasy ako artefakt
+        if: ${{ always() && hashFiles('data/trails.geojson') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trasy-${{ needs.plan.outputs.key }}
+          path: |
+            data/trails.geojson
+            steps-out/trail-stats.txt
+          retention-days: 30
+          compression-level: 9
+          if-no-files-found: ignore
+
+      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
+      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
+      # je už komprimované, balenie by len ukradlo minúty.
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-trails
+          path: _site
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-trails
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
   # ---------- mapové dlaždice ----------
-  # Beží súbežne s vrstevnicami aj tieňovaním – z nich nič nepotrebuje,
-  # len PBF z prípravy.
+  # Beží súbežne s vrstevnicami, trasami aj tieňovaním – z nich nič
+  # nepotrebuje, len PBF z prípravy.
   tiles:
     name: Mapové dlaždice (Planetiler)
     needs: plan
@@ -1237,9 +1424,9 @@ jobs:
           # na konci overí, že súčet naozaj sedí.
           LIMIT_MB='${{ inputs.size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT) / 100 + BUDGET_ASSETS_MB ))
+          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT + BUDGET_TRAILS_PCT) / 100 + BUDGET_ASSETS_MB ))
           BUDGET_MB=$(( LIMIT_MB - OTHERS_MB ))
-          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
+          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − trasy ${BUDGET_TRAILS_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
 
           if [ "$BUDGET_MB" -lt 50 ]; then
             echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB. Zdvihni size_limit_mb alebo uber podiel vrstevniciam a terénu (BUDGET_*_PCT v env)."
@@ -1506,7 +1693,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, contours, terrain, tiles, assets]
+    needs: [plan, contours, trails, terrain, tiles, assets]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1542,7 +1729,7 @@ jobs:
       - name: Čo prišlo od ostatných jobov
         run: |
           set -uo pipefail
-          echo "Výsledky jobov: vrstevnice=${{ needs.contours.result }}, terén=${{ needs.terrain.result }}, dlaždice=${{ needs.tiles.result }}, ikonky=${{ needs.assets.result }}"
+          echo "Výsledky jobov: vrstevnice=${{ needs.contours.result }}, trasy=${{ needs.trails.result }}, terén=${{ needs.terrain.result }}, dlaždice=${{ needs.tiles.result }}, ikonky=${{ needs.assets.result }}"
           find _site -maxdepth 2 -mindepth 1 -type d -exec du -sh {} \; 2>/dev/null || true
           du -sm _site | cut -f1 | xargs -I{} echo "_site spolu: {} MB"
 
@@ -1560,6 +1747,8 @@ jobs:
             --maxzoom='${{ needs.tiles.outputs.maxzoom }}' \
             --contours='${{ needs.contours.outputs.enabled || 'false' }}' \
             --contours-maxzoom='${{ needs.contours.outputs.maxzoom || '14' }}' \
+            --trails='${{ needs.trails.outputs.enabled || 'false' }}' \
+            --trails-maxzoom='${{ needs.trails.outputs.maxzoom || '14' }}' \
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
@@ -1609,6 +1798,9 @@ jobs:
             ")" \
             --argjson maxzoom '${{ needs.tiles.outputs.maxzoom }}' \
             --argjson size_mb '${{ needs.tiles.outputs.size_mb }}' \
+            --argjson trails '${{ needs.trails.outputs.enabled || 'false' }}' \
+            --argjson tmaxzoom '${{ needs.trails.outputs.maxzoom || '14' }}' \
+            --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
@@ -1639,7 +1831,12 @@ jobs:
                   contour_interval: $cinterval,
                   dem_source: $demsource
                 } + (if $rockslope == "off" then {} else { rock_slope: ($rockslope | tonumber) } end)
-                else {} end))
+                else {} end)
+                + (if $trails then {
+                  trails: ("tiles/" + $region + "-trails.pmtiles"),
+                  trails_maxzoom: $tmaxzoom,
+                  trail_count: $tcount
+                } else {} end))
               }
             }' > _site/tiles/manifest.json
           cat _site/tiles/manifest.json
@@ -1697,6 +1894,12 @@ jobs:
           if jq -e '.sources.contours' "$STYLE" >/dev/null; then
             CPM="_site/tiles/${{ needs.plan.outputs.key }}-contours.pmtiles"
             [ -s "$CPM" ] || { echo "::error::štýl používa vrstevnice, ale chýba $CPM"; fail=1; }
+          fi
+
+          # značené trasy, ak ich štýl používa
+          if jq -e '.sources.trails' "$STYLE" >/dev/null; then
+            TPM="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles"
+            [ -s "$TPM" ] || { echo "::error::štýl používa značené trasy, ale chýba $TPM"; fail=1; }
           fi
 
           # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
@@ -1764,6 +1967,10 @@ jobs:
             check "$BASE/tiles/$REGION-contours.pmtiles" 206 "vrstevnice (Range request)" "-H Range:bytes=0-1023"
           fi
 
+          if [ '${{ needs.trails.outputs.enabled }}' = 'true' ]; then
+            check "$BASE/tiles/$REGION-trails.pmtiles" 206 "značené trasy (Range request)" "-H Range:bytes=0-1023"
+          fi
+
           exit $fail
 
       # ---------- súhrn ----------
@@ -1799,6 +2006,7 @@ jobs:
             echo "|---|---|"
             echo "| Príprava | ${{ needs.plan.result }} |"
             echo "| Vrstevnice a skaly | ${{ needs.contours.result }} |"
+            echo "| Značené trasy | ${{ needs.trails.result }} |"
             echo "| Tieňovanie a 3D terén | ${{ needs.terrain.result }} |"
             echo "| Mapové dlaždice | ${{ needs.tiles.result }} |"
             echo "| Ikonky a fonty | ${{ needs.assets.result }} |"
@@ -1860,6 +2068,34 @@ jobs:
               echo "> ale zdrojový DEM má bunku ~${dem_cell_m:-?} m, takže nové detaily"
               echo "> terénu jemnejšia mriežka nevymyslí – len obrys vyhladí a presnejšie"
               echo "> umiestni. Jemnejší DEM pre Slovensko Sonny neponúka."
+            } >> "$S"
+          fi
+
+          # ---- detail značených trás ----
+          # Čísla píše workers/trail-routes.py; job s trasami ich pribalil
+          # k meraniu krokov.
+          if [ -s steps-out/trail-stats.txt ]; then
+            # shellcheck disable=SC1091
+            . steps-out/trail-stats.txt
+            {
+              echo
+              echo "## Značené trasy – čo sa našlo v OSM"
+              echo
+              echo "| vlastnosť | hodnota |"
+              echo "|---|---|"
+              echo "| relácií trás (\`type=route\`) | ${routes:-0} |"
+              echo "| z toho pomenovaných | ${named:-0} |"
+              echo "| ciest, po ktorých vedie trasa | ${ways:-0} |"
+              echo "| úsekov v dlaždiciach (cesta × trasa) | ${features:-0} |"
+              echo "| ciest s viac než jednou trasou | ${multi:-0} (najviac naraz ${max_lanes:-0}) |"
+              echo "| turistické / cyklo / MTB | ${type_hiking:-0} / ${type_bicycle:-0} / ${type_mtb:-0} |"
+              echo "| lyžiarske / jazdecké | ${type_ski:-0} / ${type_horse:-0} |"
+              echo "| diaľkové (medzinárodné + národné) | $(( ${tier_international:-0} + ${tier_national:-0} )) |"
+              echo "| farby značiek | ${colours:-–} |"
+              echo
+              echo "Trasa sa kreslí ako farebný pásik **vedľa** cesty, každá vo"
+              echo "svojom pruhu – po jednej ceste ich vedie aj ${max_lanes:-1} naraz"
+              echo "a cesta pod nimi zostane vidieť aj s tým, aká je."
             } >> "$S"
           fi
 

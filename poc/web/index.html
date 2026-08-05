@@ -197,6 +197,9 @@
     }
     .dev-prop { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
     .dev-propname { font-size: 10px; color: #888; width: 96px; flex: none; }
+    /* Hlavička nad farbami, ktoré vrstva berie z palety (nie zo svojho paint) */
+    .dev-prophead { margin-top: 7px; border-top: 1px solid #eee; padding-top: 5px; }
+    .dev-prophead .dev-propname { width: auto; font-style: italic; }
     .dev-colorrow { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
     .dev-colorrow.changed .dev-hex { border-color: #d09030; background: #fffaf0; }
     .dev-color {
@@ -250,6 +253,7 @@
     body.dark .dev-iconset.on { border-color: #3a6ea5; background: #1e2636; }
     body.dark .dev-zoombar { background: #24243a; }
     body.dark .dev-zoominfo { color: #999; }
+    body.dark .dev-prophead { border-color: #2a2a3c; }
     body.dark .dev-sub { background: #222232; }
     body.dark .dev-sub.changed { background: #342c1c; box-shadow: inset 0 0 0 1px #7a5a2a; }
     body.dark .dev-field { color: #999; }
@@ -282,6 +286,10 @@
     <div class="row" id="row-contours" hidden>
       <input type="checkbox" id="contours" checked />
       <label for="contours" style="margin:0">Vrstevnice a skaly</label>
+    </div>
+    <div class="row" id="row-trails" hidden>
+      <input type="checkbox" id="trails" checked />
+      <label for="trails" style="margin:0">Značené trasy</label>
     </div>
     <div class="row" id="row-hillshade" hidden>
       <input type="checkbox" id="hillshade" />

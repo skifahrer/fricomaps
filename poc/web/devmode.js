@@ -8,7 +8,10 @@
  *   - prezerať mapu po zoomoch: nastavíš zoom a zoznam ukáže, ktoré vrstvy
  *     sú na ňom naozaj povolené a ktoré sa orežú,
  *   - zmeniť farbu ktoréhokoľvek prvku: farby vrstvy zvlášť aj celej palety
- *     naraz, vrátane hromadnej editácie výberu a kopírovania hodnôt,
+ *     naraz, vrátane hromadnej editácie výberu a kopírovania hodnôt – a to aj
+ *     tam, kde si vrstva farbu vyberá **výrazom** (pásik trasy podľa značky
+ *     z OSM): tie sa ladia z palety priamo v riadku vrstvy,
+ *   - vymeniť **ikonu** symbolovej vrstvy za ktorúkoľvek zo sady,
  *   - dať ploche alebo čiare opakujúci sa **vzor** a ľubovoľný **okraj**,
  *     čiare aj prerušovanie,
  *   - skryť konkrétne triedy POI a prepnúť celú sadu ikoniek,
@@ -763,6 +766,85 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
                 }
               : null
           })
+        ])
+      );
+    }
+
+    // ---- farby, ktoré vrstva vyberá výrazom ----
+    // Napr. pásik trasy má farbu podľa značky z OSM, takže v `paint` nie je
+    // hex, ale `match`. Taká farba sa nedá prepísať na vrstve – mení sa
+    // v palete, a tá platí pre celú tému. Ovládanie je aj tak tu, nech sa
+    // farba ladí tam, kde je vidieť, čo mení.
+    const extraKeys = (layer.metadata || {})["frico:palette-extra"] || [];
+    if (extraKeys.length) {
+      const colors = mergedPalette(getTheme(), overrides);
+      const changedPalette = overrides.palette[getTheme()] || {};
+      parts.push(
+        el("div", { class: "dev-prop dev-prophead" }, [
+          el("span", {
+            class: "dev-propname",
+            text: "farby z palety (platia pre celú tému)"
+          })
+        ])
+      );
+      for (const key of extraKeys) {
+        parts.push(
+          el("div", { class: "dev-prop" }, [
+            el("span", { class: "dev-propname", text: PALETTE_LABELS[key] || key }),
+            colorControl({
+              value: colors[key],
+              changed: key in changedPalette,
+              onInput: (v) => {
+                setPaletteColor(key, v);
+                apply({ rerender: false });
+              },
+              onReset:
+                key in changedPalette
+                  ? () => {
+                      setPaletteColor(key, undefined);
+                      apply({ immediate: true });
+                    }
+                  : null
+            })
+          ])
+        );
+      }
+    }
+
+    // ---- ikona ----
+    // Len tam, kde je meno ikony v štýle napevno – mená skladané výrazom
+    // (POI podľa triedy) sa vyberajú z dát, nie zo zoznamu.
+    const iconNow = (layer.layout || {})["icon-image"];
+    if (layer.type === "symbol" && typeof iconNow === "string") {
+      const set = (getIconSets?.() || []).find(
+        (s) => s.id === selectedIconSource(overrides)
+      ) || (getIconSets?.() || [])[0];
+      // Súčasná ikona je v zozname vždy, aj keby ju nasadená sada nemala –
+      // inak by `select` ticho ukázal prvú položku a tvrdil, že je vybraná.
+      const names = [...new Set([iconNow, ...(set?.icons || [])])].sort();
+      parts.push(
+        el("div", { class: `dev-sub${o.icon ? " changed" : ""}` }, [
+          selectField({
+            label: "Ikona",
+            value: iconNow,
+            options: names.map((n) => [n, n]),
+            onChange: (v) => {
+              setLayerOverride(layer.id, { icon: v === iconNow && !o.icon ? undefined : v });
+              apply({ immediate: true });
+            }
+          }),
+          o.icon
+            ? el("button", {
+                type: "button",
+                class: "dev-mini",
+                title: "Späť na pôvodnú ikonu",
+                text: "⟲",
+                onclick: () => {
+                  setLayerOverride(layer.id, { icon: undefined });
+                  apply({ immediate: true });
+                }
+              })
+            : null
         ])
       );
     }

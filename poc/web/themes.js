@@ -160,7 +160,27 @@ export const THEMES = {
     cliffStrong: "#54514d",
     hillShadow: "#5a4a3a",
     hillHighlight: "#ffffff",
-    hillAccent: "#8a7a6a"
+    hillAccent: "#8a7a6a",
+    // Značené trasy. Prvá desiatka sú farby značiek, ako ich pozná OSM
+    // (`osmc:symbol`, `colour`): dáta nesú meno farby, mapa až tento odtieň –
+    // takže sa dá každá značka doladiť zvlášť a v každej téme inak. Zvyšok sú
+    // farby podľa druhu trasy, ktoré sa použijú, keď značka farbu nemá.
+    trailRed: "#d42a2a",
+    trailBlue: "#2a54c8",
+    trailGreen: "#1f8a3c",
+    trailYellow: "#d8a000",
+    trailBlack: "#3a3a3a",
+    trailWhite: "#ffffff",
+    trailOrange: "#e2700c",
+    trailBrown: "#8a5a2c",
+    trailPurple: "#8a3aa8",
+    trailGray: "#7c7c7c",
+    trailHiking: "#b8342c",
+    trailCycling: "#1668b8",
+    trailMtb: "#7a3aa0",
+    trailSki: "#0f9ec0",
+    trailHorse: "#8a6a3a",
+    trailHalo: "#ffffff"
   },
   tmava: {
     label: "Tmavá",
@@ -232,7 +252,26 @@ export const THEMES = {
     cliffStrong: "#6e6e7e",
     hillShadow: "#000000",
     hillHighlight: "#4a4a60",
-    hillAccent: "#2a2a3a"
+    hillAccent: "#2a2a3a",
+    // V tmavej téme sa značky nekreslia doslova: čierna značka by na tmavom
+    // podklade zmizla, preto je svetlosivá. Podstatné je, aby sa dala od
+    // ostatných rozoznať – nie aby mala presne tú farbu, čo v teréne.
+    trailRed: "#ff6a6a",
+    trailBlue: "#7aa4ff",
+    trailGreen: "#5ecb6a",
+    trailYellow: "#ffd45a",
+    trailBlack: "#b4b4c2",
+    trailWhite: "#ffffff",
+    trailOrange: "#ffa350",
+    trailBrown: "#c48a5c",
+    trailPurple: "#c481e0",
+    trailGray: "#9c9caa",
+    trailHiking: "#e07a7a",
+    trailCycling: "#6aa8ff",
+    trailMtb: "#b47ade",
+    trailSki: "#5ad0e8",
+    trailHorse: "#c0a070",
+    trailHalo: "#14141f"
   },
   outdoor: {
     label: "Outdoor / Turistická",
@@ -304,7 +343,25 @@ export const THEMES = {
     cliffStrong: "#5d554c",
     hillShadow: "#6a5030",
     hillHighlight: "#fffaf0",
-    hillAccent: "#9a8060"
+    hillAccent: "#9a8060",
+    // Outdoor téma je na turistiku – značky sú tu najsýtejšie, aby sa dali
+    // rozoznať aj cez vrstevnice a tieňovanie.
+    trailRed: "#cc2222",
+    trailBlue: "#1f4fc0",
+    trailGreen: "#18862e",
+    trailYellow: "#e0a800",
+    trailBlack: "#2e2e2e",
+    trailWhite: "#ffffff",
+    trailOrange: "#e06a00",
+    trailBrown: "#7d5124",
+    trailPurple: "#8226a4",
+    trailGray: "#6e6e6e",
+    trailHiking: "#c02a20",
+    trailCycling: "#1a5ec0",
+    trailMtb: "#7a2ea0",
+    trailSki: "#0894b8",
+    trailHorse: "#7d5a30",
+    trailHalo: "#f4f1e4"
   },
   retro: {
     label: "Retro / Pastel",
@@ -376,7 +433,23 @@ export const THEMES = {
     cliffStrong: "#6c635c",
     hillShadow: "#8a6a58",
     hillHighlight: "#fffdf8",
-    hillAccent: "#c0a090"
+    hillAccent: "#c0a090",
+    trailRed: "#d06a5a",
+    trailBlue: "#6a8fb8",
+    trailGreen: "#6aa06a",
+    trailYellow: "#d8b45a",
+    trailBlack: "#6a5a55",
+    trailWhite: "#fffdf8",
+    trailOrange: "#d8905a",
+    trailBrown: "#a07a5a",
+    trailPurple: "#a87aa8",
+    trailGray: "#9a9088",
+    trailHiking: "#c07a68",
+    trailCycling: "#7a9fb8",
+    trailMtb: "#a87aa8",
+    trailSki: "#7ab8c0",
+    trailHorse: "#a08a68",
+    trailHalo: "#fdf6ec"
   }
 };
 
@@ -474,6 +547,28 @@ export const PALETTE_GROUPS = [
     ]
   },
   {
+    id: "trasy",
+    label: "Značené trasy",
+    keys: [
+      ["trailRed", "Značka červená"],
+      ["trailBlue", "Značka modrá"],
+      ["trailGreen", "Značka zelená"],
+      ["trailYellow", "Značka žltá"],
+      ["trailBlack", "Značka čierna"],
+      ["trailWhite", "Značka biela"],
+      ["trailOrange", "Značka oranžová"],
+      ["trailBrown", "Značka hnedá"],
+      ["trailPurple", "Značka fialová"],
+      ["trailGray", "Značka sivá"],
+      ["trailHiking", "Turistická trasa (bez farby)"],
+      ["trailCycling", "Cyklotrasa (bez farby)"],
+      ["trailMtb", "Horská cyklotrasa (bez farby)"],
+      ["trailSki", "Lyžiarska trasa (bez farby)"],
+      ["trailHorse", "Jazdecká trasa (bez farby)"],
+      ["trailHalo", "Podklad pod pásikom trasy"]
+    ]
+  },
+  {
     id: "doprava",
     label: "Železnica a ostatná doprava",
     keys: [
@@ -558,6 +653,7 @@ export const LAYER_GROUPS = [
   { id: "budovy", label: "Budovy" },
   { id: "cesty", label: "Cesty" },
   { id: "chodniky", label: "Chodníky a cestičky" },
+  { id: "trasy", label: "Značené trasy" },
   { id: "doprava", label: "Železnica a ostatná doprava" },
   { id: "hranice", label: "Hranice" },
   { id: "popisky", label: "Popisky" },
@@ -759,6 +855,18 @@ export function normalizeOverrides(raw) {
     }
     if (Object.keys(paint).length) clean.paint = paint;
 
+    // ---- ikona symbolovej vrstvy ----
+    // Zoznam ikon závisí od nasadenej sady, tu sa preto kontroluje len tvar
+    // mena; či taká ikona v sprite naozaj je, rieši `applyLayerOverrides`.
+    if (def.icon != null) {
+      const icon = String(def.icon).trim();
+      if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(icon)) {
+        problems.push(`Vrstva "${id}": neplatné meno ikony "${def.icon}".`);
+      } else {
+        clean.icon = icon;
+      }
+    }
+
     // ---- prerušovanie čiary ----
     if (def.dash != null) {
       if (!DASH_IDS.includes(def.dash)) {
@@ -946,9 +1054,13 @@ function outlineLayer(layer, outline) {
 
 /**
  * Aplikuje úpravy vrstiev na hotový štýl: viditeľnosť, rozsah zoomu, farby,
- * prerušovanie čiary a odvodené vrstvy (vzor, okraj).
+ * ikonu, prerušovanie čiary a odvodené vrstvy (vzor, okraj).
+ *
+ * @param {(name: string) => boolean} [hasIcon] je taká ikona v sprite? Ikona,
+ *        ktorú vybraná sada nemá, sa nenastaví – chýbajúci obrázok znamená
+ *        nevykreslený symbol a v pipeline navyše zhodí kontrolu štýlu.
  */
-function applyLayerOverrides(style, layerOverrides) {
+function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
   if (!layerOverrides) return style;
   const out = [];
 
@@ -957,6 +1069,10 @@ function applyLayerOverrides(style, layerOverrides) {
     if (!o) {
       out.push(layer);
       continue;
+    }
+
+    if (o.icon && layer.type === "symbol" && hasIcon(o.icon)) {
+      layer.layout = { ...(layer.layout || {}), "icon-image": o.icon };
     }
 
     if (o.visible === false) {
@@ -1008,6 +1124,8 @@ function applyLayerOverrides(style, layerOverrides) {
  * @param {number} [opts.maxzoom]   najvyšší zoom dlaždíc (default MAX_TILE_Z)
  * @param {string} [opts.contoursUrl]     pmtiles:// URL s vrstevnicami (voliteľné)
  * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
+ * @param {string} [opts.trailsUrl]       pmtiles:// URL so značenými trasami
+ * @param {number} [opts.trailsMaxzoom]   najvyšší zoom dlaždíc s trasami
  * @param {string} [opts.demSource]       zdroj výšok (kľúč z DEM_SOURCES) –
  *                                        určuje atribúciu vrstevníc a skál
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
@@ -1028,6 +1146,8 @@ export function buildStyle({
   maxzoom = MAX_TILE_Z,
   contoursUrl = null,
   contoursMaxzoom = 14,
+  trailsUrl = null,
+  trailsMaxzoom = 14,
   demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
   demMaxzoom = DEFAULT_DEM_MAXZOOM,
@@ -1110,6 +1230,18 @@ export function buildStyle({
         .attribution
     };
   }
+  // Značené trasy sú tiež samostatný .pmtiles: sú to `type=route` relácie,
+  // ktoré schéma OpenMapTiles nepozná – v hlavných dlaždiciach je len cesta,
+  // bez značenia. Robia sa z toho istého PBF, ale vlastným krokom pipeline.
+  if (trailsUrl) {
+    style.sources.trails = {
+      type: "vector",
+      url: trailsUrl,
+      maxzoom: trailsMaxzoom,
+      attribution:
+        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> prispievatelia'
+    };
+  }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
   // Vlastné dlaždice (workers/build-terrain.py) sú z toho istého modelu ako
   // vrstevnice a skaly – atribúcia preto ide podľa zdroja výšok. Keď ich
@@ -1133,18 +1265,27 @@ export function buildStyle({
   /**
    * Pridá vrstvu spolu s metadátami pre developer mode.
    *
+   * `paletteExtra` sú kľúče palety, ktoré vrstva používa vo **výraze**
+   * (napr. farba pásika trasy sa vyberá podľa značky z OSM). Taká farba nie
+   * je v `paint` obyčajným hexom, takže by ju developer mode v riadku vrstvy
+   * nenašiel – odtiaľ sa potom ladí cez paletu.
+   *
    * @param {object} layer  vrstva podľa MapLibre style-spec
-   * @param {[string,string,string,object?]} meta [skupina, popis, druh, {paintProp: kľúč palety}]
+   * @param {[string,string,string,object?,string[]?]} meta
+   *        [skupina, popis, druh, {paintProp: kľúč palety}, [kľúče palety vo výrazoch]]
    */
   const add = (layer, meta) => {
-    const [group, label, kind, palette] = meta;
+    const [group, label, kind, palette, paletteExtra] = meta;
     const l = { ...layer };
     if (l.type !== "background" && !l.source) l.source = "omt";
     l.metadata = {
       "frico:group": group,
       "frico:label": label,
       "frico:kind": kind,
-      "frico:palette": palette || {}
+      "frico:palette": palette || {},
+      ...(paletteExtra && paletteExtra.length
+        ? { "frico:palette-extra": paletteExtra }
+        : {})
     };
     L.push(l);
   };
@@ -1739,6 +1880,235 @@ export function buildStyle({
     );
   }
 
+  // ================= značené trasy =================
+  // Trasa nie je cesta. Je to `type=route` relácia, ktorá zbiera cudzie
+  // cesty a nesie značenie (farbu pásika, sieť, názov) – v dlaždiciach
+  // OpenMapTiles po nej nezostane ani stopa. Preto má vlastný zdroj a
+  // kreslí sa ako farebný pásik **vedľa** cesty:
+  //
+  //     ── cesta ────────────    zostane vidieť, aká to je cesta
+  //     ━━ červená (off 0,5) ━
+  //     ━━ modrá   (off 1,5) ━   druhá trasa po tej istej ceste
+  //
+  // Pruh (`off`) prichádza z dát, `line-offset` ho prepočíta na pixely –
+  // preto sa pásiky neprekrývajú ani vtedy, keď po ceste vedie päť trás.
+  if (trailsUrl) {
+    // Farby značiek tak, ako ich pozná OSM (`osmc:symbol`, `colour`).
+    // Cez paletu, nie natvrdo z dát: „červená" značka má v každej téme
+    // vyzerať ako červená značka, nie ako presne to `#ff0000`, ktoré do
+    // OSM napísal ten, kto trasu zadával.
+    const MARK_COLOURS = [
+      ["red", "trailRed"],
+      ["blue", "trailBlue"],
+      ["green", "trailGreen"],
+      ["yellow", "trailYellow"],
+      ["black", "trailBlack"],
+      ["white", "trailWhite"],
+      ["orange", "trailOrange"],
+      ["brown", "trailBrown"],
+      ["purple", "trailPurple"],
+      ["gray", "trailGray"]
+    ];
+    const MARK_KEYS = MARK_COLOURS.map(([, key]) => key);
+
+    /**
+     * Farba pásika: pomenovaná značka → paleta, neznáma farba z OSM → tak,
+     * ako je v dátach (atribút `hex`), žiadna farba → podľa druhu trasy.
+     */
+    const trailColour = (fallbackKey) => [
+      "match",
+      str("colour"),
+      ...MARK_COLOURS.flatMap(([name, key]) => [name, c[key]]),
+      ["coalesce", ["get", "hex"], c[fallbackKey]]
+    ];
+
+    // Posun pásika od osi cesty. `["zoom"]` smie byť len vstupom
+    // najvrchnejšieho `interpolate`, preto sa násobí až vo výstupoch stopov,
+    // nie výrazom `["*", ["interpolate", …], …]`.
+    const trailOffset = [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      // Krok pruhu musí byť aspoň polovica šírky cesty pod ním, inak by
+      // pásik ležal na ceste. Rastie preto rýchlejšie než šírka pásika –
+      // na z20 sú cesty široké desiatky pixelov.
+      ...[[9, 1.6], [12, 2.4], [14, 4], [16, 6], [20, 20]].flatMap(
+        ([z, step]) => [z, ["*", step, num("off", 0)]]
+      )
+    ];
+
+    /** Ikona podľa druhu trasy – prvá, ktorú vybraná sada naozaj má. */
+    const pickIcon = (names) => {
+      for (const n of names) {
+        if (hasIcon(`${n}${suffix}`)) return `${n}${suffix}`;
+      }
+      return null;
+    };
+
+    // Popisok: „0801 Chodník hrdinov SNP", inak čo z toho je.
+    const trailLabel = [
+      "case",
+      ["all", ["has", "ref"], ["has", "name"]],
+      ["concat", ["get", "ref"], " ", ["get", "name"]],
+      ["has", "name"],
+      ["get", "name"],
+      ["has", "ref"],
+      ["get", "ref"],
+      ""
+    ];
+    // Diaľkové trasy sa popisujú prednostne – keď sa nezmestia všetky,
+    // nech ostane na mape tá dôležitejšia.
+    const trailSort = [
+      "match",
+      str("tier"),
+      "international", 0,
+      "national", 1,
+      "regional", 2,
+      3
+    ];
+
+    // Podklad pod všetkými pásikmi naraz: farebná čiara sama o sebe sa cez
+    // les, vrstevnice a tieňovanie stráca.
+    add(
+      {
+        id: "trail-halo",
+        type: "line",
+        source: "trails",
+        "source-layer": "trail",
+        minzoom: 11,
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: {
+          "line-color": c.trailHalo,
+          "line-width": zw([[11, 2.4], [14, 3.4], [16, 4.8], [20, 10]]),
+          "line-offset": trailOffset,
+          "line-opacity": zl([[11, 0], [12, 0.45], [14, 0.65]])
+        }
+      },
+      ["trasy", "Podklad pod pásikmi trás", "line", { "line-color": "trailHalo" }]
+    );
+
+    // [id, popis, hodnota `route`, kľúč palety, kandidáti na ikonu, prerušenie]
+    const trailDefs = [
+      ["hiking", "Turistické trasy (značené)", "hiking", "trailHiking",
+        ["mountain", "triangle"], null],
+      ["bicycle", "Cyklotrasy", "bicycle", "trailCycling",
+        ["bicycle"], [5, 2]],
+      ["mtb", "Horské cyklotrasy (MTB)", "mtb", "trailMtb",
+        ["bicycle"], [2.5, 1.5]],
+      ["ski", "Lyžiarske a bežkárske trasy", "ski", "trailSki",
+        ["skiing", "mountain"], [7, 2.5]],
+      ["horse", "Jazdecké trasy", "horse", "trailHorse",
+        ["horse", "circle"], [1.5, 1.5]]
+    ];
+
+    for (const [id, label, route, paletteKey, iconNames, dash] of trailDefs) {
+      const filter = ["==", str("route"), route];
+      add(
+        {
+          id: `trail-${id}`,
+          type: "line",
+          source: "trails",
+          "source-layer": "trail",
+          minzoom: 9,
+          filter,
+          layout: { "line-cap": "butt", "line-join": "round" },
+          paint: {
+            "line-color": trailColour(paletteKey),
+            "line-width": zw([[9, 0.9], [12, 1.3], [14, 1.9], [16, 2.6], [20, 6]]),
+            "line-offset": trailOffset,
+            "line-opacity": zl([[9, 0.75], [13, 0.95]]),
+            ...(dash ? { "line-dasharray": dash } : {})
+          }
+        },
+        ["trasy", label, "line", {}, [...MARK_KEYS, paletteKey]]
+      );
+    }
+
+    // Ikony a popisky idú až za všetky pásiky, aby sa čiara jednej trasy
+    // nekreslila cez popisok druhej.
+    for (const [id, label, route, paletteKey, iconNames] of trailDefs) {
+      const icon = pickIcon(iconNames);
+      if (!icon) continue;
+      add(
+        {
+          id: `trail-${id}-icon`,
+          type: "symbol",
+          source: "trails",
+          "source-layer": "trail",
+          minzoom: 13,
+          filter: ["==", str("route"), route],
+          layout: {
+            "symbol-placement": "line",
+            "symbol-spacing": 260,
+            "icon-image": icon,
+            "icon-size": zl([[13, 0.5], [16, 0.75], [20, 1]]),
+            "icon-rotation-alignment": "viewport",
+            "icon-padding": 6
+          },
+          paint: {
+            "icon-opacity": 0.85,
+            ...(sdfIcons
+              ? {
+                  "icon-color": trailColour(paletteKey),
+                  "icon-halo-color": c.trailHalo,
+                  "icon-halo-width": 1.2
+                }
+              : {})
+          }
+        },
+        [
+          "trasy",
+          `${label} – ikona`,
+          "point",
+          sdfIcons ? { "icon-halo-color": "trailHalo" } : {},
+          sdfIcons ? [...MARK_KEYS, paletteKey] : []
+        ]
+      );
+    }
+
+    for (const [id, label, route, paletteKey] of trailDefs) {
+      add(
+        {
+          id: `trail-${id}-label`,
+          type: "symbol",
+          source: "trails",
+          "source-layer": "trail",
+          minzoom: 12,
+          filter: [
+            "all",
+            ["==", str("route"), route],
+            ["any", ["has", "name"], ["has", "ref"]]
+          ],
+          layout: {
+            "symbol-placement": "line",
+            "text-field": trailLabel,
+            "text-font": REG,
+            "text-size": zl([[12, 9], [14, 10.5], [18, 13]]),
+            "symbol-spacing": 420,
+            "text-max-angle": 30,
+            "text-padding": 6,
+            // Popisok sa odsunie z čiary nabok, nech neleží na pásikoch.
+            "text-offset": [0, 0.8],
+            "symbol-sort-key": trailSort
+          },
+          paint: {
+            // Názov trasy je vo farbe trasy – červená značka má červený nápis.
+            "text-color": trailColour(paletteKey),
+            "text-halo-color": c.textHalo,
+            "text-halo-width": 1.6
+          }
+        },
+        [
+          "trasy",
+          `${label} – názvy`,
+          "text",
+          { "text-halo-color": "textHalo" },
+          [...MARK_KEYS, paletteKey]
+        ]
+      );
+    }
+  }
+
   // ================= hranice =================
   add(
     {
@@ -2205,8 +2575,19 @@ export function buildStyle({
     );
   }
 
-  return applyLayerOverrides(style, overrides?.layers);
+  return applyLayerOverrides(style, overrides?.layers, hasIcon);
 }
 
 /** Vrstvy, na ktoré sa dá kliknúť (popup s detailom). */
-export const CLICKABLE_LAYERS = ["poi-major", "poi-all", "mountain-peak", "aerodrome-label"];
+export const CLICKABLE_LAYERS = [
+  "poi-major",
+  "poi-all",
+  "mountain-peak",
+  "aerodrome-label",
+  // Značené trasy – po ceste ich vedie viac, popup povie, ktorá je ktorá.
+  "trail-hiking",
+  "trail-bicycle",
+  "trail-mtb",
+  "trail-ski",
+  "trail-horse"
+];

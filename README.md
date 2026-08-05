@@ -10,8 +10,8 @@ app/ios/       iOS aplikácia (SwiftUI + MapLibre Native)
 backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
-workers/       pipeline: regióny, výškové dlaždice, generátor štýlov,
-               SDF sprite, vzory do spritu, zápis úprav štýlu do zdrojáku
+workers/       pipeline: regióny, výškové dlaždice, značené trasy, generátor
+               štýlov, SDF sprite, vzory do spritu, zápis úprav štýlu
 docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 .github/workflows/  CI pipeline (výškový model + build mapy + deploy Pages)
 ```
@@ -22,11 +22,12 @@ docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 ## Ako funguje pipeline
 
 ```
-Build map                    osem jobov, tie dlhé bežia súbežne:
+Build map                    deväť jobov, tie dlhé bežia súbežne:
 (manuálne, výber regiónu)      plan     región + PBF z osm.fr exportov
                                tiles    Planetiler ─► {región}.pmtiles
                                contours vrstevnice + skaly z DEM
                                terrain  tieňovanie a 3D ako PNG dlaždice
+                               trails   značené trasy z OSM relácií
                                assets   SDF sprity a glyfy
                                deploy   zloží _site ─► GitHub Pages
 
@@ -53,7 +54,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
   a `custom_name`. Bbox sa prečíta z PBF hlavičky (alebo zadaj `custom_bbox`).
 - **Témy a štýlovanie:** [poc/web/themes.js](poc/web/themes.js) – 4 farebné
-  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~119 vrstiev pokrývajúcich celú
+  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~135 vrstiev pokrývajúcich celú
   OpenMapTiles schému: krajinná pokrývka, využitie územia, voda a vodné toky,
   budovy (od z16 v 3D), cesty vrátane chodníkov/cyklotrás/schodov, mosty a
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
@@ -62,6 +63,9 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   pohoria, hrebene a geografické oblasti sa od nízkych zoomov kreslia
   kurzívou a verzálkami, aby sa nepliedli so sídlami.
   Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
+- **Značené trasy:** turistické chodníky, cyklotrasy, bežky a jazdecké trasy
+  z OSM relácií – ako farebné pásiky **vedľa** cesty, s názvom pozdĺž trasy.
+  Viď [Značené trasy](#značené-trasy-turistika-cyklo-bežky).
 - **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
   podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
   farbu im meniť nejde. Pipeline z každého zdroja vyrobí vlastný **SDF sprite**
@@ -534,6 +538,8 @@ trvalo a s akým výsledkom.
 | Vrstevnice (gdal_contour) | 0:04:31 | interval 10 m, 218M |
 | Skalné plochy | 0:36:07 | 41 802 plôch, sklon ≥ 50°, mriežka 2 m (výpočet) |
 | Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
+| Značené trasy z OSM | 0:01:38 | ~1 400 trás, ~39 000 úsekov, ~6 000 ciest s viac trasami |
+| Značené trasy → PMTiles | 0:00:44 | maxzoom 14, ~9M |
 | Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
 | Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
 | Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
@@ -546,6 +552,117 @@ prehľad, **čo prišlo z cache a čo sa naozaj počítalo** – takže sa hneď
 či mal beh trvať hodinu, alebo minútu.
 
 
+## Značené trasy (turistika, cyklo, bežky)
+
+**Trasa nie je cesta.** V OpenStreetMape je značená trasa `type=route`
+**relácia**: zoznam cudzích ciest plus samotné značenie – farba pásika
+([`osmc:symbol`](https://wiki.openstreetmap.org/wiki/Key:osmc:symbol),
+`colour`), sieť (`network`), názov, `ref`, dĺžka. Schéma OpenMapTiles relácie
+trás **nepozná**: v dlaždiciach ostane len cesta (`class=path`) a z nej sa
+nedá zistiť, či po nej vedie červená turistická, dve cyklotrasy, alebo nič.
+
+Preto majú trasy vlastný krok pipeline a vlastný `.pmtiles`:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter r/route=hiking,foot,…   len relácie trás a ich členovia
+  → workers/trail-routes.py (pyosmium)         relácie → línie s pruhmi
+  → data/trails.geojson
+  → planetiler generate-custom --schema=workers/trails.yml
+  → {región}-trails.pmtiles
+```
+
+### Pásiky vedľa cesty, nie namiesto nej
+
+Trasa sa kreslí ako farebný pásik **vedľa** cesty (`line-offset`), takže pod
+ním zostane vidieť, aká je to vlastne cesta – chodník, lesná cesta, asfaltka:
+
+```
+── cesta ────────────────    zostane vidieť, aká to je cesta
+━━ červená (off 0,5) ━━━━
+━━ modrá   (off 1,5) ━━━━    druhá trasa po tej istej ceste
+━╍ cyklotrasa (off 2,5) ╍    a tretia, prerušovane
+```
+
+Po jednej ceste vedie bežne viac trás naraz, takže sa každá zapíše do dlaždíc
+zvlášť a dostane vlastný **pruh**. Detaily, ktoré na tom závisia:
+
+| vec | ako to je | prečo |
+|---|---|---|
+| číslovanie pruhov | od cesty von: 0,5 · 1,5 · 2,5 … | keby boli vycentrované, koniec jednej trasy by posunul všetky ostatné |
+| poradie | sieť → druh → farba → id relácie | závisí len od trasy, takže si dve trasy na susedných úsekoch pruhy neprehodia; dôležitejšia je bližšie k ceste |
+| smer čiary | vždy od západnejšieho konca | `line-offset` posúva podľa smeru geometrie – inak by pásik preskakoval z jednej strany cesty na druhú podľa toho, ako kto cestu nakreslil |
+| duplikáty | nadradená trasa a jej časť sa zlúčia | superroute a jej člen sú dve relácie na tých istých cestách; dva rovnaké pásiky vedľa seba nie sú informácia, ale chyba |
+| krok pruhu | 1,6 px (z9) až 20 px (z20) | musí byť aspoň polovica šírky cesty pod ním, a tá s približovaním rastie |
+
+### Farba ide z OSM, odtieň z palety
+
+Farba sa berie z `osmc:symbol` (prvé pole je farba pásika na strome), inak
+z `colour`/`color`:
+
+| v OSM | v dlaždiciach | v mape |
+|---|---|---|
+| `osmc:symbol=red:white:red_bar` | `colour=red` | farba `Značka červená` z palety |
+| `colour=blue` | `colour=blue` | farba `Značka modrá` z palety |
+| `colour=#0000ee` | `colour=blue` | zaokrúhlené na modrú (je dosť blízko) |
+| `colour=#ff69b4` | `hex=#ff69b4` | presne tento hex – žiadnej značke sa nepodobá |
+| *(nič)* | – | farba podľa druhu trasy |
+
+**Prečo cez paletu a nie priamo hex z OSM.** „Červená" značka má v každej téme
+vyzerať ako červená značka, nie ako presne to `#ff0000`, ktoré do OSM napísal
+ten, kto trasu zadával. V tmavej téme je navyše čierna značka svetlosivá –
+inak by na tmavom podklade zmizla. Všetkých desať farieb značiek je v palete
+v skupine **Značené trasy**, takže sa dajú v developer móde doladiť ako
+čokoľvek iné.
+
+### Druhy trás
+
+| druh | `route` v OSM | predvolená ikona | čiara |
+|---|---|---|---|
+| turistická | `hiking`, `foot`, `walking` | vrch | plná |
+| cyklotrasa | `bicycle` | bicykel | čiarkovaná |
+| horská cyklotrasa | `mtb` | bicykel | krátke čiarky |
+| lyžiarska / bežkárska | `ski`, `nordic`, `skitour` | lyžiar | dlhé čiarky |
+| jazdecká | `horse` | koliesko | bodkovaná |
+
+Každý druh má vlastnú vrstvu pre čiaru, ikonu aj názov – v developer móde sa
+im dá zvlášť meniť farba, ikona, hrúbka, prerušovanie aj rozsah zoomu.
+
+### Názov pozdĺž trasy
+
+Trasy s názvom alebo `ref` majú od z12 popisok **pozdĺž čiary a vo farbe
+trasy** (`0801 Chodník hrdinov SNP`). Aby sa názov nekreslil po 200-metrových
+kúskoch, Planetiler v dlaždici **zlepí úseky s rovnakými atribútmi** –
+teda tej istej trasy v tom istom pruhu (`merge_line_strings`).
+
+Klik na pásik ukáže popup s názvom, druhom, farbou značky, sieťou a odkazom
+na reláciu v OSM.
+
+### Od akého zoomu je čo vidieť
+
+Riadi to `network` (`iwn`/`nwn`/`rwn`/`lwn` a cyklo obdoby), lebo diaľkovú
+trasu má zmysel vidieť aj z prehľadu, kým miestny okruh až vtedy, keď je
+vidieť aj cesta pod ním:
+
+| sieť | v dlaždiciach od | typicky |
+|---|--:|---|
+| medzinárodná (`iwn`, `icn`) | z8 | E-cesty, Eurovelo |
+| národná (`nwn`, `ncn`) | z8 | magistrály |
+| regionálna (`rwn`, `rcn`) | z10 | väčšina našich značených trás |
+| miestna (`lwn`, `lcn`) | z12 | okruhy, náučné chodníky |
+
+Keď trasa sieť nemá, rozhodne `distance` (nad 150 km = národná, nad 50 km =
+regionálna, inak miestna).
+
+### Ovládanie
+
+Vo workflowe: `trails` (zap/vyp) a `trails_maxzoom` (default 14). V mape sa
+trasy vypínajú prepínačom **Značené trasy** v paneli ⚙. Job sa **necachuje** –
+celé sú to pár minút a závisí to od PBF, ktoré sa mení denne.
+
+Súhrn buildu píše, koľko trás sa v území našlo, koľko z nich má názov, po
+koľkých cestách vedú a koľko z tých ciest nesie viac trás naraz.
+
 ## Developer mode – ladenie mapy v prehliadači
 
 Mapa sa dá doladiť priamo vo viewri, bez čakania na pipeline. Zapína sa
@@ -553,8 +670,8 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 
 | záložka | čo sa v nej dá |
 |---|---|
-| **Vrstvy** | všetkých ~119 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
-| **Paleta** | ~69 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Vrstvy** | všetkých ~135 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **ikona** pri symbolových vrstvách, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
+| **Paleta** | ~85 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
 | **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
@@ -579,6 +696,14 @@ Vzory nie sú hotové obrázky: **názov obrázka je jeho predpis**
 `styleimagemissing`, a pipeline tie isté názvy nájde v hotovom štýle a
 dopečie ich do spritu ([workers/add-sprite-patterns.mjs](workers/add-sprite-patterns.mjs)),
 aby fungovali aj v statickom `style.json` pre iOS.
+
+**Ikona a farby z palety priamo v riadku vrstvy.** Symbolová vrstva s pevne
+zadanou ikonou (ikony trás, vrcholy, letiská) má v detaile výber **Ikona** so
+všetkými obrázkami z nasadenej sady. Vrstvy, ktoré si farbu vyberajú
+**výrazom** – pásik trasy podľa značky z OSM – nemajú v `paint` hex, ktorý by
+sa dal prepísať; namiesto toho je v riadku sekcia *farby z palety*, kde sa
+dajú doladiť rovno tam, kde je vidieť, čo menia. Taká zmena platí pre celú
+tému (je to paleta, nie vrstva).
 
 **Sady ikoniek.** Schéma OpenMapTiles pomenúva POI cez `class`/`subclass`
 (`restaurant`, `cafe`, `fuel`, …) a štýl z toho skladá meno ikony – zdroj je
@@ -635,16 +760,17 @@ Formát súboru:
 {
   "version": 1,
   "icons": "osm-bright",
-  "palette": { "outdoor": { "forest": "#a8cc8e" } },
+  "palette": { "outdoor": { "forest": "#a8cc8e", "trailRed": "#cc2222" } },
   "layers": {
     "landcover-wood": {
       "paint":   { "fill-color": "#a8cc8e" },
       "pattern": { "id": "trees", "color": "#2f5a28", "size": 22, "weight": 1.2, "opacity": 0.7 },
       "outline": { "color": "#2f5a28", "width": 1, "dash": "dashed", "opacity": 1 }
     },
-    "rail-bg":        { "dash": "ties", "outline": { "color": "#5a5a5a", "width": 1 } },
-    "housenumber":    { "visible": false },
-    "road-motorway":  { "minzoom": 6, "maxzoom": 20 }
+    "rail-bg":          { "dash": "ties", "outline": { "color": "#5a5a5a", "width": 1 } },
+    "trail-hiking-icon": { "icon": "triangle_11" },
+    "housenumber":      { "visible": false },
+    "road-motorway":    { "minzoom": 6, "maxzoom": 20 }
   },
   "poi": { "hidden": ["fast_food"] }
 }
@@ -717,6 +843,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    - `maxzoom`: `16` (max, aký Planetiler vie; `12` pre rýchly testovací build)
    - `crop_bbox`: voliteľné orezanie, napr. `18.98,49.18,19.20,49.28` (Žilina)
    - `contours`: vrstevnice z DEM (zapnuté; pre celé Slovensko pozor na veľkosť)
+   - `trails`, `trails_maxzoom`: značené trasy z OSM relácií (zapnuté) –
+     turistické, cyklo, bežky a jazdecké ako farebné pásiky vedľa cesty
    - `rocks`, `rock_slope`, `rock_res`: skalné plochy – od akého sklonu je
      terén skala (default 50° = steny) a na akej mriežke sa počíta obrys
      (2 m; `1` dá detail na 1 m²). Tvar plôch je tvar terénu a miesta pod

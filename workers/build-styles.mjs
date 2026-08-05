@@ -10,6 +10,7 @@
  *                  ak je sprite SDF, štýl navyše nastaví farby ikon
  *   --fonts-dir  … adresár s glyfmi na Pages – z neho sa vyberú fontstacky
  *   --overrides  … úpravy z developer módu (poc/web/style-overrides.json)
+ *   --trails     … značené trasy z OSM relácií (vlastný .pmtiles)
  *   --dem-source … zdroj výšok (sonny / copernicus) – ide do atribúcie
  *   --sprites-dir… adresár s nasadenými spritmi; sada sa vyberie podľa úprav
  *
@@ -51,6 +52,9 @@ const maxzoom = Number(args.maxzoom || MAX_TILE_Z);
 // Vrstevnice sú voliteľné – štýl ich zapne, len ak pipeline vyrobila .pmtiles.
 const contoursMaxzoom = Number(args["contours-maxzoom"] || 14);
 const hasContours = args.contours === "true" || args.contours === "1";
+// Značené trasy – rovnako voliteľné a v samostatnom .pmtiles.
+const trailsMaxzoom = Number(args["trails-maxzoom"] || 14);
+const hasTrails = args.trails === "true" || args.trails === "1";
 // Zdroj výšok ovplyvňuje atribúciu vrstevníc a skál v štýle.
 const demSource = DEM_SOURCES[args["dem-source"]]
   ? args["dem-source"]
@@ -219,6 +223,10 @@ for (const themeKey of Object.keys(THEMES)) {
       ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
       : null,
     contoursMaxzoom,
+    trailsUrl: hasTrails
+      ? `pmtiles://${baseUrl}/tiles/${region}-trails.pmtiles`
+      : null,
+    trailsMaxzoom,
     demSource,
     demTiles,
     demMaxzoom,
@@ -230,6 +238,7 @@ for (const themeKey of Object.keys(THEMES)) {
 }
 
 console.log(
+  `Značené trasy: ${hasTrails ? `áno (do z${trailsMaxzoom})` : "nie"}, ` +
   `Vrstevnice a skaly: ${
     hasContours ? `áno (do z${contoursMaxzoom}, výšky: ${DEM_SOURCES[demSource].label})` : "nie"
   }, ` +
