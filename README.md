@@ -318,26 +318,33 @@ Build map
        └─ contours    stiahne COG z releasu a počíta
 ```
 
-> **ÚGKK sa mi overiť nepodarilo a treba to povedať rovno.** Sieťová politika
-> prostredia, v ktorom to píšem, blokuje `*.skgeodesy.sk`, takže som sa k ich
-> službám nedostal. Isté je, že majú verejný ArcGIS adresár služieb
-> ([`zbgis.skgeodesy.sk/zbgis/rest/services`](https://zbgis.skgeodesy.sk/zbgis/rest/services));
-> ktorá z nich je DMR 5.0 v plnom rozlíšení, zdokumentované nie je.
+> **ÚGKK služby z GitHub runnera nefungujú – zmerané, nie odhadnuté.**
+> V behu [30997189220](https://github.com/skifahrer/fricomaps/actions/runs/30997189220)
+> neodpovedal ani adresár služieb, ani jeden z ImageServerov, ani WCS:
+> HTTPS požiadavka na `skgeodesy.sk` z runnera jednoducho neprejde. Nie sú to
+> zle uhádnuté názvy služieb – na ten stroj sa odtiaľ nedá dostať vôbec.
+> Odkazy zo ZBGIS Mapového klienta v `ugkk_urls` preto tiež nepomôžu, sú na
+> tej istej doméne.
 >
-> Preto má zrkadlo **tri cesty za sebou** a berie prvú, ktorá dá skutočný
-> výškový raster (kontroluje sa veľkosť bunky aj dátový typ – 10 m model ani
-> obrázok neprejde):
+> Zisťuje sa to teraz za **2 sekundy** (predtým to bolo 6 min 50 s čakania na
+> timeouty) a build sa kvôli tomu **nezastaví**: s `ugkk_fallback` (default
+> zapnuté) dopočíta terén zo Sonnyho 20 m a napíše to do súhrnu aj do
+> atribúcie mapy. Nikdy netvrdí ÚGKK tam, kde je Sonny.
 >
-> | # | cesta | kedy zaberie |
-> |--:|---|---|
-> | 1 | **priame URL** (`ugkk_urls`) | vždy – toto je istota |
-> | 2 | ArcGIS `exportImage` | ak majú DMR 5.0 ako ImageServer |
-> | 3 | WCS `GetCoverage` | ak majú OGC službu |
+> **Čo naozaj funguje** – raz ručne, potom to už len sťahuje:
 >
-> Keď zlyhajú obe automatické, build to povie a odkáže na cestu 1: v ZBGIS
-> Mapovom klientovi *Terén → Export údajov → DMR 5.0* si vyberieš územie (do
-> 400 km²), odkazy vložíš do inputu `ugkk_urls` a zrkadlo ich stiahne, zlepí
-> a odloží do releasu. Odvtedy je to tam a ďalší build ich len stiahne.
+> 1. ZBGIS Mapový klient → *Terén → Export údajov → DMR 5.0*, vyber územie
+>    (do 400 km²)
+> 2. ```
+>    gdalbuildvrt all.vrt *.tif
+>    gdal_translate -of COG -co COMPRESS=DEFLATE -co PREDICTOR=3 \
+>      all.vrt ugkk-vysoke_tatry.tif
+>    gh release upload dem-ugkk ugkk-vysoke_tatry.tif --clobber
+>    ```
+>
+> Odvtedy `check-dem` výrez v release nájde, zrkadlo sa vôbec nespustí
+> a `dem_source: ugkk` funguje. Presne ten istý postup ako pri Sonnym, len
+> ten sa dá stiahnuť automaticky a tento nie.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.

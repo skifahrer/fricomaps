@@ -60,6 +60,11 @@ on:
         options:
           - sonny
           - ugkk
+      ugkk_fallback:
+        description: "Keď 1 m LiDAR od ÚGKK nie je k dispozícii, dopočítať terén zo Sonnyho (20 m) namiesto zlyhania. Mapa sa nasadí, len s hrubším modelom – a je to napísané v súhrne aj v atribúcii"
+        required: false
+        default: true
+        type: boolean
       ugkk_urls:
         description: "ÚGKK – posledná záchrana: čiarkami oddelené URL na .tif/.zip zo ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0). Použije sa, len keď automatické cesty zlyhajú"
         required: false
@@ -493,7 +498,7 @@ jobs:
           # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
           # zistiť to po hodine sťahovania nie.
           if [ '${{ inputs.dem_source }}' = 'ugkk' ] && [ -z '${{ inputs.area }}' ]; then
-            echo "::error::dem_source: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input `area` (napr. vysoke_tatry) alebo použi dem_source: sonny."
+            echo "::error::dem_source: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry) alebo použi dem_source: sonny."
             exit 1
           fi
 
@@ -699,7 +704,7 @@ jobs:
           AREA_NAME='${{ needs.plan.outputs.area_name }}'
           AREA_BBOX='${{ needs.plan.outputs.area_bbox }}'
           if [ "$AREA_KEY" != "cely" ]; then
-            echo "::warning::Vrstevnice AJ skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX, ${{ needs.plan.outputs.area_km2 }} km²). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región nechaj input `area` prázdny."
+            echo "::warning::Vrstevnice AJ skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX, ${{ needs.plan.outputs.area_km2 }} km²). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región nechaj input „area“ prázdny."
             # Vrstevnice sa ďalej trasujú z výrezu, nie z celého regiónu.
             IFS=, read -r W S E N <<< "$AREA_BBOX"
           fi
@@ -718,7 +723,25 @@ jobs:
             FETCH_BBOX="$BBOX"
           fi
           AREA_KEY_IN='${{ needs.plan.outputs.area_key }}'
+          set +e
           workers/fetch-dem.sh "$FETCH_BBOX" dem steps-out/contours.tsv "$DEM_USED" "$AREA_KEY_IN"
+          FETCH_RC=$?
+          set -e
+          if [ "$FETCH_RC" -eq 3 ]; then
+            # ÚGKK nemáme. Buď to zhodíme, alebo dopočítame zo Sonnyho –
+            # ale nikdy ticho: `dem-source.txt` nesie, čo sa NAOZAJ použilo,
+            # takže atribúcia v mape nebude tvrdiť ÚGKK tam, kde je Sonny.
+            if [ '${{ inputs.ugkk_fallback }}' != 'true' ]; then
+              echo "::error::1 m LiDAR od ÚGKK nie je k dispozícii a ugkk_fallback je vypnutý. Zapni ho, alebo daj dem_source: sonny."
+              exit 1
+            fi
+            echo "::warning::1 m LiDAR od ÚGKK nie je k dispozícii – terén sa počíta zo Sonnyho (20 m). Mapa bude, len s hrubším modelom. Ako ÚGKK doplniť, hovorí log jobu 'Doplniť ÚGKK 1 m LiDAR'."
+            DEM_USED=sonny
+            FETCH_BBOX="$BBOX"
+            workers/fetch-dem.sh "$FETCH_BBOX" dem steps-out/contours.tsv sonny "$AREA_KEY_IN"
+          elif [ "$FETCH_RC" -ne 0 ]; then
+            exit "$FETCH_RC"
+          fi
 
           # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
           # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =

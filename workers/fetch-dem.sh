@@ -34,8 +34,10 @@ if [ "$SOURCE" = "ugkk" ]; then
   UASSET="ugkk-${AREA_KEY}.tif"
   if ! gh release download "${UGKK_RELEASE:-dem-ugkk}" --repo "$GITHUB_REPOSITORY" \
         --pattern "$UASSET" --dir "$DIR" --clobber >/dev/null 2>&1; then
-    echo "::error::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET. Doplniť ho mal job 'Doplniť ÚGKK 1 m LiDAR' – pozri jeho log. Keď automatické cesty k ÚGKK zlyhali, vyplň input ugkk_urls odkazmi zo ZBGIS Mapového klienta."
-    exit 1
+    # Kód 3 = „ÚGKK nemáme", nie „všetko je zle". Volajúci sa podľa neho vie
+    # rozhodnúť: buď spadnúť, alebo prejsť na Sonnyho (input ugkk_fallback).
+    echo "::warning::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET – 1 m LiDAR pre tento výrez nemáme. Pozri log jobu 'Doplniť ÚGKK 1 m LiDAR'."
+    exit 3
   fi
   gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
   SIZE=$(du -h "$DIR/$UASSET" | cut -f1)

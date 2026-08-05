@@ -33,7 +33,37 @@ UA = {"User-Agent": "fricomaps-dem-probe/1 (+https://github.com/skifahrer/fricom
 TEST_BBOX = (20.12, 49.15, 20.16, 49.18)
 
 
-def fetch(url, params=None, timeout=45, binary=False):
+# Krátke timeouty zámerne: keď server neodpovie, chceme to vedieť za sekundy,
+# nie za sedem minút. V behu 30997189220 zabralo šesť kandidátov + tri WCS
+# 6 min 50 s čistého čakania a výsledok bol rovnaký ako po 20 sekundách.
+DEFAULT_TIMEOUT = 12
+
+
+def host_reachable(url, timeout=8):
+    """Odpovie vôbec ten stroj? Rozlišuje „server nie je" od „cesta nie je".
+
+    Bez toho log povie len „URLError" pri každom kandidátovi a nie je z neho
+    poznať, či sme hádali zlé názvy služieb, alebo je celý hostiteľ z runnera
+    nedostupný. To sú dve úplne rôzne veci s úplne rôznym riešením.
+
+    Testuje sa skutočným HTTPS požiadavkom na koreň, nie len TCP spojením:
+    za HTTP proxy sa TCP otvorí vždy (na proxy) a až CONNECT sa odmietne,
+    takže samotný socket by tvrdil „dostupné" aj tam, kde nie je.
+    """
+    p = urllib.parse.urlparse(url)
+    root = f"{p.scheme}://{p.netloc}/"
+    try:
+        req = urllib.request.Request(root, headers=UA, method="HEAD")
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return True, f"HTTP {r.status}"
+    except urllib.error.HTTPError as exc:
+        # 403/404 na koreni je v poriadku – server existuje a odpovedá.
+        return True, f"HTTP {exc.code}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def fetch(url, params=None, timeout=DEFAULT_TIMEOUT, binary=False):
     if params:
         url = url + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers=UA)
@@ -44,6 +74,12 @@ def fetch(url, params=None, timeout=45, binary=False):
 
 def probe_directory(url):
     print(f"\n── Adresár služieb: {url}")
+    ok, why = host_reachable(url)
+    if not ok:
+        print(f"   ✗ hostiteľ neodpovedá ({why})")
+        print(f"      → z tohto stroja sa na {urllib.parse.urlparse(url).hostname} "
+              f"nedá dostať vôbec; nie je to otázka názvu služby.")
+        return []
     try:
         d = fetch(url, {"f": "json"})
     except Exception as exc:
