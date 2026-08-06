@@ -9,8 +9,8 @@
 # (release `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených
 # dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `ugkk` = jeden COG
 # s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá – build
-# nikdy nesiaha priamo na cudzí server, to robia workflowy `Update DEM`,
-# `Update DEM (ÚGKK otvorené dáta)` a `Update DEM (ÚGKK 1 m)`.
+# nikdy nesiaha priamo na cudzí server, to robí jediná sťahovacia pipeline
+# `Stiahnuť výškové dáta` (workflow update-dem.yml, výber v `source`).
 #
 # `sonny` a `dmr35` sa líšia LEN menom releasu: dlaždice majú tú istú
 # pomenúvaciu schému (`N49E019.tif`), takže sa nižšie nič nevetví.

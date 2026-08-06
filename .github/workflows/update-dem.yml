@@ -1,7 +1,24 @@
-name: Update DEM (Sonny's LiDAR DTM → release)
+name: Stiahnuť výškové dáta
 
-# Zrkadlí výškový model Sonny's LiDAR DTM (https://sonny.4lima.de/) do releasu
-# `dem-sonny`, aby ho vedel použiť workflow "Build map".
+# JEDINÁ sťahovacia pipeline. Vyber v `source` model a ona ho zoženie,
+# preveďí na dlaždice a uloží do releasu, z ktorého si ho berie „Build map".
+#
+# Do augusta 2026 to boli tri workflowy (Sonny, ÚGKK 1 m, ÚGKK otvorené dáta)
+# a jeden diagnostický. Robili to isté – stiahni, preveď, nahraj do releasu –
+# len z iného URL, takže sa opravy museli robiť trikrát. Teraz je to jeden
+# workflow s výberom zdroja; URL nesie workers/dem-sources.json a dá sa
+# prebiť poľom `url`.
+#
+# | source  | čo to je                    | release      | mriežka |
+# |---------|-----------------------------|--------------|---------|
+# | sonny   | Sonny's LiDAR DTM (Drive)   | dem-sonny    | 20 m    |
+# | dmr35   | ÚGKK DMR 3.5 (opendata ZIP) | dem-dmr35    | ~10 m   |
+# | ugkk    | ÚGKK DMR 5.0 (1 m LiDAR)    | dem-ugkk     | 1 m     |
+#
+# `ugkk` sa z GitHub runnera stiahnuť NEDÁ – `zbgis.skgeodesy.sk` aj
+# `zbgisws.skgeodesy.sk` timeoutujú aj pri 30 s (zmerané v behoch
+# 31072215798, 31075806874, 31096745697). Ostáva vo výbere preto, že cez
+# `url` sa dá zadať odkaz z ručného exportu zo ZBGIS Mapového klienta.
 #
 # PREČO ZRKADLENIE: Sonny distribuuje dlaždice cez Google Drive. Drive nemá
 # stabilné priame URL na súbory v zdieľanom priečinku a pri väčšom počte
@@ -32,49 +49,59 @@ name: Update DEM (Sonny's LiDAR DTM → release)
 on:
   workflow_dispatch:
     inputs:
-      drive_folder:
-        description: "Google Drive priečinok so Sonny dátami (default = Slovensko, model 20m: mriežka 20×20 m, výška po 0,1 m)"
-        required: false
-        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
-        type: string
-      direct_urls:
-        description: "Náhrada za Drive: priame URL na .zip/.hgt/.tif oddelené medzerou alebo novým riadkom"
+      source:
+        description: "Ktorý výškový model stiahnuť"
+        required: true
+        default: sonny
+        type: choice
+        options:
+          - sonny
+          - dmr35
+          - ugkk
+      url:
+        description: "Prebiť URL zdroja (prázdne = z workers/dem-sources.json). Napr. https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip alebo odkaz z ručného exportu ZBGIS"
         required: false
         default: ""
         type: string
-      release_tag:
-        description: "Tag releasu, do ktorého sa dlaždice uložia"
+      area:
+        description: "Len pre ugkk: pohorie z workers/areas.json alebo bbox W,S,E,N"
         required: false
-        default: "dem-sonny"
+        default: vysoke_tatry
         type: string
-      keep_existing:
-        description: "Nechať v release aj dlaždice, ktoré sa teraz nestiahli"
+      drive_folder:
+        description: "Len pre sonny: Google Drive priečinok (default = Slovensko, model 20 m)"
         required: false
-        default: true
+        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
+        type: string
+      force:
+        description: "Stiahnuť nanovo, aj keď už dáta v release sú"
+        required: false
+        default: false
         type: boolean
   # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho
   # územie – vtedy si terén doplní sám, s predvolenými hodnotami.
   workflow_call:
     inputs:
-      drive_folder:
-        description: "Google Drive priečinok so Sonny dátami (default = Slovensko, model 20m: mriežka 20×20 m, výška po 0,1 m)"
-        required: false
-        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
+      # `workflow_call` nepozná `type: choice` – hodnotu stráži krok
+      # „Priprav zdroj“, ktorý neznámy zdroj odmietne s vypísaním známych.
+      source:
+        required: true
         type: string
-      direct_urls:
-        description: "Náhrada za Drive: priame URL na .zip/.hgt/.tif oddelené medzerou alebo novým riadkom"
+      url:
         required: false
         default: ""
         type: string
-      release_tag:
-        description: "Tag releasu, do ktorého sa dlaždice uložia"
+      area:
         required: false
-        default: "dem-sonny"
+        default: vysoke_tatry
         type: string
-      keep_existing:
-        description: "Nechať v release aj dlaždice, ktoré sa teraz nestiahli"
+      drive_folder:
         required: false
-        default: true
+        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
+        type: string
+      force:
+        required: false
+        default: false
         type: boolean
 
 permissions:
@@ -94,13 +121,40 @@ jobs:
           sudo apt-get install -y -qq gdal-bin p7zip-full
           python3 -m pip install --quiet --upgrade gdown
 
+      # Jediné miesto, kde sa rozhoduje „ktorý zdroj → ktorý release a URL".
+      # Berie sa z workers/dem-sources.json, aby to nebolo opísané na dvoch
+      # miestach; `url` to prebije.
+      - name: Priprav zdroj
+        id: src
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, sys
+          key = '${{ inputs.source }}'.strip() or 'sonny'
+          src = json.load(open("workers/dem-sources.json"))
+          if key not in src or key.startswith("_"):
+              known = ", ".join(k for k in src if not k.startswith("_"))
+              print(f"::error::Neznámy zdroj „{key}“. Známe: {known}",
+                    file=sys.stderr)
+              raise SystemExit(1)
+          d = src[key]
+          url = '${{ inputs.url }}'.strip() or d.get("url", "")
+          rel = d.get("release") or ("dem-ugkk" if key == "ugkk" else "dem-sonny")
+          print(f"key={key}")
+          print(f"url={url}")
+          print(f"release={rel}")
+          print(f"label={d.get('label', key)}")
+          PY
+          echo "Zdroj: $(grep '^label=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+
       - name: Stiahni dlaždice
         id: fetch
+        if: ${{ inputs.source == 'sonny' }}
         run: |
           set -uo pipefail
           mkdir -p dl
 
-          URLS='${{ inputs.direct_urls }}'
+          URLS='${{ inputs.url }}'
           if [ -n "${URLS//[[:space:]]/}" ]; then
             # Priame URL (napr. mirror) majú prednosť – Drive vie limitovať.
             for u in $URLS; do
@@ -128,6 +182,7 @@ jobs:
 
       - name: Rozbaľ archívy a preveď na GeoTIFF dlaždice
         id: convert
+        if: ${{ inputs.source == 'sonny' }}
         run: |
           set -uo pipefail
           mkdir -p unpacked tiles
@@ -225,11 +280,12 @@ jobs:
           ls tiles
 
       - name: Publikuj ako release assety
+        if: ${{ inputs.source == 'sonny' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='${{ inputs.release_tag }}'
+          TAG='${{ steps.src.outputs.release }}'
 
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" \
@@ -237,7 +293,7 @@ jobs:
               --title "Výškový model – Sonny's LiDAR DTM" \
               --notes "Dlaždice 1°×1° výškového modelu (GeoTIFF, meno = juhozápadný roh). Zdroj: [Sonny's LiDAR Digital Terrain Models of Europe](https://sonny.4lima.de/), licencia CC BY 4.0."
 
-          if [ '${{ inputs.keep_existing }}' != 'true' ]; then
+          if [ '${{ inputs.force }}' = 'true' ]; then
             for a in $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
               gh release delete-asset "$TAG" "$a" --repo "$GITHUB_REPOSITORY" --yes || true
             done
@@ -256,3 +312,150 @@ jobs:
           gh release upload "$TAG" tiles/*.tif tiles/meta.json \
             --repo "$GITHUB_REPOSITORY" --clobber
           echo "Hotovo – ${{ steps.convert.outputs.count }} dlaždíc v release $TAG."
+
+      # ---------- ÚGKK DMR 3.5 (otvorené dáta, jeden ZIP) ----------
+      # Ten istý výsledok ako Sonny – 1°×1° dlaždice `N49E019.tif` – takže
+      # `workers/fetch-dem.sh` sa pri čítaní vôbec nevetví a rozhoduje len
+      # meno releasu.
+      - name: Sú dlaždice DMR 3.5 už v release?
+        id: have35
+        if: ${{ inputs.source == 'dmr35' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          N=$(gh release view '${{ steps.src.outputs.release }}' --repo "$GITHUB_REPOSITORY" \
+                --json assets -q '.assets | length' 2>/dev/null || echo 0)
+          if [ '${{ inputs.force }}' = 'true' ]; then
+            echo "force=áno – sťahujem nanovo (v release je ${N:-0} dlaždíc)."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif [ "${N:-0}" -gt 0 ]; then
+            echo "V release '${{ steps.src.outputs.release }}' už je $N dlaždíc – nesťahujem."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `continue-on-error`: `opendata.skgeodesy.sk` sa z runnera ešte nikdy
+      # neskúšal. Keď nepôjde, nie je to dôvod zhodiť beh – volajúci build to
+      # zistí z prázdneho releasu a spadne späť na Sonnyho.
+      - name: Stiahni a rozrež DMR 3.5
+        id: fetch35
+        if: ${{ inputs.source == 'dmr35' && steps.have35.outputs.skip != 'true' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p tiles
+          python3 workers/fetch-dem-open.py \
+            --url='${{ steps.src.outputs.url }}' \
+            --out=tiles --stats=open-stats.txt
+
+      - name: Nahraj DMR 3.5 do releasu
+        if: ${{ inputs.source == 'dmr35' && steps.fetch35.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.src.outputs.release }}'
+          COUNT=$(find tiles -maxdepth 1 -name '*.tif' | wc -l)
+          [ "$COUNT" -gt 0 ] || { echo "::warning::Žiadne dlaždice."; exit 0; }
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Výškový model – ÚGKK DMR 3.5 (otvorené dáta)" \
+              --notes "Dlaždice 1°×1° z https://opendata.skgeodesy.sk. Zdroj: ÚGKK SR."
+          find tiles -maxdepth 1 -name '*.tif' -print0 \
+            | xargs -0 gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Nahraných $COUNT dlaždíc do releasu $TAG ✓"
+
+      # ---------- ÚGKK DMR 5.0 (1 m LiDAR, po výrezoch) ----------
+      # Pri 1 m má jedna 1° dlaždica ~48 GB, takže sa tu nekrája na dlaždice,
+      # ale ukladá jeden COG na pohorie.
+      - name: Vyrieš výrez
+        id: area
+        if: ${{ inputs.source == 'ugkk' }}
+        run: |
+          set -euo pipefail
+          python3 workers/resolve-area.py \
+            --region-bbox='16.815,47.71,22.585,49.635' \
+            --area='${{ inputs.area }}' --out="$GITHUB_OUTPUT"
+
+      - name: Je výrez už v release?
+        id: haveu
+        if: ${{ inputs.source == 'ugkk' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          ASSET="ugkk-${{ steps.area.outputs.key }}.tif"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          if [ '${{ inputs.force }}' = 'true' ]; then
+            echo "force=áno – sťahujem nanovo."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif gh release view '${{ steps.src.outputs.release }}' --repo "$GITHUB_REPOSITORY" \
+                 --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$ASSET"; then
+            echo "V release už je $ASSET – nesťahujem."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `continue-on-error`: z GitHub runnera sa DMR 5.0 stiahnuť NEDÁ –
+      # zmerané trikrát, hostitelia timeoutujú aj pri 30 s. Ostáva to tu
+      # kvôli poľu `url`, kam sa dá vložiť odkaz z ručného exportu.
+      - name: Stiahni DMR 5.0
+        id: fetchu
+        if: ${{ inputs.source == 'ugkk' && steps.haveu.outputs.skip != 'true' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          echo "Výrez: ${{ steps.area.outputs.name }} (${{ steps.area.outputs.bbox }}), ${{ steps.area.outputs.km2 }} km²"
+          python3 workers/fetch-dem-ugkk.py \
+            --bbox='${{ steps.area.outputs.bbox }}' \
+            --out='${{ steps.haveu.outputs.asset }}' \
+            --direct-urls='${{ inputs.url }}'
+
+      - name: Nahraj DMR 5.0 do releasu
+        if: ${{ inputs.source == 'ugkk' && steps.fetchu.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.src.outputs.release }}'
+          ASSET='${{ steps.haveu.outputs.asset }}'
+          ls -lh "$ASSET"
+          # Release asset má strop 2 GB – radšej to povedať tu, než nechať
+          # upload zlyhať bez vysvetlenia.
+          SZ=$(stat -c%s "$ASSET")
+          if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
+            echo "::error::$ASSET má $(( SZ / 1048576 )) MB, strop je 2 GB. Zvoľ menší výrez."
+            exit 1
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "ÚGKK DMR 5.0 (1 m LiDAR)" \
+              --notes "Jeden COG na výrez; meno assetu je kľúč z workers/areas.json. Zdroj: ÚGKK SR."
+          gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Uložené: $TAG / $ASSET"
+
+      - name: Súhrn
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          {
+            echo "# ${{ steps.src.outputs.label }}"
+            echo
+            echo "| vec | hodnota |"
+            echo "|---|---|"
+            echo "| zdroj | \`${{ inputs.source }}\` |"
+            echo "| release | \`${{ steps.src.outputs.release }}\` |"
+            echo "| URL | ${{ steps.src.outputs.url }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -s open-stats.txt ]; then
+            # shellcheck disable=SC1091
+            . open-stats.txt
+            {
+              echo "| dlaždíc | ${tiles:-?} ($\{mb:-?} MB) |"
+              echo "| **skutočná mriežka** | **${cell_m:-?} m** (Sonny má 20 m) |"
+              echo "| CRS zdroja | ${crs:-?} |"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

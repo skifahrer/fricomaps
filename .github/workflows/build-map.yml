@@ -123,7 +123,7 @@ env:
   # Release s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
   DEM_RELEASE: dem-sonny
   # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
-  # z iného modelu – napĺňa ich workflow "Update DEM (ÚGKK otvorené dáta)".
+  # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
   DMR35_RELEASE: dem-dmr35
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
@@ -270,42 +270,24 @@ jobs:
           echo "demkey=$DEMKEY" >> "$GITHUB_OUTPUT"
           echo "Otlačok releasu: $DEMKEY"
 
-  # ---------- doplnenie terénu (rovnaký workflow ako Update DEM) ----------
+  # ---------- doplnenie výškových dát ----------
+  # Jeden job pre všetky zdroje. Sťahovaciu pipeline máme jedinú a rozdiel
+  # medzi modelmi je len v jej `source` – tri takmer rovnaké mirror joby tu
+  # boli len preto, že tri takmer rovnaké workflowy boli aj vedľa.
+  #
+  # Spúšťa sa SÁM, keď v release nie sú dlaždice pre naše územie. Netreba
+  # teda púšťať nič ručne – `Build map` je jediné, čo spúšťaš.
   mirror-dem:
     name: Doplniť výškový model
-    needs: check-dem
-    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' && inputs.dem_source != 'dmr35' }}
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && (needs.check-dem.outputs.needed == 'true' || needs.check-dem.outputs.ugkk_needed == 'true') }}
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
-
-  # ---------- doplnenie otvorených dát ÚGKK (DMR 3.5) ----------
-  # To isté, čo `mirror-dem` robí pre Sonnyho, len z iného zdroja a do iného
-  # releasu. Dlaždice majú tú istú pomenúvaciu schému, takže build ďalej
-  # nerozlišuje, z ktorého modelu sú – rozhoduje meno releasu.
-  mirror-dem-open:
-    name: Doplniť ÚGKK DMR 3.5
-    needs: check-dem
-    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' && inputs.dem_source == 'dmr35' }}
-    permissions:
-      contents: write
-    uses: ./.github/workflows/update-dem-open.yml
-
-  # ---------- doplnenie 1 m LiDARu od ÚGKK ----------
-  # To isté, čo `mirror-dem` robí pre Sonnyho: keď výrez v release nie je,
-  # build si ho doplní SÁM. Netreba teda spúšťať druhý workflow ručne –
-  # `Build map` je jediné, čo púšťaš.
-  mirror-dem-ugkk:
-    name: Doplniť ÚGKK 1 m LiDAR
-    needs: [plan, check-dem]
-    if: ${{ !cancelled() && needs.check-dem.outputs.ugkk_needed == 'true' }}
-    permissions:
-      contents: write
-    uses: ./.github/workflows/update-dem-ugkk.yml
     with:
+      source: ${{ inputs.dem_source }}
       area: ${{ inputs.area }}
-      region_bbox: ${{ needs.plan.outputs.bbox }}
-      direct_urls: ${{ needs.plan.outputs.opt_ugkk_urls }}
+      url: ${{ needs.plan.outputs.opt_ugkk_urls }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
@@ -552,7 +534,7 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-dem, mirror-dem-open, mirror-dem-ugkk]
+    needs: [plan, check-dem, mirror-dem]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
