@@ -451,11 +451,30 @@ def safe_name(url):
     return (name or "subor")[-90:]
 
 
-def phase_download(found, bbox, out, max_mb, total_mb, timeout):
+def phase_download(found, bbox, out, max_mb, total_mb, timeout, reachable):
     print("\n══ 3.+4. Sťahovanie ══════════════════════════════════════════")
     data_dir = os.path.join(out, "data")
     os.makedirs(data_dir, exist_ok=True)
     rows, got = [], 0
+
+    # Na mŕtveho hostiteľa sa neklope druhýkrát. Fáza 1 aj 2b už zistili,
+    # kto neodpovedá; `smart_get` pritom skúša štyri profily prehliadača
+    # a potom curl, takže jedna URL na mŕtvom stroji stojí ~90 s. Pri desiatich
+    # kandidátoch na `zbgis.skgeodesy.sk` to je štvrťhodina čakania na to isté,
+    # čo sme vedeli po prvej fáze – v behu 31075806874 to job natiahlo z 90 s
+    # na vyše 10 minút.
+    def alive(url):
+        h = urllib.parse.urlparse(url).hostname
+        return reachable.get(h, True)
+
+    skipped = [(u, d) for u, d in found.items() if not alive(u)]
+    for url, desc in skipped:
+        host = urllib.parse.urlparse(url).hostname
+        rows.append((url, "–", f"preskočené: {host} neodpovedá (viď fáza 1)", desc))
+    if skipped:
+        print(f"  preskočených {len(skipped)} odkazov na nedostupných "
+              f"hostiteľoch – klopať druhýkrát nemá zmysel")
+    found = {u: d for u, d in found.items() if alive(u)}
 
     files = [(u, d) for u, d in found.items() if FILE_RE.search(u)]
     # Musí KONČIŤ na ImageServer: `…/ImageServer/WCSServer` je WCS, nie
@@ -640,8 +659,8 @@ def main():
               f"idú len odkazy zo zberu.")
 
     host_rows += phase_new_hosts(found, reachable, args.slow_timeout)
-    dl_rows, got = phase_download(found, bbox, args.out_dir,
-                                  args.max_mb, args.total_mb, args.timeout)
+    dl_rows, got = phase_download(found, bbox, args.out_dir, args.max_mb,
+                                  args.total_mb, args.timeout, reachable)
     path = write_report(args.out_dir, host_rows, notes, dl_rows, got, bbox,
                         time.time() - t0)
 
