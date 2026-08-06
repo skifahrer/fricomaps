@@ -285,9 +285,9 @@ jobs:
       contents: write
     uses: ./.github/workflows/update-dem.yml
     with:
-      source: ${{ inputs.dem_source }}
+      what: ${{ inputs.dem_source }}
       area: ${{ inputs.area }}
-      url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+      custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
