@@ -369,10 +369,47 @@ Build map
 > ich strane. Keď nie je 200 ani pypi, je rozbitá sieť runnera. Bez tohto sa
 > „nefunguje to" nedá odlíšiť od „nefunguje to takto".
 
-> **Testované som to však nemal kde.** Sieť prostredia, v ktorom sa to písalo,
-> blokuje `*.skgeodesy.sk`, `geoportal.sk` aj `rpi.gov.sk`. Overená je
-> mechanika (rotácia profilov prešla proti dostupnému hostiteľovi), nie to,
-> či ÚGKK pustí Safari. To povie prvý beh – v matici vyššie.
+#### Ako to dopadlo: z GitHub runnera sa k ÚGKK dostať nedá
+
+Zmerané, nie odhadnuté. Workflow **[Test – lov na ÚGKK DMR 5.0](.github/workflows/hunt-ugkk.yml)**
+(`workers/hunt-ugkk.py`) prehľadá širokú sadu vstupných bodov, čo nájde to
+stiahne a všetko vyhodí ako artefakt. Tri behy
+([31072215798](https://github.com/skifahrer/fricomaps/actions/runs/31072215798),
+[31075806874](https://github.com/skifahrer/fricomaps/actions/runs/31075806874),
+[31096745697](https://github.com/skifahrer/fricomaps/actions/runs/31096745697))
+dali zakaždým to isté:
+
+| hostiteľ | výsledok |
+|---|---|
+| `zbgis.skgeodesy.sk` | `Connection timed out` — aj pri 30 s |
+| `zbgisws.skgeodesy.sk` | `Connection timed out` — aj pri 30 s |
+| `geoportal.sk` aj `www.geoportal.sk` | chyba certifikátu, ich cert nesedí ani na jedno meno |
+| `mapy.geoportal.sk` | neexistuje, DNS ho nepozná (bol to náš tip) |
+| `data.slovensko.sk`, `data.gov.sk`, `rpi.gov.sk`, `inspire.gov.sk`, `www.skgeodesy.sk` | **HTTP 200** |
+
+Posledný riadok je dôležitý: **nie je to geoblok na Slovensko.** Mŕtve sú
+presne tie dva stroje, na ktorých sú dáta.
+
+Vyčerpali sme adresár služieb, správne meno služby, dvoch rôznych hostiteľov,
+WMS, WCS, národný katalóg otvorených dát aj INSPIRE. Že mechanika je v poriadku,
+dokázalo české ČÚZK — tá istá cesta (`exportImage`) odtiaľ vrátila skutočné
+GeoTIFFy.
+
+Vedľajší nález: **správne meno služby je `LLS_DMR5`**, nie žiadne zo šiestich,
+ktoré sme hádali. Vrátilo ho vyhľadávanie ArcGIS Online ako „DMR 5.0 (Web
+Mercator)“, vlastník `UGKK_SR`. Nepomohlo to — na mŕtvy hostiteľ sa nedostaneš
+ani so správnym menom — ale keby sa cesta niekedy otvorila, toto je meno,
+ktorým začať.
+
+**Prakticky:** `dem_source: ugkk` funguje len vtedy, keď je výrez už v releasi
+`dem-ugkk`. Dostane sa tam jednorazovým exportom zo ZBGIS Mapového klienta
+(Terén → Export údajov → DMR 5.0, do 400 km²) a nahratím ako
+`ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho a napíše to.
+
+Build to preto **neskúša naslepo**: `fetch-dem-ugkk.py` sa najprv spýta na
+dostupnosť hostiteľa a keď neodpovedá, ImageServer ani WCS už nerozbieha —
+všetky sú na tej istej doméne a každý z nich stojí štyri profily prehliadača
+plus curl.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.

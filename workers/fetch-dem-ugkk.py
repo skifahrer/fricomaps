@@ -259,19 +259,32 @@ def main():
         tiles, how = None, ""
         if args.direct_urls:
             # Keď sú priame URL zadané, majú prednosť: používateľ vie lepšie,
-            # čo chce, než naše hádanie názvov služieb.
+            # čo chce, než naše hádanie názvov služieb. Skúšajú sa aj vtedy,
+            # keď je skgeodesy mŕtvy – môžu viesť inam.
             print("── 0. priame URL (zadané ručne)")
             tiles, how = try_direct(args.direct_urls.split(","), tmp), "priame URL"
+
+        # Dostupnosť hostiteľa NAJPRV, nie až po neúspechu. Všetky služby
+        # (ImageServer aj WCS) sú na `skgeodesy.sk`, a keď ten neodpovedá,
+        # každá z nich vyčerpá štyri profily prehliadača plus curl – zopár
+        # minút čakania na odpoveď, ktorú dá jedna požiadavka za sekundy.
+        # Namerané workflowom „Test – lov na ÚGKK DMR 5.0“ (behy 31072215798,
+        # 31075806874, 31096745697): timeout zakaždým, aj pri 30 s.
+        host_ok = True
         if not tiles:
-            print("── 1. ArcGIS ImageServer")
-            tiles, how = try_arcgis(bbox, tmp, args.sources), "ArcGIS ImageServer"
-        if not tiles:
-            print("── 2. WCS")
-            tiles, how = try_wcs(bbox, tmp, args.sources), "WCS"
+            host_ok, why = _probe.host_reachable(
+                json.load(open(args.sources))["ugkk"]["directory"])
+            if not host_ok:
+                print(f"── hostiteľ skgeodesy.sk neodpovedá ({why}) – "
+                      f"ImageServer ani WCS nemá zmysel skúšať")
+            else:
+                print("── 1. ArcGIS ImageServer")
+                tiles, how = try_arcgis(bbox, tmp, args.sources), "ArcGIS ImageServer"
+                if not tiles:
+                    print("── 2. WCS")
+                    tiles, how = try_wcs(bbox, tmp, args.sources), "WCS"
 
         if not tiles:
-            host_ok, _ = _probe.host_reachable(
-                json.load(open(args.sources))["ugkk"]["directory"])
             print("::error::Ani jedna cesta k ÚGKK DMR 5.0 nevyšla.")
             print()
             if not host_ok:

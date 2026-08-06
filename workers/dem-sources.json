@@ -15,15 +15,37 @@
     "nižšie sú tipy podľa názvov a workflow `Check DEM source` ich otestuje",
     "a napíše, ktorý funguje.",
     "",
-    "PRVÝ NEHÁDANÝ KANDIDÁT je `LLS_DMR5`. Nevymysleli sme ho: v behu",
+    "ZÁVER K DNEŠNÉMU DŇU (2026-08-06): z GitHub runnera sa k ÚGKK dostať",
+    "NEDÁ. Nie je to otázka mien služieb ani hlavičiek. Merané v troch behoch",
+    "workflowu `Test – lov na ÚGKK DMR 5.0` (31072215798, 31075806874,",
+    "31096745697), zakaždým rovnako:",
+    "",
+    "  zbgis.skgeodesy.sk    Connection timed out (aj pri 30 s, 150 s celkom)",
+    "  zbgisws.skgeodesy.sk  Connection timed out (aj pri 30 s)",
+    "  geoportal.sk aj www.  chyba certifikátu – ich cert nesedí ani na jedno",
+    "  mapy.geoportal.sk     neexistuje, DNS ho nepozná (bol to náš tip)",
+    "",
+    "Pritom data.slovensko.sk, data.gov.sk, rpi.gov.sk, inspire.gov.sk aj",
+    "www.skgeodesy.sk vrátili HTTP 200 – takže to NIE JE geoblok na Slovensko.",
+    "Mŕtve sú presne tie dva stroje, na ktorých sú dáta.",
+    "",
+    "Skúšané a vyčerpané: adresár služieb, správne meno služby z ArcGIS Online,",
+    "dva rôzne hostitele, WMS, WCS, národný katalóg otvorených dát, INSPIRE.",
+    "Že mechanika je v poriadku, dokázalo české ČÚZK – tá istá cesta",
+    "(exportImage) odtiaľ vrátila skutočné GeoTIFFy.",
+    "",
+    "PRAKTICKY TO ZNAMENÁ: `dem_source: ugkk` funguje len vtedy, keď je výrez",
+    "už v releasi `dem-ugkk`. Dostane sa tam jednorazovým exportom zo ZBGIS",
+    "Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²) a nahratím",
+    "ako `ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho.",
+    "",
+    "`LLS_DMR5` je napriek tomu prvý kandidát a nie je hádaný: v behu",
     "31072215798 ho vrátilo vyhľadávanie ArcGIS Online ako",
     "`https://zbgis.skgeodesy.sk/zbgis/rest/services/LLS_DMR5/MapServer`,",
     "názov „DMR 5.0 (Web Mercator)“, vlastník `UGKK_SR`. Šesť mien, ktoré sme",
     "hádali predtým (dmr5_0, DMR_hres, dmr5, DMR5_0, zbgis_dmr5_0, dmr3_5_10),",
-    "bolo teda zlých – ale to nie je jediný problém: v tom istom behu bol",
-    "`zbgis.skgeodesy.sk` jediný ÚGKK hostiteľ, ktorý z runnera neodpovedal",
-    "vôbec (`Connection timed out`), kým data.slovensko.sk, rpi.gov.sk,",
-    "inspire.gov.sk aj www.skgeodesy.sk vrátili HTTP 200.",
+    "bolo zlých. Keby sa cesta k tomu hostiteľovi niekedy otvorila, toto je",
+    "meno, ktorým začať.",
     "",
     "Poradie v `candidates` je poradie skúšania. Keď sonda potvrdí víťaza,",
     "stačí ho dať na prvé miesto (alebo ostatné zmazať).",
@@ -54,7 +76,6 @@
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr5/ImageServer",
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/DMR5_0/ImageServer",
       "https://zbgisws.skgeodesy.sk/zbgis_dmr5_0/ImageServer",
-      "https://mapy.geoportal.sk/arcgis/rest/services/dmr5_0/ImageServer",
       "https://zbgis.skgeodesy.sk/zbgis/rest/services/dmr3_5_10/ImageServer"
     ],
     "wcs": [
@@ -83,8 +104,7 @@
       "https://geoportal.gov.sk/gallery/datasets/detail/2a5ce05d-2223-4f0e-8764-f43ab881f586"
     ],
     "directories": [
-      "https://zbgis.skgeodesy.sk/zbgis/rest/services",
-      "https://mapy.geoportal.sk/arcgis/rest/services"
+      "https://zbgis.skgeodesy.sk/zbgis/rest/services"
     ]
   }
 }
