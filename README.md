@@ -316,7 +316,24 @@ Input **`dem_source`**:
 | hodnota | model | mriežka | pokrytie | stav |
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
-| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **neoverené** |
+| `dmr35` | ÚGKK DMR 3.5 (otvorené dáta) | **~10 m** | celý región | **neoverené** |
+| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **nedá sa stiahnuť** |
+
+**`dmr35` je jediná cesta k lepšiemu modelu, ktorá má šancu vyjsť.** Berie
+jeden ZIP z `opendata.skgeodesy.sk` — statické úložisko, iný stroj než ten,
+na ktorom je DMR 5.0 a ktorý z runnera timeoutuje. Model je starší a hrubší
+než 1 m LiDAR, ale ak má naozaj 10 m, je **dvakrát jemnejší než Sonny**, a
+mriežka zdroja je jediné, čo stropuje skutočný detail skál. `rock_res: auto`
+si to zoberie sám: dolný strop je desatina bunky DEM, takže z 2 m spadne na
+1 m — v `rock-areas.py` netreba meniť nič.
+
+Tá mriežka je zatiaľ **odčítaná z mena súboru** (`dmr3_5-10.zip`), nie
+overená. `workers/fetch-dem-open.py` ju po rozbalení zmeria a vypíše do
+súhrnu, a keď vyjde 20 m a horšie, povie rovno, že to nič nezlepší.
+
+Dlaždice majú tú istú pomenúvaciu schému ako Sonny (`N49E019.tif`), takže sa
+sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
+(`dem-sonny` vs. `dem-dmr35`).
 
 Platí pre **vrstevnice aj skaly** – oboje sa počíta z toho istého modelu, nech
 obrys skaly a priebeh vrstevnice sedia na tom istom teréne.

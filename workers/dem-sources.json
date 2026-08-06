@@ -61,6 +61,30 @@
     "attribution": "Sonny's LiDAR DTM",
     "verified": true
   },
+  "dmr35": {
+    "label": "ÚGKK DMR 3.5 (otvorené dáta)",
+    "kind": "zip-url",
+    "url": "https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip",
+    "release": "dem-dmr35",
+    "cell_m": 10,
+    "attribution": "ÚGKK SR – DMR 3.5",
+    "verified": false,
+    "_comment": [
+      "Iný stroj než DMR 5.0 a v tom je celá pointa: `opendata.skgeodesy.sk`",
+      "je statické úložisko, nie ArcGIS za mapovým klientom. `zbgis.` aj",
+      "`zbgisws.` z GitHub runnera timeoutujú aj pri 30 s (behy 31072215798,",
+      "31075806874, 31096745697), tento hostiteľ sa ešte netestoval.",
+      "",
+      "Model je starší a hrubší než DMR 5.0, ale to je stále výhra: keď má",
+      "mriežku 10 m, je DVAKRÁT jemnejší než Sonny (20 m) – a mriežka zdroja",
+      "je jediné, čo stropuje skutočný detail skál. `rock_res: auto` si to",
+      "zoberie sám, jeho dolný strop je desatina bunky DEM: z 2 m spadne na 1 m.",
+      "",
+      "`cell_m: 10` je podľa mena súboru (`dmr3_5-10.zip`), nie overené.",
+      "Skutočnú mriežku zmeria a vypíše `workers/fetch-dem-open.py` po",
+      "rozbalení, a keď vyjde 20 m a horšie, povie, že to nič nezlepší."
+    ]
+  },
   "ugkk": {
     "label": "ÚGKK DMR 5.0 (1 m LiDAR)",
     "kind": "arcgis-image",
