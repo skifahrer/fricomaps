@@ -51,9 +51,9 @@ zoomu 6". Zmena farieb preto nevyžaduje prepočet dlaždíc – to je celý zá
 
 ---
 
-## Workflow „Build map": deväť jobov
+## Workflow „Build map": desať jobov
 
-Build nie je jeden dlhý job, ale **deväť samostatných**. Dôvod je praktický:
+Build nie je jeden dlhý job, ale **desať samostatných**. Dôvod je praktický:
 kým bolo všetko v jednom, [beh 30948662582](https://github.com/skifahrer/fricomaps/actions/runs/30948662582)
 strávil tri hodiny na skalách, narazil na `timeout-minutes` a zahodil aj mapu,
 tieňovanie aj ikonky – hoci s nimi nebolo nič zlé. Teraz má každá časť vlastný
@@ -92,10 +92,9 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | job | čo robí | timeout | beží súbežne s |
 |---|---|--:|---|
 | **plan** | overí Pages, vyrieši región/bbox, stiahne (a nacacheuje) PBF | 30 min | — |
-| **check-dem** | sú v release `dem-sonny` dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
-| **mirror-dem** | keď chýbajú, spustí *Update DEM* | — | tiles, assets |
+| **check-dem** | sú v release zvoleného zdroja dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
+| **mirror-dem** | keď chýbajú, spustí *Stiahnuť výškové dáta* so zvoleným `source` | — | tiles, assets |
 | **keys** | poskladá kľúče cache, pri `*_rebuild` zmaže staré záznamy | 10 min | tiles, assets |
-| **mirror-dem-ugkk** | doplní 1 m LiDAR do releasu, keď chýba | 120 min | tiles, assets |
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
 | **trails** | OSM relácie trás → `{región}-trails.pmtiles` | 60 min | úplne so všetkým |
@@ -156,7 +155,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | `dem_source` | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
-| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Update DEM](#druhý-workflow-update-dem)) | overené |
+| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | ArcGIS ImageServer, len s výrezom (`area`) | **neoverené**, viď nižšie |
 
 Zdroj platí pre **vrstevnice aj skaly** – oboje z toho istého modelu, nech
@@ -750,7 +749,7 @@ geometrie a bez zahadzovania malých prvkov.
 
 ---
 
-## Druhý workflow: „Update DEM"
+## Druhý workflow: „Stiahnuť výškové dáta"
 
 > **Spúšťa sa aj sám.** „Build map" má pred sebou úlohu *Kontrola výškového
 > modelu*: zistí, ktoré 1° dlaždice pokrývajú jeho bbox, a porovná ich

@@ -31,7 +31,7 @@ Build map                    deväť jobov, tie dlhé bežia súbežne:
                                assets   SDF sprity a glyfy
                                deploy   zloží _site ─► GitHub Pages
 
-Update DEM                   Sonny's LiDAR DTM 20m (Google Drive) ─► rezanie
+Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 / DMR 5.0 ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
                              N49E019.tif + meta.json
                              ▲ Build map ho zavolá automaticky, keď v release
@@ -86,7 +86,7 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | čo | zdroj | kde sa berie |
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
-| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Update DEM*) |
+| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Stiahnuť výškové dáta*) |
 | **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastné PNG dlaždice `terrain/{z}/{x}/{y}.png`, uložené v release `dem-terrain` |
 | tieňovanie a 3D – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/), keď sa vlastné nevyrobia |
 
@@ -388,9 +388,8 @@ Build map
 
 #### Ako to dopadlo: z GitHub runnera sa k ÚGKK dostať nedá
 
-Zmerané, nie odhadnuté. Workflow **[Test – lov na ÚGKK DMR 5.0](.github/workflows/hunt-ugkk.yml)**
-(`workers/hunt-ugkk.py`) prehľadá širokú sadu vstupných bodov, čo nájde to
-stiahne a všetko vyhodí ako artefakt. Tri behy
+Zmerané, nie odhadnuté. Diagnostický workflow prehľadal širokú sadu vstupných
+bodov, čo našiel to stiahol a všetko vyhodil ako artefakt. Tri behy
 ([31072215798](https://github.com/skifahrer/fricomaps/actions/runs/31072215798),
 [31075806874](https://github.com/skifahrer/fricomaps/actions/runs/31075806874),
 [31096745697](https://github.com/skifahrer/fricomaps/actions/runs/31096745697))
