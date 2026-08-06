@@ -1,0 +1,112 @@
+name: Test – lov na ÚGKK DMR 5.0
+
+# Samostatná testovacia pipeline. NEROBÍ mapu a do žiadneho releasu nezapisuje:
+# jej jediná úloha je zistiť, či a odkiaľ sa dá z GitHub runnera stiahnuť 1 m
+# LiDAR od ÚGKK (DMR 5.0) – a čo nájde, to vyhodiť ako artefakt.
+#
+# PREČO SAMOSTATNE: v behu 30948662582 → 30997189220 to `Build map` skúšal ako
+# svoj krok a skončilo to tak, že sa 6 min 50 s čakalo na timeouty a v logu
+# ostalo len „URLError“ pri každom kandidátovi. Z toho sa nedá nič vyvodiť ani
+# ďalej skúšať bez toho, aby sa zakaždým púšťal celý hodinový build.
+#
+# Beží pár minút, nič nemôže pokaziť a výsledok je súbor, ktorý sa dá stiahnuť
+# a pozrieť – nie riadok v logu.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bbox:
+        description: "Testovací výrez W,S,E,N – malý, len na overenie (default: Gerlach a okolie)"
+        required: false
+        default: "20.12,49.15,20.16,49.18"
+        type: string
+      extra_urls:
+        description: "Ďalšie vstupné body na preskúmanie, oddelené čiarkou (napr. odkazy zo ZBGIS Mapového klienta)"
+        required: false
+        default: ""
+        type: string
+      max_mb:
+        description: "Strop na jeden stiahnutý súbor v MB (väčší sa uloží len ako ukážka na overenie formátu)"
+        required: false
+        default: "200"
+        type: string
+      total_mb:
+        description: "Strop na celý artefakt v MB"
+        required: false
+        default: "800"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hunt-ugkk
+  cancel-in-progress: true
+
+jobs:
+  hunt:
+    name: Hľadaj a stiahni DMR 5.0
+    runs-on: ubuntu-latest
+    # Krátky strop zámerne: keď hostitelia neodpovedajú, je to vidieť za pár
+    # minút. Hodinové čakanie na timeouty nič nové nepovie.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: GDAL (na overenie, či je to naozaj raster)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq gdal-bin
+
+      - name: Lov
+        id: hunt
+        # Nález aj nenález je výsledok merania – artefakt sa musí nahrať tak
+        # či tak, inak by sa report o zlyhaní stratil práve vtedy, keď ho
+        # najviac treba.
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          python3 workers/hunt-ugkk.py \
+            --out-dir=ugkk-hunt \
+            --bbox='${{ inputs.bbox }}' \
+            --extra-urls='${{ inputs.extra_urls }}' \
+            --max-mb='${{ inputs.max_mb }}' \
+            --total-mb='${{ inputs.total_mb }}' \
+            --summary="$GITHUB_STEP_SUMMARY"
+
+      # Čo prišlo, nech je vidieť aj ako raster – `sniff` v skripte pozná len
+      # magické bajty, `gdalinfo` povie mriežku, rozsah a súradnicový systém.
+      # Práve to rozhoduje, či je to DMR 5.0 alebo hocijaký iný raster.
+      - name: Čo sme to vlastne stiahli
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          if [ ! -d ugkk-hunt/data ] || [ -z "$(find ugkk-hunt/data -type f -print -quit)" ]; then
+            echo "Nestiahol sa ani jeden súbor – podrobnosti sú v ugkk-hunt/report.md."
+            exit 0
+          fi
+          {
+            echo
+            echo "## Overenie stiahnutých súborov"
+            echo
+            echo "| súbor | veľkosť | čo to je |"
+            echo "|---|--:|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+          find ugkk-hunt/data -type f | sort | while read -r f; do
+            SIZE=$(du -h "$f" | cut -f1)
+            INFO=$(gdalinfo "$f" 2>/dev/null \
+              | grep -E '^(Size is|Pixel Size|Coordinate System)' | tr '\n' ' ')
+            [ -n "${INFO// /}" ] || INFO="gdalinfo to neprečítal (nie je to raster)"
+            echo "### $f ($SIZE)"
+            echo "  $INFO"
+            printf '| %s | %s | %s |\n' "$(basename "$f")" "$SIZE" "$INFO" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Artefakt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ugkk-hunt
+          path: ugkk-hunt
+          retention-days: 14
+          if-no-files-found: warn
