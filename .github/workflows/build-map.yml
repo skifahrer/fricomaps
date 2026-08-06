@@ -55,12 +55,13 @@ on:
           - strazovske_vrchy
           - male_karpaty
       dem_source:
-        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. ugkk = 1 m LiDAR ÚGKK, podrobnejšie, ale LEN s výrezom"
+        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. dmr35 = otvorené dáta ÚGKK, jemnejšie a tiež na celý región. ugkk = 1 m LiDAR, najpodrobnejšie, ale LEN s výrezom a zatiaľ sa nedá stiahnuť"
         required: false
         default: sonny
         type: choice
         options:
           - sonny
+          - dmr35
           - ugkk
       layers:
         description: "Čo generovať, oddelené čiarkou: contours (vrstevnice a skaly), terrain (tieňovanie a 3D), trails (značené trasy)"
@@ -121,6 +122,9 @@ env:
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
   # Release s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
   DEM_RELEASE: dem-sonny
+  # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
+  # z iného modelu – napĺňa ich workflow "Update DEM (ÚGKK otvorené dáta)".
+  DMR35_RELEASE: dem-dmr35
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
@@ -214,14 +218,22 @@ jobs:
           fi
           echo "ugkk_needed=$UGKK_NEED" >> "$GITHUB_OUTPUT"
 
-          ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+          # Dlaždicové zdroje (sonny, dmr35) sa líšia len releasom – schéma
+          # mien je tá istá, takže sa nižšie nič nevetví.
+          if [ '${{ inputs.dem_source }}' = 'dmr35' ]; then
+            TILE_RELEASE="$DMR35_RELEASE"
+          else
+            TILE_RELEASE="$DEM_RELEASE"
+          fi
+          echo "tile_release=$TILE_RELEASE" >> "$GITHUB_OUTPUT"
+          ASSETS=$(gh release view "$TILE_RELEASE" --repo "$GITHUB_REPOSITORY" \
             --json assets -q '.assets[].name' 2>/dev/null || echo '')
 
           if [ -z "$BBOX" ]; then
             # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak sa
             # pozeráme len na to, či v release vôbec niečo je.
             NEED=$([ -z "$ASSETS" ] && echo true || echo false)
-            echo "Bbox nie je známy; release $DEM_RELEASE má $(printf '%s' "$ASSETS" | grep -c . || true) assetov → doplniť: $NEED"
+            echo "Bbox nie je známy; release $TILE_RELEASE má $(printf '%s' "$ASSETS" | grep -c . || true) assetov → doplniť: $NEED"
           else
             IFS=, read -r W S E N <<< "$BBOX"
             TILES=$(python3 - "$W" "$S" "$E" "$N" <<'PY'
@@ -243,7 +255,7 @@ jobs:
             # napr. N47E016 v Maďarsku) v ňom nikdy nebudú, takže „chýba jedna,
             # tak sťahuj znova" by mirrorovalo pri každom builde.
             NEED=$([ "$HAVE" -eq 0 ] && echo true || echo false)
-            echo "Dlaždíc pre bbox: $TOTAL, v release $DEM_RELEASE: $HAVE → doplniť: $NEED"
+            echo "Dlaždíc pre bbox: $TOTAL, v release $TILE_RELEASE: $HAVE → doplniť: $NEED"
           fi
           echo "needed=$NEED" >> "$GITHUB_OUTPUT"
 
@@ -252,7 +264,7 @@ jobs:
           # ešte z Copernicusu.
           # `|| true` vnútri zátvoriek: keď release ešte neexistuje, gh skončí
           # nenulovo a `set -o pipefail` by zhodil celý krok.
-          DEMKEY=$({ gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
+          DEMKEY=$({ gh release view "$TILE_RELEASE" --repo "$GITHUB_REPOSITORY" --json assets \
             -q '[.assets[] | .name + ":" + (.size|tostring)] | sort | join(",")' 2>/dev/null \
             || true; } | sha256sum | cut -c1-12)
           echo "demkey=$DEMKEY" >> "$GITHUB_OUTPUT"
@@ -262,10 +274,22 @@ jobs:
   mirror-dem:
     name: Doplniť výškový model
     needs: check-dem
-    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' }}
+    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' && inputs.dem_source != 'dmr35' }}
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
+
+  # ---------- doplnenie otvorených dát ÚGKK (DMR 3.5) ----------
+  # To isté, čo `mirror-dem` robí pre Sonnyho, len z iného zdroja a do iného
+  # releasu. Dlaždice majú tú istú pomenúvaciu schému, takže build ďalej
+  # nerozlišuje, z ktorého modelu sú – rozhoduje meno releasu.
+  mirror-dem-open:
+    name: Doplniť ÚGKK DMR 3.5
+    needs: check-dem
+    if: ${{ !cancelled() && needs.check-dem.outputs.needed == 'true' && inputs.dem_source == 'dmr35' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem-open.yml
 
   # ---------- doplnenie 1 m LiDARu od ÚGKK ----------
   # To isté, čo `mirror-dem` robí pre Sonnyho: keď výrez v release nie je,
@@ -528,7 +552,7 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-dem, mirror-dem-ugkk]
+    needs: [plan, check-dem, mirror-dem, mirror-dem-open, mirror-dem-ugkk]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

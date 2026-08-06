@@ -116,6 +116,13 @@ SEEDS = [
      "url": "https://www.skgeodesy.sk/sk/ugkk/geodezia-kartografia/"},
     {"kind": "page", "name": "ZBGIS Mapový klient (konfigurácia)",
      "url": "https://zbgis.skgeodesy.sk/mkzbgis/"},
+    # Statické úložisko otvorených dát – iný stroj než `zbgis.`, bez ArcGIS
+    # a bez WAF-u. Práve preto má šancu tam, kde ostatné ÚGKK hostitele
+    # timeoutujú. Odtiaľ berie DMR 3.5 aj `workers/fetch-dem-open.py`.
+    {"kind": "page", "name": "opendata.skgeodesy.sk",
+     "url": "https://opendata.skgeodesy.sk/"},
+    {"kind": "page", "name": "opendata – priečinok DMR3_5",
+     "url": "https://opendata.skgeodesy.sk/static/DMR3_5/"},
     # ArcGIS adresáre služieb – to, čo sonda skúšala doteraz.
     {"kind": "service", "name": "ZBGIS adresár služieb",
      "url": "https://zbgis.skgeodesy.sk/zbgis/rest/services"},

@@ -6,9 +6,14 @@
 # kopírovalo dvakrát a jedna kópia by časom zaostala za druhou.
 #
 # Zdroj hovorí, z ktorého releasu: `sonny` = 1°×1° dlaždice 20 m modelu
-# (release `dem-sonny`), `ugkk` = jeden COG s 1 m LiDARom pre výrez
-# (release `dem-ugkk`). Oboje sú zrkadlá – build nikdy nesiaha priamo na
-# cudzí server, to robia workflowy `Update DEM` a `Update DEM (ÚGKK 1 m)`.
+# (release `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených
+# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `ugkk` = jeden COG
+# s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá – build
+# nikdy nesiaha priamo na cudzí server, to robia workflowy `Update DEM`,
+# `Update DEM (ÚGKK otvorené dáta)` a `Update DEM (ÚGKK 1 m)`.
+#
+# `sonny` a `dmr35` sa líšia LEN menom releasu: dlaždice majú tú istú
+# pomenúvaciu schému (`N49E019.tif`), takže sa nižšie nič nevetví.
 #
 # Použitie:
 #   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv] [zdroj] [kľúč výrezu]
@@ -50,6 +55,12 @@ if [ "$SOURCE" = "ugkk" ]; then
   exit 0
 fi
 
+# Ktorý release a ako to volať v logu. Ďalej je to už to isté.
+case "$SOURCE" in
+  dmr35) SRC_RELEASE="${DMR35_RELEASE:-dem-dmr35}"; SRC_LABEL="ÚGKK DMR 3.5" ;;
+  *)     SRC_RELEASE="$DEM_RELEASE"; SRC_LABEL="Sonny's LiDAR DTM" ;;
+esac
+
 IFS=, read -r W S E N <<< "$BBOX"
 # Stiahnuté dlaždice majú vlastný podadresár: medzivýsledky (clip, slope…)
 # sú tiež .tif a nesmú sa dostať do mozaiky.
@@ -70,7 +81,7 @@ echo "DEM dlaždíc pre bbox: $WANT"
 
 # Zoznam dlaždíc v release si vypýtame naraz – nemá zmysel skúšať sťahovať
 # to, čo tam nie je.
-ASSETS=$(gh release view "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+ASSETS=$(gh release view "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
   --json assets -q '.assets[].name' 2>/dev/null || echo '')
 
 have=0
@@ -79,7 +90,7 @@ while IFS= read -r t; do
   if [ -s "$DIR/tiles/$t.tif" ]; then
     have=$(( have + 1 ))          # už v cache behu
   elif printf '%s\n' "$ASSETS" | grep -qx "$t.tif" && \
-       gh release download "$DEM_RELEASE" --repo "$GITHUB_REPOSITORY" \
+       gh release download "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
          --pattern "$t.tif" --dir "$DIR/tiles" --clobber >/dev/null 2>&1; then
     have=$(( have + 1 ))
   else
@@ -88,7 +99,7 @@ while IFS= read -r t; do
 done < "$DIR/list.txt"
 
 if [ "$have" -eq 0 ]; then
-  echo "::error::V release $DEM_RELEASE nie je pre toto územie ani jedna dlaždica."
+  echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   echo "Spusti workflow 'Update DEM' s priečinkom, ktorý toto územie pokrýva – alebo mu vyplň direct_urls."
   exit 1
@@ -97,9 +108,9 @@ if [ -n "$missing" ]; then
   # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za hranicou
   # v ňom byť nemusia. Tam jednoducho nebude terén; radšej diera, ktorú
   # vidno, než výplň z modelu povrchu.
-  echo "::warning::V release $DEM_RELEASE nie sú dlaždice:$missing – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
+  echo "::warning::V release $SRC_RELEASE nie sú dlaždice:$missing – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
 fi
-echo "Sonny's LiDAR DTM: $have z $WANT dlaždíc z release $DEM_RELEASE ✓"
+echo "$SRC_LABEL: $have z $WANT dlaždíc z release $SRC_RELEASE ✓"
 
 shopt -s nullglob
 tifs=("$DIR"/tiles/*.tif)
@@ -116,6 +127,6 @@ echo "DEM dlaždíc k dispozícii: ${#tifs[@]} → $DIR/all.vrt"
 if [ -n "$STEPS_TSV" ]; then
   # Prvé pole je poradie v súhrne – joby bežia súbežne, tak sa riadky
   # neradia podľa času, ale podľa toho, kam v pipeline patria.
-  printf '%s\t%s\t%s\t%s\n' 20 "DEM dlaždice (Sonny)" "$(( $(date +%s) - T0 ))" \
+  printf '%s\t%s\t%s\t%s\n' 20 "DEM dlaždice ($SRC_LABEL)" "$(( $(date +%s) - T0 ))" \
     "$have z $WANT dlaždíc, $(du -sh "$DIR/tiles" | cut -f1)" >> "$STEPS_TSV"
 fi
