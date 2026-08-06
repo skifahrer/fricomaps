@@ -474,12 +474,16 @@ jobs:
             echo "| release | \`${{ steps.src.outputs.release }}\` |"
             echo "| URL | ${{ steps.src.outputs.url }} |"
           } >> "$GITHUB_STEP_SUMMARY"
+          # Čítať `key=value`, NIE `source`. Hodnoty nie sú shell kód:
+          # `crs=S-JTSK / Krovak East North` sa pri `.` vykoná ako príkaz `/`
+          # a shell skončí so 126 („Is a directory"). Presne toto zhodilo beh
+          # 31125042584 – po tom, čo sa 2,3 GB stiahlo, rozrezalo na 15
+          # dlaždíc a nahralo do releasu. Súhrn nesmie zhodiť hotovú prácu.
+          get() { sed -n "s/^$1=//p" open-stats.txt | head -1; }
           if [ -s open-stats.txt ]; then
-            # shellcheck disable=SC1091
-            . open-stats.txt
             {
-              echo "| dlaždíc | ${tiles:-?} (${mb:-?} MB) |"
-              echo "| **skutočná mriežka** | **${cell_m:-?} m** (Sonny má 20 m) |"
-              echo "| CRS zdroja | ${crs:-?} |"
+              echo "| dlaždíc | $(get tiles) ($(get mb) MB) |"
+              echo "| **skutočná mriežka** | **$(get cell_m) m** (Sonny má 20 m) |"
+              echo "| CRS zdroja | $(get crs) |"
             } >> "$GITHUB_STEP_SUMMARY"
           fi

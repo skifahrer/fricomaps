@@ -316,20 +316,24 @@ Input **`dem_source`**:
 | hodnota | model | mriežka | pokrytie | stav |
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
-| `dmr35` | ÚGKK DMR 3.5 (otvorené dáta) | **~10 m** | celý región | **neoverené** |
+| **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
 | `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **nedá sa stiahnuť** |
 
-**`dmr35` je jediná cesta k lepšiemu modelu, ktorá má šancu vyjsť.** Berie
-jeden ZIP z `opendata.skgeodesy.sk` — statické úložisko, iný stroj než ten,
-na ktorom je DMR 5.0 a ktorý z runnera timeoutuje. Model je starší a hrubší
-než 1 m LiDAR, ale ak má naozaj 10 m, je **dvakrát jemnejší než Sonny**, a
+**`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
+v pipeline.** Overené behom
+[31125042584](https://github.com/skifahrer/fricomaps/actions/runs/31125042584):
+2319 MB ZIP z `opendata.skgeodesy.sk` stiahnutý, v archíve jeden raster
+42 692×20 429, mriežka **presne 10,0×10,0 m**, CRS S-JTSK / Krovak East
+North. Rozrezané na 15 dlaždíc (1315 MB) a nahraté do releasu `dem-dmr35`.
+
+Ten hostiteľ je iný stroj než ten, na ktorom je DMR 5.0 — statické úložisko,
+nie ArcGIS za mapovým klientom — a odpovedal na prvý pokus, kým `zbgis.` aj
+`zbgisws.` timeoutujú aj pri 30 s.
+
+Model je starší a redší než 1 m LiDAR, ale **dvakrát jemnejší než Sonny**, a
 mriežka zdroja je jediné, čo stropuje skutočný detail skál. `rock_res: auto`
 si to zoberie sám: dolný strop je desatina bunky DEM, takže z 2 m spadne na
 1 m — v `rock-areas.py` netreba meniť nič.
-
-Tá mriežka je zatiaľ **odčítaná z mena súboru** (`dmr3_5-10.zip`), nie
-overená. `workers/fetch-dem-open.py` ju po rozbalení zmeria a vypíše do
-súhrnu, a keď vyjde 20 m a horšie, povie rovno, že to nič nezlepší.
 
 Dlaždice majú tú istú pomenúvaciu schému ako Sonny (`N49E019.tif`), takže sa
 sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
