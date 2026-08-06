@@ -105,10 +105,13 @@ SEEDS = [
     {"kind": "page", "name": "INSPIRE geoportál SR",
      "url": "https://inspire.gov.sk/"},
     # Stránky ÚGKK/GKÚ – tam, kde je popísané, ako sa DMR 5.0 vydáva.
+    # Bez `www`: s ním vracia `www.geoportal.sk` chybu certifikátu
+    # („no alternative certificate subject name matches target host name“),
+    # čo nie je nedostupnosť, ale zle nastavené SNI na ich strane.
     {"kind": "page", "name": "geoportal.sk – LLS/DMR",
-     "url": "https://www.geoportal.sk/sk/udaje/lls-dmr/"},
-    {"kind": "page", "name": "geoportal.sk – ELS",
-     "url": "https://www.geoportal.sk/sk/zbgis/na-stiahnutie/"},
+     "url": "https://geoportal.sk/sk/udaje/lls-dmr/"},
+    {"kind": "page", "name": "geoportal.sk – na stiahnutie",
+     "url": "https://geoportal.sk/sk/zbgis/na-stiahnutie/"},
     {"kind": "page", "name": "skgeodesy.sk",
      "url": "https://www.skgeodesy.sk/sk/ugkk/geodezia-kartografia/"},
     {"kind": "page", "name": "ZBGIS Mapový klient (konfigurácia)",
@@ -116,8 +119,11 @@ SEEDS = [
     # ArcGIS adresáre služieb – to, čo sonda skúšala doteraz.
     {"kind": "service", "name": "ZBGIS adresár služieb",
      "url": "https://zbgis.skgeodesy.sk/zbgis/rest/services"},
-    {"kind": "service", "name": "mapy.geoportal.sk adresár služieb",
-     "url": "https://mapy.geoportal.sk/arcgis/rest/services"},
+    # Iný hostiteľ než `zbgis.` – ten jediný z celého ÚGKK timeoutuje, takže
+    # sa oplatí skúsiť aj jeho súrodenca. Odkaz naň prišiel z ArcGIS Online
+    # (`SK_UGKK_ZBGIS_WMS_DMR`), nie z hádania.
+    {"kind": "service", "name": "zbgisws adresár služieb",
+     "url": "https://zbgisws.skgeodesy.sk/arcgis/rest/services"},
     # Kontrola: keď tieto odpovedia a `.sk` nie, nie je to o našich URL.
     {"kind": "control", "name": "pypi.org", "url": "https://pypi.org/"},
     {"kind": "control", "name": "arcgis.com", "url": "https://www.arcgis.com/"},
@@ -272,6 +278,16 @@ def phase_collect(seeds, reachable, timeout, out):
         # Adresár služieb má zmysel vypísať celý – práve ten sme nikdy nevideli.
         if seed["kind"] == "service":
             keep = hits
+        # Keď zdroj odpovedal, ale nič z neho nevypadlo, ulož surovú odpoveď.
+        # Bez nej sa nedá zistiť, či je zlá naša otázka (`data.slovensko.sk`
+        # vrátil HTTP 200 a nula záznamov – to nie je „nemá dáta“, to je
+        # „pýtame sa zle“) alebo tam naozaj nič nie je.
+        if not keep:
+            raw = os.path.join(out, "raw",
+                               re.sub(r"[^a-zA-Z0-9]+", "-", seed["name"])[:60] + ".txt")
+            os.makedirs(os.path.dirname(raw), exist_ok=True)
+            with open(raw, "wb") as f:
+                f.write(data[:200000])
         for url, desc in keep:
             found.setdefault(url, f"{seed['name']}: {desc}")
         print(f"  ✓ {seed['name']} ({how}) – {len(hits)} odkazov, "
@@ -285,6 +301,36 @@ def phase_collect(seeds, reachable, timeout, out):
             f.write(f"{url}\t{desc}\n")
     print(f"\n  spolu {len(found)} kandidátov → {out}/found-urls.txt")
     return found, notes
+
+
+def phase_new_hosts(found, reachable, slow_timeout):
+    """Dostupnosť hostiteľov, ktorí vypadli až zo zberu.
+
+    V prvom behu sa toto nedialo a bolo to vidieť: `zbgisws.skgeodesy.sk`
+    prišiel z ArcGIS Online a nikdy sa neotestoval. Zároveň sa tu dáva
+    dlhší timeout – `zbgis.skgeodesy.sk` je jediný ÚGKK hostiteľ, ktorý
+    neodpovedá, a osem sekúnd je na pomalý štátny server málo na to, aby sa
+    z toho dal robiť záver.
+    """
+    new = []
+    for url in found:
+        h = urllib.parse.urlparse(url).hostname
+        if h and h not in reachable and h not in new:
+            new.append(h)
+    retry = [h for h, ok in reachable.items() if not ok]
+    if not new and not retry:
+        return []
+    print("\n══ 2b. Novoobjavení hostitelia (a druhý pokus na tých mŕtvych) ══")
+    rows = []
+    for host in new + retry:
+        t0 = time.time()
+        ok, why = host_reachable(f"https://{host}/", timeout=slow_timeout)
+        dt = time.time() - t0
+        tag = "objavený" if host in new else f"2. pokus, {slow_timeout:.0f}s"
+        print(f"  {'✓' if ok else '✗'} {host:<34} {why:<30} {dt:5.1f}s  [{tag}]")
+        reachable[host] = ok
+        rows.append((host, ok, why, dt, tag))
+    return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -361,6 +407,45 @@ def export_from_arcgis(url, bbox, dest, timeout):
     return download_file(d["href"], dest, max_mb=512, timeout=timeout)
 
 
+def probe_service(url, timeout):
+    """`?f=json` na ArcGIS službe – čo to vlastne je a akú má mriežku.
+
+    Platí to pre ImageServer aj MapServer. MapServer nevie `exportImage`
+    s float32 výškou, ale povie, či pod ním nie je ImageServer so správnym
+    menom – a to je presne to, čo sme doteraz hádali.
+    """
+    data, how = smart_get(f"{url.rstrip('/')}?f=json", timeout=timeout)
+    if data is None:
+        return {"ok": False, "why": how[0] if isinstance(how, list) else str(how)}
+    try:
+        d = json.loads(data.decode("utf-8", "replace"))
+    except ValueError:
+        return {"ok": False, "why": "nevrátil JSON"}
+    if "error" in d:
+        return {"ok": False, "why": str(d["error"].get("message", "chyba"))[:70]}
+    return {"ok": True, "pixel_m": d.get("pixelSizeX"),
+            "type": d.get("serviceDataType") or ",".join(
+                l.get("name", "") for l in (d.get("layers") or [])[:4]),
+            "desc": (d.get("serviceDescription") or d.get("description")
+                     or "")[:90].replace("\n", " ")}
+
+
+def probe_ogc(url, timeout):
+    """GetCapabilities na WMS/WCS – žije to a čo ponúka?"""
+    sep = "&" if "?" in url else "?"
+    for service in ("WCS", "WMS"):
+        q = f"{sep}service={service}&request=GetCapabilities"
+        data, how = smart_get(url + q, timeout=timeout)
+        if data is None:
+            continue
+        text = data.decode("utf-8", "replace")
+        names = re.findall(r"<(?:wcs:)?(?:CoverageId|Name)>([^<]{1,60})</", text)
+        if names:
+            return {"ok": True, "service": service,
+                    "layers": list(dict.fromkeys(names))[:12]}
+    return {"ok": False, "why": "GetCapabilities nevrátilo vrstvy"}
+
+
 def safe_name(url):
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", urllib.parse.urlparse(url).path.strip("/"))
     return (name or "subor")[-90:]
@@ -373,10 +458,20 @@ def phase_download(found, bbox, out, max_mb, total_mb, timeout):
     rows, got = [], 0
 
     files = [(u, d) for u, d in found.items() if FILE_RE.search(u)]
+    # Musí KONČIŤ na ImageServer: `…/ImageServer/WCSServer` je WCS, nie
+    # ImageServer, a `exportImage` na ňom nemá čo hľadať.
     services = [(u, d) for u, d in found.items()
-                if re.search(r"ImageServer", u, re.I) and "exportImage" not in u]
+                if re.search(r"/ImageServer/?$", u, re.I)]
+    # MapServer a WMS/WCS sa v prvej verzii vôbec neskúšali – a práve medzi
+    # nimi prišiel z ArcGIS Online jediný skutočný odkaz od ÚGKK
+    # (`LLS_DMR5/MapServer`, vlastník UGKK_SR). Zbierať odkazy a potom ich
+    # neotvoriť je najhorší možný kompromis.
+    maps = [(u, d) for u, d in found.items() if re.search(r"MapServer", u, re.I)]
+    ogc = [(u, d) for u, d in found.items()
+           if re.search(r"WCSServer|WMSServer|/wcs|/wms|service\.svc", u, re.I)]
 
-    print(f"  priamych súborov: {len(files)}, ArcGIS služieb: {len(services)}")
+    print(f"  priamych súborov: {len(files)}, ImageServerov: {len(services)}, "
+          f"MapServerov: {len(maps)}, OGC služieb: {len(ogc)}")
     for i, (url, desc) in enumerate(files, 1):
         if got > total_mb * 1048576:
             print(f"  … strop {total_mb} MB vyčerpaný, zvyšok len v zozname")
@@ -397,6 +492,40 @@ def phase_download(found, bbox, out, max_mb, total_mb, timeout):
         mark = "✓" if res.get("ok") else "✗"
         note = res.get("why") or f"{res.get('kind')}, {res.get('bytes', 0)/1024:.0f} kB"
         print(f"  {mark} exportImage {url}\n      {note}")
+        rows.append((url, mark, note, desc))
+
+    for url, desc in maps:
+        meta = probe_service(url, timeout)
+        if meta["ok"]:
+            note = (f"MapServer žije – vrstvy „{meta['type']}“, "
+                    f"pixel {meta.get('pixel_m')}. {meta['desc']}")
+            mark = "~"
+            # Ten istý názov ako ImageServer je najlepší tip, aký sa dá mať:
+            # nie je hádaný, je odvodený od služby, ktorá naozaj existuje.
+            guess = re.sub(r"/MapServer/?$", "/ImageServer", url)
+            dest = os.path.join(data_dir, f"guess-{safe_name(guess)}.tif")
+            res = export_from_arcgis(guess, bbox, dest, timeout)
+            if res.get("ok"):
+                mark = "✓"
+                note += f" → ImageServer s tým istým menom FUNGUJE: {guess}"
+                rows.append((guess, "✓", f"{res.get('kind')}, "
+                                         f"{res.get('bytes', 0)/1024:.0f} kB",
+                             "odvodené z MapServeru"))
+            else:
+                note += f" | ImageServer s tým istým menom: {res.get('why')}"
+        else:
+            mark, note = "✗", meta["why"]
+        print(f"  {mark} MapServer {url}\n      {note}")
+        rows.append((url, mark, note, desc))
+
+    for url, desc in ogc:
+        res = probe_ogc(url, timeout)
+        if res.get("ok"):
+            note = f"{res['service']} žije – vrstvy: {', '.join(res['layers'])}"
+            mark = "~"
+        else:
+            mark, note = "✗", res["why"]
+        print(f"  {mark} OGC {url}\n      {note}")
         rows.append((url, mark, note, desc))
 
     return rows, got
@@ -477,6 +606,9 @@ def main():
     ap.add_argument("--total-mb", type=float, default=800.0,
                     help="strop na celý artefakt")
     ap.add_argument("--timeout", type=float, default=15.0)
+    ap.add_argument("--slow-timeout", type=float, default=30.0,
+                    help="druhý pokus na hostiteľov, ktorí neodpovedali – "
+                         "štátne servery bývajú pomalé, nie mŕtve")
     ap.add_argument("--summary", default="", help="kam pripojiť report (GITHUB_STEP_SUMMARY)")
     ap.add_argument("--strict", action="store_true",
                     help="skončiť chybou, keď sa nič nestiahne")
@@ -495,6 +627,19 @@ def main():
           f"výrez {args.bbox}")
     reachable, host_rows = phase_hosts(seeds, args.out_dir)
     found, notes = phase_collect(seeds, reachable, args.timeout, args.out_dir)
+
+    # Známi kandidáti z dem-sources.json idú do sťahovania vždy, aj keď ich
+    # zber tentoraz nenašiel. Inak by beh, v ktorom vypadne katalóg, ticho
+    # preskočil práve tie URL, kvôli ktorým to celé vzniklo.
+    try:
+        src = json.load(open(os.path.join(HERE, "dem-sources.json")))["ugkk"]
+        for u in list(src.get("candidates") or []) + list(src.get("wcs") or []):
+            found.setdefault(u, "kandidát z workers/dem-sources.json")
+    except (OSError, ValueError, KeyError) as exc:
+        print(f"::warning::dem-sources.json sa nedá prečítať ({exc}) – "
+              f"idú len odkazy zo zberu.")
+
+    host_rows += phase_new_hosts(found, reachable, args.slow_timeout)
     dl_rows, got = phase_download(found, bbox, args.out_dir,
                                   args.max_mb, args.total_mb, args.timeout)
     path = write_report(args.out_dir, host_rows, notes, dl_rows, got, bbox,
