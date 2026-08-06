@@ -49,17 +49,23 @@ name: Stiahnuť výškové dáta
 on:
   workflow_dispatch:
     inputs:
-      source:
-        description: "Ktorý výškový model stiahnuť"
+      what:
+        description: "Čo stiahnuť"
         required: true
-        default: sonny
+        default: "dmr35 | https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip"
         type: choice
         options:
-          - sonny
-          - dmr35
-          - ugkk
-      url:
-        description: "Prebiť URL zdroja (prázdne = z workers/dem-sources.json). Napr. https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip alebo odkaz z ručného exportu ZBGIS"
+          - "dmr35 | https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip"
+          - "sonny | Google Drive (20 m, celé Slovensko)"
+          - "ugkk  | DMR 5.0 1 m – vyplň custom_url odkazom z exportu ZBGIS"
+          - "vlastné | vyplň custom_url"
+      custom_url:
+        description: "URL, keď je vyššie „vlastné“ alebo „ugkk“. ZIP/TIF/HGT; viac odkazov oddeľ medzerou"
+        required: false
+        default: ""
+        type: string
+      release_tag:
+        description: "Do ktorého releasu uložiť (prázdne = podľa výberu vyššie)"
         required: false
         default: ""
         type: string
@@ -68,36 +74,30 @@ on:
         required: false
         default: vysoke_tatry
         type: string
-      drive_folder:
-        description: "Len pre sonny: Google Drive priečinok (default = Slovensko, model 20 m)"
-        required: false
-        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
-        type: string
       force:
         description: "Stiahnuť nanovo, aj keď už dáta v release sú"
         required: false
         default: false
         type: boolean
-  # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho
-  # územie – vtedy si terén doplní sám, s predvolenými hodnotami.
+  # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho územie.
+  # `workflow_call` nepozná `type: choice`, tak sem chodí holý kľúč zdroja
+  # (sonny/dmr35/ugkk) – krok „Priprav zdroj" berie oboje.
   workflow_call:
     inputs:
-      # `workflow_call` nepozná `type: choice` – hodnotu stráži krok
-      # „Priprav zdroj“, ktorý neznámy zdroj odmietne s vypísaním známych.
-      source:
+      what:
         required: true
         type: string
-      url:
+      custom_url:
+        required: false
+        default: ""
+        type: string
+      release_tag:
         required: false
         default: ""
         type: string
       area:
         required: false
         default: vysoke_tatry
-        type: string
-      drive_folder:
-        required: false
-        default: "https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa"
         type: string
       force:
         required: false
@@ -110,6 +110,10 @@ permissions:
 jobs:
   mirror:
     runs-on: ubuntu-latest
+    env:
+      # Sonny distribuuje cez Google Drive a priečinok sa nemení – nemá čo
+      # zaberať pole vo formulári. Iný priečinok sa dá dať cez `custom_url`.
+      SONNY_DRIVE_FOLDER: https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -121,40 +125,60 @@ jobs:
           sudo apt-get install -y -qq gdal-bin p7zip-full
           python3 -m pip install --quiet --upgrade gdown
 
-      # Jediné miesto, kde sa rozhoduje „ktorý zdroj → ktorý release a URL".
-      # Berie sa z workers/dem-sources.json, aby to nebolo opísané na dvoch
-      # miestach; `url` to prebije.
+      # Jediné miesto, kde sa rozhoduje „čo → odkiaľ → do ktorého releasu".
+      # Zámerne obyčajný `case` a nie čítanie JSONu: URL je vidieť priamo vo
+      # formulári, takže keď beh spadne, je z jedného pohľadu jasné, čo sa
+      # sťahovalo. Skrytá indirekcia cez dem-sources.json bola o jeden krok
+      # viac, kde sa to mohlo pokaziť.
       - name: Priprav zdroj
         id: src
         run: |
-          set -euo pipefail
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json, sys
-          key = '${{ inputs.source }}'.strip() or 'sonny'
-          src = json.load(open("workers/dem-sources.json"))
-          if key not in src or key.startswith("_"):
-              known = ", ".join(k for k in src if not k.startswith("_"))
-              print(f"::error::Neznámy zdroj „{key}“. Známe: {known}",
-                    file=sys.stderr)
-              raise SystemExit(1)
-          d = src[key]
-          url = '${{ inputs.url }}'.strip() or d.get("url", "")
-          rel = d.get("release") or ("dem-ugkk" if key == "ugkk" else "dem-sonny")
-          print(f"key={key}")
-          print(f"url={url}")
-          print(f"release={rel}")
-          print(f"label={d.get('label', key)}")
-          PY
-          echo "Zdroj: $(grep '^label=' "$GITHUB_OUTPUT" | tail -1 | cut -d= -f2-)"
+          set -uo pipefail
+          WHAT='${{ inputs.what }}'
+          CUSTOM='${{ inputs.custom_url }}'
+          # Kľúč je to, čo je pred „|" – z výberu aj z `workflow_call`.
+          KEY=$(printf '%s' "$WHAT" | cut -d'|' -f1 | tr -d '[:space:]')
+          case "$KEY" in
+            dmr35)
+              URL="https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip"
+              REL=dem-dmr35; LABEL="ÚGKK DMR 3.5 (otvorené dáta)" ;;
+            sonny)
+              URL=""; REL=dem-sonny; LABEL="Sonny's LiDAR DTM 20 m" ;;
+            ugkk)
+              URL="$CUSTOM"; REL=dem-ugkk; LABEL="ÚGKK DMR 5.0 (1 m LiDAR)" ;;
+            vlastné|vlastne|custom)
+              URL="$CUSTOM"; REL=dem-dmr35; LABEL="vlastné URL" ;;
+            *)
+              echo "::error::Neznáme „$WHAT“. Známe: dmr35, sonny, ugkk, vlastné."
+              exit 1 ;;
+          esac
+          # URL z výberu sa dá prebiť custom_url pri každom zdroji.
+          if [ -n "${CUSTOM//[[:space:]]/}" ] && [ "$KEY" != "sonny" ]; then
+            URL="$CUSTOM"
+          fi
+          [ -n '${{ inputs.release_tag }}' ] && REL='${{ inputs.release_tag }}'
+          if [ "$KEY" != "sonny" ] && [ -z "${URL//[[:space:]]/}" ]; then
+            echo "::error::Pre „$KEY“ treba URL – vyplň custom_url."
+            exit 1
+          fi
+          {
+            echo "key=$KEY"
+            echo "url=$URL"
+            echo "release=$REL"
+            echo "label=$LABEL"
+          } >> "$GITHUB_OUTPUT"
+          echo "── $LABEL"
+          echo "   URL:     ${URL:-(Google Drive)}"
+          echo "   release: $REL"
 
       - name: Stiahni dlaždice
         id: fetch
-        if: ${{ inputs.source == 'sonny' }}
+        if: ${{ steps.src.outputs.key == 'sonny' }}
         run: |
           set -uo pipefail
           mkdir -p dl
 
-          URLS='${{ inputs.url }}'
+          URLS='${{ steps.src.outputs.url }}'
           if [ -n "${URLS//[[:space:]]/}" ]; then
             # Priame URL (napr. mirror) majú prednosť – Drive vie limitovať.
             for u in $URLS; do
@@ -163,7 +187,7 @@ jobs:
                 || echo "::warning::$u sa nepodarilo stiahnuť"
             done
           else
-            FOLDER='${{ inputs.drive_folder }}'
+            FOLDER="${SONNY_DRIVE_FOLDER}"
             echo "Sťahujem Google Drive priečinok: $FOLDER"
             # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
             # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
@@ -182,7 +206,7 @@ jobs:
 
       - name: Rozbaľ archívy a preveď na GeoTIFF dlaždice
         id: convert
-        if: ${{ inputs.source == 'sonny' }}
+        if: ${{ steps.src.outputs.key == 'sonny' }}
         run: |
           set -uo pipefail
           mkdir -p unpacked tiles
@@ -280,7 +304,7 @@ jobs:
           ls tiles
 
       - name: Publikuj ako release assety
-        if: ${{ inputs.source == 'sonny' }}
+        if: ${{ steps.src.outputs.key == 'sonny' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -302,7 +326,7 @@ jobs:
           jq -n \
             --arg src "Sonny's LiDAR DTM (https://sonny.4lima.de/)" \
             --arg license "CC BY 4.0" \
-            --arg folder '${{ inputs.drive_folder }}' \
+            --arg folder "$SONNY_DRIVE_FOLDER" \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson tiles "$(cd tiles && find . -maxdepth 1 -name '*.tif' -printf '%f\n' | sed 's/\.tif$//' | jq -R . | jq -s .)" \
             '{source: $src, license: $license, drive_folder: $folder, built_at: $built, tiles: $tiles}' \
@@ -319,7 +343,7 @@ jobs:
       # meno releasu.
       - name: Sú dlaždice DMR 3.5 už v release?
         id: have35
-        if: ${{ inputs.source == 'dmr35' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -341,7 +365,7 @@ jobs:
       # zistí z prázdneho releasu a spadne späť na Sonnyho.
       - name: Stiahni a rozrež DMR 3.5
         id: fetch35
-        if: ${{ inputs.source == 'dmr35' && steps.have35.outputs.skip != 'true' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.have35.outputs.skip != 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -351,7 +375,7 @@ jobs:
             --out=tiles --stats=open-stats.txt
 
       - name: Nahraj DMR 3.5 do releasu
-        if: ${{ inputs.source == 'dmr35' && steps.fetch35.outcome == 'success' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.fetch35.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -372,7 +396,7 @@ jobs:
       # ale ukladá jeden COG na pohorie.
       - name: Vyrieš výrez
         id: area
-        if: ${{ inputs.source == 'ugkk' }}
+        if: ${{ steps.src.outputs.key == 'ugkk' }}
         run: |
           set -euo pipefail
           python3 workers/resolve-area.py \
@@ -381,7 +405,7 @@ jobs:
 
       - name: Je výrez už v release?
         id: haveu
-        if: ${{ inputs.source == 'ugkk' }}
+        if: ${{ steps.src.outputs.key == 'ugkk' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -404,7 +428,7 @@ jobs:
       # kvôli poľu `url`, kam sa dá vložiť odkaz z ručného exportu.
       - name: Stiahni DMR 5.0
         id: fetchu
-        if: ${{ inputs.source == 'ugkk' && steps.haveu.outputs.skip != 'true' }}
+        if: ${{ steps.src.outputs.key == 'ugkk' && steps.haveu.outputs.skip != 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -412,10 +436,10 @@ jobs:
           python3 workers/fetch-dem-ugkk.py \
             --bbox='${{ steps.area.outputs.bbox }}' \
             --out='${{ steps.haveu.outputs.asset }}' \
-            --direct-urls='${{ inputs.url }}'
+            --direct-urls='${{ steps.src.outputs.url }}'
 
       - name: Nahraj DMR 5.0 do releasu
-        if: ${{ inputs.source == 'ugkk' && steps.fetchu.outcome == 'success' }}
+        if: ${{ steps.src.outputs.key == 'ugkk' && steps.fetchu.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -446,7 +470,7 @@ jobs:
             echo
             echo "| vec | hodnota |"
             echo "|---|---|"
-            echo "| zdroj | \`${{ inputs.source }}\` |"
+            echo "| zdroj | \`${{ steps.src.outputs.key }}\` |"
             echo "| release | \`${{ steps.src.outputs.release }}\` |"
             echo "| URL | ${{ steps.src.outputs.url }} |"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -454,7 +478,7 @@ jobs:
             # shellcheck disable=SC1091
             . open-stats.txt
             {
-              echo "| dlaždíc | ${tiles:-?} ($\{mb:-?} MB) |"
+              echo "| dlaždíc | ${tiles:-?} (${mb:-?} MB) |"
               echo "| **skutočná mriežka** | **${cell_m:-?} m** (Sonny má 20 m) |"
               echo "| CRS zdroja | ${crs:-?} |"
             } >> "$GITHUB_STEP_SUMMARY"
