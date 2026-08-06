@@ -303,24 +303,36 @@ def phase_collect(seeds, reachable, timeout, out):
     return found, notes
 
 
-def phase_new_hosts(found, reachable, slow_timeout):
+def phase_new_hosts(found, reachable, slow_timeout, retry_dead):
     """Dostupnosť hostiteľov, ktorí vypadli až zo zberu.
 
     V prvom behu sa toto nedialo a bolo to vidieť: `zbgisws.skgeodesy.sk`
-    prišiel z ArcGIS Online a nikdy sa neotestoval. Zároveň sa tu dáva
-    dlhší timeout – `zbgis.skgeodesy.sk` je jediný ÚGKK hostiteľ, ktorý
-    neodpovedá, a osem sekúnd je na pomalý štátny server málo na to, aby sa
-    z toho dal robiť záver.
+    prišiel z ArcGIS Online a nikdy sa neotestoval.
+
+    DRUHÝ POKUS NA MŔTVYCH je odteraz dobrovoľný (`--retry-dead`). Mal
+    rozhodnúť otázku „pomalý server, alebo mŕtva cesta?" a rozhodol ju:
+    v behoch 31075806874 a 31096745697 obidva ÚGKK hostitele timeoutli aj
+    pri 30 s. Ďalšie opakovanie tej istej odpovede stojí ~150 s na hostiteľa,
+    čo bolo 6,5 zo 7 minút celého behu. Keď bude treba overiť, či sa na ich
+    strane niečo nezmenilo, zapne sa to prepínačom.
     """
     new = []
     for url in found:
         h = urllib.parse.urlparse(url).hostname
         if h and h not in reachable and h not in new:
             new.append(h)
-    retry = [h for h, ok in reachable.items() if not ok]
+    dead = [h for h, ok in reachable.items() if not ok]
+    retry = dead if retry_dead else []
     if not new and not retry:
+        if dead:
+            print(f"\n══ 2b. Novoobjavení hostitelia ══ (žiadni; druhý pokus na "
+                  f"{len(dead)} mŕtvych preskočený, zapni ho cez --retry-dead)")
         return []
-    print("\n══ 2b. Novoobjavení hostitelia (a druhý pokus na tých mŕtvych) ══")
+    print("\n══ 2b. Novoobjavení hostitelia"
+          f"{' (a druhý pokus na tých mŕtvych)' if retry else ''} ══")
+    if dead and not retry:
+        print(f"  druhý pokus na {len(dead)} mŕtvych preskočený "
+              f"(--retry-dead ho zapne)")
     rows = []
     for host in new + retry:
         t0 = time.time()
@@ -626,8 +638,13 @@ def main():
                     help="strop na celý artefakt")
     ap.add_argument("--timeout", type=float, default=15.0)
     ap.add_argument("--slow-timeout", type=float, default=30.0,
-                    help="druhý pokus na hostiteľov, ktorí neodpovedali – "
-                         "štátne servery bývajú pomalé, nie mŕtve")
+                    help="timeout druhého pokusu (platí len s --retry-dead)")
+    ap.add_argument("--retry-dead", action="store_true",
+                    help="skúsiť nedostupných hostiteľov ešte raz s dlhším "
+                         "timeoutom. Odpoveď už poznáme (ÚGKK timeoutuje aj "
+                         "pri 30 s), takže je to vypnuté – zapni, keď chceš "
+                         "overiť, či sa na ich strane niečo nezmenilo. "
+                         "Stojí to ~150 s na hostiteľa.")
     ap.add_argument("--summary", default="", help="kam pripojiť report (GITHUB_STEP_SUMMARY)")
     ap.add_argument("--strict", action="store_true",
                     help="skončiť chybou, keď sa nič nestiahne")
@@ -658,7 +675,8 @@ def main():
         print(f"::warning::dem-sources.json sa nedá prečítať ({exc}) – "
               f"idú len odkazy zo zberu.")
 
-    host_rows += phase_new_hosts(found, reachable, args.slow_timeout)
+    host_rows += phase_new_hosts(found, reachable, args.slow_timeout,
+                                 args.retry_dead)
     dl_rows, got = phase_download(found, bbox, args.out_dir, args.max_mb,
                                   args.total_mb, args.timeout, reachable)
     path = write_report(args.out_dir, host_rows, notes, dl_rows, got, bbox,

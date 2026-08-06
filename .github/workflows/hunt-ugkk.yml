@@ -35,6 +35,11 @@ on:
         required: false
         default: "800"
         type: string
+      retry_dead:
+        description: "Skúsiť nedostupných hostiteľov druhýkrát s 30 s timeoutom. Odpoveď poznáme (ÚGKK timeoutuje aj tak), preto vypnuté – zapni, keď overuješ, či sa na ich strane niečo zmenilo. Stojí ~150 s na hostiteľa"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -71,6 +76,7 @@ jobs:
             --extra-urls='${{ inputs.extra_urls }}' \
             --max-mb='${{ inputs.max_mb }}' \
             --total-mb='${{ inputs.total_mb }}' \
+            ${{ inputs.retry_dead && '--retry-dead' || '' }} \
             --summary="$GITHUB_STEP_SUMMARY"
 
       # Čo prišlo, nech je vidieť aj ako raster – `sniff` v skripte pozná len
