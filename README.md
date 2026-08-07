@@ -339,8 +339,16 @@ Dlaždice majú tú istú pomenúvaciu schému ako Sonny (`N49E019.tif`), takže
 sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
 (`dem-sonny` vs. `dem-dmr35`).
 
-Platí pre **vrstevnice aj skaly** – oboje sa počíta z toho istého modelu, nech
-obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
+Platí pre **vrstevnice, skaly aj tieňovanie** – všetko sa počíta z toho istého
+modelu, nech obrys skaly, priebeh vrstevnice a tieň pod nimi sedia na tom istom
+teréne. (Výnimka je `ugkk`: 1 m LiDAR máme len na výrez, ale tieňovanie
+potrebuje celý región, takže tam ostáva Sonny.)
+
+> **Dlaždice sú vo WGS84, nie v S-JTSK.** Zdrojový ZIP je v *S-JTSK / Krovak
+> East North* — to hlási súhrn ako „CRS zdroja“ — ale `fetch-dem-open.py` ho
+> pri krájaní prepočíta (`gdalwarp -t_srs EPSG:4326`). Overené na hotovej
+> dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
+> 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
 
 **Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
 release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,

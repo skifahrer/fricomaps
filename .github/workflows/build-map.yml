@@ -564,7 +564,7 @@ jobs:
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
             echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
             echo "demtiles=demtiles-$D-$B"
-            echo "terrain=terrain-v1-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
+            echo "terrain=terrain-v1-${{ inputs.dem_source }}-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -1100,7 +1100,7 @@ jobs:
           path: terrain-out
           key: ${{ needs.keys.outputs.terrain }}
 
-      - name: Tieňovanie reliéfu (PNG dlaždice zo Sonnyho)
+      - name: Tieňovanie reliéfu (PNG dlaždice z vybraného DEM)
         id: terrain
         if: ${{ needs.plan.outputs.opt_terrain == 'true' }}
         env:
@@ -1112,7 +1112,9 @@ jobs:
           TZ='${{ needs.plan.outputs.opt_terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
           BBOX='${{ needs.plan.outputs.bbox }}'
-          ASSET="terrain-${{ needs.plan.outputs.key }}-z${TZ}.tar.zst"
+          # Zdroj je v mene assetu: tieňovanie zo Sonnyho a z DMR 3.5 nie je
+          # to isté a nesmie sa jedno vydávať za druhé.
+          ASSET="terrain-${{ needs.plan.outputs.key }}-${{ inputs.dem_source }}-z${TZ}.tar.zst"
           REBUILD='${{ needs.plan.outputs.opt_terrain_rebuild }}'
 
           have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
@@ -1140,7 +1142,13 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq gdal-bin zstd
             python3 -m pip install --quiet numpy
-            workers/fetch-dem.sh "$BBOX" dem steps-out/terrain.tsv sonny
+            # Ten istý model ako vrstevnice a skaly – inak by tieňovanie
+            # ukazovalo iný terén než obrysy, ktoré na ňom ležia. Výnimka je
+            # `ugkk`: 1 m LiDAR máme len na výrez, ale tieňovanie potrebuje
+            # celý región, tak sa tam ostáva pri Sonnym.
+            TDEM='${{ inputs.dem_source }}'
+            [ "$TDEM" = "ugkk" ] && TDEM=sonny
+            workers/fetch-dem.sh "$BBOX" dem steps-out/terrain.tsv "$TDEM"
             echo "::group::Výškové dlaždice do z$TZ"
             python3 workers/build-terrain.py --dem=dem/all.vrt --bbox="$BBOX" \
               --minzoom=5 --maxzoom="$TZ" --out=terrain-out
