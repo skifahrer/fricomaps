@@ -43,15 +43,15 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
 (vedome, trvá dlho)          priamo cez /vsizip//vsicurl/ – nič sa nesťahuje:
                                plan   centrálny adresár ─► inventár archívu
                                model  jeden prechod ─► hotový model do releasu
-                             celé Slovensko (5 m) ─► `dem-dmr5`  ─► dem_source: dmr5
-                             pohorie (1 m)        ─► `dem-ugkk`  ─► dem_source: ugkk
+                             celé Slovensko (5 m) ─► `dem-dmr5`  ─► zdroj `dmr5`
+                             pohorie (1 m)        ─► `dem-ugkk`  ─► zdroj `ugkk`
                              ▲ výstup je vstup pre Build map: vrstevnice,
                                skaly aj tieňovanie sa počítajú z neho
 
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
 (pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
                              ▲ Build map si ich vypýta cez
-                               options: rock_source=lidar_images
+                               skaly: lidar_images
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -313,7 +313,7 @@ rozpočtu času (`ROCK_BUDGET_MIN`) a nie je jemnejšia než desatina bunky
 zdrojového DEM. Pri Sonnym (20 m) z toho vždy vyjde **2 m** – jemnejšia
 mriežka by len interpolovala medzi tými istými výškami, stála 4× viac času a
 nepridala ani jeden nový tvar terénu. Skutočný skok v detaile prinesie až
-`dem_source: ugkk` (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
+zdroj `ugkk` (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
 natvrdo (`rock_res: 1`).
 
 > **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
@@ -352,7 +352,7 @@ terénu. To je jemnejšie, než na čo si sklon vieme rozumne spočítať sami.
 **Prečo to klame:** hillshade je osvetlený z jednej strany. Rovnako strmá
 stena otočená k slnku je na ňom **najsvetlejšia zo všetkého**. Táto cesta
 teda systematicky nájde severozápadné steny a systematicky prehliadne
-juhovýchodné. Preto je to `rock_source=lidar_images` a nie náhrada predvoleného
+juhovýchodné. Preto je to voľba `lidar_images` vo výbere skál a nie náhrada predvoleného
 `dem`.
 
 **Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
@@ -444,7 +444,7 @@ Vysoké Tatry na z17 sú ~12 000 dlaždíc (~300 MB) a jednotky minút; z18 je
 1. Spusti **Skaly z tieňovaných dlaždíc** s `area: vysoke_tatry`.
 2. Pozri artefakt `nahlad-…`, prípadne uprav prahy a spusti znova.
 3. Spusti **Build map** s rovnakým `area` a vyber
-   **`rock_source: lidar_images`** – vezme si **najnovší** asset pre ten
+   **skaly `lidar_images`** – vezme si **najnovší** asset pre ten
    výrez z releasu `dem-rocks-img` a skaly z DEM vôbec nepočíta.
    Konkrétny asset sa dá vynútiť cez `options: rock_img_asset=rockimg-…gpkg.zst`.
 
@@ -460,14 +460,29 @@ tie plochy sú.
 
 #### Zdroj výšok sa dá prepnúť
 
-Input **`dem_source`**:
+Výbery **`rocks` / `contours` / `terrain`**:
 
 | hodnota | model | mriežka | pokrytie | stav |
 |---|---|--:|---|---|
-| **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
+| `vypnuté` | — | — | tá vrstva sa nepočíta vôbec | — |
+| **`sonny`** | Sonny's LiDAR DTM | 20 m | celý región | overené |
 | **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
 | **`dmr5`** | ÚGKK DMR 5.0 (LLS, otvorené dáta) | **5 m** | celý región | naplniť *Pripraviť DMR 5.0* |
 | `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *Pripraviť DMR 5.0* |
+| `lidar_images` | *(len pri skalách)* hotové polygóny z tieňovaných dlaždíc | — | podľa výrezu | *Skaly z tieňovaných dlaždíc* |
+
+**Tri výbery, nie jeden.** Skaly, vrstevnice a tieňovanie sa dajú počítať
+každé z iného modelu — napríklad skaly z 5 m `dmr5`, vrstevnice z 10 m
+`dmr35` a tieňovanie zo Sonnyho, keď na jemnejšie nie je čas. Predvolené je
+`dmr35` na všetko.
+
+Dva výbery nemajú celú sadu, a to zámerne: `lidar_images` je len pri skalách
+(nie je to výškový model, ale hotové polygóny) a `ugkk` nie je pri tieňovaní
+(1 m LiDAR máme len na výrez, kým tieňovanie potrebuje celý región). Stráži
+to kontrola v *Lint workflows*.
+
+Keď si dva výbery vypýtajú rôzne modely, doplnia sa oba — job `mirror-dem`
+je matica cez zoznam chýbajúcich zdrojov.
 
 `dmr5` a `ugkk` sú **ten istý zdroj**, len inak nakrájaný: `dmr5` je celá
 krajina na hrubšej mriežke v dlaždiciach `N49E019.tif`, `ugkk` je jedno
@@ -1344,12 +1359,12 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
-   | `dem_source` | výber | `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
-   | `layers` | text | čo generovať: `contours,terrain,trails` |
+   | `rocks` | výber | zdroj SKÁL: `vypnuté` / `sonny` / `dmr35` / `dmr5` / `ugkk` / `lidar_images` |
+   | `contours` | výber | zdroj VRSTEVNÍC: `vypnuté` / `sonny` / `dmr35` / `dmr5` / `ugkk` |
+   | `terrain` | výber | zdroj TIEŇOVANIA: `vypnuté` / `sonny` / `dmr35` / `dmr5` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rock_res` | text | mriežka na obrys skál – `auto` (odporúčané) alebo číslo v metroch |
-   | `rock_source` | **výber** | odkiaľ skaly: `dem` (zo sklonu) alebo `lidar_images` (hotové polygóny z tieňovaných dlaždíc) |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` |
 

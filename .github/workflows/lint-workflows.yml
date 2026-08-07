@@ -137,26 +137,44 @@ jobs:
           print(f"výber pohorí v shading-rocks.yml sedí ({len(opts)} položiek)")
           PY
 
-      # To isté pre výber výškového zdroja: `dem_source` vo formulári musí
-      # sedieť s kľúčmi v workers/dem-sources.json. Bez toho sa dá pridať
-      # zdroj do JSONu a zabudnúť naň vo formulári (alebo naopak) – a zistí
-      # sa to až tým, že build vezme nesprávny release.
-      - name: Výber výšok sedí s dem-sources.json
+      # To isté pre tri výbery zdrojov (skaly / vrstevnice / tieňovanie):
+      # musia sedieť s kľúčmi v workers/dem-sources.json. Bez toho sa dá
+      # pridať zdroj do JSONu a zabudnúť naň vo formulári (alebo naopak)
+      # a zistí sa to až tým, že build vezme nesprávny release.
+      #
+      # Nie sú identické a nemajú byť: `vypnuté` je v každom, `lidar_images`
+      # je len pri skalách (nie je to výškový model, ale hotové polygóny)
+      # a `ugkk` nie je pri tieňovaní (1 m LiDAR máme len na výrez, kým
+      # tieňovanie potrebuje celý región). Kontroluje sa preto, že po
+      # odrátaní týchto výnimiek ostanú presne kľúče z JSONu.
+      - name: Výbery zdrojov sedia s dem-sources.json
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, sys, yaml
           d = yaml.safe_load(open(".github/workflows/build-map.yml"))
           on = d[[k for k in d if k is True or k == "on"][0]]
-          opts = on["workflow_dispatch"]["inputs"]["dem_source"]["options"]
-          keys = [k for k in json.load(open("workers/dem-sources.json"))
-                  if not k.startswith("_")]
-          if sorted(opts) != sorted(keys):
-              print("::error::Výber `dem_source` nesedí s workers/dem-sources.json")
-              print(f"  vo workflowe: {opts}")
-              print(f"  v JSONe:      {keys}")
+          ins = on["workflow_dispatch"]["inputs"]
+          keys = {k for k in json.load(open("workers/dem-sources.json"))
+                  if not k.startswith("_")}
+          # vstup: (extra hodnoty navyše, zdroje, ktoré tam byť nemajú)
+          expect = {
+              "rocks":    ({"vypnuté", "lidar_images"}, set()),
+              "contours": ({"vypnuté"}, set()),
+              "terrain":  ({"vypnuté"}, {"ugkk"}),
+          }
+          bad = 0
+          for name, (extra, skip) in expect.items():
+              opts = set(ins[name]["options"])
+              want = (keys - skip) | extra
+              if opts != want:
+                  print(f"::error::Výber `{name}` nesedí s dem-sources.json")
+                  print(f"  navyše:  {sorted(opts - want) or '–'}")
+                  print(f"  chýba:   {sorted(want - opts) or '–'}")
+                  bad += 1
+          if bad:
               sys.exit(1)
-          print(f"výber výšok sedí ({len(opts)} zdrojov)")
+          print(f"výbery zdrojov sedia ({len(keys)} zdrojov v JSONe)")
           PY
 
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`

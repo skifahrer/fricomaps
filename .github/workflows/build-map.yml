@@ -54,21 +54,39 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
-      dem_source:
-        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m, celý región. dmr5 = ÚGKK DMR 5.0 (LLS), 5 m, celý región. ugkk = 1 m LiDAR, LEN na výrez. dmr5 aj ugkk treba najprv naplniť workflowom „Pripraviť DMR 5.0“"
-        required: false
-        default: sonny
+      rocks:
+        description: "SKALY – z akého zdroja. sonny = 20 m (rýchle), dmr35 = 10 m, dmr5 = 5 m, ugkk = 1 m LiDAR (len s výrezom), lidar_images = z tieňovaných dlaždíc"
+        required: true
+        default: dmr35
         type: choice
         options:
+          - vypnuté
           - sonny
           - dmr35
           - dmr5
           - ugkk
-      layers:
-        description: "Čo generovať, oddelené čiarkou: contours (vrstevnice a skaly), terrain (tieňovanie a 3D), trails (značené trasy)"
-        required: false
-        default: "contours,terrain,trails"
-        type: string
+          - lidar_images
+      contours:
+        description: "VRSTEVNICE – z akého zdroja. Čím jemnejší model, tým vernejší priebeh čiar"
+        required: true
+        default: dmr35
+        type: choice
+        options:
+          - vypnuté
+          - sonny
+          - dmr35
+          - dmr5
+          - ugkk
+      terrain:
+        description: "TIEŇOVANIE a 3D – z akého zdroja. `ugkk` tu nie je: 1 m LiDAR máme len na výrez, tieňovanie potrebuje celý región"
+        required: true
+        default: dmr35
+        type: choice
+        options:
+          - vypnuté
+          - sonny
+          - dmr35
+          - dmr5
       contour_interval:
         description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie, 20 = redšie). Každá 10. sa kreslí ako hlavná, každá 5. ako polovičná"
         required: false
@@ -84,14 +102,6 @@ on:
         required: false
         default: auto
         type: string
-      rock_source:
-        description: "Odkiaľ skaly: dem = spočítať zo sklonu výškového modelu. lidar_images = vziať hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc\" (treba ho najprv pustiť na ten istý výrez)"
-        required: false
-        default: dem
-        type: choice
-        options:
-          - dem
-          - lidar_images
       rebuild:
         description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
         required: false
@@ -198,6 +208,7 @@ jobs:
     if: ${{ needs.plan.outputs.opt_contours == 'true' || needs.plan.outputs.opt_terrain == 'true' }}
     outputs:
       needed: ${{ steps.check.outputs.needed }}
+      mirror: ${{ steps.check.outputs.mirror }}
       demkey: ${{ steps.check.outputs.demkey }}
       ugkk_needed: ${{ steps.check.outputs.ugkk_needed }}
     steps:
@@ -215,10 +226,15 @@ jobs:
           # raz rozídu.
           BBOX='${{ needs.plan.outputs.bbox }}'
 
+          # Zdroje, ktoré tento beh naozaj potrebuje – môžu byť aj tri rôzne
+          # (iný model na skaly, iný na vrstevnice, iný na tieňovanie).
+          SRCS='${{ needs.plan.outputs.dem_srcs }}'
+          echo "Potrebné výškové zdroje: ${SRCS:-žiadny}"
+
           # ÚGKK sa zrkadlí po výrezoch (pri 1 m má jedna 1° dlaždica ~48 GB),
           # takže sa hľadá jeden asset podľa kľúča výrezu.
           UGKK_NEED=false
-          if [ '${{ inputs.dem_source }}' = 'ugkk' ]; then
+          if printf '%s' "$SRCS" | tr ',' '\n' | grep -qx 'ugkk'; then
             UASSET="ugkk-${{ needs.plan.outputs.area_key }}.tif"
             if gh release view dem-ugkk --repo "$GITHUB_REPOSITORY" \
                  --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$UASSET"; then
@@ -231,15 +247,31 @@ jobs:
           echo "ugkk_needed=$UGKK_NEED" >> "$GITHUB_OUTPUT"
 
           # Dlaždicové zdroje (sonny, dmr35, dmr5) sa líšia len releasom –
-          # schéma mien je tá istá, takže sa nižšie nič nevetví.
-          case '${{ inputs.dem_source }}' in
-            dmr35) TILE_RELEASE="$DMR35_RELEASE" ;;
-            dmr5)  TILE_RELEASE="$DMR5_RELEASE" ;;
-            *)     TILE_RELEASE="$DEM_RELEASE" ;;
-          esac
+          # schéma mien je tá istá, takže sa nižšie nič nevetví. Prejdú sa
+          # VŠETKY potrebné a doplniť sa dá každý zvlášť: výsledkom je zoznam
+          # pre maticu jobu `mirror-dem`.
+          release_of() {
+            case "$1" in
+              dmr35) echo "$DMR35_RELEASE" ;;
+              dmr5)  echo "$DMR5_RELEASE" ;;
+              *)     echo "$DEM_RELEASE" ;;
+            esac
+          }
+          TODO=""
+          ASSETS=""
+          for SRC in $(printf '%s' "$SRCS" | tr ',' ' '); do
+            [ "$SRC" = 'ugkk' ] && continue   # ten rieši UGKK_NEED vyššie
+            REL=$(release_of "$SRC")
+            A=$(gh release view "$REL" --repo "$GITHUB_REPOSITORY" \
+              --json assets -q '.assets[].name' 2>/dev/null || echo '')
+            # Prvý zdroj určuje `demkey` aj hlásenia nižšie – je to ten,
+            # z ktorého idú vrstevnice, teda ten najviditeľnejší.
+            [ -z "$ASSETS" ] && ASSETS="$A" && TILE_RELEASE="$REL"
+            echo "  $SRC → release $REL, assetov: $(printf '%s' "$A" | grep -c . || true)"
+            printf '%s' "$A" | grep -q . || TODO="${TODO:+$TODO }$SRC"
+          done
+          TILE_RELEASE="${TILE_RELEASE:-$DEM_RELEASE}"
           echo "tile_release=$TILE_RELEASE" >> "$GITHUB_OUTPUT"
-          ASSETS=$(gh release view "$TILE_RELEASE" --repo "$GITHUB_REPOSITORY" \
-            --json assets -q '.assets[].name' 2>/dev/null || echo '')
 
           if [ -z "$BBOX" ]; then
             # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak sa
@@ -268,8 +300,19 @@ jobs:
             # tak sťahuj znova" by mirrorovalo pri každom builde.
             NEED=$([ "$HAVE" -eq 0 ] && echo true || echo false)
             echo "Dlaždíc pre bbox: $TOTAL, v release $TILE_RELEASE: $HAVE → doplniť: $NEED"
+            # Prvý zdroj sa posudzuje aj podľa bboxu (release môže mať dlaždice
+            # inej krajiny). Ostatné stačí posúdiť podľa toho, či majú vôbec
+            # niečo – celé Slovensko sa zrkadlí naraz.
+            [ "$NEED" = true ] && [ -n "$SRCS" ] && \
+              TODO="$(printf '%s' "$SRCS" | cut -d, -f1) ${TODO}"
           fi
           echo "needed=$NEED" >> "$GITHUB_OUTPUT"
+
+          # Zoznam pre maticu `mirror-dem` – bez duplicít, ako JSON pole.
+          MIRROR=$(printf '%s' "$TODO" | tr ' ' '\n' | grep -v '^$' | sort -u \
+            | python3 -c 'import json,sys; print(json.dumps([l.strip() for l in sys.stdin if l.strip()]))')
+          echo "mirror=$MIRROR" >> "$GITHUB_OUTPUT"
+          echo "Doplniť treba: $MIRROR"
 
           # Otlačok obsahu releasu ide do kľúča cache vrstevníc. Bez neho by
           # sa po doplnení terénu vrátili z cache staré vrstevnice počítané
@@ -289,15 +332,36 @@ jobs:
   #
   # Spúšťa sa SÁM, keď v release nie sú dlaždice pre naše územie. Netreba
   # teda púšťať nič ručne – `Build map` je jediné, čo spúšťaš.
+  # Matica, lebo zdroje môžu byť tri rôzne: iný model na skaly, iný na
+  # vrstevnice, iný na tieňovanie. `check-dem` vráti zoznam tých, ktorým
+  # v releasi chýbajú dlaždice, a doplní sa každý zvlášť.
   mirror-dem:
-    name: Doplniť výškový model
+    name: Doplniť výškový model (${{ matrix.source }})
     needs: [plan, check-dem]
-    if: ${{ !cancelled() && (needs.check-dem.outputs.needed == 'true' || needs.check-dem.outputs.ugkk_needed == 'true') }}
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror != '[]' && needs.check-dem.outputs.mirror != '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ fromJson(needs.check-dem.outputs.mirror) }}
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
     with:
-      what: ${{ inputs.dem_source }}
+      what: ${{ matrix.source }}
+      area: ${{ inputs.area }}
+      custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+
+  # ÚGKK 1 m ide zvlášť: nezrkadlí sa po dlaždiciach, ale ako jeden COG na
+  # výrez, takže nemá čo robiť v matici vyššie.
+  mirror-ugkk:
+    name: Doplniť ÚGKK 1 m LiDAR
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && needs.check-dem.outputs.ugkk_needed == 'true' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+    with:
+      what: ugkk
       area: ${{ inputs.area }}
       custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
 
@@ -337,7 +401,13 @@ jobs:
       opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
       opt_rock_slope: ${{ inputs.rock_slope }}
       opt_rock_res: ${{ inputs.rock_res }}
-      opt_rock_source: ${{ inputs.rock_source }}
+      # `opt_rock_source` ostáva pod starým menom, lebo ho číta pol pipeline;
+      # hodnotu už ale dáva výber `rocks`, nie zrušený input `rock_source`.
+      opt_rock_source: ${{ steps.src.outputs.rock_kind }}
+      rock_src: ${{ steps.src.outputs.rock_src }}
+      contours_src: ${{ steps.src.outputs.contours_src }}
+      terrain_src: ${{ steps.src.outputs.terrain_src }}
+      dem_srcs: ${{ steps.src.outputs.dem_srcs }}
       opt_rock_img_asset: ${{ steps.opts.outputs.opt_rock_img_asset }}
       opt_maxzoom: ${{ steps.opts.outputs.opt_maxzoom }}
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
@@ -368,6 +438,74 @@ jobs:
       # `workflow_dispatch` dovolí najviac 10 inputov. Zvyšok príde ako voľné
       # `kľúč=hodnota` v jednom poli a rozloží sa tu – raz, na jednom mieste,
       # aby ostatné joby čítali hotové hodnoty a nie surový reťazec.
+      # Tri výbery vo formulári (skaly / vrstevnice / tieňovanie) sú JEDINÉ
+      # miesto, kde sa hovorí „čo z čoho". Tu sa z nich odvodí všetko ostatné,
+      # aby ostatné joby čítali hotové hodnoty a nemuseli to skladať znova –
+      # dve miesta, ktoré to skladajú, sa raz rozídu.
+      #
+      # `vypnuté` v ktoromkoľvek výbere znamená, že sa tá vrstva nepočíta;
+      # nahrádza to bývalý input `layers`. `lidar_images` pri skalách nie je
+      # výškový model, ale hotové polygóny z tieňovaných dlaždíc – vtedy
+      # skaly žiadny DEM nepotrebujú.
+      - name: Zdroje a vrstvy z výberov
+        id: src
+        run: |
+          set -euo pipefail
+          R='${{ inputs.rocks }}'
+          C='${{ inputs.contours }}'
+          T='${{ inputs.terrain }}'
+
+          # Skaly: `lidar_images` je iná cesta, nie iný DEM.
+          if [ "$R" = 'lidar_images' ]; then
+            ROCK_KIND=lidar_images; ROCK_SRC=''
+          elif [ "$R" = 'vypnuté' ]; then
+            ROCK_KIND=none; ROCK_SRC=''
+          else
+            ROCK_KIND=dem; ROCK_SRC="$R"
+          fi
+          # Pozor na `set -e`: `[ ... ] && X` vráti 1, keď test neprejde, a krok
+          # by spadol. Pri všetkých troch „vypnuté" je to úplne legitímna
+          # voľba (mapa a trasy bez terénu), tak to musí prejsť.
+          C_SRC=""; [ "$C" != 'vypnuté' ] && C_SRC="$C"
+          T_SRC=""; [ "$T" != 'vypnuté' ] && T_SRC="$T"
+
+          # Vrstevnice sa počítajú aj kvôli skalám: obe idú z jedného jobu
+          # a `contours.gpkg` musí existovať, lebo schéma naň odkazuje.
+          LAY=""
+          if [ -n "$C_SRC" ] || [ "$ROCK_KIND" != none ]; then
+            LAY="contours"
+          fi
+          if [ -n "$T_SRC" ]; then
+            LAY="${LAY:+$LAY,}terrain"
+          fi
+          # Značené trasy nemajú výškový zdroj, tak nemajú ani výber – vypína
+          # sa `trails=false` v `options`.
+          LAY="${LAY:+$LAY,}trails"
+
+          # Zoznam DEM zdrojov, ktoré sa naozaj použijú – bez duplicít.
+          # Podľa neho sa dopĺňajú releasy (job `mirror-dem`).
+          # `|| true`: keď je všetko vypnuté (alebo skaly idú z tieňovaných
+          # dlaždíc a nič iné sa nepočíta), grep nič nenájde a s `pipefail`
+          # by zhodil celý krok. Prázdny zoznam zdrojov je platný stav.
+          SRCS=$(printf '%s\n' "$C_SRC" "$ROCK_SRC" "$T_SRC" \
+                 | grep -v '^$' | sort -u | paste -sd, - || true)
+
+          {
+            echo "rock_kind=$ROCK_KIND"
+            echo "rock_src=$ROCK_SRC"
+            echo "contours_src=$C_SRC"
+            echo "terrain_src=$T_SRC"
+            echo "layers=$LAY"
+            echo "dem_srcs=$SRCS"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "── Čo sa z čoho počíta ──────────────────────────────"
+          printf '  %-12s %s\n' "skaly" "${R}${ROCK_SRC:+ (DEM $ROCK_SRC)}"
+          printf '  %-12s %s\n' "vrstevnice" "$C"
+          printf '  %-12s %s\n' "tieňovanie" "$T"
+          printf '  %-12s %s\n' "výškové zdroje" "${SRCS:-žiadny}"
+          echo "─────────────────────────────────────────────────────"
+
       - name: Rozlož voľby
         id: opts
         run: |
@@ -375,7 +513,7 @@ jobs:
           python3 workers/parse-options.py \
             --options='${{ inputs.options }}' \
             --rebuild='${{ inputs.rebuild }}' \
-            --layers='${{ inputs.layers }}' --out="$GITHUB_OUTPUT"
+            --layers='${{ steps.src.outputs.layers }}' --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
         id: day
@@ -510,8 +648,8 @@ jobs:
           # 1 m model na celý kraj je 16 miliárd buniek (64 GB) – to sa
           # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
           # zistiť to po hodine sťahovania nie.
-          if [ '${{ inputs.dem_source }}' = 'ugkk' ] && [ "$AREA_KEY" = 'cely' ]; then
-            echo "::error::dem_source: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry) alebo použi dem_source: sonny."
+          if printf '%s' '${{ steps.src.outputs.dem_srcs }}' | tr ',' '\n' | grep -qx 'ugkk' && [ "$AREA_KEY" = 'cely' ]; then
+            echo "::error::ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry) alebo zvoľ iný zdroj."
             exit 1
           fi
 
@@ -549,7 +687,7 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-dem]
+    needs: [plan, check-dem, mirror-dem, mirror-ugkk]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -579,9 +717,9 @@ jobs:
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
             # Zdroj skál je v kľúči tiež: `dem` a `lidar_images` dávajú úplne iné
             # plochy, takže sa jedny nesmú vrátiť z cache namiesto druhých.
-            echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_source }}${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
+            echo "contours=contours-v7-c${{ needs.plan.outputs.contours_src }}r${{ needs.plan.outputs.rock_src }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_source }}${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
             echo "demtiles=demtiles-$D-$B"
-            echo "terrain=terrain-v1-${{ inputs.dem_source }}-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
+            echo "terrain=terrain-v1-${{ needs.plan.outputs.terrain_src }}-$D-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -732,7 +870,11 @@ jobs:
           # kľúčom regiónu, takže čiastočné stiahnutie by sa nabudúce vrátilo
           # ako keby bolo úplné. ÚGKK sa naopak pýta po výrezoch a pri 1 m je
           # celý kraj mimo možností – tam ide len výrez.
-          DEM_USED='${{ inputs.dem_source }}'
+          # Zdroj vrstevníc. Keď sú vrstevnice vypnuté a počítajú sa len skaly,
+          # berie sa zdroj skál – DEM treba tak či tak.
+          DEM_USED='${{ needs.plan.outputs.contours_src }}'
+          [ -n "$DEM_USED" ] || DEM_USED='${{ needs.plan.outputs.rock_src }}'
+          [ -n "$DEM_USED" ] || DEM_USED=sonny
           if [ "$DEM_USED" = "ugkk" ]; then
             FETCH_BBOX="$AREA_BBOX"
           else
@@ -917,7 +1059,7 @@ jobs:
             # asset zahodí a počíta odznova.
             # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
             # vydávať za skaly celého kraja.
-            ROCK_ASSET="rock-${{ needs.plan.outputs.key }}-${AREA_KEY}-${{ inputs.dem_source }}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+            ROCK_ASSET="rock-${{ needs.plan.outputs.key }}-${AREA_KEY}-${{ needs.plan.outputs.rock_src }}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
             if [ -n "$ROCK_READY" ]; then
               : # skaly už sú (z tieňovania) – DEM sa na ne vôbec nečíta
             elif [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
@@ -1245,7 +1387,7 @@ jobs:
           BBOX='${{ needs.plan.outputs.bbox }}'
           # Zdroj je v mene assetu: tieňovanie zo Sonnyho a z DMR 3.5 nie je
           # to isté a nesmie sa jedno vydávať za druhé.
-          ASSET="terrain-${{ needs.plan.outputs.key }}-${{ inputs.dem_source }}-z${TZ}.tar.zst"
+          ASSET="terrain-${{ needs.plan.outputs.key }}-${{ needs.plan.outputs.terrain_src }}-z${TZ}.tar.zst"
           REBUILD='${{ needs.plan.outputs.opt_terrain_rebuild }}'
 
           have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
@@ -1277,7 +1419,8 @@ jobs:
             # ukazovalo iný terén než obrysy, ktoré na ňom ležia. Výnimka je
             # `ugkk`: 1 m LiDAR máme len na výrez, ale tieňovanie potrebuje
             # celý región, tak sa tam ostáva pri Sonnym.
-            TDEM='${{ inputs.dem_source }}'
+            TDEM='${{ needs.plan.outputs.terrain_src }}'
+            [ -n "$TDEM" ] || TDEM=sonny
             [ "$TDEM" = "ugkk" ] && TDEM=sonny
             workers/fetch-dem.sh "$BBOX" dem steps-out/terrain.tsv "$TDEM"
             echo "::group::Výškové dlaždice do z$TZ"
