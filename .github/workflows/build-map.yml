@@ -353,12 +353,10 @@ jobs:
   # zo Sonnyho, skaly z DMR 5.0) a chýbať môžu oba naraz. Každý sa spustí,
   # len keď `check-dem` povedal, že ten konkrétny model treba doplniť.
   #
-  # Bola to jedna matica nad `fromJSON(...)`. Vyzeralo to úspornejšie, ale
-  # GitHub taký súbor odmietol prijať: po pushnutí vznikol beh bez jobov,
-  # pomenovaný cestou k súboru (behy 33 a 34) – a to je presne ten „Build map
-  # sa spustil po mergi", ktorý sa nemá diať. Matica nad reusable workflowom
-  # je zjavne za hranicou toho, čo validátor znesie; tri obyčajné joby sú
-  # o pár riadkov dlhšie a fungujú.
+  # Bola to jedna matica nad `fromJSON(...)`, čo vyzeralo úspornejšie. Tri
+  # joby sú o pár riadkov dlhšie, ale v zozname jobov je rovno vidieť, ktorá
+  # vrstva si model pýta – a `check-dem` vie povedať „tento model už dopĺňa
+  # iná vrstva", takže sa to isté nesťahuje dvakrát.
   #
   # Spúšťajú sa SAMY, keď v release nie sú dlaždice pre naše územie. Netreba
   # teda púšťať nič ručne – `Build map` je jediné, čo spúšťaš.
@@ -2585,9 +2583,9 @@ jobs:
             echo
             echo "| vrstva | vybraný zdroj | naozaj použitý |"
             echo "|---|---|---|"
-            echo "| vrstevnice | \`${{ needs.plan.outputs.opt_contour_source }}\` | ${{ needs.contours.outputs.dem_source || '–' }} |"
-            echo "| skaly | \`${{ needs.plan.outputs.opt_rock_source }}\` | ${{ needs.contours.outputs.rock_source || '–' }} |"
-            echo "| tieňovanie a 3D | \`${{ needs.plan.outputs.opt_shading_source }}\` | ${{ needs.terrain.outputs.dem_source || '–' }} |"
+            echo "| vrstevnice | \`${{ needs.plan.outputs.opt_contour_source }}\` | ${{ needs.contours.outputs.dem_source || '(nebežalo)' }} |"
+            echo "| skaly | \`${{ needs.plan.outputs.opt_rock_source }}\` | ${{ needs.contours.outputs.rock_source || '(nebežalo)' }} |"
+            echo "| tieňovanie a 3D | \`${{ needs.plan.outputs.opt_shading_source }}\` | ${{ needs.terrain.outputs.dem_source || '(nebežalo)' }} |"
             echo
             echo "Vybraný a použitý sa líšia len vtedy, keď model nebol"
             echo "k dispozícii a zapol sa náhradný (napr. 1 m ÚGKK → Sonny)."
