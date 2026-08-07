@@ -11,9 +11,11 @@ backend/       NestJS backend (API – regióny, budúce užívateľské veci)
 poc/web/       proof-of-concept web viewer (MapLibre GL JS + PMTiles)
                + developer mode na ladenie štýlu priamo v prehliadači
 workers/       pipeline: regióny, výškové dlaždice, značené trasy, generátor
-               štýlov, SDF sprite, vzory do spritu, zápis úprav štýlu
+               štýlov, SDF sprite, vzory do spritu, zápis úprav štýlu,
+               skaly zo sklonu DEM aj z tmavých plôch v tieňovaní
 docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
-.github/workflows/  CI pipeline (výškový model + build mapy + deploy Pages)
+.github/workflows/  CI pipeline (výškový model + build mapy + deploy Pages
+                    + pokusné skaly z tieňovaných dlaždíc)
 ```
 
 > Podrobne – čo robí každý krok, aké formáty medzi sebou putujú a prečo –
@@ -45,6 +47,11 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
                              pohorie (1 m)        ─► `dem-ugkk`  ─► dem_source: ugkk
                              ▲ výstup je vstup pre Build map: vrstevnice,
                                skaly aj tieňovanie sa počítajú z neho
+
+Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
+(pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
+                             ▲ Build map si ich vypýta cez
+                               options: rock_source=shading
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -317,6 +324,90 @@ natvrdo (`rock_res: 1`).
 > ([ÚGKK DMR 5.0](https://www.geoportal.sk/)); ten sa z geoportálu sťahuje cez
 > interaktívny export, takže by sa musel najprv nazrkadliť do releasu rovnako
 > ako Sonnyho DTM.
+
+#### Druhá cesta k skalám: tmavé plochy v tieňovaní (pokus)
+
+Všetko vyššie počíta skaly **zo sklonu DEM**. Existuje aj druhá, pokusná
+cesta, ktorá sa výšok vôbec nedotkne: vezme hotový **hillshade** z freemap.sk
+a hľadá v ňom **tmavé plochy**. Robí to workflow **Skaly z tieňovaných
+dlaždíc** ([`workers/shading-rocks.py`](workers/shading-rocks.py)):
+
+```
+XYZ dlaždice sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
+  → mozaika odtieňov šedej v EPSG:3857   dlaždice sú v ňom natívne, takže
+                                         sa nič neprevzorkúva: 1 px = 1 px
+  → raster „tmavosti"                    o koľko je pixel pod referenciou
+  → gdal_contour -p -fl 0,5 -fl …        izolínia tmavosti ako PLOCHY,
+                                         s dierami – ten istý nástroj aj tá
+                                         istá sémantika ako u skál z DEM
+  → -explodecollections + filter plôch a dier
+  → -simplify + smooth-polygons.py       rovnaké zaoblenie ako pri DEM
+  → rock.gpkg  ─► release `dem-rocks-img`  +  artefakt behu (iba polygóny)
+```
+
+**Prečo to môže fungovať:** tieňovanie je obraz sklonu a hires vrstva
+freemap.sk je robená z 1 m LiDARu – pri z18 vyjde jeden pixel na **~0,4 m**
+terénu. To je jemnejšie, než na čo si sklon vieme rozumne spočítať sami.
+
+**Prečo to klame:** hillshade je osvetlený z jednej strany. Rovnako strmá
+stena otočená k slnku je na ňom **najsvetlejšia zo všetkého**. Táto cesta
+teda systematicky nájde severozápadné steny a systematicky prehliadne
+juhovýchodné. Preto je to `rock_source=shading` a nie náhrada predvoleného
+`dem`.
+
+**Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
+skala; stena v presvetlenej doline býva svetlejšia než tráva vedľa. Prah sa
+preto skladá z troch:
+
+| input | čo znamená |
+|---|---|
+| `dark` (125) | nad touto šedou nie je skala **nikdy** |
+| `dark_always` (70) | pod touto šedou je skala **vždy**, nech je okolo čokoľvek |
+| `rel` (18) | medzi tým: koľko musí byť pixel pod **miestnym pozadím** |
+
+Miestne pozadie nie je obyčajný priemer, ale priemer **svetlejších** pixelov
+v okne (`local`, default 1500 m na zemi) – odpoveď na „ako svetlý je tu
+osvetlený terén" sa nesmie dať stiahnuť dole tým, čo práve hľadáme. Dolný
+strop `dark_always` tam nie je pre ozdobu: bez neho sa veľká súvislá stena
+nenájde, lebo sa okno pozadia zmestí celé dovnútra nej a ostane z nej len
+prstenec (namerané na skúšobných dátach).
+
+**Svetlé miesto vnútri tmavej plochy ostane dierou** – polica, sneh,
+kosodrevina. Presne ako pri skalách z DEM, a z toho istého dôvodu: pásmo
+`gdal_contour -p` má vnútorné prstence tam, kde hodnota klesla pod prah.
+Zahadzujú sa len dierky menšie než `min_hole` (default 50 m²), čo je zrno
+JPEGu, nie polica.
+
+**Prvý beh je ladiaci.** Predvolené prahy sú kvalifikovaný odhad, nie
+nameraná hodnota – tá dlaždicová vrstva sa nedá ochutnať dopredu. Beh preto
+odloží artefakt `nahlad-…` s PNG **mozaika vedľa nájdených plôch** (vľavo
+tieňovanie, vpravo to isté s červenou maskou) a histogramom odtieňov. Podľa
+nich sa `dark` / `dark_always` / `rel` doladia za jeden pohľad.
+
+**Efektivita.** Dlaždice sa sťahujú paralelne (`jobs`, default 12 – je to
+dobrovoľnícka služba) s trvalým spojením, ukladajú sa do cache behu a pri
+opakovanom ladení prahov sa už neťahajú. `zoom: auto` skúsi najvyšší zoom,
+ktorý server dá a ktorý sa zmestí do stropu 60 000 dlaždíc. Vektorizuje sa
+**naraz nad celou mozaikou** (po častiach len raster tmavosti) – z rovnakého
+dôvodu ako pri skalách z DEM: diera prerezaná hranicou časti sa späť nezlepí.
+
+Vysoké Tatry na z17 sú ~12 000 dlaždíc (~300 MB) a jednotky minút; z18 je
+štvornásobok všetkého.
+
+**Ako to dostať do mapy:**
+
+1. Spusti **Skaly z tieňovaných dlaždíc** s `area: vysoke_tatry`.
+2. Pozri artefakt `nahlad-…`, prípadne uprav prahy a spusti znova.
+3. Spusti **Build map** s rovnakým `area` a
+   `options: rock_source=shading` – vezme si **najnovší** asset pre ten
+   výrez z releasu `dem-rocks-img` a skaly z DEM vôbec nepočíta.
+   Konkrétny asset sa dá vynútiť cez `rock_img_asset=rockimg-…gpkg.zst`.
+
+Vrstva je tá istá `rock` v tých istých dlaždiciach, s triedami `steep`
+a `cliff`, takže štýl netreba meniť. Líši sa len atribút: skaly z DEM majú
+`slope` (stupne sklonu), skaly z obrázka `dark` (o koľko stupňov šedej pod
+referenciou). V manifeste je `rock_source`, takže je v mape vidieť, odkiaľ
+tie plochy sú.
 
 #### Zdroj výšok sa dá prepnúť
 
@@ -1229,7 +1320,12 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails_maxzoom`,
-   `terrain_maxzoom`, `rocks`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `terrain_maxzoom`, `rocks`, `rock_source`, `rock_img_asset`,
+   `custom_pbf_url`, `custom_name`, `custom_bbox`.
+
+   `rock_source=shading` prepne skaly z výpočtu zo sklonu na hotové polygóny
+   z workflowu *Skaly z tieňovaných dlaždíc* – viď
+   [Druhá cesta k skalám](#druhá-cesta-k-skalám-tmavé-plochy-v-tieňovaní-pokus).
 
    **Preklep je chyba, nie ticho ignorovaná hodnota.** `size_limit=1200` build
    zastaví so zoznamom známych kľúčov – inak by bežal hodinu s iným

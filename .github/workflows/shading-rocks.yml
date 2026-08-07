@@ -1,0 +1,285 @@
+name: Skaly z tieňovaných dlaždíc
+
+# POKUSNÁ druhá cesta k skalám: nepočíta sa sklon z DEM, ale hľadajú sa TMAVÉ
+# PLOCHY v hotovom hillshade z freemap.sk. Výstup je ten istý formát ako
+# u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326, triedy `steep`
+# a `cliff` – takže si ho „Build map" vie vypýtať namiesto vlastného výpočtu:
+#
+#   Skaly z tieňovaných dlaždíc  ─►  release `dem-rocks-img`
+#                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
+#                                        ▼
+#   Build map  s  options: rock_source=shading   ─►  vrstva `rock` v mape
+#
+# Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
+# rozhoduje, čo je tmavé, a prečo sa vektorizuje naraz a nie po dlaždiciach.
+#
+# ČO OD TOHO ČAKAŤ: hillshade je obraz sklonu, ale osvetleného z jednej
+# strany. Severozápadné steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie
+# – tie druhé teda táto cesta systematicky prehliadne. Zato má rozlíšenie,
+# na aké si sami sklon nespočítame (z18 ≈ 0,4 m na pixel).
+#
+# PRVÝ BEH JE LADIACI. Predvolené prahy sú kvalifikovaný odhad, nie nameraná
+# hodnota. Artefakt `nahlad-…` obsahuje PNG „mozaika vedľa nájdených plôch"
+# a histogram odtieňov – podľa nich sa `dark`, `dark_always` a `rel` doladia
+# za jeden pohľad.
+
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: "Pohorie, na ktorom sa skaly hľadajú (bbox je vo workers/areas.json)"
+        required: true
+        default: vysoke_tatry
+        type: choice
+        options:
+          - tatry
+          - vysoke_tatry
+          - belianske_tatry
+          - zapadne_tatry
+          - nizke_tatry
+          - slovensky_raj
+          - pieniny
+          - mala_fatra
+          - velka_fatra
+          - sulovske_skaly
+          - slovensky_kras
+          - muranska_planina
+          - vihorlat
+          - strazovske_vrchy
+          - male_karpaty
+      zoom:
+        description: "Zoom dlaždíc. auto = najvyšší, ktorý server dá a ktorý sa zmestí do stropu na počet dlaždíc"
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - "19"
+          - "18"
+          - "17"
+          - "16"
+          - "15"
+      dark:
+        description: "Nad touto šedou (0–255) nie je skala NIKDY – horný strop prahu"
+        required: false
+        default: "125"
+        type: string
+      dark_always:
+        description: "Pod touto šedou je skala VŽDY, nech je okolo čokoľvek – bez toho sa veľká stena nájde len po obvode"
+        required: false
+        default: "70"
+        type: string
+      rel:
+        description: "Medzi tými dvomi: o koľko musí byť pixel pod miestnym pozadím, aby sa rátal"
+        required: false
+        default: "18"
+        type: string
+      cliff:
+        description: "O koľko stupňov šedej tmavšie začína trieda `cliff` (výrazná stena) namiesto `steep`"
+        required: false
+        default: "25"
+        type: string
+      min_area:
+        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu, nie skala"
+        required: false
+        default: "200"
+        type: string
+      options:
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=80 smooth=1 jobs=8`. Zoznam je vo workers/shading-rocks.py"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write   # ukladanie hotových polygónov do releasu
+
+concurrency:
+  # Dva behy na to isté pohorie by z dobrovoľníckeho servera freemap.sk
+  # ťahali dvojnásobok dlaždíc a prepisovali si ten istý asset.
+  group: shading-rocks-${{ inputs.area }}
+  cancel-in-progress: false
+
+env:
+  # Vysoké rozlíšenie tieňovania (LiDAR) z freemap.sk. Je to XYZ šablóna,
+  # žiadne metadáta – najvyšší zoom sa preto zisťuje skúšobnou dlaždicou.
+  SHADING_URL: "https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg"
+  # Release s hotovými polygónmi. Zámerne NIE `dem-rocks`: tie sú z DEM
+  # a tieto z obrázka, takže sa nesmú pomiešať ani omylom.
+  ROCK_IMG_RELEASE: dem-rocks-img
+  # Verzia algoritmu v mene assetu. Zmena algoritmu = iné skaly.
+  ROCK_IMG_ALGO: v1
+  # Bbox Slovenska – `resolve-area.py` pretína výrez s „regiónom", a tu je
+  # regiónom celé územie, na ktorom tá dlaždicová vrstva vôbec existuje.
+  SK_BBOX: "16.79,47.71,22.58,49.63"
+  # Strop na počet dlaždíc jedného behu. `zoom: auto` zíde pod neho sám.
+  # 60 000 dlaždíc je ~1,5 GB stiahnutých dát a ~4 mld. pixelov mozaiky.
+  MAX_TILES: "60000"
+
+jobs:
+  rocks:
+    name: Skaly z tieňovania
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Nástroje
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin zstd
+          python3 -m pip install --quiet numpy pillow
+          gdal_contour --version
+
+      - name: Výrez → bbox
+        id: area
+        run: |
+          set -euo pipefail
+          python3 workers/resolve-area.py \
+            --region-bbox="$SK_BBOX" \
+            --area='${{ inputs.area }}' \
+            --out="$GITHUB_OUTPUT"
+
+      # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
+      # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
+      # v sebe číslo behu, aby sa dal doplniť aj neúplný obsah: cache sa
+      # v GitHube prepísať nedá, takže bez toho by prvý (hoc aj prerušený)
+      # beh zamkol obsah navždy. Hľadá sa cez `restore-keys` po predpone.
+      - name: Cache dlaždíc (restore)
+        id: tiles-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: tiles-cache
+          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+          restore-keys: |
+            shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-
+
+      - name: Skaly z tmavých plôch
+        id: rocks
+        run: |
+          set -euo pipefail
+          mkdir -p data out
+          python3 workers/shading-rocks.py \
+            --bbox='${{ steps.area.outputs.bbox }}' \
+            --url="$SHADING_URL" \
+            --zoom='${{ inputs.zoom }}' \
+            --max-tiles="$MAX_TILES" \
+            --dark='${{ inputs.dark }}' \
+            --dark-always='${{ inputs.dark_always }}' \
+            --rel='${{ inputs.rel }}' \
+            --cliff='${{ inputs.cliff }}' \
+            --min-area='${{ inputs.min_area }}' \
+            --cache-dir=tiles-cache \
+            --preview=out/preview.png \
+            --stats=out/rock-img-stats.txt \
+            --options='${{ inputs.options }}' \
+            --out=data/rock.gpkg
+
+          # Meno assetu nesie výrez aj VŠETKY nastavenia, takže sa dva behy
+          # s rôznymi prahmi nikdy neprepíšu. Zoom sa berie zo štatistiky,
+          # nie zo vstupu – pri `auto` je až tam.
+          . out/rock-img-stats.txt
+          ASSET="rockimg-${{ steps.area.outputs.key }}-z${zoom}-d${dark}-a${dark_always}-r${rel}-c${cliff_delta}-${ROCK_IMG_ALGO}.gpkg.zst"
+          {
+            echo "asset=$ASSET"
+            echo "zoom=$zoom"
+            echo "count=$count"
+            echo "total_km2=$total_km2"
+          } >> "$GITHUB_OUTPUT"
+
+      # Uloží sa aj vtedy, keď ďalšie kroky spadnú – stiahnuté dlaždice sú
+      # to jediné, čo stálo cudzí server.
+      - name: Cache dlaždíc (save)
+        if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: tiles-cache
+          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+
+      - name: GeoJSON navyše
+        run: |
+          set -euo pipefail
+          ogr2ogr -f GeoJSON out/rock.geojson data/rock.gpkg rock \
+            -lco COORDINATE_PRECISION=6 -lco RFC7946=YES
+          ls -lh data/rock.gpkg out/rock.geojson
+
+      # Iba polygóny – to je celý zmysel tohto artefaktu. Náhľad a čísla sú
+      # vedľa, v samostatnom, aby sa dali polygóny stiahnuť samé.
+      - name: Odlož polygóny ako artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: skaly-obrazok-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
+          path: |
+            data/rock.gpkg
+            out/rock.geojson
+          retention-days: 90
+          compression-level: 9
+          if-no-files-found: error
+
+      - name: Odlož náhľad a čísla
+        if: ${{ always() && hashFiles('out/preview.png') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: nahlad-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
+          path: |
+            out/preview.png
+            out/rock-img-stats.txt
+          retention-days: 90
+          if-no-files-found: ignore
+
+      # Aby si ich vedel vypýtať build mapy. Artefakt behu sa z iného
+      # workflowu dostáva ťažko (treba číslo behu), release asset ľahko –
+      # rovnako to robia skaly z DEM v release `dem-rocks`.
+      - name: Ulož do releasu
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ASSET='${{ steps.rocks.outputs.asset }}'
+          zstd -q -19 -T0 -f -o "/tmp/$ASSET" data/rock.gpkg
+          ls -lh "/tmp/$ASSET"
+          gh release view "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" \
+              --title "Skalné plochy z tieňovaných dlaždíc" \
+              --notes "Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno assetu nesie výrez, zoom a všetky prahy. Build map si ich vypýta cez \`options: rock_source=shading\`." || true
+          gh release upload "$ROCK_IMG_RELEASE" "/tmp/$ASSET" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "Uložené do releasu $ROCK_IMG_RELEASE ako $ASSET"
+
+      - name: Súhrn
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Skaly z tieňovaných dlaždíc"
+            echo
+            echo "**${{ steps.area.outputs.name }}** – bbox \`${{ steps.area.outputs.bbox }}\` (${{ steps.area.outputs.km2 }} km²)"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ -s out/rock-img-stats.txt ]; then
+            . out/rock-img-stats.txt
+            {
+              echo "| | |"
+              echo "|---|---|"
+              echo "| zoom | z${zoom} (${px_m} m na pixel) |"
+              echo "| dlaždice | ${tiles} (${mb_downloaded} MB, ${tiles_missing} chýbalo, ${tiles_failed} zlyhalo) |"
+              echo "| mozaika | ${cells} pixelov |"
+              echo "| prah | nikdy nad ${dark}, vždy pod ${dark_always}, medzi tým ${rel} pod pozadím (okno ${local_m} m) |"
+              echo "| **skalných plôch** | **${count}** (z toho ${cliff} \`cliff\`), ${dropped} pod ${min_area_m2} m² zahodených |"
+              echo "| **plocha spolu** | **${total_km2} km²**, najväčšia $((max_m2 / 10000)) ha |"
+              echo "| diery | ${holes} zachovaných, ${holes_dropped} pod ${min_hole_m2} m² zahodených |"
+              echo "| trvanie | ${seconds} s |"
+              echo
+              echo "Asset v release \`$ROCK_IMG_RELEASE\`: \`${{ steps.rocks.outputs.asset }}\`"
+              echo
+              echo "### Ďalej"
+              echo
+              echo "1. Stiahni artefakt \`nahlad-…\` a pozri \`preview.png\` – vľavo mozaika tieňovania, vpravo to isté s červenou maskou. Podľa toho doladiť \`dark\` / \`dark_always\` / \`rel\`."
+              echo "2. Keď to sedí, spusti **Build map** s \`options: rock_source=shading\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez namiesto počítania skál z DEM."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Beh sa nedostal po štatistiku – pozri log kroku *Skaly z tmavých plôch*." >> "$GITHUB_STEP_SUMMARY"
+          fi
