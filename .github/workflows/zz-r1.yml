@@ -1,4 +1,4 @@
-name: SONDA q1 – skript, štvrtina 1
+name: SONDA r1 – skript, tretina 1
 
 # Stiahne PBF export IBA zvoleného regiónu z osm.fr regionálnych exportov
 # (https://download.openstreetmap.fr/extracts/ – Európa aj svet, rezané po
@@ -986,7 +986,44 @@ jobs:
           ROCK_VRT=""; ROCK_DEM_USED=""
 
           if [ '${{ needs.plan.outputs.opt_contour_lines }}' = 'true' ]; then
+            fetch_dem "$CONTOUR_SRC"
+            CONTOUR_VRT="$DEM_VRT"; CONTOUR_DEM="$DEM_GOT"
+            dem_info "vrstevnice ($CONTOUR_DEM)" "$CONTOUR_VRT"
+          fi
+          if [ -n "$ROCK_DEM" ]; then
+            fetch_dem "$ROCK_DEM"
+            ROCK_VRT="$DEM_VRT"; ROCK_DEM_USED="$DEM_GOT"
+            [ "$ROCK_VRT" = "$CONTOUR_VRT" ] \
+              || dem_info "skaly ($ROCK_DEM_USED)" "$ROCK_VRT"
+          fi
 
+          # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
+          # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
+          # žiadne zjemnenie, len orez na bbox v plnom rozlíšení.
+          T_CONT=$(date +%s)
+
+          make_empty_gpkg() { # $1 = súbor, $2 = vrstva, $3 = typ geometrie
+            # Schéma odkazuje na obe vrstvy vždy, takže súbor musí existovať
+            # aj vtedy, keď je vrstva vypnutá alebo sa nič nenašlo.
+            echo '{"type":"FeatureCollection","features":[]}' > work/empty.geojson
+            ogr2ogr -f GPKG "$1" work/empty.geojson -nln "$2" -overwrite \
+              -nlt "$3" -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
+          }
+
+          if [ '${{ needs.plan.outputs.opt_contour_lines }}' != 'true' ]; then
+            echo "Vrstevnice: vypnuté (contour_source: ziadne) – prázdna vrstva."
+            make_empty_gpkg data/contours.gpkg contours LINESTRING
+          else
+            SMOOTH='${{ needs.plan.outputs.opt_contour_smoothing }}'
+            case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
+            if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
+              RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
+              echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
+              python3 workers/watch.py --label="orez DEM" --watch-file=work/clip.tif \
+                -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" \
+
+      # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
+      # spadol, hodiny výpočtu ostanú v cache.
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
         continue-on-error: true

@@ -1,4 +1,4 @@
-name: SONDA q2 – skript, štvrtina 2
+name: SONDA r2 – skript, tretina 2
 
 # Stiahne PBF export IBA zvoleného regiónu z osm.fr regionálnych exportov
 # (https://download.openstreetmap.fr/extracts/ – Európa aj svet, rezané po
@@ -877,41 +877,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-            fetch_dem "$CONTOUR_SRC"
-            CONTOUR_VRT="$DEM_VRT"; CONTOUR_DEM="$DEM_GOT"
-            dem_info "vrstevnice ($CONTOUR_DEM)" "$CONTOUR_VRT"
-          fi
-          if [ -n "$ROCK_DEM" ]; then
-            fetch_dem "$ROCK_DEM"
-            ROCK_VRT="$DEM_VRT"; ROCK_DEM_USED="$DEM_GOT"
-            [ "$ROCK_VRT" = "$CONTOUR_VRT" ] \
-              || dem_info "skaly ($ROCK_DEM_USED)" "$ROCK_VRT"
-          fi
-
-          # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
-          # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
-          # žiadne zjemnenie, len orez na bbox v plnom rozlíšení.
-          T_CONT=$(date +%s)
-
-          make_empty_gpkg() { # $1 = súbor, $2 = vrstva, $3 = typ geometrie
-            # Schéma odkazuje na obe vrstvy vždy, takže súbor musí existovať
-            # aj vtedy, keď je vrstva vypnutá alebo sa nič nenašlo.
-            echo '{"type":"FeatureCollection","features":[]}' > work/empty.geojson
-            ogr2ogr -f GPKG "$1" work/empty.geojson -nln "$2" -overwrite \
-              -nlt "$3" -a_srs EPSG:4326 -lco GEOMETRY_NAME=geom
-          }
-
-          if [ '${{ needs.plan.outputs.opt_contour_lines }}' != 'true' ]; then
-            echo "Vrstevnice: vypnuté (contour_source: ziadne) – prázdna vrstva."
-            make_empty_gpkg data/contours.gpkg contours LINESTRING
-          else
-            SMOOTH='${{ needs.plan.outputs.opt_contour_smoothing }}'
-            case "$SMOOTH" in ''|*[!0-9.]*) SMOOTH=0 ;; esac
-            if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
-              RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
-              echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
-              python3 workers/watch.py --label="orez DEM" --watch-file=work/clip.tif \
-                -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" \
+          set -euo pipefail
                    -tr "$RES" "$RES" -r average "$CONTOUR_VRT" work/clip.tif
             else
               echo "Zjemnenie DEM: vypnuté – vrstevnice sa trasujú z plného rozlíšenia."
@@ -986,7 +952,79 @@ jobs:
               echo "::group::Skaly z tieňovania – $AREA_NAME, release $ROCK_IMG_RELEASE"
               if [ -z "$IMG_ASSET" ]; then
                 # Najnovší asset pre tento výrez. Zoradiť sa musí podľa času
+                # nahratia, nie podľa mena: v mene sú prahy, takže abecedne
+                # by vyhral ten s najväčším číslom, nie ten posledný.
+                # `env.PREFIX`, lebo `gh --jq` nevie `--arg`.
+                export PREFIX="rockimg-${AREA_KEY}-"
+                IMG_ASSET=$(gh release view "$ROCK_IMG_RELEASE" \
+                  --repo "$GITHUB_REPOSITORY" --json assets \
+                  --jq '[.assets[] | select(.name | startswith(env.PREFIX))
+                         | select(.name | endswith(".gpkg.zst"))]
+                        | sort_by(.createdAt) | last | .name // ""' \
+                  2>/dev/null || true)
+              fi
+              if [ -z "$IMG_ASSET" ]; then
+                echo "::endgroup::"
+                echo "::error::V release $ROCK_IMG_RELEASE nie je pre výrez '$AREA_KEY' žiadny asset (rockimg-${AREA_KEY}-*.gpkg.zst). Pozri job „Skaly z tieňovania\" v tomto behu – ten ich mal vyrobiť; keď spadol, hovorí prečo. Alebo vo výbere rock_source zvoľ výškový model (sonny / dmr35 / dmr5 / ugkk)."
+                exit 1
+              fi
+              rm -rf /tmp/rockimg && mkdir -p /tmp/rockimg
+              if ! gh release download "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                     --pattern "$IMG_ASSET" --dir /tmp/rockimg --clobber; then
+                echo "::endgroup::"
+                echo "::error::Asset $IMG_ASSET sa z releasu $ROCK_IMG_RELEASE nedal stiahnuť."
+                exit 1
+              fi
+              echo "  beriem: $IMG_ASSET ($(du -h "/tmp/rockimg/$IMG_ASSET" | cut -f1))"
+              unzstd -q -f -o data/rock.gpkg "/tmp/rockimg/$IMG_ASSET"
+              ROCK_READY=1
+              ROCK_SRC="release $ROCK_IMG_RELEASE ($IMG_ASSET)"
+              # Výrez sa tu NEOREZÁVA na bbox regiónu zámerne: asset vznikol
+              # presne pre tento výrez a orezanie by len prerezalo polygóny
+              # na hranici. Keby výrez presahoval región, dlaždice mimo neho
+              # aj tak nikto nevykreslí.
+              echo "::endgroup::"
+            fi
 
+            # Hotové skaly pre tento región a tieto nastavenia sú v release –
+            # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
+            # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
+            # asset zahodí a počíta odznova.
+            # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
+            # vydávať za skaly celého kraja.
+            ROCK_ASSET="rock-${{ needs.plan.outputs.key }}-${AREA_KEY}-${ROCK_DEM_USED:-none}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+            if [ -n "$ROCK_READY" ]; then
+              : # skaly už sú (z tieňovania) – DEM sa na ne vôbec nečíta
+            elif [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
+              echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
+              gh release delete-asset "$ROCK_RELEASE" "$ROCK_ASSET" \
+                --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 \
+                && echo "  zmazané z releasu: $ROCK_ASSET" || true
+            elif gh release download "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
+                   --pattern "$ROCK_ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
+              unzstd -q -f -o data/rock.gpkg "/tmp/$ROCK_ASSET" && ROCK_READY=1
+              [ -n "$ROCK_READY" ] && ROCK_SRC="release $ROCK_RELEASE" \
+                && echo "Skaly z releasu $ROCK_RELEASE ✓ ($ROCK_ASSET)"
+            fi
+
+            if [ -z "$ROCK_READY" ]; then
+              echo "::group::Skaly z modelu $ROCK_DEM_USED – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR}, zaoblenie ${ROCK_SMOOTH}×"
+              # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
+              # v rovine nič nenašiel), nemá to zhodiť hodinový build.
+              # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
+              # pamäť). To nie je bonus, ktorý sa dá preskočiť – je to zlé
+              # zadanie a build sa má zastaviť hneď, nie nasadiť mapu bez
+              # skál po hodine práce. Iný nenulový kód je skutočné zlyhanie
+              # výpočtu a tam prázdna vrstva stačí.
+              set +e
+              python3 workers/rock-areas.py --dem="$ROCK_VRT" --bbox="$AREA_BBOX" \
+                --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+                --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
+                --smooth="$ROCK_SMOOTH" \
+                --stats=contours-out/rock-stats.txt \
+
+      # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
+      # spadol, hodiny výpočtu ostanú v cache.
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
         continue-on-error: true
