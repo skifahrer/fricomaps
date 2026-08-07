@@ -741,6 +741,35 @@ jobs:
             exit "$FETCH_RC"
           fi
 
+          # ---------- čo sa vlastne ide počítať ----------
+          # Bez tohto je z logu vidieť len „Vrstevnice a skaly z DEM" a potom
+          # desiatky minút ticha. Rozmer rastra a počet buniek povedia, či
+          # ide o minúty alebo o hodinu, a to ešte pred prvým gdalwarpom.
+          echo "── Vstupný DEM ──────────────────────────────────────"
+          gdalinfo dem/all.vrt 2>/dev/null \
+            | grep -E "^Size is|^Pixel Size|^Upper Left|^Lower Right" || true
+          python3 - "$W" "$S" "$E" "$N" dem/all.vrt <<'PY'
+          import json, math, subprocess, sys
+          w, s, e, n = map(float, sys.argv[1:5])
+          try:
+              info = json.loads(subprocess.run(
+                  ["gdalinfo", "-json", sys.argv[5]],
+                  capture_output=True, text=True, check=True).stdout)
+              gt = info["geoTransform"]
+              dx, dy = abs(gt[1]), abs(gt[5])
+              cells = ((e - w) / dx) * ((n - s) / dy)
+              lat = (s + n) / 2
+              print(f"  výrez        {e-w:.3f}° × {n-s:.3f}°  "
+                    f"(~{(e-w)*111.32*math.cos(math.radians(lat)):.0f} × "
+                    f"{(n-s)*110.54:.0f} km)")
+              print(f"  bunka DEM    {dx*111320*math.cos(math.radians(lat)):.0f} × "
+                    f"{dy*110540:.0f} m")
+              print(f"  buniek       {cells/1e6:.1f} mil.")
+          except Exception as exc:
+              print(f"  (rozmer sa nedá zistiť: {exc})")
+          PY
+          echo "─────────────────────────────────────────────────────"
+
           # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
           # mriežku vyhladí šum, ale zároveň zje detail terénu. Default 0 =
           # žiadne zjemnenie, len orez na bbox v plnom rozlíšení.
@@ -750,15 +779,20 @@ jobs:
           if [ "${SMOOTH%%.*}" -gt 0 ] 2>/dev/null; then
             RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
             echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
-            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" \
-              -tr "$RES" "$RES" -r average dem/all.vrt dem/clip.tif
+            python3 workers/watch.py --label="orez DEM" --watch-file=dem/clip.tif \
+              -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" \
+                 -tr "$RES" "$RES" -r average dem/all.vrt dem/clip.tif
           else
             echo "Zjemnenie DEM: vypnuté – vrstevnice sa trasujú z plného rozlíšenia."
-            gdalwarp -q -overwrite -te "$W" "$S" "$E" "$N" dem/all.vrt dem/clip.tif
+            python3 workers/watch.py --label="orez DEM" --watch-file=dem/clip.tif \
+              -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" dem/all.vrt dem/clip.tif
           fi
 
-          gdal_contour -q -a ele -i "$INTERVAL" -f GPKG -nln contours \
-            dem/clip.tif dem/raw.gpkg
+          # `-q` je preč a ide to cez watch.py: gdal_contour nad krajom beží
+          # desiatky minút a doteraz pri tom nepovedal ani slovo.
+          python3 workers/watch.py --label="vrstevnice" --watch-file=dem/raw.gpkg \
+            -- gdal_contour -a ele -i "$INTERVAL" -f GPKG -nln contours \
+               dem/clip.tif dem/raw.gpkg
 
           # `level` rozdelí vrstevnice na hlavné/polovičné/základné, aby sa
           # dali zapínať podľa zoomu a kresliť rôzne hrubo. Hranice sa počítajú
@@ -770,7 +804,9 @@ jobs:
           MAJOR=$(( INTERVAL * 10 ))
           MID=$(( INTERVAL * 5 ))
           echo "Vrstevnice: interval ${INTERVAL} m, zvýraznená každá ${MAJOR} m (major) a ${MID} m (mid)"
-          ogr2ogr -f GPKG data/contours.gpkg dem/raw.gpkg -nln contours \
+          python3 workers/watch.py --label="triedenie vrstevníc" \
+            --watch-file=data/contours.gpkg \
+            -- ogr2ogr -f GPKG data/contours.gpkg dem/raw.gpkg -nln contours \
             -dialect SQLITE -sql "SELECT *, CASE
                  WHEN CAST(ele AS INTEGER) % $MAJOR = 0 THEN 'major'
                  WHEN CAST(ele AS INTEGER) % $MID  = 0 THEN 'mid'
