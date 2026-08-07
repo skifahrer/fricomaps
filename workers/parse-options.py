@@ -37,17 +37,27 @@ DEFAULTS = {
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
     "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),
     "rocks": ("true", "počítať skalné plochy"),
-    # Odkiaľ vziať skaly. `dem` = spočítať zo sklonu (workers/rock-areas.py).
-    # `shading` = vziať hotové polygóny z releasu `dem-rocks-img`, ktoré
-    # našiel workflow „Skaly z tieňovaných dlaždíc" ako tmavé plochy
-    # v hillshade JPG. Pri `shading` sa DEM na skaly vôbec nečíta.
-    "rock_source": ("dem", "odkiaľ skaly: dem (sklon) alebo shading (tmavé plochy v dlaždiciach)"),
-    # Ktorý asset z toho releasu. Prázdne = najnovší pre daný výrez, takže
-    # stačí pustiť ten workflow a potom build – meno prahov netreba prepisovať.
+    # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
+    # pri `rock_source: lidar_images`). Prázdne = najnovší pre daný výrez,
+    # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
+    # Samotný `rock_source` je samostatný input, nie voľba: prepína celý
+    # zdroj skál a to sa má dať vybrať vo formulári, nie napísať do textu.
     "rock_img_asset": ("", "presné meno assetu so skalami z tieňovania (prázdne = najnovší pre výrez)"),
+    # Bol to samostatný input, ale strop je desať a `rock_source` je
+    # užitočnejší: `maxzoom` je od začiatku 16 (tvrdý limit Planetilera)
+    # a znižuje sa len pri ladení veľkosti.
+    "maxzoom": ("16", "max zoom mapových dlaždíc – Planetiler zvládne najviac 16"),
     "custom_pbf_url": ("", "vlastný región – URL na .osm.pbf"),
     "custom_name": ("", "vlastný región – zobrazované meno"),
     "custom_bbox": ("", "vlastný región – bbox W,S,E,N"),
+}
+
+# Voľby, ktoré sa presťahovali medzi inputy. Bez tohto by `rock_source=…`
+# spadlo na „neznáma voľba" a zoznam známych kľúčov by nepovedal, kam sa
+# podela – pritom je vo formulári o pár riadkov vyššie.
+MOVED = {
+    "rock_source": "je teraz samostatný input vo formulári "
+                   "(výber „dem“ / „lidar_images“), nie voľba",
 }
 
 # Čo sa má generovať. Tri zaškrtávatka by boli tri inputy z desiatich, takže
@@ -85,6 +95,10 @@ def main():
             return 1
         k, v = token.split("=", 1)
         k = k.strip()
+        if k in MOVED:
+            print(f"::error::„{k}“ {MOVED[k]}. Vymaž to z `options` "
+                  f"a nastav vo formulári.", file=sys.stderr)
+            return 1
         if k not in DEFAULTS:
             print(f"::error::Neznáma voľba „{k}“. Známe voľby: "
                   f"{', '.join(sorted(DEFAULTS))}", file=sys.stderr)
@@ -107,11 +121,6 @@ def main():
         return 1
     for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
         values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
-
-    if values["rock_source"] not in ("dem", "shading"):
-        print(f"::error::Neznámy rock_source „{values['rock_source']}“. "
-              f"Známe: dem, shading.", file=sys.stderr)
-        return 1
 
     lines = [f"opt_{k}={v}" for k, v in values.items()]
     if args.out:

@@ -122,10 +122,12 @@ Použitie:
         --preview=out/preview.png
 """
 import argparse
+import gzip
 import http.client
 import json
 import math
 import os
+import random
 import shlex
 import shutil
 import subprocess
@@ -133,6 +135,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import zlib
 
 import numpy as np
 from PIL import Image
@@ -194,6 +197,72 @@ def ground_res(z, lat):
     return tile_res(z) * math.cos(math.radians(lat))
 
 
+# Hlavičky, ktorými sa pipeline predstavuje. Každý profil je JEDEN skutočný
+# prehliadač – UA, `Sec-CH-UA` aj platforma musia sedieť dokopy. Chrome, ktorý
+# o sebe v `Sec-CH-UA` tvrdí, že je Firefox, nie je maskovanie, to je len
+# rozbitá hlavička. Firefox a Safari `Sec-CH-UA` neposielajú vôbec, preto majú
+# `None`.
+#
+# POZOR, ČO TO ROBÍ: predvolené je toto, lebo si to vypýtal input `ua`. Berie
+# to ale službe freemap.sk možnosť rozoznať, že ide o dávku a nie o človeka –
+# a to je dobrovoľnícky server. Preto ostáva `jobs` nízke (12) a dlaždice sa
+# cachujú: slušnosť má zabezpečiť objem, keď ju už nezabezpečuje meno.
+# `ua=project` vráti pôvodnú hlavičku, ktorá sa priznáva.
+BROWSERS = (
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+     '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"', '"Windows"', "sk-SK,sk;q=0.9,en-US;q=0.8,en;q=0.7"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+     '"Chromium";v="133", "Not(A:Brand";v="24", "Google Chrome";v="133"', '"macOS"', "sk,cs;q=0.9,en;q=0.8"),
+    ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+     '"Chromium";v="132", "Not_A Brand";v="8", "Google Chrome";v="132"', '"Linux"', "en-US,en;q=0.9"),
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0",
+     '"Microsoft Edge";v="134", "Chromium";v="134", "Not:A-Brand";v="24"', '"Windows"', "sk-SK,sk;q=0.9,en;q=0.8"),
+    ("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
+     None, None, "sk-SK,sk;q=0.8,en-US;q=0.5,en;q=0.3"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 14.7; rv:134.0) Gecko/20100101 Firefox/134.0",
+     None, None, "en-US,en;q=0.5"),
+    ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Safari/605.1.15",
+     None, None, "sk-SK,sk;q=0.9"),
+    ("Mozilla/5.0 (iPhone; CPU iPhone OS 18_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3 Mobile/15E148 Safari/604.1",
+     None, None, "sk-SK,sk;q=0.9,en-US;q=0.8"),
+    ("Mozilla/5.0 (Linux; Android 15; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Mobile Safari/537.36",
+     '"Chromium";v="133", "Not(A:Brand";v="24", "Google Chrome";v="133"', '"Android"', "sk-SK,sk;q=0.9,en;q=0.8"),
+)
+
+PROJECT_UA = "fricomaps/shading-rocks (github.com/skifahrer/fricomaps)"
+
+# Prvé bajty formátov, ktoré vie PIL prečítať a ktoré dlaždicová služba môže
+# vrátiť. Slúži to na rozoznanie obrázka od chybovej stránky, nie na výber
+# dekodéra – ten si nájde PIL sám.
+IMAGE_MAGIC = (b"\xff\xd8\xff",          # JPEG
+               b"\x89PNG\r\n\x1a\n",     # PNG
+               b"GIF87a", b"GIF89a",     # GIF
+               b"RIFF")                  # WebP (RIFF....WEBP)
+
+
+def looks_like_image(body):
+    return bool(body) and body.startswith(IMAGE_MAGIC)
+
+
+def decode_body(body, encoding):
+    """Rozbalí telo, keď ho server zabalil. Prehliadačovité hlavičky pýtajú
+    `gzip, deflate`, takže to treba vedieť aj prijať."""
+    enc = (encoding or "").strip().lower()
+    if not enc or enc == "identity":
+        return body
+    try:
+        if enc == "gzip":
+            return gzip.decompress(body)
+        if enc == "deflate":
+            try:
+                return zlib.decompress(body)
+            except zlib.error:
+                return zlib.decompress(body, -zlib.MAX_WBITS)  # bez hlavičky
+    except (OSError, zlib.error):
+        return b""
+    return body
+
+
 class Fetcher:
     """Sťahovanie dlaždíc s trvalým spojením a diskovou cache.
 
@@ -205,10 +274,13 @@ class Fetcher:
     Zapíše sa ako prázdny súbor, aby sa pri ďalšom behu neskúšala znova.
     """
 
-    def __init__(self, url_tmpl, cache_dir, jobs=12, retries=3, timeout=30):
+    def __init__(self, url_tmpl, cache_dir, jobs=12, retries=3, timeout=30,
+                 ua="rotate"):
         self.tmpl = url_tmpl
         self.cache = cache_dir
         self.jobs, self.retries, self.timeout = jobs, retries, timeout
+        self.ua = ua
+        self.ua_seen = set()
         u = urllib.parse.urlsplit(url_tmpl)
         self.scheme, self.host = u.scheme, u.netloc
         self.local = threading.local()
@@ -221,6 +293,49 @@ class Fetcher:
 
     def path(self, z, x, y):
         return os.path.join(self.cache, str(z), str(x), f"{y}.jpg")
+
+    def headers(self):
+        """Hlavičky na jeden request.
+
+        `ua=rotate` (predvolené): vyberie sa náhodný profil zo `BROWSERS`,
+        takže každý request vyzerá ako iný prehliadač. Ostatné hlavičky idú
+        z toho istého profilu, nech si neodporujú.
+
+        `ua=project` sa priznáva menom projektu, hocičo iné sa pošle
+        doslova ako `User-Agent`.
+
+        Trvalé spojenie sa tým NEZAHADZUJE – server teda uvidí jedno TCP
+        spojenie, cez ktoré chodí viacero prehliadačov. To nie je dokonalé
+        maskovanie a ani sa oň nesnažíme; ide o to, aby dávka nevyzerala ako
+        jeden skript s jednou hlavičkou.
+        """
+        # `Accept-Encoding` bez `br`/`zstd` zámerne: `http.client` telo
+        # nerozbaľuje, takže rozbaliť to musíme sami a v stdlib je len gzip
+        # a deflate. Sľúbiť brotli a potom ho nevedieť prečítať by znamenalo
+        # uložiť na disk nečitateľné bajty. (JPEG sa aj tak prakticky nikdy
+        # nekomprimuje druhýkrát.)
+        h = {"Accept": "image/avif,image/webp,image/jpeg,image/*,*/*;q=0.8",
+             "Accept-Encoding": "gzip, deflate",
+             "Connection": "keep-alive"}
+        if self.ua == "rotate":
+            agent, ch_ua, platform, lang = random.choice(BROWSERS)
+            h["Accept-Language"] = lang
+            if ch_ua:
+                h["Sec-CH-UA"] = ch_ua
+                h["Sec-CH-UA-Mobile"] = "?1" if "Mobile" in agent else "?0"
+                h["Sec-CH-UA-Platform"] = platform
+            h["Sec-Fetch-Dest"] = "image"
+            h["Sec-Fetch-Mode"] = "no-cors"
+            h["Sec-Fetch-Site"] = "cross-site"
+        elif self.ua == "project":
+            agent = PROJECT_UA
+            h["Accept-Language"] = "sk-SK,sk;q=0.9,en;q=0.8"
+        else:
+            agent = self.ua
+        h["User-Agent"] = agent
+        with self.lock:
+            self.ua_seen.add(agent)
+        return h
 
     def _conn(self):
         c = getattr(self.local, "conn", None)
@@ -259,20 +374,23 @@ class Fetcher:
         for attempt in range(self.retries):
             try:
                 c = self._conn()
-                c.request("GET", rel, headers={
-                    "User-Agent": "fricomaps/shading-rocks (github.com/skifahrer/fricomaps)",
-                    "Accept": "image/jpeg,image/*",
-                    "Connection": "keep-alive",
-                })
+                c.request("GET", rel, headers=self.headers())
                 resp = c.getresponse()
                 status = resp.status
-                body = resp.read()
-                if status == 200:
+                body = decode_body(resp.read(), resp.getheader("Content-Encoding"))
+                if status == 200 and looks_like_image(body):
                     break
-                if status == 404:
+                if status == 200:
+                    # Chybová stránka s kódom 200 je pri dlaždicových
+                    # službách bežná – uložiť ju ako .jpg by znamenalo tichú
+                    # dieru v mozaike a v cache navždy. Skúsi sa znova.
+                    status, body = 0, None
+                    self._drop()
+                elif status == 404:
                     body = b""
                     break
-                self._drop()
+                else:
+                    self._drop()
             except Exception:
                 self._drop()
                 body, status = None, 0
@@ -339,6 +457,12 @@ class Fetcher:
         print(f"  dlaždice: {self.n_ok} stiahnutých, {self.n_cached} z cache, "
               f"{self.n_miss} chýba (404), {self.n_fail} zlyhalo, "
               f"{self.bytes / 1048576:.0f} MB za {hms(dt)}", flush=True)
+        # Len keď sa naozaj niečo sťahovalo – pri behu celom z cache by
+        # „0 rôznych prehliadačov" vyzeralo ako porucha, a pritom nešiel
+        # von ani jeden request.
+        if self.ua == "rotate" and self.ua_seen:
+            print(f"  hlavičky: {len(self.ua_seen)} rôznych prehliadačov "
+                  f"z {len(BROWSERS)} profilov", flush=True)
         if self.n_fail and self.n_fail > total * 0.02:
             print(f"::warning::Nepodarilo sa stiahnuť {self.n_fail} dlaždíc "
                   f"z {total} – v mozaike budú prázdne miesta.")
@@ -855,6 +979,11 @@ def print_plan(z, x0, y0, x1, y1, args):
     print("  štruktúra       " + (f"vyplnená, okno {args.fill:g} m "
                                   f"({args.fill_px} px)" if args.fill_px
                                   else "jemná sieť žliabkov (fill vypnuté)"))
+    print("  hlavičky        " + ("každý request ako iný prehliadač "
+                                  f"({len(BROWSERS)} profilov)"
+                                  if args.ua == "rotate" else
+                                  "meno projektu" if args.ua == "project"
+                                  else f"vlastné: {args.ua}"))
     print(f"  odhad sťahovanie ~{hms(dl_s)}")
     print(f"  odhad obrysy     ~{hms(ct_s)}")
     print("─────────────────────────────────────────────────────", flush=True)
@@ -925,6 +1054,10 @@ def main():
     ap.add_argument("--smooth", type=int, default=1,
                     help="koľkokrát zaobliť rohy (Chaikin, 0 = vypnuté)")
     ap.add_argument("--jobs", type=int, default=12, help="paralelné sťahovanie")
+    ap.add_argument("--ua", default="rotate",
+                    help="`rotate` = každý request ako iný prehliadač, "
+                         "`project` = priznať sa menom projektu, alebo "
+                         "vlastný User-Agent doslova")
     ap.add_argument("--cache-dir", default="tiles-cache")
     ap.add_argument("--band-cells", type=float, default=150e6,
                     help="koľko pixelov naraz drží jeden pás v pamäti")
@@ -947,7 +1080,7 @@ def main():
     lat_mid = (args.bbox[1] + args.bbox[3]) / 2.0
 
     os.makedirs(args.cache_dir, exist_ok=True)
-    fetcher = Fetcher(args.url, args.cache_dir, jobs=args.jobs)
+    fetcher = Fetcher(args.url, args.cache_dir, jobs=args.jobs, ua=args.ua)
 
     if str(args.zoom).strip().lower() == "auto":
         z = probe_zoom(fetcher, args.bbox, args.zoom_max, args.zoom_min,
@@ -1047,6 +1180,7 @@ def main():
                 ("tiles_missing", fetcher.n_miss),
                 ("tiles_failed", fetcher.n_fail),
                 ("mb_downloaded", f"{fetcher.bytes / 1048576:.0f}"),
+                ("ua", args.ua), ("ua_profiles", len(fetcher.ua_seen)),
                 ("cells", cells), ("px_m", f"{ground_res(z, lat_mid):.2f}"),
                 ("dark", args.dark), ("dark_always", args.dark_always),
                 ("local_m", f"{args.local:g}"), ("local_px", args.local_px),
