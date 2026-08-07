@@ -11,8 +11,8 @@
 # dlaždice, len z LLS DMR 5.0 (release `dem-dmr5`, mriežka 5 m), `ugkk` =
 # jeden COG s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá –
 # build nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
-# `Stiahnuť výškové dáta` (update-dem.yml) a `Rozobrať DMR 5.0`
-# (dmr5-split.yml).
+# `Stiahnuť výškové dáta` (update-dem.yml) a `Pripraviť DMR 5.0`
+# (dmr5.yml).
 #
 # `sonny`, `dmr35` a `dmr5` sa líšia LEN menom releasu: dlaždice majú tú istú
 # pomenúvaciu schému (`N49E019.tif`), takže sa nižšie nič nevetví.
@@ -108,7 +108,7 @@ if [ "$have" -eq 0 ]; then
     # DMR 5.0 sa nedopĺňa sám: je to 198 GB archív a jeho rozobratie je
     # desiatky paralelných jobov. To sa nemá spustiť ako vedľajší účinok
     # buildu mapy – púšťa sa vedome.
-    echo "Spusti workflow 'Rozobrať DMR 5.0' s area: cele (mriežka 5 m). Trvá to hodiny, preto sa to nespúšťa samo."
+    echo "Spusti workflow 'Pripraviť DMR 5.0' s area: cele_slovensko (mriežka 5 m). Trvá to dlho, preto sa to nespúšťa samo."
   else
     echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
   fi

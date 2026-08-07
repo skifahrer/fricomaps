@@ -17,8 +17,10 @@ zoznamom položiek a s ich presnými offsetmi. Keď server vie HTTP Range
   3. stiahnuť LEN byty jednej položky (alebo súvislého úseku položiek)
      a rozbaliť ich za behu.
 
-Vďaka tomu sa 198 GB dá spracovať v N paralelných jobov po ~2 GB, kde každý
-siahne iba na svoj úsek. To je celý princíp workflowu „Rozobrať DMR 5.0“.
+Vďaka tomu sa dá z archívu prečítať len to, čo treba – bez toho, aby sa
+čokoľvek stiahlo na disk. Používa to `workers/dmr5-plan.py` (inventár archívu
+z jeho centrálneho adresára) a `workers/dmr5-raster.py` (hlavičky súborov,
+z ktorých sa zisťuje, či sa raster dá vôbec rozumne otvoriť).
 
 ZIP64 JE POVINNÝ: pri 198 GB sú offsety väčšie než 4 GB, takže obyčajný
 koniec centrálneho adresára nesie samé 0xFFFFFFFF a skutočné čísla sú

@@ -157,7 +157,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
-| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [Rozobrať DMR 5.0](#štvrtý-workflow-rozobrať-dmr-50)) | naplniť |
+| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [Pripraviť DMR 5.0](#štvrtý-workflow-pripraviť-dmr-50)) | naplniť |
 | **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) | naplniť |
 
 Zdroj platí pre **vrstevnice aj skaly** – oboje z toho istého modelu, nech
@@ -819,7 +819,7 @@ repozitára. Neznáma farba, neplatný hex, neprepísateľná vlastnosť či
 prehodený rozsah zoomu skončia varovaním a vyhodia sa, takže do zdrojáku sa
 nedostane nič, čo by štýl rozbilo.
 
-## Štvrtý workflow: „Rozobrať DMR 5.0"
+## Štvrtý workflow: „Pripraviť DMR 5.0"
 
 Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
 **197,7 GB** (197 707 257 567 B, zmerané behom 31182614668), S-JTSK [JTSK03],
@@ -858,21 +858,25 @@ plan     posledných 128 kB → koniec centrálneho adresára
          (ZIP64: pri 198 GB sú offsety nad 4 GB, skutočné čísla sú v ZIP64
           zázname, nie v obyčajnej hlavičke)
          centrálny adresár → inventár VŠETKÝCH položiek do súhrnu behu
-         → rozhodne, čo archív je:
-             jeden veľký raster (≥ 50 % bajtov) → job `raster`
-             súbory po blokoch                  → joby `chunk` + `assemble`
+         → nájde hlavný raster (položka s aspoň polovicou bajtov)
 
-raster   gdalinfo cez /vsizip//vsicurl/ (pár stoviek kB) → rozmery, mriežka,
-         CRS, dlaždica, pyramídy
+model    16 bajtov hlavičky → kde leží adresár dlaždíc
+         gdalinfo cez /vsizip//vsicurl/ → rozmery, mriežka, CRS, pyramídy
          celá krajina: JEDEN gdal_translate -tr <grid> -r average
                        → dem-tiles.py → N49E019.tif → release `dem-dmr5`
-         výrez:        gdalwarp -te <bbox> -tr <grid>
-                       → ugkk-<vyrez>.tif → release `dem-ugkk`
-
-chunk /  cesta pre archívy poskladané zo samostatných súborov po blokoch.
-assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
-         vyzerajú, tak tu ostáva.
+         pohorie:      gdal_translate -projwin (sekvenčne) → gdalwarp
+                       → ugkk-<pohorie>.tif → release `dem-ugkk`
+         → do súhrnu napíše, s čím spustiť Build map
 ```
+
+**Formulár má tri polia:** `area` (dropdown – celé Slovensko alebo pohorie
+z `areas.json`), `grid_m` (dropdown) a `mode`. URL archívu je v `env`, release
+a `dem_source` sa odvodia z územia.
+
+Do augusta 2026 tu bola aj cesta cez rozdelenie archívu na časti (matrix joby,
+`workers/dmr5-chunk.py`, `workers/sjtsk.py`) a k nej šesť ďalších inputov.
+Stála na predpoklade, že archív sú výškové body po blokoch – nie sú, je to
+jeden súvislý raster, takže nebolo čo deliť. Zmazané.
 
 - **Cena čítania je daná pozíciou v súbore.** Položka v ZIPe je zabalená
   deflate-om a v deflate prúde sa nedá skočiť dopredu – dá sa doň len rozbaliť
@@ -933,17 +937,15 @@ assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
   priečinkov. Nič sa nefiltruje podľa prípon – ten filter v prvej verzii ticho
   zahodil 16 z 19 súborov a v logu nebolo ani jedno meno, takže sa nedalo
   zistiť, že archív je v skutočnosti jeden raster.
-- **Filtre.** `area` (pohorie alebo bbox) pri rastri rieši `gdalwarp`
-  a funguje vždy; pri archíve po blokoch potrebuje vedieť, kde blok leží, a
-  keď sa to z mena nedá prečítať, plán skončí chybou – nie tichým stiahnutím
-  celého archívu, ako v behu 31182614668. `folder` vyberá podľa mena položky
-  a funguje vždy, ale pri jednom veľkom rastri nemá čo zúžiť.
+- **Územie vyberá dropdown, nie písanie.** `area` je `choice` s tými istými
+  pohoriami ako `workers/areas.json`; lint to stráži, aby sa zoznamy
+  nerozišli. Z výberu sa odvodí mriežka, release aj `dem_source` pre Build
+  map – nemá zmysel, aby ich vypĺňal človek, keď z územia jednoznačne
+  vyplývajú.
 
 Kód: [`workers/zip-remote.py`](../workers/zip-remote.py) (čítanie vzdialeného
-ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (inventár a
-rozpoznanie podoby), [`workers/dmr5-raster.py`](../workers/dmr5-raster.py)
-(jeden veľký raster), [`workers/dmr5-chunk.py`](../workers/dmr5-chunk.py)
-(archív po blokoch), [`workers/sjtsk.py`](../workers/sjtsk.py) (Krovák).
+ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (inventár archívu)
+a [`workers/dmr5-raster.py`](../workers/dmr5-raster.py) (samotný model).
 
 **Tento workflow sa nespúšťa sám.** Ostatné výškové zdroje si `Build map`
 doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť

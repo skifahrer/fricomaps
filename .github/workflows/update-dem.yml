@@ -18,8 +18,8 @@ name: Stiahnuť výškové dáta
 #
 # `dmr5` sem NEPATRÍ a je tu len ako rozcestník: 198 GB archív sa nedá stiahnuť
 # jedným jobom (runner má voľných ~60 GB) a rozoberá ho vlastná pipeline
-# `Rozobrať DMR 5.0` (dmr5-split.yml) desiatkami paralelných jobov cez HTTP
-# Range. Keď sem príde `what: dmr5`, tento workflow len povie kam ísť.
+# `Pripraviť DMR 5.0` (dmr5.yml) jedným jobom, ktorý číta archív
+# priamo cez /vsizip//vsicurl/. Keď sem príde `what: dmr5`, tento workflow len povie kam ísť.
 #
 # `ugkk` sa z GitHub runnera stiahnuť NEDÁ – `zbgis.skgeodesy.sk` aj
 # `zbgisws.skgeodesy.sk` timeoutujú aj pri 30 s (zmerané v behoch
@@ -155,8 +155,8 @@ jobs:
             dmr5)
               # Sem sa dá dostať len tak, že si `Build map` vypýtal dem_source:
               # dmr5 a release je prázdny. Tento workflow to nedoplní – DMR 5.0
-              # je 198 GB archív a rozoberá sa desiatkami paralelných jobov
-              # (workflow „Rozobrať DMR 5.0"). Púšťať to ako vedľajší účinok
+              # je 198 GB archív a pripravuje sa vlastnou pipeline
+              # (workflow „Pripraviť DMR 5.0"). Púšťať to ako vedľajší účinok
               # buildu mapy by bolo prekvapenie na osem hodín.
               URL="https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip"
               REL=dem-dmr5; LABEL="ÚGKK DMR 5.0 (LLS) – dopĺňa sa inde" ;;
@@ -197,16 +197,16 @@ jobs:
             echo "## ÚGKK DMR 5.0 (LLS) sa sem nesťahuje"
             echo
             echo "Archív má ~198 GB a runner má voľných ~60 GB, takže ho tento"
-            echo "workflow stiahnuť nemôže. Rozoberá ho pipeline **Rozobrať DMR 5.0**"
-            echo "(\`dmr5-split.yml\`) – číta archív po úsekoch cez HTTP Range"
+            echo "workflow stiahnuť nemôže. Rozoberá ho pipeline **Pripraviť DMR 5.0**"
+            echo "(\`dmr5.yml\`) – číta archív po úsekoch cez HTTP Range"
             echo "a beží v desiatkach paralelných jobov."
             echo
             echo "| chcem | spusti |"
             echo "|---|---|"
-            echo "| celé Slovensko, mriežka 5 m | \`Rozobrať DMR 5.0\` s \`area: cele\` → release \`dem-dmr5\` |"
-            echo "| pohorie, mriežka 1 m | \`Rozobrať DMR 5.0\` s \`area: vysoke_tatry\` → release \`dem-ugkk\` |"
+            echo "| celé Slovensko, mriežka 5 m | \`Pripraviť DMR 5.0\` s \`area: cele\` → release \`dem-dmr5\` |"
+            echo "| pohorie, mriežka 1 m | \`Pripraviť DMR 5.0\` s \`area: vysoke_tatry\` → release \`dem-ugkk\` |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::DMR 5.0 (LLS) sa dopĺňa workflowom „Rozobrať DMR 5.0“ – tento beh nič nesťahuje."
+          echo "::warning::DMR 5.0 (LLS) sa dopĺňa workflowom „Pripraviť DMR 5.0“ – tento beh nič nesťahuje."
 
       - name: Stiahni dlaždice
         id: fetch
