@@ -76,6 +76,38 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # Strop na veľkosť súboru s workflowom je 128 KiB. Nad ním ho GitHub
+      # NEPRIJME – a nepovie to: po pushi vznikne beh bez jobov, pomenovaný
+      # cestou k súboru, s červeným krížikom, aj keď má workflow len
+      # `workflow_dispatch`. Vyzerá to, že sa spustil sám po mergi.
+      #
+      # `build-map.yml` cez ten strop prešiel o 122 bajtov (beh 33) a stálo
+      # to šesť kôl sond, kým sa to našlo: actionlint ani JSON schéma
+      # o veľkosti nevedia. Preto radšej varovanie už od 120 KiB – veľký
+      # `run:` blok patrí do `workers/`, nie do YAMLu.
+      - name: Veľkosť súborov workflowov
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, sys
+          LIMIT = 128 * 1024
+          WARN = 120 * 1024
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              n = os.path.getsize(path)
+              if n > LIMIT:
+                  print(f"::error file={path}::{n} B je nad stropom {LIMIT} B – "
+                        f"GitHub taký súbor neprijme. Presuň veľký `run:` blok "
+                        f"do workers/ a volaj ho jedným riadkom.")
+                  bad += 1
+              elif n > WARN:
+                  print(f"::warning file={path}::{n} B, strop je {LIMIT} B "
+                        f"(ostáva {LIMIT - n} B).")
+              else:
+                  print(f"{path}: {n} B ✓")
+          sys.exit(1 if bad else 0)
+          PY
+
       # `}}` v shellovom skripte bez `${{` pred ním. GitHub taký súbor
       # NEPRIJME: po pushnutí vznikne beh bez jobov, pomenovaný cestou
       # k súboru, s červeným krížikom – a to aj vtedy, keď má workflow len
