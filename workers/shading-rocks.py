@@ -20,7 +20,7 @@ PREČO TO MÔŽE KLAMAŤ: tmavý nie je len sklon, ale sklon NA ODVRÁTENEJ STRA
 Rovnako strmá stena otočená k slnku je na hillshade najsvetlejšia zo všetkého.
 Táto cesta preto systematicky nájde severozápadné steny a systematicky
 prehliadne juhovýchodné. Je to POKUS, nie náhrada `rock-areas.py`; v mape sa
-zapína zvlášť (`rock_source=shading`).
+zapína zvlášť (`rock_source: tienovanie`).
 
 ── čo ukázala skutočná dlaždica ────────────────────────────────────────────
 

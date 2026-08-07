@@ -125,11 +125,12 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
   a odloží ich artefaktom; `deploy` ich zlepí a zoradí podľa **poradového
   čísla**, nie podľa času – joby bežia súbežne, takže čas by hovoril len
   o tom, ktorý runner bol rýchlejší.
-- **Spoločné sťahovanie DEM.** Vrstevnice aj tieňovanie potrebujú tie isté
-  dlaždice; kým to bol jeden job, stačilo raz. Teraz je to
-  [`workers/fetch-dem.sh`](../workers/fetch-dem.sh) – jedna kópia pre oba,
-  aby sa časom nerozišli. Dlaždice majú spoločnú cache, takže druhý job ich
-  väčšinou už len vytiahne.
+- **Spoločné sťahovanie DEM.** Vrstevnice, skaly aj tieňovanie potrebujú
+  výškové dlaždice; kým to bol jeden job, stačilo raz. Teraz je to
+  [`workers/fetch-dem.sh`](../workers/fetch-dem.sh) – jedna kópia pre všetkých,
+  aby sa časom nerozišli. Dlaždice idú do `dem/<zdroj>/` a cache má v kľúči
+  zdroje daného jobu: odkedy si každá vrstva vyberá model sama, spoločný kľúč
+  by vracal cudziu mozaiku.
 
 Ďalej detailne, čo z toho je zaujímavé a **prečo** je to tak.
 
@@ -153,15 +154,35 @@ Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
 vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
-| zdroj | `dem_source` | čo to je | odkiaľ | stav |
+| zdroj | kľúč vo výberoch | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
 | **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [Pripraviť DMR 5.0](#štvrtý-workflow-pripraviť-dmr-50)) | naplniť |
 | **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) | naplniť |
 
-Zdroj platí pre **vrstevnice aj skaly** – oboje z toho istého modelu, nech
-obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
+**Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
+`contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
+(tieňovanie a 3D terén) – a každý ponúka ten istý zoznam modelov plus
+`ziadne`, ktorým sa vrstva vypne. Kým to bol jeden `dem_source` pre všetko,
+nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly z najjemnejšieho
+modelu (aj keď ho máme len na výrez, `ugkk`) a tieňovanie z hrubšieho, ktorý
+pokrýva celý región.
+
+Keď majú vrstevnice a skaly iný model, job si stiahne oba – každý do
+`dem/<zdroj>/` s vlastným `all.vrt`, takže sa dve mozaiky nikdy neprebijú.
+Pri rovnakom modeli sa druhé volanie `fetch-dem.sh` netrafí do siete vôbec.
+
+`shading_source` **nemá `ugkk`**: 1 m LiDAR máme len na výrez, kým tieňovanie
+sa robí vždy na celý región. Predtým sa to riešilo tichým prepnutím na
+Sonnyho v jobe s terénom – teraz sa taká voľba nedá ani zadať.
+
+`rock_source` má navyše hodnotu `tienovanie`: to je [piaty workflow](#piaty-workflow-skaly-z-tieňovaných-dlaždíc),
+ktorá výškový model nečíta vôbec.
+
+Zoznamy vo formulári stráži `Lint workflows` proti kľúču `for`
+v [`workers/dem-sources.json`](../workers/dem-sources.json) – zdroj sa nedá
+pridať do jedného a zabudnúť v druhom.
 
 > **ÚGKK je zatiaľ otvorená otázka.** Že majú verejný ArcGIS adresár služieb
 > (`zbgis.skgeodesy.sk/zbgis/rest/services`), je isté. Ktorá z tých služieb je
@@ -392,7 +413,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   ~20 m**, takže pri ňom auto vždy skončí na 2 m. Jemnejšia mriežka by len
   interpolovala medzi tými istými výškami – stála by štvornásobok času a
   nepridala ani jeden nový tvar terénu. Reálny skok v detaile prinesie až iný
-  zdroj (`dem_source: ugkk`, 1 m LiDAR → auto ide na 0,5 m).
+  zdroj (`rock_source: ugkk`, 1 m LiDAR → auto ide na 0,5 m).
 
   Výber sa celý vypíše do logu, aj s tým, koľko by ktorá mriežka trvala.
   Namiesto čísla sa dá `rock_res` zadať aj natvrdo (`1`, `2`, …).
@@ -473,21 +494,22 @@ Cache aj release existujú preto, aby sa to isté nepočítalo dvakrát. Keď sa
 zmenia nastavenia, zmení sa kľúč a prepočíta sa to samo. Keď to treba
 prepočítať **nanovo aj pri rovnakých nastaveniach**, slúžia na to inputy:
 
-| input | čo pregeneruje |
+| `rebuild` | čo pregeneruje |
 |---|---|
-| `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `rocks_rebuild` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+| `vrstevnice` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
+| `skaly` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `teren` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+| `vsetko` | všetko z toho naraz |
 
 Mechanika je dôležitá, lebo nie je zrejmá: **cache sa v GitHube nedá
 prepísať.** Kľúč, ktorý raz existuje, si drží starý obsah a `cache/save` naň
-len upozorní, že už tam je. Keby sa teda `*_rebuild` len „prepočítal a uložil",
+len upozorní, že už tam je. Keby sa teda `rebuild` len „prepočítal a uložil",
 uloženie by nič nespravilo a ďalší build by dostal späť starú verziu. Preto:
 
 1. build má právo `actions: write`,
 2. krok *Pregenerovanie – zmaž staré cache* zmaže príslušný záznam
    (`gh cache delete`) hneď na začiatku,
-3. restore sa pri `*_rebuild` **preskočí**, takže výpočet beží,
+3. restore sa pri pregenerovaní **preskočí**, takže výpočet beží,
 4. save uloží novú verziu pod ten istý kľúč.
 
 Kľúče sa počítajú na jednom mieste (krok *Kľúče cache*) a používa ich restore,
@@ -563,8 +585,10 @@ nezmestí ani slovo názvu. Zlepia sa len úseky s **rovnakými atribútmi**, te
 tej istej trasy v tom istom pruhu.
 
 Job sa **necachuje**: celé je to pár minút a závisí od PBF, ktoré sa mení
-denne – cache by sa trafila len v ten istý deň. Vypína sa inputom `trails`,
-zoom dlaždíc riadi `trails_maxzoom` (default 14).
+denne – cache by sa trafila len v ten istý deň. Vypína sa voľbou
+`options: trails=false` (jediná vrstva bez výberu zdroja – ide z toho istého
+PBF ako mapa, takže niet z čoho vyberať), zoom dlaždíc riadi `trails_maxzoom`
+(default 14).
 
 ### `tiles` – PBF → PMTiles (Planetiler)
 
@@ -871,7 +895,7 @@ model    16 bajtov hlavičky → kde leží adresár dlaždíc
 
 **Formulár má tri polia:** `area` (dropdown – celé Slovensko alebo pohorie
 z `areas.json`), `grid_m` (dropdown) a `mode`. URL archívu je v `env`, release
-a `dem_source` sa odvodia z územia.
+a to, ako sa výsledok volá vo výberoch Build map, sa odvodia z územia.
 
 Do augusta 2026 tu bola aj cesta cez rozdelenie archívu na časti (matrix joby,
 `workers/dmr5-chunk.py`, `workers/sjtsk.py`) a k nej šesť ďalších inputov.
@@ -939,7 +963,7 @@ jeden súvislý raster, takže nebolo čo deliť. Zmazané.
   zistiť, že archív je v skutočnosti jeden raster.
 - **Územie vyberá dropdown, nie písanie.** `area` je `choice` s tými istými
   pohoriami ako `workers/areas.json`; lint to stráži, aby sa zoznamy
-  nerozišli. Z výberu sa odvodí mriežka, release aj `dem_source` pre Build
+  nerozišli. Z výberu sa odvodí mriežka, release aj kľúč zdroja pre Build
   map – nemá zmysel, aby ich vypĺňal človek, keď z územia jednoznačne
   vyplývajú.
 
@@ -976,7 +1000,7 @@ gdal_contour -p -fl 0,5 -fl (0,5+cliff)     NARAZ nad celou mozaikou
 -explodecollections → filter plôch a dier → -simplify → smooth-polygons.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
-   ├─► release `dem-rocks-img`   pre Build map (`options: rock_source=lidar_images`)
+   ├─► release `dem-rocks-img`   pre Build map (výber `rock_source: tienovanie`)
    ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
    └─► artefakt `nahlad-…`         PNG náhľad + histogram + čísla
 ```
@@ -1066,8 +1090,8 @@ Build map to **nepočíta** – len si stiahne hotový asset. Zdroj skál je
 samostatný **input** vo formulári, nie voľba v `options`:
 
 ```
-rock_source: lidar_images        vezme najnovší rockimg-{výrez}-… z releasu
-rock_source: lidar_images  +  options: rock_img_asset=rockimg-…gpkg.zst
+rock_source: tienovanie          vezme najnovší rockimg-{výrez}-… z releasu
+rock_source: tienovanie  +  options: rock_img_asset=rockimg-…gpkg.zst
                                  presne tento asset
 ```
 
