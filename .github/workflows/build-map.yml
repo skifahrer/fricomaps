@@ -55,13 +55,14 @@ on:
           - strazovske_vrchy
           - male_karpaty
       dem_source:
-        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. dmr35 = otvorené dáta ÚGKK, jemnejšie a tiež na celý región. ugkk = 1 m LiDAR, najpodrobnejšie, ale LEN s výrezom a zatiaľ sa nedá stiahnuť"
+        description: "Zdroj výšok pre vrstevnice AJ skaly: sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m, celý región. dmr5 = ÚGKK DMR 5.0 (LLS), 5 m, celý región. ugkk = 1 m LiDAR, LEN na výrez. dmr5 aj ugkk treba najprv naplniť workflowom „Rozobrať DMR 5.0“"
         required: false
         default: sonny
         type: choice
         options:
           - sonny
           - dmr35
+          - dmr5
           - ugkk
       layers:
         description: "Čo generovať, oddelené čiarkou: contours (vrstevnice a skaly), terrain (tieňovanie a 3D), trails (značené trasy)"
@@ -125,6 +126,10 @@ env:
   # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
   # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
   DMR35_RELEASE: dem-dmr35
+  # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
+  # ich workflow „Rozobrať DMR 5.0" s `area: cele`; sám sa nedopĺňa, lebo je
+  # to 184 GB archív a desiatky paralelných jobov.
+  DMR5_RELEASE: dem-dmr5
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
@@ -218,13 +223,13 @@ jobs:
           fi
           echo "ugkk_needed=$UGKK_NEED" >> "$GITHUB_OUTPUT"
 
-          # Dlaždicové zdroje (sonny, dmr35) sa líšia len releasom – schéma
-          # mien je tá istá, takže sa nižšie nič nevetví.
-          if [ '${{ inputs.dem_source }}' = 'dmr35' ]; then
-            TILE_RELEASE="$DMR35_RELEASE"
-          else
-            TILE_RELEASE="$DEM_RELEASE"
-          fi
+          # Dlaždicové zdroje (sonny, dmr35, dmr5) sa líšia len releasom –
+          # schéma mien je tá istá, takže sa nižšie nič nevetví.
+          case '${{ inputs.dem_source }}' in
+            dmr35) TILE_RELEASE="$DMR35_RELEASE" ;;
+            dmr5)  TILE_RELEASE="$DMR5_RELEASE" ;;
+            *)     TILE_RELEASE="$DEM_RELEASE" ;;
+          esac
           echo "tile_release=$TILE_RELEASE" >> "$GITHUB_OUTPUT"
           ASSETS=$(gh release view "$TILE_RELEASE" --repo "$GITHUB_REPOSITORY" \
             --json assets -q '.assets[].name' 2>/dev/null || echo '')
