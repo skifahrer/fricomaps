@@ -1050,6 +1050,48 @@ výstupu je zhodný so skalami z DEM (vrstva `rock`, EPSG:4326, `class`
 = `steep`/`cliff`, `area` v m²); jediný rozdiel je, že skaly z DEM majú
 atribút `slope` a skaly z obrázka `dark`.
 
+### Tmavé nie je plocha, ale sieť
+
+Najdôležitejšie zistenie zo skutočnej dlaždice: tmavé miesta v tejto vrstve
+**nie sú súvislé steny**, ale hustá sieť žliabkov, ryhiek a mikrotieňov
+v rozčlenenom teréne. Maska vyzerá ako filigrán, nie ako klaksa.
+
+To je vlastnosť, nie chyba – tá jemná štruktúra je práve to, čo z hillshade
+chceme, a je to detail, aký zo sklonu 20 m DEM nikdy nevznikne. Pipeline je
+podľa toho nastavená:
+
+| vec | hodnota | prečo |
+|---|---|---|
+| `fill` | **0 (vypnuté)** | spriemerovanie tmavosti v okolí zo siete spraví súvislú plochu; merané: `fill=40` dá 10 útvarov a 35 % pokrytie namiesto 78 útvarov a 15 % |
+| `min_area` | 50 m² | `200` zmazal práve tie drobné útvary, o ktoré ide |
+| `min_hole` | 10 m² | medzery medzi vláknami siete SÚ tá štruktúra |
+| `simplify` | 1 px | pod pixel je už len zrno JPEGu |
+| `smooth` | 1× Chaikin | druhý prechod zdvojnásobí body za obrys, ktorý nikto nerozozná |
+
+Merané na výreze 1260×1933 px z Vysokých Tatier, prepočítané na z18:
+
+| nastavenie | plôch | dier | dáta |
+|---|--:|--:|--:|
+| `min_area 200`, `min_hole 50`, simplify ½ px, Chaikin 2× | 16 | 89 | 3,95 MB/km² |
+| **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
+
+Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
+polovičné dáta**.
+
+**Počet útvarov neexploduje, body áno.** Sieť je pospájaná – 16 útvarov
+pokrylo 15 % výrezu. Cena je v bodoch obrysu, takže beh píše do súhrnu
+`MB na km² skál`; práve to číslo rozhoduje, či sa vrstva zmestí do rozpočtu
+mapy, nie počet plôch.
+
+### Farba sa zatiaľ nepoužíva
+
+Tá vrstva je **farebný** hillshade: žltozelený nádych, tiene ťahajú do modra
+(sýtosť ~34, `B−R` od −95 do +50). Čítame ju ako jas (`convert("L")`, luma
+601), kde modrý kanál váži najmenej – modré tiene sa tým ešte prehĺbia, čo
+nám vyhovuje. Odtieň ako **druhý, nezávislý signál** (tieň vs. osvetlený
+terén nezávisle od jasu) je zatiaľ nevyužitá páka; na jednom výreze sa nedalo
+overiť, či pomáha, tak sa nepridával naslepo.
+
 ### Čo od toho čakať
 
 Hillshade je obraz sklonu, ale **osvetleného z jednej strany**. Severozápadné

@@ -80,12 +80,12 @@ on:
         default: "25"
         type: string
       min_area:
-        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu, nie skala"
+        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny"
         required: false
-        default: "200"
+        default: "50"
         type: string
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=80 smooth=1 jobs=8`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Zoznam je vo workers/shading-rocks.py"
         required: false
         default: ""
         type: string
@@ -268,9 +268,11 @@ jobs:
               echo "| dlaždice | ${tiles} (${mb_downloaded} MB, ${tiles_missing} chýbalo, ${tiles_failed} zlyhalo) |"
               echo "| mozaika | ${cells} pixelov |"
               echo "| prah | nikdy nad ${dark}, vždy pod ${dark_always}, medzi tým ${rel} pod pozadím (okno ${local_m} m) |"
+              echo "| štruktúra | ${fill_m} m vyplnenie (0 = jemná sieť žliabkov) |"
               echo "| **skalných plôch** | **${count}** (z toho ${cliff} \`cliff\`), ${dropped} pod ${min_area_m2} m² zahodených |"
               echo "| **plocha spolu** | **${total_km2} km²**, najväčšia $((max_m2 / 10000)) ha |"
               echo "| diery | ${holes} zachovaných, ${holes_dropped} pod ${min_hole_m2} m² zahodených |"
+              echo "| veľkosť dát | ${out_mb} MB = **${mb_per_km2} MB na km² skál** |"
               echo "| trvanie | ${seconds} s |"
               echo
               echo "Asset v release \`$ROCK_IMG_RELEASE\`: \`${{ steps.rocks.outputs.asset }}\`"

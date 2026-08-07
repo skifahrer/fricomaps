@@ -22,6 +22,37 @@ Táto cesta preto systematicky nájde severozápadné steny a systematicky
 prehliadne juhovýchodné. Je to POKUS, nie náhrada `rock-areas.py`; v mape sa
 zapína zvlášť (`rock_source=shading`).
 
+── čo ukázala skutočná dlaždica ────────────────────────────────────────────
+
+Namerané na výreze z tej vrstvy (1260×1933 px, Vysoké Tatry):
+
+  * Je to FAREBNÝ hillshade, nie šedý – žltozelený nádych, tiene ťahajú do
+    modra (sýtosť ~34, B−R od −95 do +50). Čítame ho ako jas (`convert("L")`,
+    luma 601), kde modrý kanál váži najmenej, takže sa modré tiene ešte
+    prehĺbia. To nám vyhovuje. Farba ako druhý, nezávislý signál zatiaľ
+    použitá NIE JE.
+  * Rozloženie jasu: medián 176, 20. percentil 135, 10. percentil 107.
+    Prah `--dark 125` z toho odkrojí ~16 % plochy a sedí na skalnatý terén.
+  * TMAVÉ NIE JE PLOCHA, ALE SIEŤ. Tmavé miesta nie sú súvislé steny, ale
+    hustá sieť žliabkov, ryhiek a mikrotieňov v rozčlenenom teréne. Práve
+    táto jemná štruktúra je to, čo chceme – nie vyplnená klaksa. Preto je
+    `--fill` (spriemerovanie tmavosti v okolí, ktoré zo siete spraví súvislú
+    plochu) štandardne VYPNUTÉ.
+  * Sieť je pospájaná: 16 útvarov pokrylo 15 % výrezu, takže počet útvarov
+    neexploduje. Explodujú BODY – pri z18 to vyšlo na ~2 MB GeoPackage na km²
+    skalnatého terénu.
+  * Z toho vyšli aj predvolené hodnoty filtrov. Merané na tom istom výreze:
+
+        min_area 200 m², min_hole 50 m², simplify ½ px, Chaikin 2× →
+            16 plôch,  89 dier,  3,95 MB/km²
+        min_area  50 m², min_hole 10 m², simplify 1 px,  Chaikin 1× →
+            78 plôch, 392 dier,  1,97 MB/km²   ← toto
+
+    Jemnejšie filtre a hrubšie zjednodušenie dali SÚČASNE viac štruktúry aj
+    polovičné dáta: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
+    aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
+    útvary, o ktoré ide.
+
 ── ako sa rozhoduje, čo je tmavé ────────────────────────────────────────────
 
 Jeden prah na celú mozaiku nestačí: celý zatienený svah je tmavý bez toho,
@@ -427,6 +458,21 @@ def load_band(fetcher, z, x0, x1, ty0, ty1):
     return band
 
 
+def upsample(small, h, w, k=BG_DOWN):
+    """Zmenšené pole späť na plné rozlíšenie (opakovaním pixelov).
+
+    `block_mean` zaokrúhľuje rozmer nadol, takže keď šírka alebo výška nie je
+    násobkom `k`, chýba na okraji pár riadkov a stĺpcov – tie sa doplnia
+    hranou. V mozaike z celých dlaždíc (256 px) to nikdy nenastane, ale
+    funkcia nemá padať na tom, kde ju kto zavolá.
+    """
+    full = np.repeat(np.repeat(small, k, axis=0), k, axis=1)
+    if full.shape[0] < h or full.shape[1] < w:
+        full = np.pad(full, ((0, max(0, h - full.shape[0])),
+                             (0, max(0, w - full.shape[1]))), mode="edge")
+    return full[:h, :w]
+
+
 def bright_background(small, r):
     """Ako svetlý je tu OSVETLENÝ terén – priemer svetlejšej polovice okna.
 
@@ -445,11 +491,16 @@ def bright_background(small, r):
     return np.where(c > 0.05, s / np.maximum(c, 1e-6), m1).astype(np.float32)
 
 
-def score_band(gray, dark, always, local_px, rel, blur):
+def score_band(gray, dark, always, local_px, rel, blur, fill_px=0):
     """Šedá → „tmavosť" (Byte): o koľko je pixel pod referenciou.
 
     ref   = clip(pozadie − rel, always, dark)   (bez pozadia rovno `dark`)
     score = clip(ref − šedá, 0, 255)
+
+    `fill_px` (input `fill`, default vypnuté) navyše spriemeruje tmavosť
+    v okolí, takže sa z jemnej siete žliabkov stane súvislá plocha. Viď
+    hlavičku súboru – zámerne je to vypnuté, lebo tá jemná štruktúra JE
+    to, čo chceme.
     """
     gray = box_blur_u8(gray, blur)
     h, w = gray.shape
@@ -470,12 +521,21 @@ def score_band(gray, dark, always, local_px, rel, blur):
             np.subtract(np.int16(dark), g, out=g)
         else:
             rows = bg[r // BG_DOWN:(r1 + BG_DOWN - 1) // BG_DOWN]
-            full = np.repeat(np.repeat(rows, BG_DOWN, axis=0),
-                             BG_DOWN, axis=1)[:r1 - r, :w]
+            full = upsample(rows, r1 - r, w)
             np.subtract(full, g.astype(np.float32), out=full)
             g = full.astype(np.int16)
         np.clip(g, 0, 255, out=g)
         out[r:r1] = g.astype(np.uint8)
+
+    if fill_px > 0:
+        # Priemerná tmavosť v okolí namiesto tmavosti pixela. Počíta sa na
+        # tom istom 8× zmenšení ako pozadie – pole hustoty je hladké, na
+        # jemnejšej mriežke vyzerá rovnako. Obrys je potom odkrokovaný po
+        # 8 px, čo Chaikin zahladí; komu ide o súvislé plochy, tomu to
+        # nevadí, a komu ide o detail, ten `fill` nezapína.
+        out = upsample(box_mean(block_mean(out, BG_DOWN),
+                                max(1, int(round(fill_px / BG_DOWN / 2)))),
+                       h, w).astype(np.uint8)
     return out, gray
 
 
@@ -529,7 +589,8 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
     res = tile_res(z)
     w_px = (x1 - x0) * TILE
     local_px = args.local_px
-    pad_tiles = int(math.ceil((local_px / 2.0) / TILE)) + (1 if args.blur else 0)
+    pad_tiles = (int(math.ceil(max(local_px, args.fill_px) / 2.0 / TILE))
+                 + (1 if args.blur else 0))
     rows_per_band = max(1, int(args.band_cells // max(1, w_px * TILE)))
     tifs = []
     t0 = time.time()
@@ -543,7 +604,7 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
         py0, py1 = max(y0, ty - pad_tiles), min(y1, ty1 + pad_tiles)
         gray = load_band(fetcher, z, x0, x1, py0, py1)
         score, blurred = score_band(gray, args.dark, args.dark_always,
-                                    local_px, args.rel, args.blur)
+                                    local_px, args.rel, args.blur, args.fill_px)
         del gray
         top = (ty - py0) * TILE
         bot = top + (ty1 - ty) * TILE
@@ -791,6 +852,9 @@ def print_plan(z, x0, y0, x1, y1, args):
              f"(okno {args.local:g} m = {args.local_px} px)"
              if args.local_px else ", bez miestneho pozadia"))
     print(f"  triedy          steep, cliff od {args.cliff} stupňov navyše")
+    print("  štruktúra       " + (f"vyplnená, okno {args.fill:g} m "
+                                  f"({args.fill_px} px)" if args.fill_px
+                                  else "jemná sieť žliabkov (fill vypnuté)"))
     print(f"  odhad sťahovanie ~{hms(dl_s)}")
     print(f"  odhad obrysy     ~{hms(ct_s)}")
     print("─────────────────────────────────────────────────────", flush=True)
@@ -849,13 +913,16 @@ def main():
                     help="o koľko stupňov tmavšie začína trieda `cliff`")
     ap.add_argument("--blur", type=int, default=1,
                     help="polomer vyhladenia šedej v px (0 = vypnuté, max 2)")
-    ap.add_argument("--min-area", type=float, default=200.0,
+    ap.add_argument("--fill", type=float, default=0.0,
+                    help="spriemerovať tmavosť v okne toľkých METROV – zo "
+                         "siete žliabkov spraví súvislú plochu (0 = vypnuté)")
+    ap.add_argument("--min-area", type=float, default=50.0,
                     help="najmenšia skalná plocha v m²")
-    ap.add_argument("--min-hole", type=float, default=50.0,
+    ap.add_argument("--min-hole", type=float, default=10.0,
                     help="najmenšia diera, ktorá sa zachová, v m²")
     ap.add_argument("--simplify", type=float, default=-1,
-                    help="zjednodušenie obrysu v metroch (-1 = polovica pixela)")
-    ap.add_argument("--smooth", type=int, default=2,
+                    help="zjednodušenie obrysu v metroch (-1 = jeden pixel)")
+    ap.add_argument("--smooth", type=int, default=1,
                     help="koľkokrát zaobliť rohy (Chaikin, 0 = vypnuté)")
     ap.add_argument("--jobs", type=int, default=12, help="paralelné sťahovanie")
     ap.add_argument("--cache-dir", default="tiles-cache")
@@ -894,6 +961,8 @@ def main():
     # známy zoom. Vďaka tomu má to isté nastavenie na z17 aj z18 rovnaký zmysel.
     args.local_px = (int(round(args.local / ground_res(z, lat_mid)))
                      if args.local > 0 else 0)
+    args.fill_px = (int(round(args.fill / ground_res(z, lat_mid)))
+                    if args.fill > 0 else 0)
     x0, y0, x1, y1 = tile_range(args.bbox, z)
     n_tiles, cells = print_plan(z, x0, y0, x1, y1, args)
     if n_tiles > args.max_tiles:
@@ -903,10 +972,11 @@ def main():
         return 2
 
     if args.simplify < 0:
-        # Pol pixela, nie štvrtina ako pri skalách z DEM: zdroj je 8-bitový
-        # JPEG, takže pod pixel je už len zrno kompresie. Ostré rohy, ktoré
-        # po zjednodušení ostanú, zaobli Chaikin (`--smooth`).
-        args.simplify = tile_res(z) / 2.0
+        # Jeden pixel, nie štvrtina ako pri skalách z DEM: zdroj je 8-bitový
+        # JPEG, takže pod pixel je už len zrno kompresie. Namerané na
+        # skutočnej dlaždici (viď hlavičku súboru) – pol pixela a 2× Chaikin
+        # stáli dvojnásobok dát za obrys, ktorý vyzerá rovnako.
+        args.simplify = tile_res(z)
 
     tmp = os.path.abspath(args.out) + ".work"
     shutil.rmtree(tmp, ignore_errors=True)
@@ -951,7 +1021,13 @@ def main():
     print(f"  spolu           {total_km2:.2f} km², "
           f"najväčšia {st.get('max_m2', 0) / 1e4:.1f} ha")
     print(f"  diery           {st.get('holes', 0)}")
-    print(f"  výstup          {args.out} ({dir_mb(args.out):.1f} MB)")
+    # Koľko dát na km² skál. To je to číslo, ktoré rozhoduje, či sa vrstva
+    # zmestí do rozpočtu mapy – nie počet plôch. Jemná sieť žliabkov má málo
+    # útvarov a veľa bodov.
+    out_mb = dir_mb(args.out)
+    per_km2 = out_mb / total_km2 if total_km2 > 0.001 else 0.0
+    print(f"  výstup          {args.out} ({out_mb:.1f} MB"
+          + (f", {per_km2:.1f} MB na km² skál)" if per_km2 else ")"))
     print(f"  čas             sťahovanie {hms(dl_s)}, tmavosť {hms(sc_s)}, "
           f"vektor {hms(vec_s)}, spolu {hms(time.time() - t_all)}")
     print("─────────────────────────────────────────────────────", flush=True)
@@ -976,6 +1052,8 @@ def main():
                 ("local_m", f"{args.local:g}"), ("local_px", args.local_px),
                 ("rel", args.rel),
                 ("cliff_delta", args.cliff), ("blur", args.blur),
+                ("fill_m", f"{args.fill:g}"),
+                ("out_mb", f"{out_mb:.1f}"), ("mb_per_km2", f"{per_km2:.1f}"),
                 ("min_area_m2", f"{args.min_area:g}"),
                 ("min_hole_m2", f"{args.min_hole:g}"),
                 ("simplify_m", f"{args.simplify:.2f}"), ("smooth", args.smooth),

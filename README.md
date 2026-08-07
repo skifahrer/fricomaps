@@ -375,8 +375,40 @@ prstenec (namerané na skúšobných dátach).
 **Svetlé miesto vnútri tmavej plochy ostane dierou** – polica, sneh,
 kosodrevina. Presne ako pri skalách z DEM, a z toho istého dôvodu: pásmo
 `gdal_contour -p` má vnútorné prstence tam, kde hodnota klesla pod prah.
-Zahadzujú sa len dierky menšie než `min_hole` (default 50 m²), čo je zrno
+Zahadzujú sa len dierky menšie než `min_hole` (default 10 m²), čo je zrno
 JPEGu, nie polica.
+
+##### Čo ukázala skutočná dlaždica
+
+Predvolené hodnoty nie sú odhad – sú namerané na výreze z tej vrstvy
+(1260×1933 px, Vysoké Tatry):
+
+- **Je to farebný hillshade, nie šedý.** Žltozelený nádych, tiene ťahajú do
+  modra (sýtosť ~34, `B−R` od −95 do +50). Čítame ho ako jas (luma 601), kde
+  modrý kanál váži najmenej – modré tiene sa tým ešte prehĺbia, čo nám
+  vyhovuje. Farba ako druhý, nezávislý signál zatiaľ použitá **nie je**.
+- **Rozloženie jasu:** medián 176, 20. percentil 135, 10. percentil 107.
+  Prah `dark = 125` z toho odkrojí ~16 % plochy a sedí na skalnatý terén.
+- **Tmavé nie je plocha, ale sieť.** Tmavé miesta nie sú súvislé steny, ale
+  hustá sieť žliabkov, ryhiek a mikrotieňov v rozčlenenom teréne. Táto jemná
+  štruktúra je to, čo chceme – nie vyplnená klaksa. Kto chce súvislé plochy,
+  zapne `options: fill=40` (spriemeruje tmavosť v okne 40 m); štandardne je
+  to **vypnuté**.
+- **Sieť je pospájaná**, takže počet útvarov neexploduje – 16 útvarov pokrylo
+  15 % výrezu. Explodujú **body**: pri z18 to vyšlo na ~2 MB GeoPackage na km²
+  skalnatého terénu. Toto číslo píše beh do súhrnu (`MB na km² skál`), lebo
+  práve ono rozhoduje, či sa vrstva zmestí do rozpočtu mapy.
+- **Odtiaľ sú predvolené filtre.** Merané na tom istom výreze:
+
+  | nastavenie | plôch | dier | dáta |
+  |---|--:|--:|--:|
+  | `min_area 200`, `min_hole 50`, simplify ½ px, Chaikin 2× | 16 | 89 | 3,95 MB/km² |
+  | **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
+
+  Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
+  polovičné dáta**: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
+  aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
+  útvary, o ktoré ide.
 
 **Prvý beh je ladiaci.** Predvolené prahy sú kvalifikovaný odhad, nie
 nameraná hodnota – tá dlaždicová vrstva sa nedá ochutnať dopredu. Beh preto
