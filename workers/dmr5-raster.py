@@ -84,6 +84,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 RASTER_EXT = (".tif", ".tiff", ".img", ".vrt", ".dem")
 SIDECAR = (".ovr", ".aux.xml", ".xml", ".tfw", ".prj", ".rrd")
 
+# Keď sa georeferencia skladá z `.tfw`, projekcia v ňom nie je – `.tfw` nesie
+# len čísla. Archív sa volá `sjtsk03`, čo je Krovák East North.
+FALLBACK_EPSG = 8353
+
 GDAL_ENV = {
     **os.environ,
     # Bez PAM by si gdalinfo -stats odkladal .aux.xml vedľa výstupov a tie by
@@ -262,7 +266,41 @@ def tiff_layout(url, entry, log, timeout=60):
     return {"kind": kind, "ifd": ifd, "size": size, "share": share}
 
 
-def probe(vsi, log, timeout=900, no_sidecars=False):
+def read_tfw(url, entry, log, timeout=60):
+    """World file: 6 čísel, ktoré georeferencujú raster aj bez jeho hlavičky.
+
+        pixel_x, rotácia, rotácia, pixel_y (záporný), stred ľavého horného
+        pixela X, ten istý Y
+
+    Kvôli tomuto sa dá `.ovr` použiť aj vtedy, keď sa hlavný raster vôbec
+    neotvorí: veľkosť pixela z `.tfw` × pomer zmenšenia dá mriežku pyramídy
+    a roh je ten istý. Bez `.tfw` by sme parametre museli vziať z rodiča –
+    a práve k nemu sa nedostaneme.
+    """
+    try:
+        rz = load_remote_zip().RemoteZip(url, timeout=timeout, verbose=False)
+        txt = rz.head(entry, 4096).decode("ascii", "replace")
+    except Exception as exc:
+        log(f"::warning::`{entry['name']}` sa nedá prečítať: {exc}")
+        return None
+    vals = []
+    for line in txt.splitlines():
+        line = line.strip().replace(",", ".")
+        if not line:
+            continue
+        try:
+            vals.append(float(line))
+        except ValueError:
+            break
+    if len(vals) < 6:
+        log(f"::warning::`{entry['name']}` nemá 6 čísel ({len(vals)}).")
+        return None
+    log(f"  world file: pixel {vals[0]}×{abs(vals[3])} m, "
+        f"ľavý horný pixel v {vals[4]:.1f}, {vals[5]:.1f}")
+    return vals[:6]
+
+
+def probe(vsi, log, timeout=900, no_sidecars=False, expect_bytes=None):
     """Hlavička rastra. Nad rozumne uloženým súborom je to pár stoviek kB.
 
     `timeout` tu nie je z opatrnosti: keď je IFD na konci deflate člena,
@@ -277,8 +315,13 @@ def probe(vsi, log, timeout=900, no_sidecars=False):
         # drahý niektorý z NICH, vyzeralo by to ako problém hlavného súboru.
         env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
     try:
-        r = subprocess.run(["gdalinfo", "-json", vsi], check=True, env=env,
-                           capture_output=True, text=True, timeout=timeout)
+        # Heartbeat AJ tu. Beh 31197330753 strávil 87 minút práve v tomto
+        # jednom `gdalinfo` a v logu nebolo nič – heartbeat vtedy strážil len
+        # kroky po sonde. Otvorenie súboru je pritom presne to miesto, kde sa
+        # to zaseklo.
+        with Heartbeat("otváranie rastra", expect_bytes=expect_bytes):
+            r = subprocess.run(["gdalinfo", "-json", vsi], check=True, env=env,
+                               capture_output=True, text=True, timeout=timeout)
         info = json.loads(r.stdout)
     except subprocess.TimeoutExpired:
         log(f"::error::`gdalinfo` sa neozval ani za {timeout / 60:.0f} min. "
@@ -321,15 +364,25 @@ def probe(vsi, log, timeout=900, no_sidecars=False):
 
 
 def find_sidecar(plan_path, member, suffix):
-    """Nájde v pláne `<member><suffix>` a vráti jeho veľkosť, alebo None."""
+    """Nájde v pláne sidecar k `member` a vráti jeho položku, alebo None.
+
+    Skúša OBE konvencie, lebo sa v jednom archíve miešajú:
+      `dmr5_jtsk03.tif` + `.ovr` → `dmr5_jtsk03.tif.ovr`   (prípona sa PRIDÁ)
+      `dmr5_jtsk03.tif` + `.tfw` → `dmr5_jtsk03.tfw`       (prípona sa NAHRADÍ)
+    World file je vždy ten druhý prípad – a práve o neho sa opiera záchranná
+    cesta cez pyramídy.
+    """
     try:
         plan = json.load(open(plan_path))
     except (OSError, ValueError):
         return None
-    want = (member + suffix).lower()
-    for e in plan.get("entries") or []:
-        if e["name"].lower() == want:
-            return e
+    wants = [(member + suffix).lower()]
+    if suffix:
+        wants.append((os.path.splitext(member)[0] + suffix).lower())
+    for want in wants:
+        for e in plan.get("entries") or []:
+            if e["name"].lower() == want:
+                return e
     return None
 
 
@@ -455,6 +508,90 @@ def clamp_to_raster(box, info, pad_px, log):
     if (w, s, e, n) != tuple(box):
         log(f"  orezané na rozsah rastra: {w:.0f},{s:.0f} … {e:.0f},{n:.0f}")
     return w, s, e, n
+
+
+def ovr_fallback(url, member, work, log, plan_path, timeout):
+    """Keď sa hlavný raster NEOTVORÍ, skús pyramídy samotné.
+
+    Toto nie je optimalizácia, ale záchrana. Beh 31197330753 strávil 87 minút
+    v jedinom `gdalinfo` nad hlavným rastrom a neotvoril ho – zato `.ovr` má
+    46 GB namiesto 151 GB, takže má trikrát väčšiu šancu prejsť.
+
+    Georeferencia nemôže prísť z rodiča (ten sa neotvára), tak sa poskladá
+    z `.tfw`: veľkosť pixela × pomer zmenšenia a ten istý ľavý horný roh.
+    Výsledok je model s hrubšou mriežkou – ale hotový model je viac než
+    dokonalý model, ktorý sa nikdy nedopočíta.
+    """
+    side = find_sidecar(plan_path, member, ".ovr")
+    tfw = find_sidecar(plan_path, member, ".tfw")
+    if not side:
+        log("::error::Hlavný raster sa neotvoril a `.ovr` v archíve nie je – "
+            "iná cesta odtiaľto nevedie.")
+        return None, None, None
+    if not tfw:
+        log("::error::Hlavný raster sa neotvoril a bez `.tfw` sa `.ovr` nedá "
+            "georeferencovať.")
+        return None, None, None
+
+    log("Skúšam to obísť pyramídami – hlavný raster sa neotvoril.")
+    w = read_tfw(url, tfw, log, timeout=60)
+    if not w:
+        return None, None, None
+
+    vsi = vsi_path(url, side["name"])
+    env = dict(GDAL_ENV, GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR")
+    try:
+        with Heartbeat("otváranie pyramíd", expect_bytes=side["csize"]):
+            r = subprocess.run(["gdalinfo", "-json", vsi], check=True, env=env,
+                               capture_output=True, text=True, timeout=timeout)
+        oi = json.loads(r.stdout)
+    except subprocess.TimeoutExpired:
+        log(f"::error::Ani `.ovr` sa neotvorilo za {timeout / 60:.0f} min. "
+            "Tento archív sa cez /vsizip//vsicurl/ čítať nedá.")
+        return None, None, None
+    except subprocess.CalledProcessError as exc:
+        log(f"::error::`.ovr` sa nedá otvoriť: {(exc.stderr or '')[:300]}")
+        return None, None, None
+
+    ow, oh = oi["size"]
+    # `.tfw` popisuje rodiča; prvá úroveň pyramídy je zmenšenina, a pomer
+    # zistíme z rozmerov – tie z rodiča nepoznáme, tak berieme štandardné 2×
+    # a overíme to na rozsahu (Slovensko má ~450 × 250 km).
+    px, py = abs(w[0]), abs(w[3])
+    factor = 2.0
+    span_km = ow * px * factor / 1000.0
+    log(f"  pyramída {ow}×{oh} px; pri zmenšení {factor:g}× to je mriežka "
+        f"{px * factor:g} m a šírka {span_km:.0f} km")
+    if not (200 <= span_km <= 900):
+        log(f"::warning::Šírka {span_km:.0f} km nesedí na Slovensko – "
+            f"georeferencia pyramídy môže byť posunutá.")
+
+    ulx = w[4] - px / 2.0          # .tfw dáva STRED pixela, GDAL chce roh
+    uly = w[5] + py / 2.0
+    lrx = ulx + ow * px * factor
+    lry = uly - oh * py * factor
+    os.makedirs(work, exist_ok=True)
+    vrt = os.path.join(work, "ovr-fallback.vrt")
+    run(["gdal_translate", "-q", "-of", "VRT",
+         "-a_srs", f"EPSG:{FALLBACK_EPSG}",
+         "-a_ullr", repr(ulx), repr(uly), repr(lrx), repr(lry), vsi, vrt])
+    info = json.loads(run(["gdalinfo", "-json", vrt]).stdout)
+    out = {
+        "size": info["size"],
+        "geoTransform": info["geoTransform"],
+        "wkt": (info.get("coordinateSystem") or {}).get("wkt", ""),
+        "pixel": [abs(info["geoTransform"][1]), abs(info["geoTransform"][5])],
+        "type": info["bands"][0]["type"],
+        "block": info["bands"][0].get("block"),
+        "nodata": info["bands"][0].get("noDataValue"),
+        "compression": None,
+        "crs": f"EPSG:{FALLBACK_EPSG} (dolepené z .tfw)",
+        "overviews": [o.get("size") for o in info["bands"][0].get("overviews", [])],
+        "seconds": 0,
+    }
+    log(f"::warning::Ide sa z pyramíd – najjemnejšia dostupná mriežka je "
+        f"{px * factor:g} m, nie {px:g} m.")
+    return vrt, side["csize"], out
 
 
 def degrees_per_metre(lat):
@@ -621,7 +758,9 @@ def main(argv=None):
     # (napr. `.ovr` so 46 GB), vyzeralo by to ako problém hlavného súboru –
     # a my ich aj tak otvárame sami, výslovne.
     t0 = time.time()
-    info = probe(vsi, log, timeout=args.probe_timeout, no_sidecars=True)
+    forced = None
+    info = probe(vsi, log, timeout=args.probe_timeout, no_sidecars=True,
+                 expect_bytes=main_entry["csize"] if main_entry else None)
     if info is not None:
         log(f"  otvorené bez sidecarov za {time.time() - t0:.0f} s")
         gt = info["geoTransform"]
@@ -632,10 +771,17 @@ def main(argv=None):
                 "sidecarmi (.tfw / .aux.xml).")
             info = probe(vsi, log, timeout=args.probe_timeout)
     if info is None:
-        log("::error::Raster sa nepodarilo otvoriť. Ak je vyššie vidieť, že "
-            "adresár dlaždíc leží hlboko v súbore, je to tá príčina – a rieši "
-            "sa to čítaním z pyramíd (`.ovr`), nie čakaním.")
-        return 3
+        # Hlavný raster sa neotvoril. Namiesto toho, aby beh skončil naprázdno,
+        # skúsime pyramídy – majú 46 GB namiesto 151 GB. Model s hrubšou
+        # mriežkou je viac než žiadny model.
+        forced, expect_fb, info = ovr_fallback(
+            args.url, member, args.work, log, args.plan, args.probe_timeout)
+        if info is None:
+            log("::error::Raster sa nepodarilo otvoriť ani cez pyramídy. "
+                "Ak je vyššie vidieť, že adresár dlaždíc leží hlboko v súbore, "
+                "je to tá príčina: člen ZIPu je deflate, takže sa GDAL k nemu "
+                "dostane len rozbalením všetkého pred ním.")
+            return 3
     if args.github_output:
         with open(args.github_output, "a") as f:
             f.write(f"member={member}\n")
@@ -653,9 +799,18 @@ def main(argv=None):
         # Z čoho sa bude čítať – hlavný raster, alebo pyramídy. Pri 151 GB vs
         # 46 GB je to tá jediná vec, ktorá rozhoduje o dĺžke behu, tak nech
         # je v logu vidieť, čo sa vybralo a prečo.
-        src, expect = (None, None) if args.no_ovr else ovr_source(
-            args.url, member, info, args.grid_m, args.work, log, args.plan,
-            args.probe_timeout)
+        if forced:
+            # Hlavný raster sa neotvoril, ideme z pyramíd – nie je z čoho
+            # vyberať a jemnejšie než ich mriežka to nepôjde.
+            src, expect = forced, expect_fb
+            if args.grid_m < info["pixel"][0]:
+                log(f"::warning::Vypýtaná mriežka {args.grid_m} m je jemnejšia "
+                    f"než pyramída ({info['pixel'][0]:g} m) – výsledok bude "
+                    f"interpolovaný, nová informácia v ňom nepribudne.")
+        else:
+            src, expect = (None, None) if args.no_ovr else ovr_source(
+                args.url, member, info, args.grid_m, args.work, log, args.plan,
+                args.probe_timeout)
         if src is None:
             src = vsi
             main_entry = find_sidecar(args.plan, member, "")

@@ -907,9 +907,18 @@ assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
   konci – a zapisovatelia ho tam bežne dávajú – GDAL sa k nemu prehryzie len
   rozbalením celého člena, teda 151 GB ešte pred prvým pixelom. Nad obyčajným
   súborom je to jedno, `fseek` na koniec je zadarmo; v deflate člene ZIPu nie.
-  Beh 31191478190 sa zasekol presne tu a v logu boli dva riadky a potom nič.
-  Teraz sa offset IFD hlavného rastra aj `.ovr` prečíta a vypíše ako prvé
-  a `gdalinfo` má strop (`--probe-timeout`, predvolene 15 min).
+  Behy 31191478190 a 31197330753 sa zasekli presne tu; ten druhý po 87
+  minútach ticha skončil s `Terminate orphan process: pid (2977) (gdalinfo)`,
+  teda `gdalinfo` stále bežal a nedostal sa ani k prvému pixelu. Teraz sa
+  offset IFD hlavného rastra aj `.ovr` prečíta a vypíše ako prvé, `gdalinfo`
+  má strop (`--probe-timeout`, predvolene 15 min) a beží pod ním heartbeat.
+- **Keď sa hlavný raster neotvorí, ide sa cez pyramídy.** `.ovr` má 46 GB
+  namiesto 151 GB. Georeferencia sa poskladá z `.tfw` (veľkosť pixela ×
+  pomer zmenšenia, ten istý ľavý horný roh) – z rodiča prísť nemôže, ten sa
+  neotvára. Overené, že to dá rovnaký `geoTransform` aj rovnaké výšky ako
+  cesta cez rodiča. Cena je rozlíšenie: z pyramíd je najjemnejšie 2 m.
+  Pri hľadaní sidecarov sa skúšajú obe konvencie – `.tif.ovr` (prípona sa
+  pridá) aj `.tfw` (prípona sa nahradí); world file je vždy ten druhý prípad.
 - **Sonda ide bez sidecarov.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR` len
   pri sonde: keby bol drahý niektorý zo sidecarov (`.ovr` má 46 GB), vyzeralo
   by to ako problém hlavného súboru. Keď sa ukáže, že raster nemá
