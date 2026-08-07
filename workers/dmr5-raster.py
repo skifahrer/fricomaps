@@ -51,6 +51,14 @@ Z toho plynú pravidlá, podľa ktorých je tento script napísaný:
      inak v logu úplne ticho (GDAL kreslí percentá cez `\\r`, čo sa v logu
      GitHub Actions neobjaví). Heartbeat vypisuje prenesené bajty zo
      sieťovky, rýchlosť a odhad zvyšku.
+  6. NAJPRV 16 BAJTOV, POTOM GDAL. Hlavička TIFFu nesie offset adresára
+     dlaždíc (IFD) a ten rozhoduje o všetkom: keď je na začiatku, súbor sa
+     otvorí za sekundu; keď je na konci, GDAL sa k nemu prehryzie len
+     rozbalením celého člena – teda 151 GB ešte pred prvým pixelom. Beh
+     31191478190 sa zasekol presne tu a v logu nebolo nič, z čoho by sa to
+     dalo zistiť. Teraz sa tých 16 bajtov prečíta ako prvé a `gdalinfo` má
+     strop (`--probe-timeout`), aby beh skončil s vysvetlením a nie po
+     šiestich hodinách bez slova.
 
 Použitie:
     python3 workers/dmr5-raster.py --url=URL --area=cele --grid-m=5 --out=tiles
@@ -59,9 +67,11 @@ Použitie:
     python3 workers/dmr5-raster.py --url=URL --probe-only
 """
 import argparse
+import importlib.util
 import json
 import math
 import os
+import struct
 import subprocess
 import sys
 import threading
@@ -202,11 +212,80 @@ def pick_member(plan_path, explicit):
     return best["name"]
 
 
-def probe(vsi, log):
-    """Hlavička rastra. Číta pár stoviek kB, aj keď má súbor 151 GB."""
-    t0 = time.time()
+def load_remote_zip():
+    spec = importlib.util.spec_from_file_location(
+        "zip_remote", os.path.join(_HERE, "zip-remote.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def tiff_layout(url, entry, log, timeout=60):
+    """Kde v TIFFe leží adresár dlaždíc (IFD). Číta 16 BAJTOV.
+
+    Toto je tá otázka, ktorá rozhoduje, či sa súbor otvorí za sekundu alebo
+    za hodiny. Hlavička TIFFu nesie offset prvého IFD, a v ňom sú offsety
+    všetkých dlaždíc. Keď je IFD na začiatku, GDAL ho prečíta hneď. Keď je na
+    konci – a zapisovatelia ho tam bežne dávajú, lebo počas zápisu ešte
+    nevedia, kde dlaždice skončia – musí sa k nemu GDAL prehrýzť.
+
+    Nad obyčajným súborom je to jedno: `fseek` na koniec je zadarmo. Ale
+    člen ZIPu zabalený deflate-om sa preskakovať NEDÁ, dá sa doň len rozbaliť
+    od začiatku. IFD na konci 151 GB člena teda znamená, že samotné OTVORENIE
+    súboru rozbalí celých 151 GB – ešte pred prvým pixelom.
+
+    Vracia dict alebo None (keď sa hlavička nedá prečítať).
+    """
     try:
-        info = json.loads(run(["gdalinfo", "-json", vsi]).stdout)
+        rz = load_remote_zip().RemoteZip(url, timeout=timeout, verbose=False)
+        head = rz.head(entry, 64)
+    except Exception as exc:
+        log(f"::warning::Hlavičku `{entry['name']}` sa nepodarilo prečítať: {exc}")
+        return None
+    if len(head) < 16 or head[:2] not in (b"II", b"MM"):
+        log(f"  `{entry['name']}`: nezačína ako TIFF ({head[:4]!r})")
+        return None
+    end = "<" if head[:2] == b"II" else ">"
+    magic = struct.unpack(end + "H", head[2:4])[0]
+    if magic == 42:
+        kind, ifd = "TIFF", struct.unpack(end + "I", head[4:8])[0]
+    elif magic == 43:
+        kind, ifd = "BigTIFF", struct.unpack(end + "Q", head[8:16])[0]
+    else:
+        log(f"  `{entry['name']}`: neznáme magické číslo {magic}")
+        return None
+    size = entry["usize"] or 1
+    share = 100.0 * ifd / size
+    log(f"  {kind}, {'little' if end == '<' else 'big'}-endian, "
+        f"adresár dlaždíc (IFD) na offsete {ifd:,} z {size:,} "
+        f"= {share:.1f} % súboru")
+    return {"kind": kind, "ifd": ifd, "size": size, "share": share}
+
+
+def probe(vsi, log, timeout=900, no_sidecars=False):
+    """Hlavička rastra. Nad rozumne uloženým súborom je to pár stoviek kB.
+
+    `timeout` tu nie je z opatrnosti: keď je IFD na konci deflate člena,
+    `gdalinfo` sa nezasekne – on poctivo rozbaľuje 151 GB a vráti sa o pár
+    hodín. To je horšie než chyba, lebo to vyzerá rovnako ako zamrznutie.
+    Radšej to zastaviť a povedať prečo.
+    """
+    t0 = time.time()
+    env = dict(GDAL_ENV)
+    if no_sidecars:
+        # Bez tohto GDAL pri otváraní hľadá .ovr, .aux.xml, .tfw… a keby bol
+        # drahý niektorý z NICH, vyzeralo by to ako problém hlavného súboru.
+        env["GDAL_DISABLE_READDIR_ON_OPEN"] = "EMPTY_DIR"
+    try:
+        r = subprocess.run(["gdalinfo", "-json", vsi], check=True, env=env,
+                           capture_output=True, text=True, timeout=timeout)
+        info = json.loads(r.stdout)
+    except subprocess.TimeoutExpired:
+        log(f"::error::`gdalinfo` sa neozval ani za {timeout / 60:.0f} min. "
+            f"Súbor sa neotvára – nie je to pomalá sieť, ale to, že sa GDAL "
+            f"k adresáru dlaždíc dostane len rozbalením celého člena archívu. "
+            f"Pozri offset IFD vyššie.")
+        return None
     except subprocess.CalledProcessError as exc:
         log("::error::Raster sa nedá otvoriť cez /vsizip//vsicurl/: "
             f"{(exc.stderr or '').strip()[:400]}")
@@ -233,7 +312,9 @@ def probe(vsi, log):
         f"mriežka {out['pixel'][0]}×{out['pixel'][1]}, {out['type']}")
     log(f"  CRS {out['crs']}, kompresia {out['compression']}, "
         f"dlaždica {out['block']}, nodata {out['nodata']}")
-    note = ovr if ovr else "(žiadne – prevzorkovanie prečíta plnú veľkosť)"
+    # Pri vypnutom readdir sú tu vždy nuly – pyramídy si otvárame sami
+    # (viď ovr_source), takže to nie je zlá správa.
+    note = ovr if ovr else "(GDAL ich tu nevidí; .ovr otvárame sami)"
     log(f"  prehľadových úrovní: {len(ovr)} {note}")
     log(f"  hlavička prečítaná za {out['seconds']} s")
     return out
@@ -252,7 +333,7 @@ def find_sidecar(plan_path, member, suffix):
     return None
 
 
-def ovr_source(url, member, info, grid_m, work, log, plan_path):
+def ovr_source(url, member, info, grid_m, work, log, plan_path, timeout=900):
     """Keď je cieľ hrubší než zdroj, čítaj z pyramíd (.ovr), nie zo samotného
     rastra.
 
@@ -277,8 +358,15 @@ def ovr_source(url, member, info, grid_m, work, log, plan_path):
         return None, None
 
     vsi = vsi_path(url, side["name"])
+    env = dict(GDAL_ENV, GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR")
     try:
-        oi = json.loads(run(["gdalinfo", "-json", vsi]).stdout)
+        r = subprocess.run(["gdalinfo", "-json", vsi], check=True, env=env,
+                           capture_output=True, text=True, timeout=timeout)
+        oi = json.loads(r.stdout)
+    except subprocess.TimeoutExpired:
+        log(f"::warning::`{side['name']}` sa neotvoril ani za "
+            f"{timeout / 60:.0f} min – čítam plný raster.")
+        return None, None
     except subprocess.CalledProcessError as exc:
         log(f"::warning::`{side['name']}` sa nedá otvoriť ({(exc.stderr or '')[:160]}) "
             f"– čítam plný raster.")
@@ -492,6 +580,8 @@ def main(argv=None):
     ap.add_argument("--debug", action="store_true",
                     help="CPL_DEBUG=ON – každá požiadavka do logu. Len na "
                          "krátke behy, pri 151 GB je toho milión riadkov.")
+    ap.add_argument("--probe-timeout", type=float, default=900,
+                    help="sekundy, koľko sa čaká na otvorenie rastra")
     ap.add_argument("--summary", default="")
     ap.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
     args = ap.parse_args()
@@ -511,8 +601,40 @@ def main(argv=None):
     log(f"Položka v archíve: {member}")
     log(f"Cesta pre GDAL:    {vsi}")
 
-    info = probe(vsi, log)
+    # ---- lacná diagnostika PRED tým, než sa pustí GDAL ----
+    # 16 bajtov z každého súboru povie, či sa vôbec dá otvoriť rozumne rýchlo.
+    # Beh 31191478190 sa zasekol presne tu a v logu nebolo nič, z čoho by sa
+    # to dalo zistiť.
+    log("Rozloženie rastrov v archíve (16 bajtov z každého):")
+    main_entry = find_sidecar(args.plan, member, "")
+    ovr_entry = find_sidecar(args.plan, member, ".ovr")
+    lay = tiff_layout(args.url, main_entry, log) if main_entry else None
+    lay_ovr = tiff_layout(args.url, ovr_entry, log) if ovr_entry else None
+    for name, l in (("hlavný raster", lay), ("pyramídy", lay_ovr)):
+        if l and l["share"] > 1.0:
+            log(f"::warning::{name}: adresár dlaždíc je až na {l['share']:.0f} % "
+                f"súboru. Člen ZIPu je deflate, takže sa k nemu GDAL dostane "
+                f"len rozbalením všetkého pred ním – otvorenie samo o sebe "
+                f"prečíta ~{l['ifd'] / 1e9:.1f} GB.")
+
+    # Sondu púšťame BEZ hľadania sidecarov. Keby bol drahý niektorý z nich
+    # (napr. `.ovr` so 46 GB), vyzeralo by to ako problém hlavného súboru –
+    # a my ich aj tak otvárame sami, výslovne.
+    t0 = time.time()
+    info = probe(vsi, log, timeout=args.probe_timeout, no_sidecars=True)
+    if info is not None:
+        log(f"  otvorené bez sidecarov za {time.time() - t0:.0f} s")
+        gt = info["geoTransform"]
+        if gt[:6] == [0.0, 1.0, 0.0, 0.0, 0.0, 1.0] or not info["wkt"]:
+            # Georeferencia nie je v samotnom TIFFe – musí prísť z .tfw
+            # alebo .aux.xml, a tie GDAL nájde len s povoleným readdir.
+            log("Raster nemá georeferenciu v sebe – skúšam znova aj so "
+                "sidecarmi (.tfw / .aux.xml).")
+            info = probe(vsi, log, timeout=args.probe_timeout)
     if info is None:
+        log("::error::Raster sa nepodarilo otvoriť. Ak je vyššie vidieť, že "
+            "adresár dlaždíc leží hlboko v súbore, je to tá príčina – a rieši "
+            "sa to čítaním z pyramíd (`.ovr`), nie čakaním.")
         return 3
     if args.github_output:
         with open(args.github_output, "a") as f:
@@ -532,7 +654,8 @@ def main(argv=None):
         # 46 GB je to tá jediná vec, ktorá rozhoduje o dĺžke behu, tak nech
         # je v logu vidieť, čo sa vybralo a prečo.
         src, expect = (None, None) if args.no_ovr else ovr_source(
-            args.url, member, info, args.grid_m, args.work, log, args.plan)
+            args.url, member, info, args.grid_m, args.work, log, args.plan,
+            args.probe_timeout)
         if src is None:
             src = vsi
             main_entry = find_sidecar(args.plan, member, "")

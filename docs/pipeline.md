@@ -902,6 +902,19 @@ assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
   zvyšku a veľkosť výstupu. GDAL kreslí percentá cez `\r`, čo sa v logu
   GitHub Actions neobjaví, takže hodinový krok je inak úplne ticho a nedá sa
   odlíšiť od zaseknutého behu.
+- **Najprv 16 bajtov, potom GDAL.** Hlavička TIFFu nesie offset adresára
+  dlaždíc (IFD). Keď je na začiatku, súbor sa otvorí za sekundu; keď je na
+  konci – a zapisovatelia ho tam bežne dávajú – GDAL sa k nemu prehryzie len
+  rozbalením celého člena, teda 151 GB ešte pred prvým pixelom. Nad obyčajným
+  súborom je to jedno, `fseek` na koniec je zadarmo; v deflate člene ZIPu nie.
+  Beh 31191478190 sa zasekol presne tu a v logu boli dva riadky a potom nič.
+  Teraz sa offset IFD hlavného rastra aj `.ovr` prečíta a vypíše ako prvé
+  a `gdalinfo` má strop (`--probe-timeout`, predvolene 15 min).
+- **Sonda ide bez sidecarov.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR` len
+  pri sonde: keby bol drahý niektorý zo sidecarov (`.ovr` má 46 GB), vyzeralo
+  by to ako problém hlavného súboru. Keď sa ukáže, že raster nemá
+  georeferenciu v sebe, sonda sa zopakuje aj so sidecarmi (`.tfw`,
+  `.aux.xml`).
 - **Rozlíšenie stropuje release, nie zdroj.** Pri 1 m má jedna 1°×1° dlaždica
   ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
   rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m

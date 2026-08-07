@@ -467,6 +467,29 @@ Preto beh vypisuje **každých 30 sekúnd**, koľko už stiahol, akou rýchlosť
 a koľko odhadom ostáva — hodinový prechod cez 151 GB je inak v logu úplne
 ticho a nedá sa odlíšiť od zaseknutého behu.
 
+#### Najprv 16 bajtov, potom GDAL
+
+Je jedna vec, ktorá rozhodne o všetkom ešte pred prvým pixelom: **kde v TIFFe
+leží adresár dlaždíc (IFD)**. Hlavička TIFFu nesie jeho offset.
+
+| IFD | otvorenie súboru |
+|---|---|
+| na začiatku | prečíta pár stoviek kB, hotovo za sekundu |
+| na konci | GDAL sa k nemu dostane **len rozbalením celého člena** |
+
+Nad obyčajným súborom je to jedno — skok na koniec je zadarmo. Ale člen ZIPu
+zabalený deflate-om sa preskakovať nedá, dá sa doň len rozbaliť od začiatku.
+IFD na konci 151 GB člena teda znamená, že **samotné otvorenie prečíta
+151 GB**. A zapisovatelia ho tam bežne dávajú — počas zápisu ešte nevedia,
+kde dlaždice skončia.
+
+Beh [31191478190](https://github.com/skifahrer/fricomaps/actions/runs/31191478190)
+sa zasekol presne tu: v logu boli dva riadky a potom pol hodiny nič, lebo
+`gdalinfo` poctivo rozbaľovalo. Preto sa teraz **najprv prečíta 16 bajtov**
+z hlavného rastra aj z `.ovr`, offset IFD sa vypíše, a `gdalinfo` má strop
+(`--probe-timeout`, predvolene 15 min) — aby beh skončil s vysvetlením a nie
+po šiestich hodinách bez slova.
+
 **Rozlíšenie vs. územie.** Pri 1 m má jedna 1°×1° dlaždica ~48 GB, takže:
 
 | `area` | mriežka | výsledok | release | `dem_source` |
