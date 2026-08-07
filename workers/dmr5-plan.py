@@ -304,6 +304,31 @@ def describe_inventory(entries, log):
     return lines, top, ext
 
 
+# Sidecary sa neotvárajú samostatne – GDAL si ich nájde vedľa hlavného súboru.
+RASTER_EXT = (".tif", ".tiff", ".img", ".vrt", ".dem")
+SIDECAR = (".ovr", ".aux.xml", ".xml", ".tfw", ".prj", ".rrd")
+
+
+def dominant_raster(entries, share=0.5):
+    """Je archív v podstate jeden veľký raster? Vráti tú položku, alebo None.
+
+    „V podstate jeden" znamená, že jeden raster má aspoň polovicu bajtov –
+    zvyšok sú pyramídy, metadáta a licencie. Vtedy nemá zmysel deliť archív
+    po položkách; delí sa až samotný raster, a to vie GDAL sám.
+    """
+    total = sum(e["csize"] for e in entries) or 1
+    best = None
+    for e in entries:
+        low = e["name"].lower()
+        if any(low.endswith(s) for s in SIDECAR) or not low.endswith(RASTER_EXT):
+            continue
+        if best is None or e["csize"] > best["csize"]:
+            best = e
+    if best and best["csize"] / total >= share:
+        return best
+    return None
+
+
 def filter_names(entries, include, exclude, log):
     """Výber podľa priečinka alebo vzoru – bez toho, aby sa čítali dáta.
 
@@ -413,7 +438,25 @@ def main(argv=None):
         log(f"::warning::{nested} položiek sú vnorené ZIPy – rozbaľujú sa až "
             f"v spracovaní časti.")
 
-    oname, ofn, mapping, shown = calibrate(rz, entries, args.calibrate, log)
+    # Rozdeľovanie na časti dáva zmysel len vtedy, keď je archív z mnohých
+    # samostatných súborov. DMR 5.0 taký NIE JE: beh 31184095104 ukázal, že
+    # je to jeden 151 GB GeoTIFF (`dmr5_0/dmr5_jtsk03.tif`) plus 46 GB
+    # pyramíd a pár PDF. Jeden súvislý raster sa po položkách archívu deliť
+    # nedá – zato sa dá čítať priamo cez /vsizip//vsicurl/, čo robí
+    # workers/dmr5-raster.py.
+    main = dominant_raster(entries)
+    layout = "raster" if main else "points"
+    if main:
+        log(f"Archív je JEDEN raster: {main['name']} "
+            f"({human(main['csize'])} z {human(sum(e['csize'] for e in entries))})")
+        log("  → nekrája sa na časti, číta sa priamo cez /vsizip//vsicurl/")
+
+    # Kalibrácia hľadá výškové body v texte. Pri rastri by len minula čas
+    # a napísala varovanie o tom, že text nenašla – lebo tam žiadny nie je.
+    if layout == "raster":
+        oname, ofn, mapping, shown = None, None, None, []
+    else:
+        oname, ofn, mapping, shown = calibrate(rz, entries, args.calibrate, log)
 
     origins = {}
     if mapping:
@@ -434,7 +477,8 @@ def main(argv=None):
 
     # ---- výrez ----
     en_box = None
-    if area_bbox:
+    # Pri rastri výrez rieši gdalwarp v dmr5-raster.py – tu sa nefiltruje nič.
+    if area_bbox and layout == "points":
         if not mapping:
             # NIKDY nepokračovať „len tak" na celý archív. V behu 31182614668
             # sa presne to stalo: vypýtal si `vysoke_tatry`, poloha blokov sa
@@ -461,21 +505,27 @@ def main(argv=None):
             entries = keep
 
     entries.sort(key=lambda e: e["offset"])
-    chunk_bytes = int(args.chunk_mb * MB)
-    span_bytes = int((args.span_mb or args.chunk_mb * 3) * MB)
-    chunks = make_chunks(entries, chunk_bytes, span_bytes, args.max_chunks)
+    if layout == "raster":
+        chunks = []
+        total_c = main["csize"]
+        total_u = main["usize"]
+        total_span = 0
+    else:
+        chunk_bytes = int(args.chunk_mb * MB)
+        span_bytes = int((args.span_mb or args.chunk_mb * 3) * MB)
+        chunks = make_chunks(entries, chunk_bytes, span_bytes, args.max_chunks)
 
-    picked = {i for c in chunks for i in c["idx"]}
-    entries = [e for e in entries if e["i"] in picked]
-    total_c = sum(c["csize"] for c in chunks)
-    total_u = sum(c["usize"] for c in chunks)
-    total_span = sum(c["span"] for c in chunks)
-    log(f"Častí: {len(chunks)} — stiahne sa {human(total_span)} "
-        f"(dáta {human(total_c)} → rozbalené {human(total_u)})")
+        picked = {i for c in chunks for i in c["idx"]}
+        entries = [e for e in entries if e["i"] in picked]
+        total_c = sum(c["csize"] for c in chunks)
+        total_u = sum(c["usize"] for c in chunks)
+        total_span = sum(c["span"] for c in chunks)
+        log(f"Častí: {len(chunks)} — stiahne sa {human(total_span)} "
+            f"(dáta {human(total_c)} → rozbalené {human(total_u)})")
 
-    if len(chunks) > 256:
-        log(f"::warning::{len(chunks)} častí, ale `strategy.matrix` má strop "
-            f"256 jobov. Zväčši chunk_mb alebo zúž výrez.")
+        if len(chunks) > 256:
+            log(f"::warning::{len(chunks)} častí, ale `strategy.matrix` má strop "
+                f"256 jobov. Zväčši chunk_mb alebo zúž výrez.")
 
     plan = {
         "url": args.url,
@@ -485,6 +535,8 @@ def main(argv=None):
                  "bbox_wgs": list(area_bbox) if area_bbox else None,
                  "bbox_en": list(en_box) if en_box else None},
         "filter": {"include": args.include, "exclude": args.exclude},
+        "layout": layout,
+        "member": main["name"] if main else None,
         "orientation": oname,
         "name_mapping": mapping,
         "block_m": [bw, bh],
@@ -506,6 +558,8 @@ def main(argv=None):
         # a diakritiky. „cele“ znamená celé Slovensko a ide inou cestou.
         akey = re.sub(r"[^a-z0-9_]+", "-", args.area.strip().lower()) or "cele"
         with open(args.github_output, "a") as f:
+            f.write(f"layout={layout}\n")
+            f.write(f"member={main['name'] if main else ''}\n")
             f.write(f"area_key={akey}\n")
             f.write(f"whole_country={'true' if area_bbox is None else 'false'}\n")
             f.write(f"chunks={len(chunks)}\n")
@@ -524,12 +578,18 @@ def main(argv=None):
             f.write(f"| položiek v archíve | {len(raw)} |\n")
             f.write(f"| filter | `{args.include or '(všetko)'}` |\n")
             f.write(f"| položiek na spracovanie | {len(entries)} |\n")
-            f.write(f"| **stiahne sa** | **{human(total_span)}** "
-                    f"({100 * total_span / max(rz.size, 1):.1f} % archívu) |\n")
-            f.write(f"| rozbalené dáta | {human(total_u)} |\n")
-            f.write(f"| častí (jobov) | {len(chunks)} |\n")
-            f.write(f"| orientácia stĺpcov | {oname or '—'} |\n")
-            f.write(f"| blok | {bw or '?'}×{bh or '?'} m |\n")
+            f.write(f"| podoba archívu | {'jeden veľký raster' if main else 'súbory po blokoch'} |\n")
+            if main:
+                f.write(f"| hlavný raster | `{main['name']}` ({human(main['csize'])}) |\n")
+                f.write("| ako sa číta | priamo cez `/vsizip//vsicurl/`, "
+                        "bez sťahovania na disk |\n")
+            else:
+                f.write(f"| **stiahne sa** | **{human(total_span)}** "
+                        f"({100 * total_span / max(rz.size, 1):.1f} % archívu) |\n")
+                f.write(f"| rozbalené dáta | {human(total_u)} |\n")
+                f.write(f"| častí (jobov) | {len(chunks)} |\n")
+                f.write(f"| orientácia stĺpcov | {oname or '—'} |\n")
+                f.write(f"| blok | {bw or '?'}×{bh or '?'} m |\n")
             f.write(f"| čas plánu | {time.time() - t0:.0f} s |\n\n")
             if shown:
                 f.write("Prvé riadky ukážkovej položky:\n\n```\n"
