@@ -31,11 +31,20 @@ Build map                    deväť jobov, tie dlhé bežia súbežne:
                                assets   SDF sprity a glyfy
                                deploy   zloží _site ─► GitHub Pages
 
-Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 / DMR 5.0 ─► rezanie
+Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
                              N49E019.tif + meta.json
                              ▲ Build map ho zavolá automaticky, keď v release
                                nie je pre jeho územie ani jedna dlaždica
+
+Rozobrať DMR 5.0             184 GB ZIP z opendata.skgeodesy.sk čítaný
+(vedome, trvá hodiny)        po úsekoch cez HTTP Range:
+                               plan     centrálny adresár ─► zoznam častí
+                               chunk    N paralelných jobov, každý jeden
+                                        úsek ─► rastre ako artefakty
+                               assemble mozaika ─► release
+                             celé Slovensko (5 m) ─► `dem-dmr5`
+                             pohorie (1 m)        ─► `dem-ugkk`
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -317,7 +326,14 @@ Input **`dem_source`**:
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
 | **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
-| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | **nedá sa stiahnuť** |
+| **`dmr5`** | ÚGKK DMR 5.0 (LLS, otvorené dáta) | **5 m** | celý región | naplniť *Rozobrať DMR 5.0* |
+| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *Rozobrať DMR 5.0* |
+
+`dmr5` a `ugkk` sú **ten istý zdroj**, len inak nakrájaný: `dmr5` je celá
+krajina na hrubšej mriežke v dlaždiciach `N49E019.tif`, `ugkk` je jedno
+pohorie v plnom metrovom rozlíšení ako `ugkk-<vyrez>.tif`. Oba release plní
+workflow [*Rozobrať DMR 5.0*](#rozobrať-dmr-50-184-gb-cez-http-range) a ani
+jeden sa **nedopĺňa sám** – 184 GB archív nie je vedľajší účinok buildu mapy.
 
 **`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
 v pipeline.** Overené behom
@@ -350,9 +366,120 @@ potrebuje celý región, takže tam ostáva Sonny.)
 > dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
 > 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
 
+### Rozobrať DMR 5.0: 184 GB cez HTTP Range
+
+ÚGKK dal DMR 5.0 (1 m LiDAR) na to isté statické úložisko, z ktorého ide
+DMR 3.5 — ako **jeden ZIP na celé Slovensko**:
+
+```
+https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip   ~184 GB
+```
+
+Vnútri sú textové **výškové body** v S-JTSK [JTSK03], výšky Bpv. Je to tá istá
+dátová sada, na ktorú sme sa mesiace márne pokúšali dostať cez `zbgis.
+skgeodesy.sk` — len leží na stroji, ktorý odpovedá.
+
+**Stiahnuť sa celý nedá a nie je to otázka trpezlivosti:**
+
+| strop | koľko |
+|---|--:|
+| voľné miesto na runneri | ~60 GB (po vyčistení ~85 GB) |
+| artefakt / asset releasu | **2 GB na súbor** |
+| archív | **184 GB** |
+| ten istý archív rozbalený | ~700 GB |
+
+Klasické „stiahni a rozbaľ“ tu teda neexistuje. **ZIP je ale na náhodný
+prístup stavaný:** na konci má centrálny adresár s offsetom a veľkosťou každej
+položky. Keď server vie HTTP Range — a statické úložisko ho vie — dá sa
+prečítať zoznam položiek (pár MB) a potom stiahnuť **len byty tých, ktoré
+chceš**, a rozbaliť ich za behu.
+
+To je celý workflow **Rozobrať DMR 5.0** ([`dmr5-split.yml`](.github/workflows/dmr5-split.yml)):
+
+```
+plan        prečíta centrálny adresár (ZIP64 – pri 184 GB sú offsety nad 4 GB)
+            ─► zoznam položiek + rozdelenie na časti po ~2 GB
+            ─► nestiahne ani jeden výškový bod
+
+chunk       matrix job, N naraz. Každý stiahne SVOJ súvislý úsek jedným
+            prenosom, body binuje rovno do mriežky a odovzdá rastre
+            ─► artefakt dmr5-chunk-<NNN>  (.tar.zst)
+
+assemble    mozaika zo všetkých častí ─► jeden warp do WGS84 ─► release
+```
+
+**Prečo sa rastruje už v časti, a nie na konci.** 700 GB rozbaleného textu
+nemá kde ležať ani ako sa odovzdať ďalej. Ten istý terén ako mriežka Float32
+je pri 5 m okolo 8 GB — a vrstevnice, skaly aj tieňovanie sa aj tak počítajú
+z mriežky, nie z bodov. Body nikdy nikde neležia celé naraz; režim `body
+(raw)` existuje len na to, keby si chcel vidieť originál.
+
+**Jeden raster na blok, nie na časť.** Položky idú do častí v poradí offsetov
+(inak by sa nedali stiahnuť jedným prenosom), takže časť môže byť pás cez pol
+Slovenska. Jeden raster na taký pás by bol z 95 % prázdny. Raster na blok je
+presne to, čo v dátach je.
+
+**Rozlíšenie vs. územie.** Pri 1 m má jedna 1°×1° dlaždica ~48 GB, takže:
+
+| `area` | mriežka | výsledok | release | `dem_source` |
+|---|--:|---|---|---|
+| `cele` | 5 m | dlaždice `N49E019.tif` | `dem-dmr5` | `dmr5` |
+| `vysoke_tatry`, … | **1 m** | jeden COG `ugkk-<vyrez>.tif` | `dem-ugkk` | `ugkk` |
+
+Workflow to ustráži sám: celé Slovensko pod 3 m odmietne **v prvej minúte**,
+v nastaveniach, nie po ôsmich hodinách sťahovania. Aj tak je 5 m štyrikrát
+jemnejšie než Sonny (20 m) a dvakrát než DMR 3.5 (10 m) — a mriežka zdroja je
+jediné, čo stropuje skutočný detail skál.
+
+**Kde ktorý blok leží, sa neháda.** Meno súboru v archíve nesie súradnice
+bloku, ale ÚGKK nikde nepíše v akom tvare a poradí — a Krovák má dve
+oficiálne podoby (`EPSG:8352` s kladnými hodnotami, `EPSG:8353` so zápornými),
+plus poradie stĺpcov v texte je ďalšia neznáma. `plan` preto z niekoľkých
+položiek prečíta **prvé kilobajty**, z nich dostane skutočné súradnice a
+dopočíta, ktoré číslo v mene je východ a ktoré sever. Keď to nevyjde, povie to
+a `area` sa jednoducho nepoužije — rozdelenie na časti funguje aj tak.
+
+**Prvý beh nech je `mode: len plán`.** Prečíta centrálny adresár, vypíše do
+súhrnu koľko je v archíve položiek, aké majú mená, prvé riadky ukážky a koľko
+by sa stiahlo — a nestiahne pritom nič. Ak sa niečo v archíve od tohto zápisu
+zmenilo, uvidíš to za pár minút a nie po hodinách.
+
+| input | čo robí |
+|---|---|
+| `url` | odkaz na archív (musí vedieť HTTP Range) |
+| `area` | `cele`, kľúč z [`workers/areas.json`](workers/areas.json), alebo bbox `W,S,E,N` |
+| `mode` | `len plán` / `raster (DEM)` / `body (raw)` / `raster aj body` |
+| `grid_m` | mriežka; `auto` = 1 m na výrez, 5 m na celé Slovensko |
+| `chunk_mb` | koľko komprimovaných MB na jednu časť (= jeden job) |
+| `max_parallel` | koľko častí naraz – aj ohľaduplnosť voči `opendata.skgeodesy.sk` |
+| `max_chunks` | na skúšku daj `1` – spracuje sa len prvá časť |
+| `retention_days` | ako dlho držať artefakty s časťami |
+| `release_tag` | prebije release podľa územia |
+
+Kód je v troch súboroch a každý sa dá spustiť aj samostatne:
+
+| súbor | čo robí |
+|---|---|
+| [`workers/zip-remote.py`](workers/zip-remote.py) | čítanie vzdialeného ZIP64 cez Range: centrálny adresár, streamované rozbaľovanie súvislého úseku, obnova pretrhnutého prenosu |
+| [`workers/dmr5-plan.py`](workers/dmr5-plan.py) | manifest, kalibrácia polohy blokov, filter na výrez, rozdelenie na časti |
+| [`workers/dmr5-chunk.py`](workers/dmr5-chunk.py) | jedna časť: stiahnuť úsek, parsovať body, binovať do mriežky, GeoTIFF |
+| [`workers/sjtsk.py`](workers/sjtsk.py) | Krovák: ktorý stĺpec je východ a ktorý sever |
+
+```bash
+# čo je v archíve, bez sťahovania obsahu
+python3 workers/zip-remote.py list \
+  https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip --limit=50
+```
+
+**Licencia ÚGKK:** voľné použitie vrátane komerčného pri uvedení zdroja
+(ÚGKK SR) — atribúcia je v [`poc/web/themes.js`](poc/web/themes.js).
+
 **Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
 release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,
-čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič.
+čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič. **Výnimka je
+`dmr5`:** 184 GB archív sa vedome nespúšťa ako vedľajší účinok buildu mapy,
+takže `Rozobrať DMR 5.0` treba pustiť raz ručne. Build to povie – aj s tým,
+čo presne spustiť.
 
 ```
 Build map
@@ -430,9 +557,16 @@ ani so správnym menom — ale keby sa cesta niekedy otvorila, toto je meno,
 ktorým začať.
 
 **Prakticky:** `dem_source: ugkk` funguje len vtedy, keď je výrez už v releasi
-`dem-ugkk`. Dostane sa tam jednorazovým exportom zo ZBGIS Mapového klienta
-(Terén → Export údajov → DMR 5.0, do 400 km²) a nahratím ako
-`ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho a napíše to.
+`dem-ugkk`. Dostane sa tam **workflowom [*Rozobrať DMR
+5.0*](#rozobrať-dmr-50-184-gb-cez-http-range)** (`area: <pohorie>`), alebo
+jednorazovým exportom zo ZBGIS Mapového klienta (Terén → Export údajov →
+DMR 5.0, do 400 km²) a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť
+na Sonnyho a napíše to.
+
+> **Dodatok (august 2026): tá cesta sa našla, len vedie inde.** Všetko nižšie
+> o mŕtvom `zbgis.skgeodesy.sk` platí – ale to isté DMR 5.0 leží aj na
+> `opendata.skgeodesy.sk` ako jeden 184 GB ZIP a odtiaľ sa vziať dá. Viď
+> [Rozobrať DMR 5.0](#rozobrať-dmr-50-184-gb-cez-http-range).
 
 Build to preto **neskúša naslepo**: `fetch-dem-ugkk.py` sa najprv spýta na
 dostupnosť hostiteľa a keď neodpovedá, ImageServer ani WCS už nerozbieha —
@@ -969,7 +1103,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
-   | `dem_source` | výber | `sonny` (20 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
+   | `dem_source` | výber | `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m) alebo `ugkk` (1 m LiDAR, len s výrezom) |
    | `layers` | text | čo generovať: `contours,terrain,trails` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |

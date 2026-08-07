@@ -156,7 +156,9 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 | zdroj | `dem_source` | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
-| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | ArcGIS ImageServer, len s výrezom (`area`) | **neoverené**, viď nižšie |
+| **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
+| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [Rozobrať DMR 5.0](#štvrtý-workflow-rozobrať-dmr-50)) | naplniť |
+| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) | naplniť |
 
 Zdroj platí pre **vrstevnice aj skaly** – oboje z toho istého modelu, nech
 obrys skaly a priebeh vrstevnice sedia na tom istom teréne.
@@ -816,3 +818,72 @@ Protikus developer módu – vezme stiahnutý `style-overrides.json`, prežene h
 repozitára. Neznáma farba, neplatný hex, neprepísateľná vlastnosť či
 prehodený rozsah zoomu skončia varovaním a vyhodia sa, takže do zdrojáku sa
 nedostane nič, čo by štýl rozbilo.
+
+## Štvrtý workflow: „Rozobrať DMR 5.0"
+
+Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
+**~184 GB**, vnútri textové výškové body v S-JTSK [JTSK03], výšky Bpv.
+
+Toto je jediný workflow v repozitári, ktorý **nesmie stiahnuť svoj vstup**.
+Runner má voľných ~60 GB, artefakt aj asset releasu majú strop 2 GB na súbor
+a rozbalený archív má ~700 GB. Nič z toho sa nedá obísť väčšou trpezlivosťou.
+
+Dá sa to obísť tým, ako je ZIP postavený: na konci má **centrálny adresár**
+so zoznamom položiek a s offsetom a veľkosťou každej z nich. Keď server vie
+HTTP Range – a `opendata.skgeodesy.sk` je statické úložisko, takže vie – dá
+sa prečítať zoznam (pár MB) a potom stiahnuť len byty vybraných položiek.
+
+```
+plan       posledných 128 kB  → koniec centrálneho adresára
+           (ZIP64: pri 184 GB sú offsety nad 4 GB, takže skutočné čísla
+            sú v ZIP64 zázname, nie v obyčajnej hlavičke)
+           centrálny adresár   → zoznam VŠETKÝCH položiek s offsetmi
+           z ~8 položiek prvé kilobajty → kalibrácia polohy blokov
+           ─► plan.json + matrix (jedna položka = jedna časť po ~2 GB)
+
+chunk      matrix job, `max_parallel` naraz:
+           jeden Range prenos na celú časť (nie na položku – pri 20 000
+           malých súboroch je réžia väčšia než dáta)
+           lokálne hlavičky sa čítajú z prúdu, obsah sa inflatuje za behu
+           body → binning do mriežky → GeoTIFF na blok, v natívnom S-JTSK
+           ─► artefakt dmr5-chunk-<NNN>.tar.zst
+
+assemble   gdalbuildvrt nad všetkými blokmi → JEDEN gdalwarp do WGS84
+           ─► dlaždice N49E019.tif (celé Slovensko) do `dem-dmr5`
+              alebo jeden COG ugkk-<vyrez>.tif do `dem-ugkk`
+```
+
+- **Prečo sa rastruje v časti a nie na konci.** 700 GB textu nemá kde ležať
+  ani ako sa odovzdať ďalej. Ako mriežka Float32 je ten istý terén pri 5 m
+  okolo 8 GB – a vrstevnice, skaly aj tieňovanie sa počítajú z mriežky.
+- **Prečo je natívne S-JTSK až do konca.** Časti odovzdávajú `EPSG:8353` bez
+  prevzorkovania a do WGS84 to ide jedným warpom v `assemble`. Keby warpovala
+  každá časť sama, terén by sa interpoloval dvakrát.
+- **Jeden raster na blok, nie na časť.** Položky idú do častí v poradí
+  offsetov, inak sa nedajú stiahnuť jedným prenosom – časť tak môže byť pás
+  cez pol Slovenska a jeden raster na taký pás by bol z 95 % prázdny.
+- **Rozlíšenie stropuje release, nie zdroj.** Pri 1 m má jedna 1°×1° dlaždica
+  ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
+  rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m
+  workflow odmietne v prvej minúte, nie po ôsmich hodinách.
+- **Poloha bloku sa zisťuje, neháda.** Meno súboru nesie súradnice, ale nie je
+  zdokumentované v akom tvare – a Krovák má dve oficiálne podoby (`EPSG:8352`
+  s kladnými hodnotami, `EPSG:8353` so zápornými) plus neznáme poradie
+  stĺpcov. `plan` preto z ukážky položiek prečíta skutočné súradnice a z nich
+  dopočíta, ktoré číslo v mene je východ a ktoré sever. Keď to nevyjde, povie
+  to a filter na výrez sa jednoducho nepoužije.
+- **Prenos sa obnovuje.** Pri 2 GB úseku z jedného servera je pretrhnutie
+  normálna vec – čítačka si pamätá absolútnu pozíciu a vypýta si zvyšok od
+  nej, nie celý úsek odznova.
+- **`mode: len plán`** prečíta obsah archívu a nestiahne ani jeden výškový
+  bod. Prvý beh nech je tento.
+
+Kód: [`workers/zip-remote.py`](../workers/zip-remote.py) (čítanie vzdialeného
+ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (manifest a
+rozdelenie), [`workers/dmr5-chunk.py`](../workers/dmr5-chunk.py) (jedna časť),
+[`workers/sjtsk.py`](../workers/sjtsk.py) (Krovák).
+
+**Tento workflow sa nespúšťa sám.** Ostatné výškové zdroje si `Build map`
+doplní ako svoju úlohu; 184 GB a desiatky paralelných jobov ale nemajú byť
+vedľajší účinok buildu mapy, takže `dmr5` sa pustí raz vedome. Build to
+napíše aj s tým, čo presne spustiť.

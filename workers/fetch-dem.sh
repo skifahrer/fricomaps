@@ -7,12 +7,14 @@
 #
 # Zdroj hovorí, z ktorého releasu: `sonny` = 1°×1° dlaždice 20 m modelu
 # (release `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených
-# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `ugkk` = jeden COG
-# s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá – build
-# nikdy nesiaha priamo na cudzí server, to robí jediná sťahovacia pipeline
-# `Stiahnuť výškové dáta` (workflow update-dem.yml, výber v `source`).
+# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `dmr5` = zase tie isté
+# dlaždice, len z LLS DMR 5.0 (release `dem-dmr5`, mriežka 5 m), `ugkk` =
+# jeden COG s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá –
+# build nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
+# `Stiahnuť výškové dáta` (update-dem.yml) a `Rozobrať DMR 5.0`
+# (dmr5-split.yml).
 #
-# `sonny` a `dmr35` sa líšia LEN menom releasu: dlaždice majú tú istú
+# `sonny`, `dmr35` a `dmr5` sa líšia LEN menom releasu: dlaždice majú tú istú
 # pomenúvaciu schému (`N49E019.tif`), takže sa nižšie nič nevetví.
 #
 # Použitie:
@@ -58,6 +60,7 @@ fi
 # Ktorý release a ako to volať v logu. Ďalej je to už to isté.
 case "$SOURCE" in
   dmr35) SRC_RELEASE="${DMR35_RELEASE:-dem-dmr35}"; SRC_LABEL="ÚGKK DMR 3.5" ;;
+  dmr5)  SRC_RELEASE="${DMR5_RELEASE:-dem-dmr5}";   SRC_LABEL="ÚGKK DMR 5.0 (LLS)" ;;
   *)     SRC_RELEASE="$DEM_RELEASE"; SRC_LABEL="Sonny's LiDAR DTM" ;;
 esac
 
@@ -101,7 +104,14 @@ done < "$DIR/list.txt"
 if [ "$have" -eq 0 ]; then
   echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
-  echo "Spusti workflow 'Update DEM' s priečinkom, ktorý toto územie pokrýva – alebo mu vyplň direct_urls."
+  if [ "$SOURCE" = "dmr5" ]; then
+    # DMR 5.0 sa nedopĺňa sám: je to 184 GB archív a jeho rozobratie je
+    # desiatky paralelných jobov. To sa nemá spustiť ako vedľajší účinok
+    # buildu mapy – púšťa sa vedome.
+    echo "Spusti workflow 'Rozobrať DMR 5.0' s area: cele (mriežka 5 m). Trvá to hodiny, preto sa to nespúšťa samo."
+  else
+    echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
+  fi
   exit 1
 fi
 if [ -n "$missing" ]; then
