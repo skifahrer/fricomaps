@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plán rozobratia ÚGKK DMR 5.0: čo je v 184 GB archíve a ako sa rozdelí.
+Plán rozobratia ÚGKK DMR 5.0: čo je v 198 GB archíve a ako sa rozdelí.
 
 Beží ako prvý job workflowu „Rozobrať DMR 5.0“ a NESTIAHNE ani jeden výškový
 bod – číta iba centrálny adresár ZIPu (pár MB) a z niekoľkých položiek prvé
@@ -21,14 +21,25 @@ KDE KTORÁ POLOŽKA LEŽÍ sa zisťuje, nie háda. Meno súboru v archíve obsah
 súradnice bloku, ale ÚGKK nikde nepíše v akom tvare a v akom poradí. Preto sa
 z pár položiek prečítajú prvé riadky, tie dajú skutočné (east, north) a z nich
 sa dopočíta, ktoré číslo v mene je východ a ktoré sever (`--calibrate`).
-Keď kalibrácia neprejde, `--area` sa použiť nedá a script to povie – ale
-rozdelenie na časti funguje aj tak.
+
+KEĎ KALIBRÁCIA NEPREJDE, `--area` KONČÍ CHYBOU. V behu 31182614668 to takto
+nebolo a bola to chyba: vypýtal si Vysoké Tatry, poloha blokov sa nedala
+zistiť a plán ticho navrhol stiahnuť 151 GB. Kto si vypýta pohorie, nechce
+celé Slovensko. Zúžiť sa vtedy dá cez `--include` (priečinok v archíve), čo
+je len meno, a teda to funguje vždy.
+
+INVENTÁR JE HLAVNÝ VÝSTUP, keď ide o prvý beh. Ten istý beh nevypísal do logu
+ani jedno meno súboru, takže sa nedalo zistiť, čo v archíve je – a filter na
+prípony pritom ticho zahodil 16 z 19 súborov. Teraz sa žiadny súbor nezahadzuje
+a zoznam (mená, veľkosti, uložené vs deflate) ide do logu aj do súhrnu behu
+skôr, než sa čokoľvek ďalšie môže pokaziť.
 
 Použitie:
     python3 workers/dmr5-plan.py --url=URL --out=plan.json --matrix=matrix.json \
         --area=vysoke_tatry --chunk-mb=2048 --summary=summary.md
 """
 import argparse
+import fnmatch
 import importlib.util
 import json
 import os
@@ -44,10 +55,6 @@ import sjtsk  # noqa: E402
 
 MB = 1024 * 1024
 NUM_RE = re.compile(r"-?\d+")
-
-# Prípony, ktoré vieme prečítať ako výškové body alebo raster.
-DATA_EXT = (".txt", ".xyz", ".asc", ".csv", ".pts", ".dat", ".las", ".laz",
-            ".tif", ".tiff", ".zip")
 
 
 def load_remote_zip():
@@ -235,6 +242,99 @@ def human(b):
     return f"{b / 1e9:.2f} GB" if b >= 1e9 else f"{b / 1e6:.1f} MB"
 
 
+# ---------- inventár a výber priečinka ----------
+
+def describe_inventory(entries, log):
+    """Vypíše, čo v archíve naozaj je – mená, veľkosti, kompresia, priečinky.
+
+    Pri `mode: len plán` je toto celý zmysel behu: 21 mien povie o archíve
+    viac než akýkoľvek odhad. Vracia riadky pre súhrn behu.
+    """
+    METHOD = {0: "uložené", 8: "deflate"}
+    lines = []
+    ext = {}
+    for e in entries:
+        x = os.path.splitext(e["name"])[1].lower() or "(bez prípony)"
+        k = ext.setdefault(x, [0, 0])
+        k[0] += 1
+        k[1] += e["csize"]
+
+    # Ktorá úroveň cesty archív naozaj delí. Keď je všetko pod jedným
+    # `DMR5_0/`, je zoznam „jeden priečinok" nanič – zaujíma nás prvá
+    # úroveň, na ktorej sa mená rozchádzajú.
+    def group(depth):
+        out = {}
+        for e in entries:
+            parts = e["name"].split("/")
+            # Súbor plytší než `depth` sa zaradí do svojho vlastného
+            # priečinka, nie do zberného koša – inak by `citajma.txt` vyzeral
+            # ako samostatná skupina.
+            d = min(depth, len(parts) - 1)
+            head = "/".join(parts[:d]) + "/" if d > 0 else "(koreň)"
+            t = out.setdefault(head, [0, 0])
+            t[0] += 1
+            t[1] += e["csize"]
+        return out
+
+    top = group(1)
+    for d in (2, 3):
+        if len(top) > 1 or len(entries) <= 1:
+            break
+        deeper = group(d)
+        if len(deeper) > len(top):
+            top = deeper
+
+    log("Priečinky v archíve:")
+    for name, (n, sz) in sorted(top.items(), key=lambda kv: -kv[1][1]):
+        log(f"  {name:40s} {n:6d} položiek  {human(sz)}")
+        lines.append(f"| `{name}` | {n} | {human(sz)} |")
+    log("Prípony:")
+    for name, (n, sz) in sorted(ext.items(), key=lambda kv: -kv[1][1]):
+        log(f"  {name:40s} {n:6d} položiek  {human(sz)}")
+
+    # Celý zoznam, kým sa dá prečítať očami. Pri desiatkach tisíc položiek
+    # by z toho bol nečitateľný val, tak sa vtedy vypíše len začiatok.
+    show = entries if len(entries) <= 200 else entries[:100]
+    log(f"Súbory ({len(show)} z {len(entries)}):")
+    for e in show:
+        ratio = (1 - e["csize"] / e["usize"]) * 100 if e["usize"] else 0
+        log(f"  [{e['i']:5d}] {human(e['csize']):>10s} "
+            f"({METHOD.get(e['method'], e['method'])}, -{ratio:.0f} %)  "
+            f"{e['name']}")
+    return lines, top, ext
+
+
+def filter_names(entries, include, exclude, log):
+    """Výber podľa priečinka alebo vzoru – bez toho, aby sa čítali dáta.
+
+    Toto je jediný filter, ktorý funguje VŽDY. Filter podľa územia potrebuje
+    vedieť, kde ktorý blok leží, a to sa dá len vtedy, keď sa poloha dá
+    prečítať z mena súboru. Priečinok v archíve je proti tomu istota.
+
+    Vzor bez `*?[` sa berie ako cesta priečinka (stačí začiatok mena),
+    inak je to `fnmatch`. Veľké/malé písmená sa neriešia.
+    """
+    def match(pattern, name):
+        p, n = pattern.strip().lower(), name.lower()
+        if not p:
+            return False
+        if any(c in p for c in "*?["):
+            return fnmatch.fnmatch(n, p)
+        return n.startswith(p.rstrip("/") + "/") or n == p
+
+    out = entries
+    if include.strip():
+        pats = [p for p in include.split(",") if p.strip()]
+        out = [e for e in out if any(match(p, e["name"]) for p in pats)]
+        log(f"Filter „{include}“: {len(out)} z {len(entries)} položiek")
+    if exclude.strip():
+        pats = [p for p in exclude.split(",") if p.strip()]
+        before = len(out)
+        out = [e for e in out if not any(match(p, e["name"]) for p in pats)]
+        log(f"Bez „{exclude}“: {len(out)} z {before} položiek")
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", required=True)
@@ -244,6 +344,10 @@ def main(argv=None):
     ap.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
     ap.add_argument("--area", default="cele")
     ap.add_argument("--areas", default=os.path.join(_HERE, "areas.json"))
+    ap.add_argument("--include", default="",
+                    help="len tieto priečinky/vzory v archíve, oddelené čiarkou")
+    ap.add_argument("--exclude", default="",
+                    help="tieto naopak vynechať")
     ap.add_argument("--chunk-mb", type=float, default=2048)
     ap.add_argument("--span-mb", type=float, default=0,
                     help="strop na súvislý úsek vrátane dier (0 = 3× chunk-mb)")
@@ -270,11 +374,40 @@ def main(argv=None):
     entries = [e for e in raw
                if not e["name"].endswith("/") and e["usize"] > 0]
     skipped = len(raw) - len(entries)
-    data = [e for e in entries if e["name"].lower().endswith(DATA_EXT)]
-    if data:
-        entries = data
     log(f"Položiek: {len(raw)} (adresáre a prázdne: {skipped}, "
-        f"na spracovanie: {len(entries)})")
+        f"súborov: {len(entries)})")
+
+    # Inventár PRED akýmkoľvek filtrom. Beh 31182614668 spadol práve na tom,
+    # že filter na prípony ticho zahodil 16 z 19 súborov a v logu nebolo ani
+    # jedno meno – nedalo sa zistiť, čo v archíve vlastne je. Toto je pri
+    # `mode: len plán` to hlavné, čo z behu chceš.
+    folder_rows, _tops, _exts = describe_inventory(entries, log)
+    # Inventár ide do súhrnu HNEĎ, nie až na konci. Plán môže ešte skončiť
+    # chybou (nepoužiteľný výrez, prázdny filter) a práve vtedy je zoznam
+    # toho, čo v archíve je, to jediné, čo z behu potrebuješ.
+    if args.summary:
+        with open(args.summary, "w") as f:
+            f.write(f"## Čo je v archíve\n\n`{args.url}`\n\n")
+            f.write(f"{human(rz.size)}, {len(raw)} položiek "
+                    f"({len(entries)} súborov)\n\n")
+            if folder_rows:
+                f.write("| priečinok | položiek | veľkosť |\n|---|--:|--:|\n")
+                f.write("\n".join(folder_rows) + "\n\n")
+                f.write("Ktorýkoľvek z nich sa dá spracovať sám – vlož ho do "
+                        "`folder` pri spustení workflowu.\n\n")
+            f.write("```\n")
+            for e in (entries if len(entries) <= 200 else entries[:100]):
+                f.write(f"{human(e['csize']):>10s}  {e['name']}\n")
+            if len(entries) > 200:
+                f.write(f"… a ďalších {len(entries) - 100}\n")
+            f.write("```\n\n")
+
+    kept = filter_names(entries, args.include, args.exclude, log)
+    if not kept:
+        log(f"::error::Filter „{args.include or '*'}“ nevybral ani jednu "
+            f"položku. Mená vidíš v zozname vyššie.")
+        return 4
+    entries = kept
     nested = sum(1 for e in entries if e["name"].lower().endswith(".zip"))
     if nested:
         log(f"::warning::{nested} položiek sú vnorené ZIPy – rozbaľujú sa až "
@@ -303,9 +436,15 @@ def main(argv=None):
     en_box = None
     if area_bbox:
         if not mapping:
-            log("::warning::Výrez sa nedá použiť – poloha blokov nie je známa. "
-                "Spracuje sa celý archív.")
-            area_name += " (nepoužité)"
+            # NIKDY nepokračovať „len tak" na celý archív. V behu 31182614668
+            # sa presne to stalo: vypýtal si `vysoke_tatry`, poloha blokov sa
+            # nedala zistiť, a plán ticho naplánoval 151 GB. Kto si vypýtal
+            # pohorie, nechce stiahnuť celé Slovensko.
+            log("::error::Výrez „" + args.area + "“ sa nedá použiť – poloha "
+                "blokov sa z mien súborov nedá zistiť (pozri kalibráciu "
+                "vyššie). Zúž to priečinkom v archíve (`folder`), alebo "
+                "vedome daj `area: cele`.")
+            return 4
         else:
             en_box = sjtsk.wgs_bbox_to_en(area_bbox)
             w, s, e_, n = en_box
@@ -345,6 +484,7 @@ def main(argv=None):
         "area": {"key": args.area, "name": area_name,
                  "bbox_wgs": list(area_bbox) if area_bbox else None,
                  "bbox_en": list(en_box) if en_box else None},
+        "filter": {"include": args.include, "exclude": args.exclude},
         "orientation": oname,
         "name_mapping": mapping,
         "block_m": [bw, bh],
@@ -377,11 +517,12 @@ def main(argv=None):
             f.write("matrix=" + json.dumps([{"id": c["id"]} for c in chunks]) + "\n")
 
     if args.summary:
-        with open(args.summary, "w") as f:
+        with open(args.summary, "a") as f:
             f.write(f"## Plán rozobratia – {area_name}\n\n")
             f.write("| vec | hodnota |\n|---|---|\n")
             f.write(f"| archív | {human(rz.size)} |\n")
             f.write(f"| položiek v archíve | {len(raw)} |\n")
+            f.write(f"| filter | `{args.include or '(všetko)'}` |\n")
             f.write(f"| položiek na spracovanie | {len(entries)} |\n")
             f.write(f"| **stiahne sa** | **{human(total_span)}** "
                     f"({100 * total_span / max(rz.size, 1):.1f} % archívu) |\n")
