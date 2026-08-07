@@ -105,7 +105,7 @@ if [ "$have" -eq 0 ]; then
   echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
-    # DMR 5.0 sa nedopĺňa sám: je to 184 GB archív a jeho rozobratie je
+    # DMR 5.0 sa nedopĺňa sám: je to 198 GB archív a jeho rozobratie je
     # desiatky paralelných jobov. To sa nemá spustiť ako vedľajší účinok
     # buildu mapy – púšťa sa vedome.
     echo "Spusti workflow 'Rozobrať DMR 5.0' s area: cele (mriežka 5 m). Trvá to hodiny, preto sa to nespúšťa samo."

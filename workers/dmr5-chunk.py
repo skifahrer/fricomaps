@@ -7,7 +7,7 @@ naplánoval `dmr5-plan.py`. Každý beh siahne LEN na svoj súvislý úsek bajto
 (jeden HTTP prenos s Range) a nikdy nemá na disku viac než jeden rozbalený
 blok naraz.
 
-PREČO SA RASTRUJE UŽ TU, A NIE AŽ NA KONCI: 184 GB komprimovaného textu je
+PREČO SA RASTRUJE UŽ TU, A NIE AŽ NA KONCI: 198 GB komprimovaného textu je
 rozbalených okolo 700 GB. To sa nemá kam uložiť ani odovzdať ďalej. Ten istý
 terén ako mriežka Float32 je o rád menší (a pri 5 m o dva), takže časť
 odovzdáva rastre – z nich sa vrstevnice, skaly aj tieňovanie počítajú presne

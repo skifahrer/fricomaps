@@ -14,9 +14,9 @@ name: Stiahnuť výškové dáta
 # | sonny   | Sonny's LiDAR DTM (Drive)   | dem-sonny    | 20 m    |
 # | dmr35   | ÚGKK DMR 3.5 (opendata ZIP) | dem-dmr35    | ~10 m   |
 # | ugkk    | ÚGKK DMR 5.0 (1 m LiDAR)    | dem-ugkk     | 1 m     |
-# | dmr5    | ÚGKK DMR 5.0 (LLS, 184 GB)  | dem-dmr5     | 5 m     |
+# | dmr5    | ÚGKK DMR 5.0 (LLS, 198 GB)  | dem-dmr5     | 5 m     |
 #
-# `dmr5` sem NEPATRÍ a je tu len ako rozcestník: 184 GB archív sa nedá stiahnuť
+# `dmr5` sem NEPATRÍ a je tu len ako rozcestník: 198 GB archív sa nedá stiahnuť
 # jedným jobom (runner má voľných ~60 GB) a rozoberá ho vlastná pipeline
 # `Rozobrať DMR 5.0` (dmr5-split.yml) desiatkami paralelných jobov cez HTTP
 # Range. Keď sem príde `what: dmr5`, tento workflow len povie kam ísť.
@@ -155,7 +155,7 @@ jobs:
             dmr5)
               # Sem sa dá dostať len tak, že si `Build map` vypýtal dem_source:
               # dmr5 a release je prázdny. Tento workflow to nedoplní – DMR 5.0
-              # je 184 GB archív a rozoberá sa desiatkami paralelných jobov
+              # je 198 GB archív a rozoberá sa desiatkami paralelných jobov
               # (workflow „Rozobrať DMR 5.0"). Púšťať to ako vedľajší účinok
               # buildu mapy by bolo prekvapenie na osem hodín.
               URL="https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip"
@@ -196,7 +196,7 @@ jobs:
           {
             echo "## ÚGKK DMR 5.0 (LLS) sa sem nesťahuje"
             echo
-            echo "Archív má ~184 GB a runner má voľných ~60 GB, takže ho tento"
+            echo "Archív má ~198 GB a runner má voľných ~60 GB, takže ho tento"
             echo "workflow stiahnuť nemôže. Rozoberá ho pipeline **Rozobrať DMR 5.0**"
             echo "(\`dmr5-split.yml\`) – číta archív po úsekoch cez HTTP Range"
             echo "a beží v desiatkach paralelných jobov."

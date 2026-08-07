@@ -128,7 +128,7 @@ env:
   DMR35_RELEASE: dem-dmr35
   # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
   # ich workflow „Rozobrať DMR 5.0" s `area: cele`; sám sa nedopĺňa, lebo je
-  # to 184 GB archív a desiatky paralelných jobov.
+  # to 198 GB archív a desiatky paralelných jobov.
   DMR5_RELEASE: dem-dmr5
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na

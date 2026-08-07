@@ -37,7 +37,7 @@ Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
                              ▲ Build map ho zavolá automaticky, keď v release
                                nie je pre jeho územie ani jedna dlaždica
 
-Rozobrať DMR 5.0             184 GB ZIP z opendata.skgeodesy.sk čítaný
+Rozobrať DMR 5.0             198 GB ZIP z opendata.skgeodesy.sk čítaný
 (vedome, trvá hodiny)        po úsekoch cez HTTP Range:
                                plan     centrálny adresár ─► zoznam častí
                                chunk    N paralelných jobov, každý jeden
@@ -332,8 +332,8 @@ Input **`dem_source`**:
 `dmr5` a `ugkk` sú **ten istý zdroj**, len inak nakrájaný: `dmr5` je celá
 krajina na hrubšej mriežke v dlaždiciach `N49E019.tif`, `ugkk` je jedno
 pohorie v plnom metrovom rozlíšení ako `ugkk-<vyrez>.tif`. Oba release plní
-workflow [*Rozobrať DMR 5.0*](#rozobrať-dmr-50-184-gb-cez-http-range) a ani
-jeden sa **nedopĺňa sám** – 184 GB archív nie je vedľajší účinok buildu mapy.
+workflow [*Rozobrať DMR 5.0*](#rozobrať-dmr-50-198-gb-cez-http-range) a ani
+jeden sa **nedopĺňa sám** – 198 GB archív nie je vedľajší účinok buildu mapy.
 
 **`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
 v pipeline.** Overené behom
@@ -366,18 +366,30 @@ potrebuje celý región, takže tam ostáva Sonny.)
 > dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
 > 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
 
-### Rozobrať DMR 5.0: 184 GB cez HTTP Range
+### Rozobrať DMR 5.0: 198 GB cez HTTP Range
 
 ÚGKK dal DMR 5.0 (1 m LiDAR) na to isté statické úložisko, z ktorého ide
 DMR 3.5 — ako **jeden ZIP na celé Slovensko**:
 
 ```
-https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip   ~184 GB
+https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip
+197 707 257 567 B = 197,7 GB          (zmerané behom 31182614668)
 ```
 
-Vnútri sú textové **výškové body** v S-JTSK [JTSK03], výšky Bpv. Je to tá istá
-dátová sada, na ktorú sme sa mesiace márne pokúšali dostať cez `zbgis.
-skgeodesy.sk` — len leží na stroji, ktorý odpovedá.
+Je to tá istá dátová sada, na ktorú sme sa mesiace márne pokúšali dostať cez
+`zbgis.skgeodesy.sk` — len leží na stroji, ktorý odpovedá. Prvý beh (`mode:
+len plán`, nič sa nesťahovalo) prečítal centrálny adresár:
+
+| zistené | hodnota |
+|---|--:|
+| položiek | 21 (2 adresáre/prázdne, **19 súborov**) |
+| tri najväčšie položky spolu | **151,4 GB** (~50 GB každá) |
+| ich kompresia | **3,5 %** |
+| čitateľné výškové body v ukážke | **žiadne** |
+
+Tri percentá kompresie znamenajú, že obsah je **už komprimovaný** — teda LAZ
+alebo vnorené ZIPy, nie holý text. Čo presne, povie inventár: `mode: len plán`
+teraz vypíše do súhrnu behu **všetky mená, veľkosti a spôsob kompresie**.
 
 **Stiahnuť sa celý nedá a nie je to otázka trpezlivosti:**
 
@@ -385,7 +397,7 @@ skgeodesy.sk` — len leží na stroji, ktorý odpovedá.
 |---|--:|
 | voľné miesto na runneri | ~60 GB (po vyčistení ~85 GB) |
 | artefakt / asset releasu | **2 GB na súbor** |
-| archív | **184 GB** |
+| archív | **198 GB** |
 | ten istý archív rozbalený | ~700 GB |
 
 Klasické „stiahni a rozbaľ“ tu teda neexistuje. **ZIP je ale na náhodný
@@ -397,7 +409,7 @@ chceš**, a rozbaliť ich za behu.
 To je celý workflow **Rozobrať DMR 5.0** ([`dmr5-split.yml`](.github/workflows/dmr5-split.yml)):
 
 ```
-plan        prečíta centrálny adresár (ZIP64 – pri 184 GB sú offsety nad 4 GB)
+plan        prečíta centrálny adresár (ZIP64 – pri 198 GB sú offsety nad 4 GB)
             ─► zoznam položiek + rozdelenie na časti po ~2 GB
             ─► nestiahne ani jeden výškový bod
 
@@ -431,22 +443,40 @@ v nastaveniach, nie po ôsmich hodinách sťahovania. Aj tak je 5 m štyrikrát
 jemnejšie než Sonny (20 m) a dvakrát než DMR 3.5 (10 m) — a mriežka zdroja je
 jediné, čo stropuje skutočný detail skál.
 
-**Kde ktorý blok leží, sa neháda.** Meno súboru v archíve nesie súradnice
-bloku, ale ÚGKK nikde nepíše v akom tvare a poradí — a Krovák má dve
-oficiálne podoby (`EPSG:8352` s kladnými hodnotami, `EPSG:8353` so zápornými),
-plus poradie stĺpcov v texte je ďalšia neznáma. `plan` preto z niekoľkých
+#### Dva spôsoby, ako si vypýtať menej
+
+| filter | čím sa riadi | kedy funguje |
+|---|---|---|
+| **`folder`** | meno položky v archíve | **vždy** — je to len text |
+| `area` | poloha bloku v teréne | len keď sa poloha dá prečítať z mena súboru |
+
+**`folder` je istota.** Vloží sa doň priečinok z archívu (`DMR5_0/34-12/`),
+viac priečinkov cez čiarku, alebo vzor (`*34-12*`). Zoznam priečinkov aj so
+zoznamom všetkých súborov vypíše `mode: len plán` do súhrnu behu — takže si
+najprv pozrieš, čo tam je, a potom si vyberieš jeden.
+
+**`area` potrebuje vedieť, kde blok leží,** a to sa háda z mena súboru. Meno
+súradnice nesie, ale ÚGKK nikde nepíše v akom tvare a poradí — a Krovák má
+dve oficiálne podoby (`EPSG:8352` s kladnými hodnotami, `EPSG:8353` so
+zápornými), plus poradie stĺpcov je ďalšia neznáma. `plan` preto z niekoľkých
 položiek prečíta **prvé kilobajty**, z nich dostane skutočné súradnice a
-dopočíta, ktoré číslo v mene je východ a ktoré sever. Keď to nevyjde, povie to
-a `area` sa jednoducho nepoužije — rozdelenie na časti funguje aj tak.
+dopočíta, ktoré číslo v mene je východ a ktoré sever.
+
+> **Keď to nevyjde, `area` skončí chybou — nie stiahnutím celého archívu.**
+> V behu [31182614668](https://github.com/skifahrer/fricomaps/actions/runs/31182614668)
+> to tak ešte nebolo: vypýtal si `vysoke_tatry`, kalibrácia neprešla (obsah
+> nie je text) a plán ticho navrhol stiahnuť **151 GB**. Kto si vypýta
+> pohorie, nechce celé Slovensko. Teraz to zastaví a pošle ťa na `folder`.
 
 **Prvý beh nech je `mode: len plán`.** Prečíta centrálny adresár, vypíše do
-súhrnu koľko je v archíve položiek, aké majú mená, prvé riadky ukážky a koľko
-by sa stiahlo — a nestiahne pritom nič. Ak sa niečo v archíve od tohto zápisu
-zmenilo, uvidíš to za pár minút a nie po hodinách.
+súhrnu **všetky mená súborov, ich veľkosti a či sú uložené alebo deflate**,
+zoznam priečinkov a koľko by sa stiahlo — a nestiahne pritom nič. To je aj
+jediný spôsob, ako zistiť, čo tie tri 50 GB položky vlastne sú.
 
 | input | čo robí |
 |---|---|
 | `url` | odkaz na archív (musí vedieť HTTP Range) |
+| **`folder`** | **len tento priečinok/vzor v archíve; prázdne = celý archív** |
 | `area` | `cele`, kľúč z [`workers/areas.json`](workers/areas.json), alebo bbox `W,S,E,N` |
 | `mode` | `len plán` / `raster (DEM)` / `body (raw)` / `raster aj body` |
 | `grid_m` | mriežka; `auto` = 1 m na výrez, 5 m na celé Slovensko |
@@ -477,7 +507,7 @@ python3 workers/zip-remote.py list \
 **Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
 release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,
 čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič. **Výnimka je
-`dmr5`:** 184 GB archív sa vedome nespúšťa ako vedľajší účinok buildu mapy,
+`dmr5`:** 198 GB archív sa vedome nespúšťa ako vedľajší účinok buildu mapy,
 takže `Rozobrať DMR 5.0` treba pustiť raz ručne. Build to povie – aj s tým,
 čo presne spustiť.
 
@@ -558,15 +588,15 @@ ktorým začať.
 
 **Prakticky:** `dem_source: ugkk` funguje len vtedy, keď je výrez už v releasi
 `dem-ugkk`. Dostane sa tam **workflowom [*Rozobrať DMR
-5.0*](#rozobrať-dmr-50-184-gb-cez-http-range)** (`area: <pohorie>`), alebo
+5.0*](#rozobrať-dmr-50-198-gb-cez-http-range)** (`area: <pohorie>`), alebo
 jednorazovým exportom zo ZBGIS Mapového klienta (Terén → Export údajov →
 DMR 5.0, do 400 km²) a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť
 na Sonnyho a napíše to.
 
 > **Dodatok (august 2026): tá cesta sa našla, len vedie inde.** Všetko nižšie
 > o mŕtvom `zbgis.skgeodesy.sk` platí – ale to isté DMR 5.0 leží aj na
-> `opendata.skgeodesy.sk` ako jeden 184 GB ZIP a odtiaľ sa vziať dá. Viď
-> [Rozobrať DMR 5.0](#rozobrať-dmr-50-184-gb-cez-http-range).
+> `opendata.skgeodesy.sk` ako jeden 198 GB ZIP a odtiaľ sa vziať dá. Viď
+> [Rozobrať DMR 5.0](#rozobrať-dmr-50-198-gb-cez-http-range).
 
 Build to preto **neskúša naslepo**: `fetch-dem-ugkk.py` sa najprv spýta na
 dostupnosť hostiteľa a keď neodpovedá, ImageServer ani WCS už nerozbieha —

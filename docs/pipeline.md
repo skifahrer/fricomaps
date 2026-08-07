@@ -822,7 +822,14 @@ nedostane nič, čo by štýl rozbilo.
 ## Štvrtý workflow: „Rozobrať DMR 5.0"
 
 Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
-**~184 GB**, vnútri textové výškové body v S-JTSK [JTSK03], výšky Bpv.
+**197,7 GB** (197 707 257 567 B, zmerané behom 31182614668), S-JTSK [JTSK03],
+výšky Bpv.
+
+Čo je vnútri, zatiaľ nevieme presne. Centrálny adresár hlási 21 položiek,
+z toho 19 súborov, a **tri z nich majú dokopy 151 GB**. Kompresia je 3,5 %,
+takže obsah je už komprimovaný – LAZ alebo vnorené ZIPy, nie holý text;
+ukážkové položky sa ako výškové body prečítať nedali. Odpoveď dá inventár
+z `mode: len plán`.
 
 Toto je jediný workflow v repozitári, ktorý **nesmie stiahnuť svoj vstup**.
 Runner má voľných ~60 GB, artefakt aj asset releasu majú strop 2 GB na súbor
@@ -835,7 +842,7 @@ sa prečítať zoznam (pár MB) a potom stiahnuť len byty vybraných položiek.
 
 ```
 plan       posledných 128 kB  → koniec centrálneho adresára
-           (ZIP64: pri 184 GB sú offsety nad 4 GB, takže skutočné čísla
+           (ZIP64: pri 198 GB sú offsety nad 4 GB, takže skutočné čísla
             sú v ZIP64 zázname, nie v obyčajnej hlavičke)
            centrálny adresár   → zoznam VŠETKÝCH položiek s offsetmi
            z ~8 položiek prvé kilobajty → kalibrácia polohy blokov
@@ -866,12 +873,21 @@ assemble   gdalbuildvrt nad všetkými blokmi → JEDEN gdalwarp do WGS84
   ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
   rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m
   workflow odmietne v prvej minúte, nie po ôsmich hodinách.
+- **Dva filtre, jeden z nich istota.** `folder` vyberá podľa mena položky
+  v archíve (priečinok, viac priečinkov, alebo vzor) a funguje vždy. `area`
+  vyberá podľa polohy v teréne a funguje len tam, kde sa poloha bloku dá
+  prečítať z mena súboru.
 - **Poloha bloku sa zisťuje, neháda.** Meno súboru nesie súradnice, ale nie je
   zdokumentované v akom tvare – a Krovák má dve oficiálne podoby (`EPSG:8352`
   s kladnými hodnotami, `EPSG:8353` so zápornými) plus neznáme poradie
   stĺpcov. `plan` preto z ukážky položiek prečíta skutočné súradnice a z nich
-  dopočíta, ktoré číslo v mene je východ a ktoré sever. Keď to nevyjde, povie
-  to a filter na výrez sa jednoducho nepoužije.
+  dopočíta, ktoré číslo v mene je východ a ktoré sever. **Keď to nevyjde,
+  `area` skončí chybou** – v behu 31182614668 to tak nebolo a plán vtedy na
+  žiadosť o Vysoké Tatry ticho navrhol stiahnuť 151 GB.
+- **Inventár je hlavný výstup prvého behu.** `mode: len plán` vypíše do súhrnu
+  všetky mená, veľkosti a spôsob kompresie (uložené vs deflate) a zoznam
+  priečinkov. Nič sa nefiltruje podľa prípon – ten filter v prvej verzii ticho
+  zahodil 16 z 19 súborov a v logu nebolo ani jedno meno.
 - **Prenos sa obnovuje.** Pri 2 GB úseku z jedného servera je pretrhnutie
   normálna vec – čítačka si pamätá absolútnu pozíciu a vypýta si zvyšok od
   nej, nie celý úsek odznova.
@@ -884,6 +900,6 @@ rozdelenie), [`workers/dmr5-chunk.py`](../workers/dmr5-chunk.py) (jedna časť),
 [`workers/sjtsk.py`](../workers/sjtsk.py) (Krovák).
 
 **Tento workflow sa nespúšťa sám.** Ostatné výškové zdroje si `Build map`
-doplní ako svoju úlohu; 184 GB a desiatky paralelných jobov ale nemajú byť
+doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť
 vedľajší účinok buildu mapy, takže `dmr5` sa pustí raz vedome. Build to
 napíše aj s tým, čo presne spustiť.

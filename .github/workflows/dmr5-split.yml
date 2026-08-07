@@ -3,10 +3,17 @@ name: Rozobrať DMR 5.0
 # ÚGKK zverejnil DMR 5.0 (1 m LiDAR) ako otvorené dáta – jeden ZIP na celé
 # Slovensko:
 #   https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip
-# Má ~184 GB a vnútri sú textové výškové body v S-JTSK [JTSK03], výšky Bpv.
+# Má ~198 GB (zmerané behom 31182614668) a je v S-JTSK [JTSK03], výšky Bpv.
+#
+# ČO JE VNÚTRI, ZATIAĽ NEVIEME PRESNE. Prvý beh prečítal centrálny adresár:
+# 21 položiek, z toho 19 súborov, a tri z nich majú dokopy 151 GB. Kompresia
+# je 3,5 %, takže obsah je už komprimovaný – teda LAZ alebo vnorené ZIPy, nie
+# holý text. Ukážkové položky sa ako výškové body prečítať nedali.
+# Preto `mode: len plán` teraz vypíše CELÝ inventár (mená, veľkosti, uložené
+# vs deflate) do súhrnu behu – to je jediné, čo tú otázku zodpovie.
 #
 # STIAHNUŤ SA CELÝ NEDÁ a nie je to problém siete: GitHub runner má voľných
-# ~60 GB (a po vyčistení predinštalovaného softvéru ~85 GB), takže sa 184 GB
+# ~60 GB (a po vyčistení predinštalovaného softvéru ~85 GB), takže sa 198 GB
 # nemá kam odložiť – ani raz. Rovnako sa nedá odovzdať ďalej: artefakt aj
 # asset releasu majú strop 2 GB na súbor.
 #
@@ -23,10 +30,17 @@ name: Rozobrať DMR 5.0
 #               výrez        → `ugkk-<vyrez>.tif` do releasu `dem-ugkk`
 #               celá krajina → dlaždice `N49E019.tif` do releasu `dem-dmr5`
 #
-# PREČO SA RASTRUJE UŽ V ČASTI: 184 GB textu je rozbalených ~700 GB. Ten istý
+# PREČO SA RASTRUJE UŽ V ČASTI: 198 GB textu je rozbalených ~700 GB. Ten istý
 # terén ako Float32 mriežka je pri 5 m okolo 8 GB – a vrstevnice, skaly aj
 # tieňovanie sa počítajú z mriežky, nie z bodov. Body nikdy nikde neležia
 # celé naraz; režim `body (raw)` je len na to, keby si chcel vidieť originál.
+#
+# DVA SPÔSOBY, AKO SI VYPÝTAŤ MENEJ:
+#   `folder`  priečinok (alebo vzor) v archíve. Funguje VŽDY – je to len meno.
+#   `area`    pohorie alebo bbox. Funguje len tam, kde sa poloha bloku dá
+#             prečítať z mena súboru; keď nie, plán skončí chybou a nie
+#             tichým stiahnutím celého archívu (to sa stalo v behu
+#             31182614668, kde si vypýtal Vysoké Tatry a plán navrhol 151 GB).
 #
 # ROZLÍŠENIE VS. ÚZEMIE. Pri 1 m má jedna 1°×1° dlaždica ~48 GB, takže:
 #   * výrez (pohorie, do ~500 km²) sa dá spraviť v plnom 1 m rozlíšení,
@@ -39,9 +53,9 @@ name: Rozobrať DMR 5.0
 # (ÚGKK SR) – atribúcia je v poc/web/themes.js.
 #
 # POZOR pri úpravách: `workflow_dispatch` dovolí najviac 10 inputov a tento
-# workflow ich má 9. Jedenásty by GitHub odmietol tak, že by workflow ani
-# nenačítal – beh by skončil ako „failure" s nula jobmi a prázdnym logom
-# (viď komentár v lint-workflows.yml).
+# workflow ich má PRESNE 10. Jedenásty by GitHub odmietol tak, že by workflow
+# ani nenačítal – beh by skončil ako „failure" s nula jobmi a prázdnym logom
+# (viď komentár v lint-workflows.yml). Ďalší input sa musí niečím nahradiť.
 
 on:
   workflow_dispatch:
@@ -51,10 +65,15 @@ on:
         required: false
         default: "https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip"
         type: string
-      area:
-        description: "Územie: „cele“ = celé Slovensko, alebo kľúč z workers/areas.json (vysoke_tatry…), alebo bbox W,S,E,N"
+      folder:
+        description: "Len tento priečinok v archíve (napr. „DMR5_0/34-12/“). Viac oddeľ čiarkou, dá sa aj vzor „*34-12*“. Prázdne = celý archív"
         required: false
-        default: vysoke_tatry
+        default: ""
+        type: string
+      area:
+        description: "Územie: „cele“ = celé Slovensko, alebo kľúč z workers/areas.json (vysoke_tatry…), alebo bbox W,S,E,N. Funguje len tam, kde sa poloha bloku dá prečítať z mena súboru – inak zúž `folder`"
+        required: false
+        default: cele
         type: string
       mode:
         description: "Čo z toho vypadne"
@@ -192,6 +211,7 @@ jobs:
           python3 workers/dmr5-plan.py \
             --url='${{ inputs.url }}' \
             --area='${{ inputs.area }}' \
+            --include='${{ inputs.folder }}' \
             --chunk-mb='${{ inputs.chunk_mb }}' \
             --max-chunks='${{ inputs.max_chunks }}' \
             --out=plan.json --matrix=matrix.json --summary=plan-summary.md
@@ -409,7 +429,7 @@ jobs:
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
               --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
-              --notes "Z archívu DMR5_0_sjtsk03_bpv.zip (~184 GB), čítaného po úsekoch cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
+              --notes "Z archívu DMR5_0_sjtsk03_bpv.zip (~198 GB), čítaného po úsekoch cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
 
           jq -n \
             --arg src "ÚGKK SR – DMR 5.0 (LLS)" \

@@ -4,7 +4,7 @@
 
 PREČO: DMR 5.0 od ÚGKK je jeden archív
 `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`
-a má ~184 GB. GitHub runner má voľných ~60 GB na disku, takže sa ten súbor
+a má ~198 GB. GitHub runner má voľných ~60 GB na disku, takže sa ten súbor
 nemá kam stiahnuť – ani raz, ani po častiach na to isté miesto. Klasické
 „stiahni a rozbaľ“ tu neexistuje.
 
@@ -17,10 +17,10 @@ zoznamom položiek a s ich presnými offsetmi. Keď server vie HTTP Range
   3. stiahnuť LEN byty jednej položky (alebo súvislého úseku položiek)
      a rozbaliť ich za behu.
 
-Vďaka tomu sa 184 GB dá spracovať v N paralelných jobov po ~2 GB, kde každý
+Vďaka tomu sa 198 GB dá spracovať v N paralelných jobov po ~2 GB, kde každý
 siahne iba na svoj úsek. To je celý princíp workflowu „Rozobrať DMR 5.0“.
 
-ZIP64 JE POVINNÝ: pri 184 GB sú offsety väčšie než 4 GB, takže obyčajný
+ZIP64 JE POVINNÝ: pri 198 GB sú offsety väčšie než 4 GB, takže obyčajný
 koniec centrálneho adresára nesie samé 0xFFFFFFFF a skutočné čísla sú
 v ZIP64 zázname. Bez toho by sa archív javil ako prázdny alebo rozbitý.
 
@@ -110,7 +110,7 @@ class RemoteZip:
                 if code != 206 or "/" not in cr:
                     raise RemoteZipError(
                         f"server nevie HTTP Range (HTTP {code}, "
-                        f"Content-Range: {cr or '—'}). Bez neho sa 184 GB "
+                        f"Content-Range: {cr or '—'}). Bez neho sa 198 GB "
                         f"archív spracovať nedá.")
                 total = cr.rsplit("/", 1)[1].strip()
                 if not total.isdigit():
@@ -187,7 +187,7 @@ class RemoteZip:
         base = self.size - tail_len
 
         # ZIP64: 0xFFFF/0xFFFFFFFF znamená „skutočné číslo je inde“. Pri
-        # 184 GB to tak je vždy.
+        # 198 GB to tak je vždy.
         loc = tail.rfind(EOCD64_LOC_SIG, 0, pos)
         if loc >= 0 and (cd_count == 0xFFFF or cd_size == 0xFFFFFFFF
                          or cd_off == 0xFFFFFFFF):
