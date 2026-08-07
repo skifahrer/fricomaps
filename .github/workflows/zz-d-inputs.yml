@@ -1,0 +1,122 @@
+name: SONDA d – iba formulár
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
+        required: true
+        default: slovensko
+        type: choice
+        options:
+          - slovensko
+          - bratislavsky
+          - trnavsky
+          - trenciansky
+          - nitriansky
+          - zilinsky
+          - banskobystricky
+          - presovsky
+          - kosicky
+      area:
+        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Vlastný bbox cez options: area_bbox=W,S,E,N"
+        required: false
+        default: cely_region
+        type: choice
+        options:
+          - cely_region
+          - tatry
+          - vysoke_tatry
+          - belianske_tatry
+          - zapadne_tatry
+          - nizke_tatry
+          - slovensky_raj
+          - pieniny
+          - mala_fatra
+          - velka_fatra
+          - sulovske_skaly
+          - slovensky_kras
+          - muranska_planina
+          - vihorlat
+          - strazovske_vrchy
+          - male_karpaty
+      # Tri výbery zdroja, jeden na vrstvu. Kým bol `dem_source` jeden pre
+      # všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly
+      # z najjemnejšieho modelu (aj keď je len na výrez) a tieňovanie
+      # z hrubšieho, ktorý pokrýva celý región. `ziadne` vrstvu vypne –
+      # zapínač je tým pádom v tom istom poli ako zdroj a nie vedľa neho,
+      # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
+      # Zoznam zdrojov drží workers/dem-sources.json (stráži to Lint workflows).
+      contour_source:
+        description: "VRSTEVNICE – z ktorého modelu terénu. sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m. dmr5 = ÚGKK DMR 5.0 (LLS), 5 m. ugkk = 1 m LiDAR, LEN na výrez. ziadne = negenerovať"
+        required: false
+        default: sonny
+        type: choice
+        options:
+          - sonny
+          - dmr35
+          - dmr5
+          - ugkk
+          - ziadne
+      rock_source:
+        description: "SKALY – zo sklonu ktorého modelu (sonny / dmr35 / dmr5 / ugkk), alebo tienovanie = hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc“ (treba ho najprv pustiť na ten istý výrez). ziadne = negenerovať"
+        required: false
+        default: sonny
+        type: choice
+        options:
+          - sonny
+          - dmr35
+          - dmr5
+          - ugkk
+          - tienovanie
+          - ziadne
+      shading_source:
+        description: "TIEŇOVANIE A 3D TERÉN – z ktorého modelu. ugkk tu nie je: 1 m LiDAR máme len na výrez, tieňovanie sa robí na celý región. ziadne = negenerovať"
+        required: false
+        default: sonny
+        type: choice
+        options:
+          - sonny
+          - dmr35
+          - dmr5
+          - ziadne
+      contour_interval:
+        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie, 20 = redšie). Každá 10. sa kreslí ako hlavná, každá 5. ako polovičná"
+        required: false
+        default: "10"
+        type: string
+      rock_slope:
+        description: "Od akého sklonu (°) je terén skala – 50 = steny, 40 = aj strmé svahy (oveľa väčšie plochy)"
+        required: false
+        default: "50"
+        type: string
+      rock_res:
+        description: "Mriežka na obrys skál v metroch. auto = najjemnejšia, ktorá sa zmestí do času a má pri danom DEM ešte zmysel (odporúčané). Alebo číslo, napr. 1"
+        required: false
+        default: auto
+        type: string
+      rebuild:
+        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
+        required: false
+        default: nic
+        type: choice
+        options:
+          - nic
+          - vrstevnice
+          - skaly
+          - teren
+          - vsetko
+      options:
+        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Zoznam kľúčov je vo workers/parse-options.py"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  nic:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
