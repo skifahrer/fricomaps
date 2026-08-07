@@ -825,79 +825,88 @@ Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
 **197,7 GB** (197 707 257 567 B, zmerané behom 31182614668), S-JTSK [JTSK03],
 výšky Bpv.
 
-Čo je vnútri, zatiaľ nevieme presne. Centrálny adresár hlási 21 položiek,
-z toho 19 súborov, a **tri z nich majú dokopy 151 GB**. Kompresia je 3,5 %,
-takže obsah je už komprimovaný – LAZ alebo vnorené ZIPy, nie holý text;
-ukážkové položky sa ako výškové body prečítať nedali. Odpoveď dá inventár
-z `mode: len plán`.
+Čo je vnútri, prečítal beh 31184095104 (`mode: len plán`):
+
+```
+dmr5_0/dmr5_jtsk03.tif        151,43 GB   celé Slovensko, 1 m, JEDEN raster
+dmr5_0/dmr5_jtsk03.tif.ovr     46,28 GB   prehľadové úrovne (pyramídy)
+dmr5_0/dmr5_jtsk03.tfw                    world file
+dmr5_0/dmr5_jtsk03.tif.aux.xml, .xml      metadáta
+INFO_slk.txt, INFO_eng.txt, 4× PDF        licencie a popis
+prehlad_lokalit_lls_1_cyklus/*.shp …      prehľad lokalít zberu
+```
+
+**Nie sú to výškové body po blokoch, je to jeden súvislý GeoTIFF.** Po
+položkách archívu sa teda deliť nedá – ale deliť netreba.
 
 Toto je jediný workflow v repozitári, ktorý **nesmie stiahnuť svoj vstup**.
-Runner má voľných ~60 GB, artefakt aj asset releasu majú strop 2 GB na súbor
-a rozbalený archív má ~700 GB. Nič z toho sa nedá obísť väčšou trpezlivosťou.
+Runner má voľných ~60 GB, artefakt aj asset releasu majú strop 2 GB na súbor.
+Nič z toho sa nedá obísť väčšou trpezlivosťou.
 
-Dá sa to obísť tým, ako je ZIP postavený: na konci má **centrálny adresár**
-so zoznamom položiek a s offsetom a veľkosťou každej z nich. Keď server vie
-HTTP Range – a `opendata.skgeodesy.sk` je statické úložisko, takže vie – dá
-sa prečítať zoznam (pár MB) a potom stiahnuť len byty vybraných položiek.
+Nemusí sa. GDAL vie otvoriť raster priamo vo vzdialenom ZIPe:
 
 ```
-plan       posledných 128 kB  → koniec centrálneho adresára
-           (ZIP64: pri 198 GB sú offsety nad 4 GB, takže skutočné čísla
-            sú v ZIP64 zázname, nie v obyčajnej hlavičke)
-           centrálny adresár   → zoznam VŠETKÝCH položiek s offsetmi
-           z ~8 položiek prvé kilobajty → kalibrácia polohy blokov
-           ─► plan.json + matrix (jedna položka = jedna časť po ~2 GB)
-
-chunk      matrix job, `max_parallel` naraz:
-           jeden Range prenos na celú časť (nie na položku – pri 20 000
-           malých súboroch je réžia väčšia než dáta)
-           lokálne hlavičky sa čítajú z prúdu, obsah sa inflatuje za behu
-           body → binning do mriežky → GeoTIFF na blok, v natívnom S-JTSK
-           ─► artefakt dmr5-chunk-<NNN>.tar.zst
-
-assemble   gdalbuildvrt nad všetkými blokmi → JEDEN gdalwarp do WGS84
-           ─► dlaždice N49E019.tif (celé Slovensko) do `dem-dmr5`
-              alebo jeden COG ugkk-<vyrez>.tif do `dem-ugkk`
+/vsizip//vsicurl/https://opendata.skgeodesy.sk/…/DMR5_0_sjtsk03_bpv.zip/dmr5_0/dmr5_jtsk03.tif
 ```
 
-- **Prečo sa rastruje v časti a nie na konci.** 700 GB textu nemá kde ležať
-  ani ako sa odovzdať ďalej. Ako mriežka Float32 je ten istý terén pri 5 m
-  okolo 8 GB – a vrstevnice, skaly aj tieňovanie sa počítajú z mriežky.
-- **Prečo je natívne S-JTSK až do konca.** Časti odovzdávajú `EPSG:8353` bez
-  prevzorkovania a do WGS84 to ide jedným warpom v `assemble`. Keby warpovala
-  každá časť sama, terén by sa interpoloval dvakrát.
-- **Jeden raster na blok, nie na časť.** Položky idú do častí v poradí
-  offsetov, inak sa nedajú stiahnuť jedným prenosom – časť tak môže byť pás
-  cez pol Slovenska a jeden raster na taký pás by bol z 95 % prázdny.
+ZIP sa číta cez HTTP Range (centrálny adresár dá offset položky), GeoTIFF je
+dlaždicovaný 512×512 s DEFLATE, takže si GDAL vypýta len tie dlaždice, ktoré
+potrebuje. Na disku nepristane nič.
+
+```
+plan     posledných 128 kB → koniec centrálneho adresára
+         (ZIP64: pri 198 GB sú offsety nad 4 GB, skutočné čísla sú v ZIP64
+          zázname, nie v obyčajnej hlavičke)
+         centrálny adresár → inventár VŠETKÝCH položiek do súhrnu behu
+         → rozhodne, čo archív je:
+             jeden veľký raster (≥ 50 % bajtov) → job `raster`
+             súbory po blokoch                  → joby `chunk` + `assemble`
+
+raster   gdalinfo cez /vsizip//vsicurl/ (pár stoviek kB) → rozmery, mriežka,
+         CRS, dlaždica, pyramídy
+         celá krajina: JEDEN gdal_translate -tr <grid> -r average
+                       → dem-tiles.py → N49E019.tif → release `dem-dmr5`
+         výrez:        gdalwarp -te <bbox> -tr <grid>
+                       → ugkk-<vyrez>.tif → release `dem-ugkk`
+
+chunk /  cesta pre archívy poskladané zo samostatných súborov po blokoch.
+assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
+         vyzerajú, tak tu ostáva.
+```
+
+- **Cena čítania je daná pozíciou v súbore.** Položka v ZIPe je zabalená
+  deflate-om a v deflate prúde sa nedá skočiť dopredu – dá sa doň len rozbaliť
+  od začiatku. Zmerané na napodobenine (44 MB ZIP, dlaždicovaný DEFLATE
+  GeoTIFF, vlastný HTTP server s Range): výrez na začiatku rastra 0,5 MB (1 %),
+  výrez na konci 44,1 MB (100 %), celý raster 1 m → 5 m 37,8 MB s `.ovr`
+  a 46,1 MB bez neho. Pri výreze je preto sever lacný a juh drahý.
+- **Jeden prechod, nie viac.** Celá krajina sa prevzorkúva jedným
+  `gdal_translate -tr` a na 1° dlaždice sa krája až hotový malý raster.
+  Krájať dlaždice priamo zo zdroja by stálo N× cestu od začiatku súboru.
+- **Sidecary sa nesmú schovať.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`
+  šetrí požiadavky, ale skryje `.ovr` aj `.tfw` – a práve tých 46 GB pyramíd
+  robí z prevzorkovania celej krajiny zlomok práce. Preto sa tá premenná
+  v `dmr5-raster.py` zámerne NEnastavuje.
 - **Rozlíšenie stropuje release, nie zdroj.** Pri 1 m má jedna 1°×1° dlaždica
   ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
   rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m
   workflow odmietne v prvej minúte, nie po ôsmich hodinách.
-- **Dva filtre, jeden z nich istota.** `folder` vyberá podľa mena položky
-  v archíve (priečinok, viac priečinkov, alebo vzor) a funguje vždy. `area`
-  vyberá podľa polohy v teréne a funguje len tam, kde sa poloha bloku dá
-  prečítať z mena súboru.
-- **Poloha bloku sa zisťuje, neháda.** Meno súboru nesie súradnice, ale nie je
-  zdokumentované v akom tvare – a Krovák má dve oficiálne podoby (`EPSG:8352`
-  s kladnými hodnotami, `EPSG:8353` so zápornými) plus neznáme poradie
-  stĺpcov. `plan` preto z ukážky položiek prečíta skutočné súradnice a z nich
-  dopočíta, ktoré číslo v mene je východ a ktoré sever. **Keď to nevyjde,
-  `area` skončí chybou** – v behu 31182614668 to tak nebolo a plán vtedy na
-  žiadosť o Vysoké Tatry ticho navrhol stiahnuť 151 GB.
 - **Inventár je hlavný výstup prvého behu.** `mode: len plán` vypíše do súhrnu
   všetky mená, veľkosti a spôsob kompresie (uložené vs deflate) a zoznam
   priečinkov. Nič sa nefiltruje podľa prípon – ten filter v prvej verzii ticho
-  zahodil 16 z 19 súborov a v logu nebolo ani jedno meno.
-- **Prenos sa obnovuje.** Pri 2 GB úseku z jedného servera je pretrhnutie
-  normálna vec – čítačka si pamätá absolútnu pozíciu a vypýta si zvyšok od
-  nej, nie celý úsek odznova.
-- **`mode: len plán`** prečíta obsah archívu a nestiahne ani jeden výškový
-  bod. Prvý beh nech je tento.
+  zahodil 16 z 19 súborov a v logu nebolo ani jedno meno, takže sa nedalo
+  zistiť, že archív je v skutočnosti jeden raster.
+- **Filtre.** `area` (pohorie alebo bbox) pri rastri rieši `gdalwarp`
+  a funguje vždy; pri archíve po blokoch potrebuje vedieť, kde blok leží, a
+  keď sa to z mena nedá prečítať, plán skončí chybou – nie tichým stiahnutím
+  celého archívu, ako v behu 31182614668. `folder` vyberá podľa mena položky
+  a funguje vždy, ale pri jednom veľkom rastri nemá čo zúžiť.
 
 Kód: [`workers/zip-remote.py`](../workers/zip-remote.py) (čítanie vzdialeného
-ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (manifest a
-rozdelenie), [`workers/dmr5-chunk.py`](../workers/dmr5-chunk.py) (jedna časť),
-[`workers/sjtsk.py`](../workers/sjtsk.py) (Krovák).
+ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (inventár a
+rozpoznanie podoby), [`workers/dmr5-raster.py`](../workers/dmr5-raster.py)
+(jeden veľký raster), [`workers/dmr5-chunk.py`](../workers/dmr5-chunk.py)
+(archív po blokoch), [`workers/sjtsk.py`](../workers/sjtsk.py) (Krovák).
 
 **Tento workflow sa nespúšťa sám.** Ostatné výškové zdroje si `Build map`
 doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť
