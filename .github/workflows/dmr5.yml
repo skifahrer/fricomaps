@@ -1,0 +1,312 @@
+name: Pripraviť DMR 5.0
+
+# Z otvorených dát ÚGKK spraví výškový model, z ktorého vie „Build map"
+# počítať VRSTEVNICE, SKALY aj TIEŇOVANIE. To je celý zmysel tohto workflowu:
+# jeho výstup je vstup pre `dem_source` v builde mapy.
+#
+#   area: cele_slovensko  →  mriežka 5 m  →  dlaždice N49E019.tif
+#                            release `dem-dmr5`   →  Build map `dem_source: dmr5`
+#   area: <pohorie>       →  mriežka 1 m  →  ugkk-<pohorie>.tif
+#                            release `dem-ugkk`   →  Build map `dem_source: ugkk`
+#                                                    (a rovnaké `area`)
+#
+# Pomenúvacia schéma aj formát sú tie isté ako u Sonnyho a DMR 3.5, takže
+# `workers/fetch-dem.sh` sa pri čítaní vôbec nevetví – rozhoduje len meno
+# releasu. Build mapy sa teda nemusí učiť nič nové.
+#
+# ZDROJ: https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip
+# ~198 GB, S-JTSK [JTSK03], výšky Bpv. Vnútri (beh 31184095104):
+#
+#   dmr5_0/dmr5_jtsk03.tif      151,43 GB  celé Slovensko, 1 m, JEDEN raster
+#   dmr5_0/dmr5_jtsk03.tif.ovr   46,28 GB  prehľadové úrovne (pyramídy)
+#   dmr5_0/dmr5_jtsk03.tfw                 world file
+#   INFO_*.txt, 4× PDF, prehlad_lokalit_*  licencie a prehľad lokalít
+#
+# NESŤAHUJE SA. Runner má voľných ~60 GB a asset releasu má strop 2 GB, takže
+# 151 GB sa nemá kam odložiť. GDAL ale vie `/vsizip//vsicurl/URL/cesta.tif`:
+# ZIP číta cez HTTP Range a GeoTIFF je dlaždicovaný, takže si vypýta len to,
+# čo potrebuje.
+#
+# ČO STOJÍ ČÍTANIE: člen ZIPu je zabalený deflate-om a v deflate prúde sa nedá
+# skočiť dopredu – dá sa doň len rozbaliť od začiatku. Cena je preto úmerná
+# tomu, ako ďaleko v súbore dáta ležia (sever lacný, juh drahý), a keď je
+# adresár dlaždíc až na konci, tak aj samotné OTVORENIE prečíta celý súbor.
+# Presne to zhodilo behy 31191478190 a 31197330753. Preto sa najprv číta 16
+# bajtov hlavičky, `gdalinfo` má strop a keď neprejde, siahne sa po pyramídach
+# (46 GB namiesto 151 GB) georeferencovaných z `.tfw`.
+#
+# HISTÓRIA: do augusta 2026 tu bola aj cesta cez rozdelenie archívu na časti
+# (matrix joby, `workers/dmr5-chunk.py`). Stála na predpoklade, že archív sú
+# výškové body po blokoch. Nie sú – je to jeden súvislý raster, takže nebolo
+# čo deliť. Zmazané aj s inputmi, ktoré k tomu patrili (`chunk_mb`,
+# `max_parallel`, `max_chunks`, `folder`, `retention_days`).
+
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: "Územie. Celé Slovensko ide na 5 m do releasu dem-dmr5; pohorie na 1 m do dem-ugkk"
+        required: true
+        default: cele_slovensko
+        type: choice
+        options:
+          - cele_slovensko
+          - tatry
+          - vysoke_tatry
+          - belianske_tatry
+          - zapadne_tatry
+          - nizke_tatry
+          - slovensky_raj
+          - pieniny
+          - mala_fatra
+          - velka_fatra
+          - sulovske_skaly
+          - slovensky_kras
+          - muranska_planina
+          - vihorlat
+          - strazovske_vrchy
+          - male_karpaty
+      grid_m:
+        description: "Mriežka výsledku"
+        required: false
+        default: "auto (1 m na pohorie, 5 m na celé Slovensko)"
+        type: choice
+        options:
+          - "auto (1 m na pohorie, 5 m na celé Slovensko)"
+          - "1 m – najpodrobnejšie, len na pohorie"
+          - "2 m"
+          - "5 m – celé Slovensko"
+          - "10 m"
+          - "20 m – rýchly test"
+      mode:
+        description: "Čo spraviť"
+        required: false
+        default: "model do releasu"
+        type: choice
+        options:
+          - "model do releasu"
+          - "len sonda – čo je v archíve, nič sa nesťahuje"
+          - "model + podrobný log GDALu"
+
+permissions:
+  contents: write
+
+concurrency:
+  # Dva behy naraz by z toho istého servera ťahali dvojnásobok a prepisovali
+  # si tie isté assety.
+  group: dmr5-${{ inputs.area }}
+  cancel-in-progress: false
+
+env:
+  DMR5_URL: https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip
+
+jobs:
+  # ---------- čo je v archíve ----------
+  # Číta len centrálny adresár ZIPu (pár MB na konci) – behá pár sekúnd
+  # a nestiahne ani jeden pixel.
+  plan:
+    name: Sonda (čo je v archíve)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      layout: ${{ steps.plan.outputs.layout }}
+      member: ${{ steps.plan.outputs.member }}
+      member_gb: ${{ steps.plan.outputs.member_gb }}
+      grid: ${{ steps.cfg.outputs.grid }}
+      mode: ${{ steps.cfg.outputs.mode }}
+      release: ${{ steps.cfg.outputs.release }}
+      area_key: ${{ steps.cfg.outputs.area_key }}
+      whole_country: ${{ steps.cfg.outputs.whole_country }}
+      dem_source: ${{ steps.cfg.outputs.dem_source }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Jediné miesto, kde sa z formulára stanú konkrétne čísla a mená.
+      # Ostatné kroky už len čítajú výstupy – dvakrát počítať to isté sa vždy
+      # raz rozíde.
+      - name: Nastavenia
+        id: cfg
+        run: |
+          set -euo pipefail
+          AREA='${{ inputs.area }}'
+          case '${{ inputs.mode }}' in
+            "len sonda"*) MODE=plan ;;
+            "model + podrobný"*) MODE=debug ;;
+            *) MODE=model ;;
+          esac
+
+          # Celé Slovensko ide na dlaždice ako Sonny a DMR 3.5; pohorie ide na
+          # jeden COG presne tak, ako to už čaká workers/fetch-dem.sh.
+          if [ "$AREA" = cele_slovensko ]; then
+            WHOLE=true;  REL=dem-dmr5; SRC=dmr5; KEY=cele
+          else
+            WHOLE=false; REL=dem-ugkk; SRC=ugkk; KEY="$AREA"
+          fi
+
+          # Z „5 m – celé Slovensko" spraví „5“.
+          GRID=$(printf '%s' '${{ inputs.grid_m }}' | grep -oE '^[0-9]+' || true)
+          if [ -z "$GRID" ]; then
+            GRID=$([ "$WHOLE" = true ] && echo 5 || echo 1)
+          fi
+
+          # Strážca, ktorý ušetrí hodiny počítania: pri 1 m má jedna 1°×1°
+          # dlaždica ~48 GB a asset releasu má strop 2 GB. Celé Slovensko
+          # v jemnej mriežke sa teda nemá kam uložiť.
+          if [ "$WHOLE" = true ] && [ "$GRID" -lt 3 ]; then
+            echo "::error::Celé Slovensko pri mriežke ${GRID} m sa do releasu nezmestí (1°×1° dlaždica by mala vyše 5 GB, strop assetu je 2 GB). Zvoľ 5 m, alebo si vyber pohorie."
+            exit 1
+          fi
+
+          {
+            echo "mode=$MODE"
+            echo "grid=$GRID"
+            echo "release=$REL"
+            echo "area_key=$KEY"
+            echo "whole_country=$WHOLE"
+            echo "dem_source=$SRC"
+          } >> "$GITHUB_OUTPUT"
+          echo "── $AREA, mriežka ${GRID} m → release $REL (Build map: dem_source: $SRC)"
+
+      - name: Prečítaj obsah archívu
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 workers/dmr5-plan.py \
+            --url="$DMR5_URL" --out=plan.json --summary=plan-summary.md
+
+      - name: Odlož plán
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmr5-plan
+          path: plan.json
+          retention-days: 7
+          compression-level: 9
+          if-no-files-found: ignore
+
+      - name: Súhrn
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          [ -s plan-summary.md ] && cat plan-summary.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "| nastavenie | hodnota |"
+            echo "|---|---|"
+            echo "| územie | \`${{ inputs.area }}\` |"
+            echo "| mriežka | ${{ steps.cfg.outputs.grid }} m |"
+            echo "| release | \`${{ steps.cfg.outputs.release }}\` |"
+            echo "| pre Build map | \`dem_source: ${{ steps.cfg.outputs.dem_source }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- hotový model do releasu ----------
+  model:
+    name: Výškový model
+    needs: plan
+    if: ${{ needs.plan.outputs.mode != 'plan' && needs.plan.outputs.layout == 'raster' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Nainštaluj GDAL
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin jq
+
+      - name: Uvoľni miesto na disku
+        run: |
+          set -uo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - name: Vezmi plán
+        uses: actions/download-artifact@v4
+        with:
+          name: dmr5-plan
+
+      - name: Vyrež model
+        run: |
+          set -euo pipefail
+          DEBUG=''
+          [ '${{ needs.plan.outputs.mode }}' = 'debug' ] && DEBUG='--debug'
+          python3 workers/dmr5-raster.py \
+            --url="$DMR5_URL" \
+            --plan=plan.json \
+            --member='${{ needs.plan.outputs.member }}' \
+            --area='${{ needs.plan.outputs.area_key }}' \
+            --grid-m='${{ needs.plan.outputs.grid }}' \
+            --out=out --work=raster-work \
+            --asset='ugkk-${{ needs.plan.outputs.area_key }}.tif' \
+            --summary=model-summary.md $DEBUG
+
+      - name: Nahraj do releasu
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ needs.plan.outputs.release }}'
+          shopt -s nullglob
+          FILES=(out/*.tif)
+          [ ${#FILES[@]} -gt 0 ] || { echo "::error::Nevznikol ani jeden súbor."; exit 1; }
+
+          BIG=0
+          for f in "${FILES[@]}"; do
+            SZ=$(stat -c%s "$f")
+            if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
+              echo "::error::$f má $(( SZ / 1048576 )) MB, strop assetu je 2 GB. Zvoľ hrubšiu mriežku alebo menšie územie."
+              BIG=1
+            fi
+          done
+          [ "$BIG" -eq 0 ] || exit 1
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
+              --notes "Z archívu DMR5_0_sjtsk03_bpv.zip, čítaného priamo cez /vsizip//vsicurl/. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
+
+          jq -n \
+            --arg src "ÚGKK SR – DMR 5.0 (LLS)" \
+            --arg url "$DMR5_URL" \
+            --arg member '${{ needs.plan.outputs.member }}' \
+            --arg area '${{ needs.plan.outputs.area_key }}' \
+            --arg grid '${{ needs.plan.outputs.grid }}' \
+            --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson files "$(printf '%s\n' "${FILES[@]}" | xargs -n1 basename | jq -R . | jq -s .)" \
+            '{source:$src, url:$url, member:$member, area:$area, cell_m:($grid|tonumber), built_at:$built, files:$files}' \
+            > out/meta-dmr5.json
+          cat out/meta-dmr5.json
+
+          gh release upload "$TAG" "${FILES[@]}" out/meta-dmr5.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "V releasi $TAG: ${#FILES[@]} súborov ✓"
+
+      # Výstup tohto workflowu je vstup pre Build map – nech je z behu jasné,
+      # čo tam presne nastaviť, aby z toho boli vrstevnice, skaly a tieňovanie.
+      - name: Súhrn
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          [ -s model-summary.md ] && cat model-summary.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "## Ako z toho spraviť mapu"
+            echo
+            echo "Spusti **Build map** s:"
+            echo
+            echo "| input | hodnota |"
+            echo "|---|---|"
+            echo "| \`dem_source\` | \`${{ needs.plan.outputs.dem_source }}\` |"
+            if [ '${{ needs.plan.outputs.whole_country }}' != 'true' ]; then
+              echo "| \`area\` | \`${{ needs.plan.outputs.area_key }}\` |"
+            fi
+            echo "| \`layers\` | \`contours,terrain\` (vrstevnice + skaly + tieňovanie) |"
+            echo
+            echo "Vrstevnice, skaly aj tieňovanie sa počítajú z toho istého modelu,"
+            echo "takže obrys skaly, priebeh vrstevnice a tieň pod nimi sedia na tom"
+            echo "istom teréne."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -91,6 +91,29 @@ jobs:
           print(f"výber pohorí sedí ({len(opts)} položiek)")
           PY
 
+      # A to isté pre výber pohoria v „Pripraviť DMR 5.0". Ten workflow robí
+      # výškový model práve pre tie územia, na ktoré potom Build map počíta
+      # skaly – keby sa zoznamy rozišli, dá sa vyrobiť model pre pohorie,
+      # ktoré si build nevie vypýtať (alebo naopak).
+      - name: Výber pohorí v dmr5.yml sedí s areas.json
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, sys, yaml
+          d = yaml.safe_load(open(".github/workflows/dmr5.yml"))
+          on = d[[k for k in d if k is True or k == "on"][0]]
+          opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
+          areas = [k for k in json.load(open("workers/areas.json"))
+                   if not k.startswith("_")]
+          want = ["cele_slovensko"] + areas
+          if opts != want:
+              print("::error::Výber `area` v dmr5.yml nesedí s workers/areas.json")
+              print(f"  vo workflowe: {opts}")
+              print(f"  malo by byť:  {want}")
+              sys.exit(1)
+          print(f"výber pohorí v dmr5.yml sedí ({len(opts)} položiek)")
+          PY
+
       # To isté pre výber výškového zdroja: `dem_source` vo formulári musí
       # sedieť s kľúčmi v workers/dem-sources.json. Bez toho sa dá pridať
       # zdroj do JSONu a zabudnúť naň vo formulári (alebo naopak) – a zistí
