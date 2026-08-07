@@ -883,10 +883,25 @@ assemble DMR 5.0 taký nie je, ale mechanika je overená a iné zdroje tak
 - **Jeden prechod, nie viac.** Celá krajina sa prevzorkúva jedným
   `gdal_translate -tr` a na 1° dlaždice sa krája až hotový malý raster.
   Krájať dlaždice priamo zo zdroja by stálo N× cestu od začiatku súboru.
+- **Čítať sa musí dopredu.** Výrez ide v dvoch krokoch: `gdal_translate
+  -projwin` sekvenčne na disk, potom `gdalwarp` z disku do WGS84. Warp
+  priamo nad vzdialeným zdrojom si dlaždice pýta v poradí cieľovej mriežky
+  a každý skok späť v deflate prúde znamená rozbaľovanie od začiatku člena.
+  Okno sa pritom oreže na skutočný rozsah rastra – `-projwin` by presah
+  doplnil NULAMI a nula je platná výška, takže by z toho v mape bol pás
+  mora, nie diera.
+- **Pyramídy miesto rastra, keď to ide.** Pri cieli aspoň 2× hrubšom než
+  zdroj sa číta z `.ovr` (46 GB) a nie z hlavného rastra (151 GB). `.ovr` je
+  obyčajný TIFF bez georeferencie – tá sa mu dolepí z rodiča cez VRT.
+  Vyberá sa výslovne, nie s dôverou, že si ho GDAL nájde sám: keby ho
+  neuvidel, prečítal by celý raster a nikto by sa to nedozvedel.
 - **Sidecary sa nesmú schovať.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`
-  šetrí požiadavky, ale skryje `.ovr` aj `.tfw` – a práve tých 46 GB pyramíd
-  robí z prevzorkovania celej krajiny zlomok práce. Preto sa tá premenná
+  šetrí požiadavky, ale skryje `.ovr` aj `.tfw`. Preto sa tá premenná
   v `dmr5-raster.py` zámerne NEnastavuje.
+- **Heartbeat každých 30 s.** Prenesené bajty zo sieťovky, rýchlosť, odhad
+  zvyšku a veľkosť výstupu. GDAL kreslí percentá cez `\r`, čo sa v logu
+  GitHub Actions neobjaví, takže hodinový krok je inak úplne ticho a nedá sa
+  odlíšiť od zaseknutého behu.
 - **Rozlíšenie stropuje release, nie zdroj.** Pri 1 m má jedna 1°×1° dlaždica
   ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
   rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m
