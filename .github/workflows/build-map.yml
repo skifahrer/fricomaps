@@ -207,7 +207,7 @@ jobs:
   # ---------- je v release terén pre toto územie? ----------
   # Iný zdroj výšok nemáme (Copernicus je zámerne vypnutý), takže bez dlaždíc
   # by build po pár minútach zlyhal. Radšej sa najprv pozrieme, či v release
-  # niečo pre náš bbox je – a keď nie, doplní ho `mirror-dem` ešte predtým.
+  # niečo pre náš bbox je – a keď nie, doplnia ho joby `mirror-*` ešte predtým.
   check-dem:
     name: Kontrola výškového modelu
     needs: plan
@@ -218,10 +218,13 @@ jobs:
     # a nie na `opt_rocks`.
     if: ${{ needs.plan.outputs.opt_contour_lines == 'true' || needs.plan.outputs.opt_rock_dem != '' || needs.plan.outputs.opt_terrain == 'true' }}
     outputs:
-      # Zoznam zdrojov, ktoré treba doplniť, ako JSON pole – `mirror-dem`
-      # z neho spraví maticu. Vrstvy môžu chcieť rôzne modely, takže sa
-      # nedopĺňa „ten jeden", ale každý, ktorý chýba.
-      mirror: ${{ steps.check.outputs.mirror }}
+      # Ktorý model treba doplniť pre ktorú vrstvu; prázdne = netreba nič.
+      # Vrstvy môžu chcieť rôzne modely, takže sa nedopĺňa „ten jeden", ale
+      # každý, ktorý chýba – a keď dve vrstvy chcú ten istý, ostane vyplnená
+      # len prvá z nich, nech sa to isté nesťahuje dvakrát.
+      mirror_contours: ${{ steps.check.outputs.mirror_contours }}
+      mirror_rocks: ${{ steps.check.outputs.mirror_rocks }}
+      mirror_terrain: ${{ steps.check.outputs.mirror_terrain }}
       # Otlačok releasu na vrstvu. Ide do kľúča cache – keď sa release
       # doplní, nesmie sa z nej vrátiť starý výsledok. Na vrstvu preto, aby
       # doplnenie DMR 5.0 nezahodilo vrstevnice zo Sonnyho.
@@ -260,14 +263,12 @@ jobs:
           )
           fi
 
-          MIRROR=""   # zdroje na doplnenie, unikátne
-          add_mirror() {
-            case " $MIRROR " in *" $1 "*) ;; *) MIRROR="$MIRROR $1" ;; esac
-          }
+          MIRROR=""   # už zaradené na doplnenie, nech sa nesťahuje dvakrát
+          NEED_SRC=""  # čo má doplniť práve kontrolovaná vrstva
 
           # Pozrie sa na jeden zdroj: či pre naše územie v jeho release niečo
           # je, a aký je otlačok obsahu. Výsledok ide do DEMKEY, prípadné
-          # doplnenie do MIRROR.
+          # doplnenie do NEED_SRC.
           check_source() { # $1 = vrstva (na výpis), $2 = zdroj
             local what="$1" src="$2" rel assets names need=false
             case "$src" in
@@ -314,7 +315,13 @@ jobs:
               echo "$what ($src): dlaždíc pre bbox $total, v release $rel $have → doplniť: $need"
             fi
 
-            [ "$need" = true ] && add_mirror "$src" || true
+            if [ "$need" = true ]; then
+              # Ten istý model už dopĺňa iná vrstva – druhýkrát netreba.
+              case " $MIRROR " in
+                *" $src "*) echo "  ($src už dopĺňa iná vrstva)" ;;
+                *) NEED_SRC="$src"; MIRROR="$MIRROR $src" ;;
+              esac
+            fi
             DEMKEY=$(printf '%s' "$assets" | sha256sum | cut -c1-12)
           }
 
@@ -325,48 +332,98 @@ jobs:
             layer="${pair%%:*}"
             src="${pair#*:}"
             DEMKEY=""
+            NEED_SRC=""
             # Prázdny zdroj = vrstva je vypnutá (alebo skaly idú z tieňovania)
             # a žiadny výškový model sa pre ňu nečíta.
             if [ -n "$src" ] && [ "$src" != 'ziadne' ]; then
               check_source "$layer" "$src"
             fi
             echo "demkey_$layer=$DEMKEY" >> "$GITHUB_OUTPUT"
+            echo "mirror_$layer=$NEED_SRC" >> "$GITHUB_OUTPUT"
           done
 
-          # JSON pole pre maticu jobu `mirror-dem`. Prázdne pole = niet čo
-          # dopĺňať a ten job sa vôbec nespustí.
-          JSON=$(python3 -c \
-            "import json,sys; print(json.dumps(sys.argv[1].split()))" "$MIRROR")
-          echo "mirror=$JSON" >> "$GITHUB_OUTPUT"
-          echo "Doplniť treba: ${MIRROR:-nič}"
+          echo "Doplniť treba:${MIRROR:- nič}"
 
   # ---------- doplnenie výškových dát ----------
   # Jeden job pre všetky zdroje. Sťahovaciu pipeline máme jedinú a rozdiel
   # medzi modelmi je len v jej `source` – tri takmer rovnaké mirror joby tu
   # boli len preto, že tri takmer rovnaké workflowy boli aj vedľa.
   #
-  # Matica, lebo vrstvy môžu chcieť rôzne modely: vrstevnice zo Sonnyho
-  # a skaly z DMR 5.0 sú dva releasy a chýbať môžu oba naraz.
+  # Tri joby, jeden na vrstvu: vrstvy môžu chcieť rôzne modely (vrstevnice
+  # zo Sonnyho, skaly z DMR 5.0) a chýbať môžu oba naraz. Každý sa spustí,
+  # len keď `check-dem` povedal, že ten konkrétny model treba doplniť.
   #
-  # Spúšťa sa SÁM, keď v release nie sú dlaždice pre naše územie. Netreba
+  # Bola to jedna matica nad `fromJSON(...)`. Vyzeralo to úspornejšie, ale
+  # GitHub taký súbor odmietol prijať: po pushnutí vznikol beh bez jobov,
+  # pomenovaný cestou k súboru (behy 33 a 34) – a to je presne ten „Build map
+  # sa spustil po mergi", ktorý sa nemá diať. Matica nad reusable workflowom
+  # je zjavne za hranicou toho, čo validátor znesie; tri obyčajné joby sú
+  # o pár riadkov dlhšie a fungujú.
+  #
+  # Spúšťajú sa SAMY, keď v release nie sú dlaždice pre naše územie. Netreba
   # teda púšťať nič ručne – `Build map` je jediné, čo spúšťaš.
-  mirror-dem:
-    name: Doplniť výškový model (${{ matrix.src }})
+  mirror-contours:
+    name: Doplniť výškový model (vrstevnice)
     needs: [plan, check-dem]
-    if: ${{ !cancelled() && needs.check-dem.outputs.mirror != '' && needs.check-dem.outputs.mirror != '[]' }}
-    strategy:
-      # Jeden chýbajúci model nemá zhodiť doplnenie ostatných – build ide
-      # ďalej s tým, čo sa podarilo, a zvyšok povie fetch-dem.sh.
-      fail-fast: false
-      matrix:
-        src: ${{ fromJSON(needs.check-dem.outputs.mirror || '[]') }}
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror_contours != '' }}
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
     with:
-      what: ${{ matrix.src }}
+      what: ${{ needs.check-dem.outputs.mirror_contours }}
       area: ${{ inputs.area }}
       custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+
+  mirror-rocks:
+    name: Doplniť výškový model (skaly)
+    needs: [plan, check-dem]
+    # Keď skaly berú ten istý model ako vrstevnice, `check-dem` ho tu nechá
+    # prázdny – doplní ho job vyššie a druhé sťahovanie toho istého by bolo
+    # len zbytočné.
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror_rocks != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+    with:
+      what: ${{ needs.check-dem.outputs.mirror_rocks }}
+      area: ${{ inputs.area }}
+      custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+
+  mirror-terrain:
+    name: Doplniť výškový model (tieňovanie)
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror_terrain != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+    with:
+      what: ${{ needs.check-dem.outputs.mirror_terrain }}
+      area: ${{ inputs.area }}
+      custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+
+  # ---------- skaly z tieňovaných dlaždíc ----------
+  # Keď je `rock_source: tienovanie`, obrázky sa stiahnu tu a rovno v tomto
+  # behu – nie „spusti si najprv ten druhý workflow a potom príď". Je to tá
+  # istá pipeline (shading-rocks.yml), len volaná; stiahnuté JPG dlaždice
+  # z nej vypadnú ako artefakt `dlazdice-tienovania-…` a hotové polygóny ako
+  # asset v release, ktorý si o kus nižšie vypýta job s vrstevnicami.
+  #
+  # Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build
+  # z dobrovoľníckeho servera freemap.sk neťahá nič.
+  #
+  # `rock_img_asset` je vedomé obídenie: keď si prahy doladil ručným behom
+  # a chceš presne ten asset, nič sa nepočíta nanovo.
+  shading-rocks:
+    name: Skaly z tieňovania
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.opt_rock_source == 'tienovanie' && needs.plan.outputs.opt_rock_img_asset == '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/shading-rocks.yml
+    with:
+      area: ${{ inputs.area }}
+      zoom: ${{ needs.plan.outputs.opt_rock_img_zoom }}
+      options: ${{ needs.plan.outputs.opt_rock_img_options }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
@@ -417,6 +474,8 @@ jobs:
       opt_rock_slope: ${{ inputs.rock_slope }}
       opt_rock_res: ${{ inputs.rock_res }}
       opt_rock_img_asset: ${{ steps.opts.outputs.opt_rock_img_asset }}
+      opt_rock_img_zoom: ${{ steps.opts.outputs.opt_rock_img_zoom }}
+      opt_rock_img_options: ${{ steps.opts.outputs.opt_rock_img_options }}
       opt_maxzoom: ${{ steps.opts.outputs.opt_maxzoom }}
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
@@ -601,6 +660,13 @@ jobs:
                 exit 1
               fi
             done
+            # To isté pre skaly z tieňovania: sú to hotové dlaždice z cudzieho
+            # servera a na celý kraj by ich boli státisíce. Pipeline, ktorú si
+            # build volá, preto pozná len pohoria.
+            if [ '${{ inputs.rock_source }}' = 'tienovanie' ]; then
+              echo "::error::rock_source: tienovanie sťahuje hotové tieňované dlaždice a to má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry), alebo vyber výškový model (sonny / dmr35 / dmr5)."
+              exit 1
+            fi
           fi
 
       - name: Cache PBF regiónu (save)
@@ -637,7 +703,7 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-dem]
+    needs: [plan, check-dem, mirror-contours, mirror-rocks, mirror-terrain]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -714,7 +780,11 @@ jobs:
   # timeout a hlavne: keď spadne, mapa, tieňovanie ani ikonky sa nezahodia.
   contours:
     name: Vrstevnice a skaly
-    needs: [plan, keys]
+    # `shading-rocks` je v needs kvôli poradiu, nie kvôli dátam: keď skaly
+    # idú z tieňovania, musí byť asset v release skôr, než si ho tento job
+    # vypýta. Pri inom zdroji je ten job preskočený a `!cancelled()` sa
+    # o preskočenú závislosť nezastaví.
+    needs: [plan, keys, shading-rocks]
     if: ${{ !cancelled() && needs.plan.outputs.opt_contours == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
@@ -1017,10 +1087,11 @@ jobs:
             ROCK_SRC="výpočet"
 
             # ---------- skaly z tieňovaných dlaždíc (rock_source: tienovanie) ----------
-            # Tie sa tu NEPOČÍTAJÚ. Nájde ich workflow „Skaly z tieňovaných
-            # dlaždíc" ako tmavé plochy v hillshade JPG a odloží do releasu;
-            # build si ich len stiahne. Bez mena assetu sa berie najnovší pre
-            # tento výrez, takže stačí ten workflow pustiť a potom build.
+            # Tie sa v TOMTO jobe nepočítajú – spravil to job `shading-rocks`
+            # o kus vyššie v tom istom behu (stiahol tieňované dlaždice
+            # z freemap.sk, odložil ich ako artefakt a hotové polygóny nahral
+            # do releasu). Tu sa už len stiahne výsledok. Keď je vyplnený
+            # `rock_img_asset`, ten job nebežal a berie sa presne ten asset.
             if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'tienovanie' ]; then
               IMG_ASSET='${{ needs.plan.outputs.opt_rock_img_asset }}'
               echo "::group::Skaly z tieňovania – $AREA_NAME, release $ROCK_IMG_RELEASE"
@@ -1039,7 +1110,7 @@ jobs:
               fi
               if [ -z "$IMG_ASSET" ]; then
                 echo "::endgroup::"
-                echo "::error::V release $ROCK_IMG_RELEASE nie je pre výrez '$AREA_KEY' žiadny asset (rockimg-${AREA_KEY}-*.gpkg.zst). Spusti najprv workflow „Skaly z tieňovaných dlaždíc\" s area=$AREA_KEY, alebo vo výbere rock_source zvoľ výškový model (sonny / dmr35 / dmr5 / ugkk)."
+                echo "::error::V release $ROCK_IMG_RELEASE nie je pre výrez '$AREA_KEY' žiadny asset (rockimg-${AREA_KEY}-*.gpkg.zst). Pozri job „Skaly z tieňovania\" v tomto behu – ten ich mal vyrobiť; keď spadol, hovorí prečo. Alebo vo výbere rock_source zvoľ výškový model (sonny / dmr35 / dmr5 / ugkk)."
                 exit 1
               fi
               rm -rf /tmp/rockimg && mkdir -p /tmp/rockimg
@@ -2043,7 +2114,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, contours, trails, terrain, tiles, assets]
+    needs: [plan, shading-rocks, contours, trails, terrain, tiles, assets]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -2366,6 +2437,7 @@ jobs:
             echo "|---|---|"
             echo "| Príprava | ${{ needs.plan.result }} |"
             echo "| Vrstevnice a skaly | ${{ needs.contours.result }} |"
+            echo "| Skaly z tieňovania | ${{ needs.shading-rocks.result }} |"
             echo "| Značené trasy | ${{ needs.trails.result }} |"
             echo "| Tieňovanie a 3D terén | ${{ needs.terrain.result }} |"
             echo "| Mapové dlaždice | ${{ needs.tiles.result }} |"
@@ -2519,6 +2591,12 @@ jobs:
             echo
             echo "Vybraný a použitý sa líšia len vtedy, keď model nebol"
             echo "k dispozícii a zapol sa náhradný (napr. 1 m ÚGKK → Sonny)."
+            if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'tienovanie' ]; then
+              echo
+              echo "Tieňované dlaždice, z ktorých sú skaly, stiahol v tomto behu"
+              echo "job *Skaly z tieňovania* – sú v artefakte"
+              echo "\`dlazdice-tienovania-…\` a náhľad mozaiky v \`nahlad-…\`."
+            fi
             echo
             echo "**Ako pregenerovať:** spusti workflow znova a vo výbere"
             echo "\`rebuild\` zvoľ \`vrstevnice\`, \`skaly\` (vrátane uloženej"

@@ -58,7 +58,12 @@ DEFAULTS = {
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
     # Samotný `rock_source` je samostatný input, nie voľba: prepína celý
     # zdroj skál a to sa má dať vybrať vo formulári, nie napísať do textu.
-    "rock_img_asset": ("", "presné meno assetu so skalami z tieňovania (prázdne = najnovší pre výrez)"),
+    "rock_img_asset": ("", "presné meno assetu so skalami z tieňovania (prázdne = spočítať v tomto behu)"),
+    # Ladenie pipeline, ktorú si build pri `rock_source: tienovanie` volá sám
+    # (shading-rocks.yml). Prahy majú vlastné predvolené hodnoty tam; sem
+    # patrí len to, čo mení cenu behu (zoom) a voľné prepínače skriptu.
+    "rock_img_zoom": ("auto", "zoom dlaždíc tieňovania (auto = najvyšší, čo sa zmestí do stropu)"),
+    "rock_img_options": ("", "prepínače pre výpočet skál z tieňovania, napr. \"fill=40 min_hole=5\""),
     # Bol to samostatný input, ale strop je desať a tri výbery zdroja sú
     # užitočnejšie: `maxzoom` je od začiatku 16 (tvrdý limit Planetilera)
     # a znižuje sa len pri ladení veľkosti.

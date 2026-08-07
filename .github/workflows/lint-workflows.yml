@@ -35,7 +35,14 @@ jobs:
           # v hláškach ako preklep (SC1111). To sú falošné poplachy, nie chyby;
           # skutočnú syntax kontroluje `bash -n` v ďalšom kroku, ktorý výrazy
           # najprv nahradí. SC2129 a SC2015 sú štýlové názory na `>>` a `&&`.
-          SHELLCHECK_OPTS: "-e SC1083,SC1073,SC1072,SC1009,SC1089,SC1111,SC2129,SC2015"
+          #
+          # SC2153 („ROCK_RES may not be assigned. Did you mean ROCK_DEM?")
+          # je tu preto, že shellcheck nevidí `env:` workflowu. Do skriptov
+          # ich chodí pätnásť (ROCK_RES, ROCK_ALGO, DEM_RELEASE…), takže
+          # každá lokálna premenná s podobným menom vyrobí falošný poplach –
+          # a prepisovať mená premenných podľa toho, čo sa shellchecku zdá,
+          # je horšie než tento check nepoužívať.
+          SHELLCHECK_OPTS: "-e SC1083,SC1073,SC1072,SC1009,SC1089,SC1111,SC2129,SC2015,SC2153"
         run: |
           set -euo pipefail
           VER=1.7.7

@@ -1,0 +1,42 @@
+name: Sonda – matica nad reusable workflowom
+
+# DOČASNÝ SÚBOR. Jediné, čo overuje: či GitHub prijme job, ktorý volá
+# reusable workflow a má pritom `strategy.matrix` z `fromJSON(...)`.
+#
+# Prečo: po pushnutí verzie s takou maticou v `build-map.yml` vznikli behy
+# 33 a 34 – bez jobov, pomenované cestou k súboru, s červeným krížikom, a to
+# aj napriek tomu, že `on:` je len `workflow_dispatch`. Presne tak GitHub
+# hlási, že súbor neprijal. actionlint 1.7.7 aj oficiálna JSON schéma ten
+# súbor pritom považujú za platný, takže sa to lokálne nedá odchytiť.
+#
+# Ak po pushnutí vznikne beh s menom `.github/workflows/zz-probe-matrix.yml`,
+# je vinník potvrdený a `build-map.yml` (kde je matica nahradená tromi
+# obyčajnými jobmi) ostáva čistý. Tento súbor sa potom hneď zmaže.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  zoznam:
+    runs-on: ubuntu-latest
+    outputs:
+      list: ${{ steps.s.outputs.list }}
+    steps:
+      - id: s
+        run: echo 'list=["sonny"]' >> "$GITHUB_OUTPUT"
+
+  volanie:
+    name: Sonda (${{ matrix.src }})
+    needs: zoznam
+    if: ${{ !cancelled() && needs.zoznam.outputs.list != '[]' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        src: ${{ fromJSON(needs.zoznam.outputs.list || '[]') }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/update-dem.yml
+    with:
+      what: ${{ matrix.src }}

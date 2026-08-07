@@ -89,6 +89,55 @@ on:
         required: false
         default: ""
         type: string
+  # Volá ho aj „Build map", keď má `rock_source: tienovanie`. Netreba teda
+  # pustiť najprv toto a potom build – rovnako ako pri výškových modeloch je
+  # `Build map` jediné, čo spúšťaš. `workflow_call` nepozná `type: choice`,
+  # tak sem chodia tie isté hodnoty ako holé reťazce.
+  workflow_call:
+    inputs:
+      area:
+        required: true
+        type: string
+      zoom:
+        required: false
+        default: auto
+        type: string
+      dark:
+        required: false
+        default: "125"
+        type: string
+      dark_always:
+        required: false
+        default: "70"
+        type: string
+      rel:
+        required: false
+        default: "18"
+        type: string
+      cliff:
+        required: false
+        default: "25"
+        type: string
+      min_area:
+        required: false
+        default: "50"
+        type: string
+      options:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      # Meno assetu v release – build si podľa neho vypýta presne tie skaly,
+      # ktoré tento beh vyrobil, a nie „najnovšie pre výrez".
+      asset:
+        description: "Meno assetu so skalami v release dem-rocks-img"
+        value: ${{ jobs.rocks.outputs.asset }}
+      zoom:
+        description: "Zoom dlaždíc, z ktorých sa skaly počítali"
+        value: ${{ jobs.rocks.outputs.zoom }}
+      count:
+        description: "Počet nájdených skalných plôch"
+        value: ${{ jobs.rocks.outputs.count }}
 
 permissions:
   contents: write   # ukladanie hotových polygónov do releasu
@@ -120,6 +169,10 @@ jobs:
     name: Skaly z tieňovania
     runs-on: ubuntu-latest
     timeout-minutes: 180
+    outputs:
+      asset: ${{ steps.rocks.outputs.asset }}
+      zoom: ${{ steps.rocks.outputs.zoom }}
+      count: ${{ steps.rocks.outputs.count }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -130,7 +183,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin zstd
           python3 -m pip install --quiet numpy pillow
-          gdal_contour --version
+          # `gdalinfo --version`, nie `gdal_contour --version`: contour nemá
+          # prepínač na verziu, argumenty si prečíta ako bežný beh a skončí
+          # na „Neither -i nor -fl nor -e are specified" s kódom 1. Pri
+          # `set -e` to zhodí celý job v 30. sekunde – ešte pred stiahnutím
+          # prvej dlaždice. (Presne to sa stalo v behu 31215692174.)
+          gdalinfo --version
 
       - name: Výrez → bbox
         id: area
@@ -217,6 +275,21 @@ jobs:
           retention-days: 90
           compression-level: 9
           if-no-files-found: error
+
+      # Samotné stiahnuté tieňovanie – tie isté JPG dlaždice, z ktorých sa
+      # skaly počítali. Cache ich drží medzi behmi, ale pozrieť sa na ne dá
+      # len takto. `compression-level: 0`: JPG je už komprimovaný, balenie by
+      # len ukradlo minúty. Pri z18 na veľké pohorie to je aj vyše gigabajtu –
+      # preto kratšia doba držania než pri polygónoch.
+      - name: Odlož stiahnuté dlaždice ako artefakt
+        if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
+          path: tiles-cache
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: ignore
 
       - name: Odlož náhľad a čísla
         if: ${{ always() && hashFiles('out/preview.png') != '' }}
