@@ -11,7 +11,10 @@
  *   --fonts-dir  … adresár s glyfmi na Pages – z neho sa vyberú fontstacky
  *   --overrides  … úpravy z developer módu (poc/web/style-overrides.json)
  *   --trails     … značené trasy z OSM relácií (vlastný .pmtiles)
- *   --dem-source … zdroj výšok (sonny / copernicus) – ide do atribúcie
+ *   --dem-source … model, z ktorého sú vrstevnice a skaly – ide do atribúcie
+ *   --dem-tiles-source … model, z ktorého sú výškové dlaždice (tieňovanie
+ *                  a 3D terén). Vo formulári je to vlastný výber, takže to
+ *                  nemusí byť ten istý; prázdne = ten istý ako --dem-source
  *   --sprites-dir… adresár s nasadenými spritmi; sada sa vyberie podľa úprav
  *
  * Použitie:
@@ -59,6 +62,11 @@ const hasTrails = args.trails === "true" || args.trails === "1";
 const demSource = DEM_SOURCES[args["dem-source"]]
   ? args["dem-source"]
   : DEFAULT_DEM_SOURCE;
+// Tieňovanie má vo formulári vlastný výber modelu, takže výškové dlaždice
+// môžu byť z iného než vrstevnice – atribúcia sa preto berie zvlášť.
+const demTilesSource = DEM_SOURCES[args["dem-tiles-source"]]
+  ? args["dem-tiles-source"]
+  : demSource;
 // Tieňovanie reliéfu sa dá vypnúť (--dem-tiles=none). Ak pipeline vyrobila
 // vlastné výškové dlaždice, príde sem ich URL šablóna a max zoom.
 const demTiles =
@@ -229,6 +237,7 @@ for (const themeKey of Object.keys(THEMES)) {
     trailsMaxzoom,
     demSource,
     demTiles,
+    demTilesSource,
     demMaxzoom,
     name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
   });
@@ -246,7 +255,7 @@ console.log(
       demTiles
         ? demTiles === DEFAULT_DEM_TILES
           ? "AWS Terrain Tiles"
-          : `vlastné do z${demMaxzoom}`
+          : `vlastné do z${demMaxzoom} z ${DEM_SOURCES[demTilesSource].label}`
         : "nie"
     }, ` +
     `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`

@@ -140,6 +140,10 @@ function styleFor(manifest) {
     trailsMaxzoom: region.trails_maxzoom || 14,
     demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
+    // Tieňovanie má vo formulári pipeline vlastný výber modelu, takže
+    // výškové dlaždice môžu byť z iného než vrstevnice. Manifest to nesie
+    // hore pri `dem`, lebo dlaždice sú spoločné pre všetky regióny.
+    demTilesSource: manifest.dem_source || region.dem_source || DEFAULT_DEM_SOURCE,
     demMaxzoom: manifest.dem_maxzoom || DEFAULT_DEM_MAXZOOM,
     overrides,
     name: `FricoMaps – ${region.name}`

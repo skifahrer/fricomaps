@@ -60,9 +60,12 @@ export const DEFAULT_DEM_TILES =
 export const DEFAULT_DEM_MAXZOOM = 15;
 
 /**
- * Zdroje výšok, z ktorých pipeline počíta vrstevnice a skalné plochy.
- * Licencia oboch vyžaduje uvedenie zdroja, preto ide atribúcia priamo do
- * zdroja `contours` v štýle (MapLibre ju zobrazí v rohu mapy).
+ * Zdroje výšok, z ktorých pipeline počíta vrstevnice, skalné plochy
+ * a tieňovanie. Kľúče sú tie isté ako vo `workers/dem-sources.json` a ako
+ * v troch výberoch vo formulári „Build map" (`contour_source`, `rock_source`,
+ * `shading_source`) – každá vrstva môže mať iný model.
+ * Licencia každého z nich vyžaduje uvedenie zdroja, preto ide atribúcia
+ * priamo do zdroja v štýle (MapLibre ju zobrazí v rohu mapy).
  */
 export const DEM_SOURCES = {
   sonny: {
@@ -70,6 +73,18 @@ export const DEM_SOURCES = {
     note: "LiDAR model terénu – bez stromov a budov",
     attribution:
       '<a href="https://sonny.4lima.de/">Sonny\'s LiDAR DTM</a> (CC BY 4.0)'
+  },
+  dmr35: {
+    label: "ÚGKK DMR 3.5 (10 m)",
+    note: "otvorené dáta ÚGKK, mriežka presne 10 × 10 m",
+    // Licencia ÚGKK je voľná vrátane komerčného použitia, ale PODMIENENÁ
+    // uvedením zdroja – preto to tu je natvrdo, nie voliteľne.
+    attribution: '<a href="https://www.geoportal.sk/">ÚGKK SR</a> – DMR 3.5'
+  },
+  dmr5: {
+    label: "ÚGKK DMR 5.0 (LLS, 5 m)",
+    note: "slovenský LiDAR prevzorkovaný na 5 m, celé Slovensko",
+    attribution: '<a href="https://www.geoportal.sk/">ÚGKK SR</a> – DMR 5.0'
   },
   ugkk: {
     label: "ÚGKK DMR 5.0 (1 m LiDAR)",
@@ -1198,6 +1213,10 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  *                                        určuje atribúciu vrstevníc a skál
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
  *                                        a 3D terén (null = bez nich)
+ * @param {string} [opts.demTilesSource]  zdroj výšok pre tie dlaždice; odkedy
+ *                                        má tieňovanie vo formulári vlastný
+ *                                        výber, nemusí to byť ten istý model
+ *                                        ako pri vrstevniciach (default: je)
  * @param {number} [opts.demMaxzoom]      najvyšší zoom výškových dlaždíc
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
@@ -1218,6 +1237,7 @@ export function buildStyle({
   trailsMaxzoom = 14,
   demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
+  demTilesSource = null,
   demMaxzoom = DEFAULT_DEM_MAXZOOM,
   sdfIcons = false,
   iconSet = null,
@@ -1311,11 +1331,13 @@ export function buildStyle({
     };
   }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
-  // Vlastné dlaždice (workers/build-terrain.py) sú z toho istého modelu ako
-  // vrstevnice a skaly – atribúcia preto ide podľa zdroja výšok. Keď ich
-  // pipeline nevyrobila, padá sa na verejné AWS Terrain Tiles.
+  // Vlastné dlaždice (workers/build-terrain.py) majú vo formulári vlastný
+  // výber modelu, takže atribúcia ide podľa `demTilesSource` – a nie podľa
+  // vrstevníc, ktoré môžu byť z iného. Keď ich pipeline nevyrobila, padá sa
+  // na verejné AWS Terrain Tiles.
   if (demTiles) {
     const ownDem = demTiles !== DEFAULT_DEM_TILES;
+    const tilesSource = demTilesSource || demSource;
     style.sources.dem = {
       type: "raster-dem",
       tiles: [demTiles],
@@ -1323,7 +1345,7 @@ export function buildStyle({
       tileSize: 256,
       maxzoom: demMaxzoom,
       attribution: ownDem
-        ? (DEM_SOURCES[demSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).attribution
+        ? (DEM_SOURCES[tilesSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).attribution
         : '<a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>'
     };
   }
