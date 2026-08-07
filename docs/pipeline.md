@@ -976,7 +976,7 @@ gdal_contour -p -fl 0,5 -fl (0,5+cliff)     NARAZ nad celou mozaikou
 -explodecollections → filter plôch a dier → -simplify → smooth-polygons.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
-   ├─► release `dem-rocks-img`   pre Build map (`options: rock_source=shading`)
+   ├─► release `dem-rocks-img`   pre Build map (`options: rock_source=lidar_images`)
    ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
    └─► artefakt `nahlad-…`         PNG náhľad + histogram + čísla
 ```
@@ -1014,6 +1014,7 @@ v pixeloch, takže to isté nastavenie platí na z17 aj z18 rovnako.
 | vec | ako |
 |---|---|
 | sťahovanie | `jobs` vlákien (default 12) s trvalým spojením – pri 12 000 dlaždiciach je nový TLS handshake na každú z nich väčšina času |
+| hlavičky | každý request z náhodného profilu skutočného prehliadača (9 profilov); `ua=project` sa vráti k menu projektu |
 | opakované ladenie prahov | dlaždice sú v cache behu (`actions/cache`), druhý beh nestiahne ani jednu |
 | chýbajúca dlaždica (404) | značka na disku, pri ďalšom behu sa neskúša znova; v mozaike ostane 255 = určite nie skala |
 | pamäť | mozaika sa nikdy nedrží celá – pás dlaždicových riadkov podľa `band_cells` (default 150 mil. px) |
@@ -1031,13 +1032,43 @@ hranicou časti sa zmení na zárez v okraji a späť sa už nezlepí. Po časti
 sa preto počíta **len raster tmavosti**, a `gdal_contour` ide jedným
 priechodom nad celou mozaikou.
 
+### Ako sa pipeline predstavuje
+
+Hlavičky sa berú z deviatich profilov skutočných prehliadačov a vyberajú sa
+náhodne na **každý request**. Profil je celý – `User-Agent`, `Sec-CH-UA`,
+platforma aj `Accept-Language` sedia dokopy; Chrome, ktorý o sebe v
+`Sec-CH-UA` tvrdí, že je Firefox, nie je maskovanie, ale rozbitá hlavička.
+Firefox a Safari `Sec-CH-UA` neposielajú vôbec, tak ho nemajú ani ich profily.
+
+Trvalé spojenie sa tým nezahadzuje, takže server vidí jedno TCP spojenie,
+cez ktoré chodí viac „prehliadačov". Dokonalé maskovanie to nie je a ani sa
+oň nesnažíme – ide o to, aby dávka nevyzerala ako jeden skript s jednou
+hlavičkou.
+
+Dôsledok, ktorý treba mať na pamäti: berie to freemap.sk možnosť rozoznať
+automat od človeka, a je to dobrovoľnícky server. Slušnosť preto musí
+zabezpečiť objem – `jobs` ostáva 12, dlaždice sa cachujú a `zoom: auto` má
+strop na počet dlaždíc. `ua=project` vráti hlavičku, ktorá sa priznáva.
+
+Dve veci, ktoré k prehliadačovitým hlavičkám patria, lebo inak by ticho
+rozbili beh:
+
+- **`Accept-Encoding` bez `br`/`zstd`.** `http.client` telo nerozbaľuje,
+  takže si to robíme sami a v stdlib je len gzip a deflate. Sľúbiť brotli
+  a nevedieť ho prečítať by znamenalo uložiť na disk nečitateľné bajty.
+- **Kontrola prvých bajtov.** Chybová stránka s kódom 200 je pri dlaždicových
+  službách bežná; uložiť ju ako `.jpg` by znamenalo tichú dieru v mozaike
+  a v cache navždy. Čo nezačína magickými bajtmi obrázka, ide na retry.
+
 ### Ako sa to dostane do mapy
 
-Build map to **nepočíta** – len si stiahne hotový asset:
+Build map to **nepočíta** – len si stiahne hotový asset. Zdroj skál je
+samostatný **input** vo formulári, nie voľba v `options`:
 
 ```
-options: rock_source=shading        vezme najnovší rockimg-{výrez}-… z releasu
-options: rock_source=shading rock_img_asset=rockimg-…gpkg.zst   presne tento
+rock_source: lidar_images        vezme najnovší rockimg-{výrez}-… z releasu
+rock_source: lidar_images  +  options: rock_img_asset=rockimg-…gpkg.zst
+                                 presne tento asset
 ```
 
 Keď pre daný výrez v release nič nie je, build to povie v prvej minúte

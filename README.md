@@ -51,7 +51,7 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
 (pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
                              ▲ Build map si ich vypýta cez
-                               options: rock_source=shading
+                               options: rock_source=lidar_images
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -352,7 +352,7 @@ terénu. To je jemnejšie, než na čo si sklon vieme rozumne spočítať sami.
 **Prečo to klame:** hillshade je osvetlený z jednej strany. Rovnako strmá
 stena otočená k slnku je na ňom **najsvetlejšia zo všetkého**. Táto cesta
 teda systematicky nájde severozápadné steny a systematicky prehliadne
-juhovýchodné. Preto je to `rock_source=shading` a nie náhrada predvoleného
+juhovýchodné. Preto je to `rock_source=lidar_images` a nie náhrada predvoleného
 `dem`.
 
 **Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
@@ -416,6 +416,19 @@ odloží artefakt `nahlad-…` s PNG **mozaika vedľa nájdených plôch** (vľa
 tieňovanie, vpravo to isté s červenou maskou) a histogramom odtieňov. Podľa
 nich sa `dark` / `dark_always` / `rel` doladia za jeden pohľad.
 
+**Každý request vyzerá ako iný prehliadač.** Hlavičky sa berú z deviatich
+profilov skutočných prehliadačov (Chrome, Firefox, Safari, Edge; Windows,
+macOS, Linux, iOS, Android) a vyberajú sa náhodne na každý request. Profil je
+celý – `User-Agent`, `Sec-CH-UA`, platforma aj `Accept-Language` sedia
+dokopy, lebo Chrome, ktorý o sebe v `Sec-CH-UA` tvrdí, že je Firefox, nie je
+maskovanie, ale rozbitá hlavička.
+
+> Stojí za to vedieť, čo to robí: berie to freemap.sk možnosť rozoznať dávku
+> od človeka, a je to dobrovoľnícky server. Slušnosť preto musí zabezpečiť
+> objem – `jobs` ostáva na 12 a dlaždice sa cachujú, takže druhý beh nestiahne
+> ani jednu. `options: ua=project` vráti pôvodnú hlavičku, ktorá sa priznáva
+> menom projektu; `ua=…` pošle čokoľvek vlastné.
+
 **Efektivita.** Dlaždice sa sťahujú paralelne (`jobs`, default 12 – je to
 dobrovoľnícka služba) s trvalým spojením, ukladajú sa do cache behu a pri
 opakovanom ladení prahov sa už neťahajú. `zoom: auto` skúsi najvyšší zoom,
@@ -430,10 +443,14 @@ Vysoké Tatry na z17 sú ~12 000 dlaždíc (~300 MB) a jednotky minút; z18 je
 
 1. Spusti **Skaly z tieňovaných dlaždíc** s `area: vysoke_tatry`.
 2. Pozri artefakt `nahlad-…`, prípadne uprav prahy a spusti znova.
-3. Spusti **Build map** s rovnakým `area` a
-   `options: rock_source=shading` – vezme si **najnovší** asset pre ten
+3. Spusti **Build map** s rovnakým `area` a vyber
+   **`rock_source: lidar_images`** – vezme si **najnovší** asset pre ten
    výrez z releasu `dem-rocks-img` a skaly z DEM vôbec nepočíta.
-   Konkrétny asset sa dá vynútiť cez `rock_img_asset=rockimg-…gpkg.zst`.
+   Konkrétny asset sa dá vynútiť cez `options: rock_img_asset=rockimg-…gpkg.zst`.
+
+Keď pre daný výrez v release nič nie je, build to povie v prvej minúte
+a **nespadne späť na skaly z DEM** – tichá zámena jedného zdroja za druhý by
+bola horšia než zastavenie.
 
 Vrstva je tá istá `rock` v tých istých dlaždiciach, s triedami `steep`
 a `cliff`, takže štýl netreba meniť. Líši sa len atribút: skaly z DEM majú
@@ -1332,7 +1349,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rock_res` | text | mriežka na obrys skál – `auto` (odporúčané) alebo číslo v metroch |
-   | `maxzoom` | text | max zoom mapových dlaždíc |
+   | `rock_source` | **výber** | odkiaľ skaly: `dem` (zo sklonu) alebo `lidar_images` (hotové polygóny z tieňovaných dlaždíc) |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` |
 
@@ -1352,11 +1369,12 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails_maxzoom`,
-   `terrain_maxzoom`, `rocks`, `rock_source`, `rock_img_asset`,
+   `terrain_maxzoom`, `maxzoom`, `rocks`, `rock_img_asset`,
    `custom_pbf_url`, `custom_name`, `custom_bbox`.
 
-   `rock_source=shading` prepne skaly z výpočtu zo sklonu na hotové polygóny
-   z workflowu *Skaly z tieňovaných dlaždíc* – viď
+   Zdroj skál sa vyberá **inputom `rock_source`**, nie tu – prepína celý
+   pôvod vrstvy, takže patrí do formulára. Cez `options` sa dá nanajvýš
+   vynútiť konkrétny asset (`rock_img_asset=rockimg-…gpkg.zst`); viď
    [Druhá cesta k skalám](#druhá-cesta-k-skalám-tmavé-plochy-v-tieňovaní-pokus).
 
    **Preklep je chyba, nie ticho ignorovaná hodnota.** `size_limit=1200` build

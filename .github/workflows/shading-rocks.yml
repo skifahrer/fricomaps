@@ -8,7 +8,7 @@ name: Skaly z tieňovaných dlaždíc
 #   Skaly z tieňovaných dlaždíc  ─►  release `dem-rocks-img`
 #                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
 #                                        ▼
-#   Build map  s  options: rock_source=shading   ─►  vrstva `rock` v mape
+#   Build map  s  options: rock_source=lidar_images   ─►  vrstva `rock` v mape
 #
 # Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
 # rozhoduje, čo je tmavé, a prečo sa vektorizuje naraz a nie po dlaždiciach.
@@ -243,7 +243,7 @@ jobs:
           gh release view "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" \
               --title "Skalné plochy z tieňovaných dlaždíc" \
-              --notes "Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno assetu nesie výrez, zoom a všetky prahy. Build map si ich vypýta cez \`options: rock_source=shading\`." || true
+              --notes "Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno assetu nesie výrez, zoom a všetky prahy. Build map si ich vypýta cez \`options: rock_source=lidar_images\`." || true
           gh release upload "$ROCK_IMG_RELEASE" "/tmp/$ASSET" \
             --repo "$GITHUB_REPOSITORY" --clobber
           echo "Uložené do releasu $ROCK_IMG_RELEASE ako $ASSET"
@@ -280,7 +280,7 @@ jobs:
               echo "### Ďalej"
               echo
               echo "1. Stiahni artefakt \`nahlad-…\` a pozri \`preview.png\` – vľavo mozaika tieňovania, vpravo to isté s červenou maskou. Podľa toho doladiť \`dark\` / \`dark_always\` / \`rel\`."
-              echo "2. Keď to sedí, spusti **Build map** s \`options: rock_source=shading\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez namiesto počítania skál z DEM."
+              echo "2. Keď to sedí, spusti **Build map** s \`options: rock_source=lidar_images\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez namiesto počítania skál z DEM."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Beh sa nedostal po štatistiku – pozri log kroku *Skaly z tmavých plôch*." >> "$GITHUB_STEP_SUMMARY"

@@ -84,11 +84,14 @@ on:
         required: false
         default: auto
         type: string
-      maxzoom:
-        description: "Max zoom mapových dlaždíc – Planetiler zvládne najviac 16"
+      rock_source:
+        description: "Odkiaľ skaly: dem = spočítať zo sklonu výškového modelu. lidar_images = vziať hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc\" (treba ho najprv pustiť na ten istý výrez)"
         required: false
-        default: "16"
-        type: string
+        default: dem
+        type: choice
+        options:
+          - dem
+          - lidar_images
       rebuild:
         description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
         required: false
@@ -141,7 +144,7 @@ env:
   ROCK_RELEASE: dem-rocks
   # Skaly nájdené ako tmavé plochy v tieňovaných dlaždiciach – napĺňa ich
   # workflow „Skaly z tieňovaných dlaždíc". Build ich nikdy nepočíta, len
-  # si ich vypýta cez `options: rock_source=shading`.
+  # si ich vypýta cez `options: rock_source=lidar_images`.
   ROCK_IMG_RELEASE: dem-rocks-img
   ROCK_RES: auto # záložná mriežka na sklon (m), keď input rock_res chýba
   # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
@@ -334,8 +337,9 @@ jobs:
       opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
       opt_rock_slope: ${{ inputs.rock_slope }}
       opt_rock_res: ${{ inputs.rock_res }}
-      opt_rock_source: ${{ steps.opts.outputs.opt_rock_source }}
+      opt_rock_source: ${{ inputs.rock_source }}
       opt_rock_img_asset: ${{ steps.opts.outputs.opt_rock_img_asset }}
+      opt_maxzoom: ${{ steps.opts.outputs.opt_maxzoom }}
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
@@ -573,7 +577,7 @@ jobs:
             # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
             # vrátili z cache ako keby to boli skaly celého kraja.
             RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
-            # Zdroj skál je v kľúči tiež: `dem` a `shading` dávajú úplne iné
+            # Zdroj skál je v kľúči tiež: `dem` a `lidar_images` dávajú úplne iné
             # plochy, takže sa jedny nesmú vrátiť z cache namiesto druhých.
             echo "contours=contours-v7-${{ inputs.dem_source }}-$D-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-r${{ needs.plan.outputs.opt_rocks }}${{ inputs.rock_slope }}g${{ inputs.rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_source }}${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
             echo "demtiles=demtiles-$D-$B"
@@ -863,12 +867,12 @@ jobs:
             ROCK_READY=""
             ROCK_SRC="výpočet"
 
-            # ---------- skaly z tieňovaných dlaždíc (rock_source=shading) ----------
+            # ---------- skaly z tieňovaných dlaždíc (rock_source=lidar_images) ----------
             # Tie sa tu NEPOČÍTAJÚ. Nájde ich workflow „Skaly z tieňovaných
             # dlaždíc" ako tmavé plochy v hillshade JPG a odloží do releasu;
             # build si ich len stiahne. Bez mena assetu sa berie najnovší pre
             # tento výrez, takže stačí ten workflow pustiť a potom build.
-            if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'shading' ]; then
+            if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'lidar_images' ]; then
               IMG_ASSET='${{ needs.plan.outputs.opt_rock_img_asset }}'
               echo "::group::Skaly z tieňovania – $AREA_NAME, release $ROCK_IMG_RELEASE"
               if [ -z "$IMG_ASSET" ]; then
@@ -978,7 +982,7 @@ jobs:
               | awk -F': ' '/^Feature Count/ {print $2}')
             # Skaly z tieňovania nemajú ani sklon, ani mriežku – písať ich do
             # merania by bolo číslo, ktoré nikde nevzniklo.
-            if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'shading' ]; then
+            if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'lidar_images' ]; then
               ROCK_HOW="tmavé plochy v tieňovaní"
             else
               ROCK_HOW="sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m"
@@ -993,10 +997,10 @@ jobs:
               # z vybranej mriežky a ten práve nebežal. Súhrn si s chýbajúcou
               # hodnotou poradí (`${min_area_m2:-?}`) – dosadiť sem premennú,
               # ktorá nikde nevzniká, by pri `set -u` zhodilo celý build.
-              if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'shading' ]; then
+              if [ '${{ needs.plan.outputs.opt_rock_source }}' = 'lidar_images' ]; then
                 # Skaly z tieňovania sú z iného sveta – ani sklon, ani mriežka
                 # pre ne neexistujú. Súhrn podľa `source` vypíše inú tabuľku.
-                { echo "source=shading"; echo "count=${ROCK_N:-0}"
+                { echo "source=lidar_images"; echo "count=${ROCK_N:-0}"
                   printf "asset='%s'\n" "$ROCK_SRC"
                 } > contours-out/rock-stats.txt
               else
@@ -1056,11 +1060,11 @@ jobs:
           # výšok (ide do atribúcie mapy) a prah sklonu skál (do manifestu).
           echo "$CZ" > contours-out/maxzoom.txt
           echo "$DEM_USED" > contours-out/dem-source.txt
-          # Prah sklonu má zmysel len pri skalách z DEM. Pri `shading` žiadny
+          # Prah sklonu má zmysel len pri skalách z DEM. Pri `lidar_images` žiadny
           # sklon neexistuje, takže do manifestu ide `off` a namiesto neho
           # sa tam píše zdroj skál.
           if [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ] \
-             && [ '${{ needs.plan.outputs.opt_rock_source }}' != 'shading' ]; then
+             && [ '${{ needs.plan.outputs.opt_rock_source }}' != 'lidar_images' ]; then
             echo "$ROCK_SLOPE" > contours-out/rock-slope.txt
           else
             echo "off" > contours-out/rock-slope.txt
@@ -1118,7 +1122,7 @@ jobs:
           case "$DEM_USED" in sonny|ugkk|copernicus) ;; *) DEM_USED=sonny ;; esac
           RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
           RSRC=$(cat contours-out/rock-source.txt 2>/dev/null || echo off)
-          case "$RSRC" in dem|shading) ;; *) RSRC=off ;; esac
+          case "$RSRC" in dem|lidar_images) ;; *) RSRC=off ;; esac
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
           echo "dem_source=$DEM_USED" >> "$GITHUB_OUTPUT"
@@ -1578,7 +1582,7 @@ jobs:
 
           # Planetiler: PlanetilerConfig.MAX_MAXZOOM = 16 → vyššie hodnoty
           # zhodia build s "Max zoom must be <= 16". Radšej orežeme s hláškou.
-          MAXZOOM='${{ inputs.maxzoom }}'
+          MAXZOOM='${{ needs.plan.outputs.opt_maxzoom }}'
           case "$MAXZOOM" in ''|*[!0-9]*) MAXZOOM=16 ;; esac
           if [ "$MAXZOOM" -gt 16 ]; then
             echo "::warning::Planetiler vie vygenerovať dlaždice najviac po zoom 16 (zadané: $MAXZOOM). Používam 16 – priblíženie až na z20 zabezpečí overzoom v MapLibre."
@@ -2211,7 +2215,7 @@ jobs:
           # Skaly z tieňovaných dlaždíc majú vlastnú tabuľku: nemajú sklon,
           # mriežku ani bunku DEM, takže tá dole by bola stĺpec otáznikov
           # a pod ním text o izolínii sklonu, ktorá tu nikdy nevznikla.
-          if [ "${source:-dem}" = "shading" ]; then
+          if [ "${source:-dem}" = "lidar_images" ]; then
             {
               echo
               echo "## Skalné plochy – z tieňovaných dlaždíc"
