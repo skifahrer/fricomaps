@@ -37,6 +37,14 @@ DEFAULTS = {
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
     "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),
     "rocks": ("true", "počítať skalné plochy"),
+    # Odkiaľ vziať skaly. `dem` = spočítať zo sklonu (workers/rock-areas.py).
+    # `shading` = vziať hotové polygóny z releasu `dem-rocks-img`, ktoré
+    # našiel workflow „Skaly z tieňovaných dlaždíc" ako tmavé plochy
+    # v hillshade JPG. Pri `shading` sa DEM na skaly vôbec nečíta.
+    "rock_source": ("dem", "odkiaľ skaly: dem (sklon) alebo shading (tmavé plochy v dlaždiciach)"),
+    # Ktorý asset z toho releasu. Prázdne = najnovší pre daný výrez, takže
+    # stačí pustiť ten workflow a potom build – meno prahov netreba prepisovať.
+    "rock_img_asset": ("", "presné meno assetu so skalami z tieňovania (prázdne = najnovší pre výrez)"),
     "custom_pbf_url": ("", "vlastný región – URL na .osm.pbf"),
     "custom_name": ("", "vlastný región – zobrazované meno"),
     "custom_bbox": ("", "vlastný región – bbox W,S,E,N"),
@@ -99,6 +107,11 @@ def main():
         return 1
     for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
         values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
+
+    if values["rock_source"] not in ("dem", "shading"):
+        print(f"::error::Neznámy rock_source „{values['rock_source']}“. "
+              f"Známe: dem, shading.", file=sys.stderr)
+        return 1
 
     lines = [f"opt_{k}={v}" for k, v in values.items()]
     if args.out:

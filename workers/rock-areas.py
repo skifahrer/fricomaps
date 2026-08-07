@@ -553,6 +553,10 @@ def main():
 
         if args.stats:
             with open(args.stats, "w") as f:
+                # Odkiaľ skaly sú. Súhrn buildu podľa toho vyberá tabuľku –
+                # skaly z tieňovaných dlaždíc (workers/shading-rocks.py)
+                # nemajú ani sklon, ani mriežku.
+                f.write("source=dem\n")
                 f.write(f"count={n}\n")
                 f.write(f"grid_m={res:g}\n")
                 f.write(f"min_area_m2={args.min_area:g}\n")

@@ -9,6 +9,11 @@
 #   gdal_contour → ogr2ogr (dopočíta `level`)        → data/contours.gpkg
 #   gdaldem slope → gdal_contour -p → ogr2ogr        → data/rock.gpkg
 #
+# `data/rock.gpkg` môže prísť aj z druhej, pokusnej cesty: workflow „Skaly
+# z tieňovaných dlaždíc" (workers/shading-rocks.py) hľadá tmavé plochy
+# v hillshade JPG. Formát je ten istý, len atribúty sa líšia – skaly z DEM
+# majú `slope`, skaly z obrázka `dark`. Ten druhý je vždy len jeden z nich.
+#
 # `level` rozdeľuje vrstevnice na tri triedy, aby sa dali zapínať postupne
 # podľa zoomu a hlavné vrstevnice sa dali kresliť hrubšie:
 #   major = násobky 100 m, mid = násobky 50 m, minor = ostatné
@@ -78,7 +83,11 @@ layers:
         min_zoom: 9
         attributes:
           - key: class
+          # sklon v stupňoch – len pri skalách z DEM
           - key: slope
+            type: integer
+          # o koľko stupňov šedej pod prahom – len pri skalách z tieňovania
+          - key: dark
             type: integer
           # plocha v m² – nech sa dá v štýle rozlíšiť bralo od odrobinky
           - key: area

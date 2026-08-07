@@ -951,3 +951,150 @@ a [`workers/dmr5-raster.py`](../workers/dmr5-raster.py) (samotný model).
 doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť
 vedľajší účinok buildu mapy, takže `dmr5` sa pustí raz vedome. Build to
 napíše aj s tým, čo presne spustiť.
+
+## Piaty workflow: „Skaly z tieňovaných dlaždíc"
+
+Pokusná druhá cesta k skalám. Všetko ostatné v pipeline počíta skaly zo
+**sklonu DEM**; tento workflow sa výšok nedotkne a hľadá **tmavé plochy**
+v hotovom hillshade z freemap.sk.
+
+```
+XYZ dlaždice   https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
+   │           paralelné sťahovanie s trvalým spojením, disková cache
+   ▼
+mozaika šedej v EPSG:3857     dlaždice sú v ňom natívne → 1 px = 1 px,
+   │                          žiadne prevzorkovanie
+   ▼
+raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
+   │                          ref   = clip(pozadie − rel, dark_always, dark)
+   │                          po pásoch dlaždicových riadkov, s presahom,
+   │                          na disk ako komprimovaný GTiff
+   ▼
+gdal_contour -p -fl 0,5 -fl (0,5+cliff)     NARAZ nad celou mozaikou
+   │                          → pásma ako polygóny, s dierami
+   ▼
+-explodecollections → filter plôch a dier → -simplify → smooth-polygons.py
+   ▼
+rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
+   ├─► release `dem-rocks-img`   pre Build map (`options: rock_source=shading`)
+   ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
+   └─► artefakt `nahlad-…`         PNG náhľad + histogram + čísla
+```
+
+### Prečo `gdal_contour`, a nie `gdal_polygonize`
+
+`gdal_polygonize` by obrys viedol po hranách pixelov (schodíky) a potreboval
+by python bindings GDALu. `gdal_contour -p` nad poľom tmavosti interpoluje
+medzi celými stupňami šedej, takže je obrys hladký a sub-pixelový – a je to
+**ten istý nástroj a tá istá sémantika dier**, akú má `rock-areas.py`:
+pásmo `[prah, ∞)` je polygón s vnútornými prstencami tam, kde hodnota pod prah
+klesla. Svetlá polica vnútri steny tak ostane dierou.
+
+Prah je `0,5`, nie `1`: dáta sú celé čísla, takže izolínia v polovici kroku
+ide presne stredom medzi „nie je tmavé" a „je tmavé". Horná úroveň `256` je
+nad maximom `Byte` – bez nej niektoré verzie GDALu najvrchnejšie pásmo
+nevytvoria.
+
+### Prečo je pozadie priemer len tých svetlejších pixelov
+
+Prvá verzia brala obyčajný priemer v okne. Na skúšobných dátach z toho
+vyšiel z veľkej súvislej tmavej plochy **iba prstenec**: okno sa celé zmestilo
+dovnútra nej, pozadie kleslo na tmavosť samotnej plochy a rozdiel voči nemu
+vyšiel nula. Opravené dvomi prechodmi – najprv hrubý priemer, potom priemer
+len z pixelov nad ním – a dolným stropom `dark_always`, pod ktorým už o okolí
+nikto nehlasuje.
+
+Pozadie sa počíta na **8× zmenšenom** obraze a späť sa roztiahne. Je to pole
+osvetlenia, nie detail; na osemnásobne menšej mriežke vyzerá rovnako a je 64×
+lacnejšie na pamäť aj čas. Okno `local` je v **metroch na zemi**, nie
+v pixeloch, takže to isté nastavenie platí na z17 aj z18 rovnako.
+
+### Čo to stojí a čo z toho drží efektivitu
+
+| vec | ako |
+|---|---|
+| sťahovanie | `jobs` vlákien (default 12) s trvalým spojením – pri 12 000 dlaždiciach je nový TLS handshake na každú z nich väčšina času |
+| opakované ladenie prahov | dlaždice sú v cache behu (`actions/cache`), druhý beh nestiahne ani jednu |
+| chýbajúca dlaždica (404) | značka na disku, pri ďalšom behu sa neskúša znova; v mozaike ostane 255 = určite nie skala |
+| pamäť | mozaika sa nikdy nedrží celá – pás dlaždicových riadkov podľa `band_cells` (default 150 mil. px) |
+| disk | pás ide na disk ako `Byte` + DEFLATE; pole tmavosti je väčšinou nula, takže z 800 MB ostanú desiatky |
+| zrno JPEGu | `blur` (3×3 na šedej) pred prahom – bez neho vzniklo 4× viac úlomkov, ktoré by aj tak vypadli na `min_area`, len by ich najprv musel niekto vektorizovať |
+| strop zadania | `max_tiles` (60 000); `zoom: auto` pod neho zíde sám a povie, prečo |
+
+Vysoké Tatry na z17: ~12 000 dlaždíc (~300 MB), mozaika 0,8 mld. pixelov,
+jednotky minút. z18 je štvornásobok všetkého (~0,4 m na pixel).
+
+### Prečo sa vektorizuje naraz
+
+Rovnaký dôvod ako pri skalách z DEM a rovnako namerané: diera prerezaná
+hranicou časti sa zmení na zárez v okraji a späť sa už nezlepí. Po častiach
+sa preto počíta **len raster tmavosti**, a `gdal_contour` ide jedným
+priechodom nad celou mozaikou.
+
+### Ako sa to dostane do mapy
+
+Build map to **nepočíta** – len si stiahne hotový asset:
+
+```
+options: rock_source=shading        vezme najnovší rockimg-{výrez}-… z releasu
+options: rock_source=shading rock_img_asset=rockimg-…gpkg.zst   presne tento
+```
+
+Keď pre daný výrez v release nič nie je, build to povie v prvej minúte
+(`::error::`) a nespadne späť na skaly z DEM – to by bola tichá zámena
+jedného zdroja za druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
+`dem` a `shading` nemôžu navzájom vrátiť z cache.
+
+Kód: [`workers/shading-rocks.py`](../workers/shading-rocks.py). Formát
+výstupu je zhodný so skalami z DEM (vrstva `rock`, EPSG:4326, `class`
+= `steep`/`cliff`, `area` v m²); jediný rozdiel je, že skaly z DEM majú
+atribút `slope` a skaly z obrázka `dark`.
+
+### Tmavé nie je plocha, ale sieť
+
+Najdôležitejšie zistenie zo skutočnej dlaždice: tmavé miesta v tejto vrstve
+**nie sú súvislé steny**, ale hustá sieť žliabkov, ryhiek a mikrotieňov
+v rozčlenenom teréne. Maska vyzerá ako filigrán, nie ako klaksa.
+
+To je vlastnosť, nie chyba – tá jemná štruktúra je práve to, čo z hillshade
+chceme, a je to detail, aký zo sklonu 20 m DEM nikdy nevznikne. Pipeline je
+podľa toho nastavená:
+
+| vec | hodnota | prečo |
+|---|---|---|
+| `fill` | **0 (vypnuté)** | spriemerovanie tmavosti v okolí zo siete spraví súvislú plochu; merané: `fill=40` dá 10 útvarov a 35 % pokrytie namiesto 78 útvarov a 15 % |
+| `min_area` | 50 m² | `200` zmazal práve tie drobné útvary, o ktoré ide |
+| `min_hole` | 10 m² | medzery medzi vláknami siete SÚ tá štruktúra |
+| `simplify` | 1 px | pod pixel je už len zrno JPEGu |
+| `smooth` | 1× Chaikin | druhý prechod zdvojnásobí body za obrys, ktorý nikto nerozozná |
+
+Merané na výreze 1260×1933 px z Vysokých Tatier, prepočítané na z18:
+
+| nastavenie | plôch | dier | dáta |
+|---|--:|--:|--:|
+| `min_area 200`, `min_hole 50`, simplify ½ px, Chaikin 2× | 16 | 89 | 3,95 MB/km² |
+| **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
+
+Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
+polovičné dáta**.
+
+**Počet útvarov neexploduje, body áno.** Sieť je pospájaná – 16 útvarov
+pokrylo 15 % výrezu. Cena je v bodoch obrysu, takže beh píše do súhrnu
+`MB na km² skál`; práve to číslo rozhoduje, či sa vrstva zmestí do rozpočtu
+mapy, nie počet plôch.
+
+### Farba sa zatiaľ nepoužíva
+
+Tá vrstva je **farebný** hillshade: žltozelený nádych, tiene ťahajú do modra
+(sýtosť ~34, `B−R` od −95 do +50). Čítame ju ako jas (`convert("L")`, luma
+601), kde modrý kanál váži najmenej – modré tiene sa tým ešte prehĺbia, čo
+nám vyhovuje. Odtieň ako **druhý, nezávislý signál** (tieň vs. osvetlený
+terén nezávisle od jasu) je zatiaľ nevyužitá páka; na jednom výreze sa nedalo
+overiť, či pomáha, tak sa nepridával naslepo.
+
+### Čo od toho čakať
+
+Hillshade je obraz sklonu, ale **osvetleného z jednej strany**. Severozápadné
+steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie – tie druhé teda táto
+cesta systematicky prehliadne. Zato má rozlíšenie, na aké si sami sklon
+nespočítame. Je to pokus vedľa hlavnej cesty, nie jej náhrada.
