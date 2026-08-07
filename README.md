@@ -483,12 +483,36 @@ IFD na konci 151 GB člena teda znamená, že **samotné otvorenie prečíta
 151 GB**. A zapisovatelia ho tam bežne dávajú — počas zápisu ešte nevedia,
 kde dlaždice skončia.
 
-Beh [31191478190](https://github.com/skifahrer/fricomaps/actions/runs/31191478190)
-sa zasekol presne tu: v logu boli dva riadky a potom pol hodiny nič, lebo
-`gdalinfo` poctivo rozbaľovalo. Preto sa teraz **najprv prečíta 16 bajtov**
-z hlavného rastra aj z `.ovr`, offset IFD sa vypíše, a `gdalinfo` má strop
-(`--probe-timeout`, predvolene 15 min) — aby beh skončil s vysvetlením a nie
-po šiestich hodinách bez slova.
+Behy [31191478190](https://github.com/skifahrer/fricomaps/actions/runs/31191478190)
+a [31197330753](https://github.com/skifahrer/fricomaps/actions/runs/31197330753)
+sa zasekli presne tu. Ten druhý to dokázal čierne na bielom — po 87 minútach
+ticha ho zrušil až používateľ a v logu ostalo:
+
+```
+16:25:13  Cesta pre GDAL: /vsizip//vsicurl/…/dmr5_jtsk03.tif
+          (87 minút ticha)
+17:52:25  Terminate orphan process: pid (2977) (gdalinfo)   ← stále bežal
+```
+
+**Nezaseklo sa to na sťahovaní dát — nedostalo sa ani k prvému pixelu.**
+Preto sa teraz **najprv prečíta 16 bajtov** z hlavného rastra aj z `.ovr`,
+offset IFD sa vypíše, `gdalinfo` má strop (`--probe-timeout`, predvolene
+15 min) a beží pod ním heartbeat.
+
+#### Keď sa hlavný raster neotvorí, ide sa cez pyramídy
+
+Model s hrubšou mriežkou je viac než dokonalý model, ktorý sa nikdy
+nedopočíta. Keď `gdalinfo` nad hlavným rastrom neprejde, pipeline skúsi
+**`.ovr` samotné** — má 46 GB namiesto 151 GB, teda trikrát väčšiu šancu.
+
+Georeferencia nemôže prísť z rodiča (ten sa neotvára), tak sa poskladá
+z **`.tfw`**: veľkosť pixela × pomer zmenšenia a ten istý ľavý horný roh.
+Overené, že to dá presne tú istú mriežku ako cesta cez rodiča — rovnaký
+`geoTransform` aj rovnaké výšky.
+
+Cena je rozlíšenie: najjemnejšie, čo z pyramíd vypadne, sú **2 m**. Na
+`dem-dmr5` (5 m na celé Slovensko) to nevadí vôbec; na `ugkk-<vyrez>.tif`
+v plnom metrovom rozlíšení áno, a workflow to napíše ako varovanie.
 
 **Rozlíšenie vs. územie.** Pri 1 m má jedna 1°×1° dlaždica ~48 GB, takže:
 
