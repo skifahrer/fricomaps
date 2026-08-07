@@ -132,6 +132,18 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
   zdroje daného jobu: odkedy si každá vrstva vyberá model sama, spoločný kľúč
   by vracal cudziu mozaiku.
 
+- **Veľké `run:` bloky patria do `workers/`.** Súbor s workflowom má strop
+  veľkosti (128 KiB) a nad ním ho GitHub **neprijme** – bez chybovej hlášky,
+  bez logu: po pushi sa v Actions objaví beh **bez jobov**, pomenovaný cestou
+  k súboru, s červeným krížikom. Vyzerá to, že sa workflow spustil sám po
+  mergi, hoci má len `workflow_dispatch`. Presne to sa stalo, keď
+  `build-map.yml` narástol na 131 194 B (o 122 bajtov nad strop) – a nezachytí
+  to ani actionlint, ani oficiálna JSON schéma. Preto je výpočet vrstevníc
+  a skál vo [`workers/contours-build.sh`](../workers/contours-build.sh)
+  a text súhrnu vo [`workers/summary.sh`](../workers/summary.sh); hodnoty im
+  workflow podáva cez `env:`. Veľkosť stráži `Lint workflows` (chyba nad
+  128 KiB, varovanie nad 120 KiB).
+
 Ďalej detailne, čo z toho je zaujímavé a **prečo** je to tak.
 
 ### `plan` – kontrola Pages
@@ -1086,18 +1098,29 @@ rozbili beh:
 
 ### Ako sa to dostane do mapy
 
-Build map to **nepočíta** – len si stiahne hotový asset. Zdroj skál je
-samostatný **input** vo formulári, nie voľba v `options`:
+Build map to **nepočíta** – ale zavolá si na to túto pipeline. Pri
+`rock_source: tienovanie` sa v behu objaví job *Skaly z tieňovania*, ktorý je
+`workflow_call` na `shading-rocks.yml`: stiahne dlaždice, nájde plochy,
+nahrá ich do releasu, a job s vrstevnicami si ich potom už len vytiahne.
+Platí teda to isté, čo pri výškových modeloch – **`Build map` je jediné, čo
+spúšťaš**.
 
 ```
-rock_source: tienovanie          vezme najnovší rockimg-{výrez}-… z releasu
-rock_source: tienovanie  +  options: rock_img_asset=rockimg-…gpkg.zst
-                                 presne tento asset
+rock_source: tienovanie                    stiahne dlaždice a spočíta skaly
+  + options: rock_img_zoom=18              iný zoom dlaždíc
+  + options: rock_img_options="fill=40"    prepínače pre výpočet
+  + options: rock_img_asset=rockimg-…      presne tento hotový asset
+                                           (vtedy sa nepočíta nič)
 ```
 
-Keď pre daný výrez v release nič nie je, build to povie v prvej minúte
-(`::error::`) a nespadne späť na skaly z DEM – to by bola tichá zámena
-jedného zdroja za druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
+Stiahnuté JPG dlaždice vypadnú ako artefakt `dlazdice-tienovania-{výrez}-z{zoom}`.
+Sú to tie isté obrázky, z ktorých sa skaly hľadali – dovtedy sa dali vidieť
+len v cache behu. Sú nekomprimované v ZIPe (JPG sa balí zbytočne) a pri z18
+na veľké pohorie to je aj vyše gigabajtu, preto sa držia 14 dní a nie 90 ako
+polygóny.
+
+Keby v release aj tak nič nebolo, build to povie (`::error::`) a nespadne
+späť na skaly z DEM – to by bola tichá zámena jedného zdroja za druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
 `dem` a `shading` nemôžu navzájom vrátiť z cache.
 
 Kód: [`workers/shading-rocks.py`](../workers/shading-rocks.py). Formát

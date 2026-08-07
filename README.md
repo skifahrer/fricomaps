@@ -439,16 +439,26 @@ dôvodu ako pri skalách z DEM: diera prerezaná hranicou časti sa späť nezle
 Vysoké Tatry na z17 sú ~12 000 dlaždíc (~300 MB) a jednotky minút; z18 je
 štvornásobok všetkého.
 
-**Ako to dostať do mapy:**
+**Ako to dostať do mapy:** stačí **Build map** s `area: vysoke_tatry`
+a `rock_source: tienovanie`. Nič sa dopredu púšťať nemusí – build si tú
+pipeline zavolá sám, rovnako ako si sám dopĺňa chýbajúce výškové modely.
+V behu z toho vypadnú dva artefakty: `dlazdice-tienovania-…` so stiahnutými
+JPG dlaždicami (to sú tie obrázky, z ktorých sa skaly hľadali)
+a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 
-1. Spusti **Skaly z tieňovaných dlaždíc** s `area: vysoke_tatry`.
-2. Pozri artefakt `nahlad-…`, prípadne uprav prahy a spusti znova.
-3. Spusti **Build map** s rovnakým `area` a vyber
-   **`rock_source: tienovanie`** – vezme si **najnovší** asset pre ten
-   výrez z releasu `dem-rocks-img` a skaly z DEM vôbec nepočíta.
-   Konkrétny asset sa dá vynútiť cez `options: rock_img_asset=rockimg-…gpkg.zst`.
+| chcem | ako |
+|---|---|
+| skaly z tieňovania, nech to trvá koľko chce | `rock_source: tienovanie` |
+| iný zoom dlaždíc | `options: rock_img_zoom=18` |
+| iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
+| presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
 
-Keď pre daný výrez v release nič nie je, build to povie v prvej minúte
+Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build z
+dobrovoľníckeho servera freemap.sk neťahá nič. Tieňovanie na **celý región**
+build odmietne hneď v príprave – dlaždice sú cudzie a na kraj by ich boli
+státisíce.
+
+Keby v release aj tak nič nebolo (napr. keď ten job spadol), build to povie
 a **nespadne späť na skaly z DEM** – tichá zámena jedného zdroja za druhý by
 bola horšia než zastavenie.
 
@@ -1394,8 +1404,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails`, `trails_maxzoom`,
-   `terrain_maxzoom`, `maxzoom`, `rock_img_asset`,
-   `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `terrain_maxzoom`, `maxzoom`, `rock_img_asset`, `rock_img_zoom`,
+   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
 
    Zdroj skál sa vyberá **inputom `rock_source`**, nie tu – prepína celý
    pôvod vrstvy, takže patrí do formulára. Cez `options` sa dá nanajvýš

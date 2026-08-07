@@ -35,7 +35,14 @@ jobs:
           # v hláškach ako preklep (SC1111). To sú falošné poplachy, nie chyby;
           # skutočnú syntax kontroluje `bash -n` v ďalšom kroku, ktorý výrazy
           # najprv nahradí. SC2129 a SC2015 sú štýlové názory na `>>` a `&&`.
-          SHELLCHECK_OPTS: "-e SC1083,SC1073,SC1072,SC1009,SC1089,SC1111,SC2129,SC2015"
+          #
+          # SC2153 („ROCK_RES may not be assigned. Did you mean ROCK_DEM?")
+          # je tu preto, že shellcheck nevidí `env:` workflowu. Do skriptov
+          # ich chodí pätnásť (ROCK_RES, ROCK_ALGO, DEM_RELEASE…), takže
+          # každá lokálna premenná s podobným menom vyrobí falošný poplach –
+          # a prepisovať mená premenných podľa toho, čo sa shellchecku zdá,
+          # je horšie než tento check nepoužívať.
+          SHELLCHECK_OPTS: "-e SC1083,SC1073,SC1072,SC1009,SC1089,SC1111,SC2129,SC2015,SC2153"
         run: |
           set -euo pipefail
           VER=1.7.7
@@ -66,6 +73,108 @@ jobs:
                           print(f"::error file={path}::{job} / {st.get('name')}: {p.stderr.strip()}")
                           bad += 1
           print(f"run blokov s chybnou syntaxou: {bad}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # Strop na veľkosť súboru s workflowom je 128 KiB. Nad ním ho GitHub
+      # NEPRIJME – a nepovie to: po pushi vznikne beh bez jobov, pomenovaný
+      # cestou k súboru, s červeným krížikom, aj keď má workflow len
+      # `workflow_dispatch`. Vyzerá to, že sa spustil sám po mergi.
+      #
+      # `build-map.yml` cez ten strop prešiel o 122 bajtov (beh 33) a stálo
+      # to šesť kôl sond, kým sa to našlo: actionlint ani JSON schéma
+      # o veľkosti nevedia. Preto radšej varovanie už od 120 KiB – veľký
+      # `run:` blok patrí do `workers/`, nie do YAMLu.
+      - name: Veľkosť súborov workflowov
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, sys
+          LIMIT = 128 * 1024
+          WARN = 120 * 1024
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              n = os.path.getsize(path)
+              if n > LIMIT:
+                  print(f"::error file={path}::{n} B je nad stropom {LIMIT} B – "
+                        f"GitHub taký súbor neprijme. Presuň veľký `run:` blok "
+                        f"do workers/ a volaj ho jedným riadkom.")
+                  bad += 1
+              elif n > WARN:
+                  print(f"::warning file={path}::{n} B, strop je {LIMIT} B "
+                        f"(ostáva {LIMIT - n} B).")
+              else:
+                  print(f"{path}: {n} B ✓")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # `}}` v shellovom skripte bez `${{` pred ním. GitHub taký súbor
+      # NEPRIJME: po pushnutí vznikne beh bez jobov, pomenovaný cestou
+      # k súboru, s červeným krížikom – a to aj vtedy, keď má workflow len
+      # `workflow_dispatch`, takže to vyzerá, že sa spustil sám po mergi.
+      # V logu nie je nič, actionlint 1.7.7 ani oficiálna JSON schéma to
+      # nezachytia.
+      #
+      # Vyrobí to celkom nevinná bashová vec – vnorená expanzia:
+      #     echo "${A:-${B:-}}"      ← končí na `}}`
+      # Stálo to štyri kolá sond po pushnutí, kým sa to našlo (behy 33–39).
+      # Rozpis: `${{ … }}` sa vyhodí (aj s `{{z}}` vnútri reťazcov, ktoré
+      # `format()` používa na escapovanie), a čo z `}}` ostane, je chyba.
+      - name: Zátvorky výrazov v run blokoch
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, yaml
+
+          # Otvárací a zatvárací token sa SKLADAJÚ, nepíšu. Keby tu stáli
+          # doslova, mal by tento súbor presne tú chybu, ktorú hľadá – a
+          # kontrola by zhodila samu seba (aj actionlint, ktorý by ich skúsil
+          # prečítať ako výraz).
+          OPEN = "$" + "{" * 2
+          CLOSE = "}" * 2
+
+          def strip_exprs(s):
+              """Vyhodí celé výrazy; vráti (zvyšok, neuzavretý výraz alebo None)."""
+              out, i = [], 0
+              while True:
+                  j = s.find(OPEN, i)
+                  if j < 0:
+                      out.append(s[i:]); return "".join(out), None
+                  out.append(s[i:j])
+                  k, in_str = j + len(OPEN), False
+                  while k < len(s):
+                      # V reťazci vnútri výrazu môžu byť zdvojené zátvorky ako
+                      # text – tak si ich escapuje `format()`.
+                      if s[k] == "'":
+                          in_str = not in_str; k += 1
+                      elif not in_str and s.startswith(CLOSE, k):
+                          k += len(CLOSE); break
+                      else:
+                          k += 1
+                  else:
+                      return "".join(out), s[j:j + 60]
+                  i = k
+
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              for job, jd in ((yaml.safe_load(open(path)) or {}).get("jobs") or {}).items():
+                  for st in jd.get("steps") or []:
+                      s = st.get("run")
+                      if not s:
+                          continue
+                      rest, unclosed = strip_exprs(s)
+                      if unclosed:
+                          print(f"::error file={path}::{job} / {st.get('name')}: "
+                                f"neuzavretý výraz: {unclosed}")
+                          bad += 1
+                          continue
+                      for line in rest.split("\n"):
+                          if CLOSE in line or OPEN in line:
+                              print(f"::error file={path}::{job} / {st.get('name')}: "
+                                    f"zdvojená zátvorka bez výrazu – GitHub taký "
+                                    f"súbor neprijme: {line.strip()[:100]}")
+                              bad += 1
+          print(f"run blokov so zlomenými zátvorkami: {bad}")
           sys.exit(1 if bad else 0)
           PY
 
