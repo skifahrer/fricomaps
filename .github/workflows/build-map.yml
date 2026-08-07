@@ -1282,7 +1282,15 @@ jobs:
           echo "$CZ" > contours-out/maxzoom.txt
           # Do atribúcie ide model, z ktorého sú vrstevnice; keď sú vypnuté,
           # ten, z ktorého sú skaly – v tej vrstve je aj tak len jedno z nich.
-          echo "${CONTOUR_DEM:-${ROCK_DEM_USED:-}}" > contours-out/dem-source.txt
+          # Dva riadky namiesto vnorenej expanzie `${A:-${B:-...}`: tá končí
+          # dvomi zloženými zátvorkami za sebou a GitHub taký súbor NEPRIJME –
+          # workflow sa po pushnutí objaví ako beh bez jobov, pomenovaný
+          # cestou k súboru. Stráži to krok „Zátvorky výrazov v run blokoch"
+          # v Lint workflows; aj tento komentár preto tie dve zátvorky
+          # opisuje slovami.
+          DEM_FOR_STYLE="$CONTOUR_DEM"
+          [ -n "$DEM_FOR_STYLE" ] || DEM_FOR_STYLE="$ROCK_DEM_USED"
+          echo "$DEM_FOR_STYLE" > contours-out/dem-source.txt
           # Prah sklonu má zmysel len pri skalách z DEM. Pri `tienovanie` žiadny
           # sklon neexistuje, takže do manifestu ide `off` a namiesto neho
           # sa tam píše zdroj skál.
