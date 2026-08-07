@@ -442,17 +442,30 @@ dlaždicovaný DEFLATE GeoTIFF, vlastný HTTP server s Range):
 | celý raster 1 m → 5 m, **s `.ovr`** | 37,8 MB | 1,1 s |
 | to isté **bez `.ovr`** | 46,1 MB | 2,7 s |
 
-Z toho plynú dve pravidlá, podľa ktorých je pipeline napísaná:
+Z toho plynú pravidlá, podľa ktorých je pipeline napísaná:
 
 1. **Jeden prechod, nie viac.** Celá krajina sa prevzorkúva jedným
    `gdal_translate -tr`, a na 1° dlaždice sa krája až hotový malý raster.
    Krájať dlaždice priamo zo zdroja by stálo N× cestu od začiatku súboru.
-2. **Sidecary sa nesmú schovať.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`
-   síce šetrí požiadavky, ale skryje `.ovr` aj `.tfw` — a práve tých 46 GB
-   pyramíd robí z prevzorkovania celej krajiny zlomok práce.
+2. **Čítať sa musí dopredu.** Výrez ide v dvoch krokoch: najprv
+   `gdal_translate -projwin` sekvenčne na disk, až potom `gdalwarp` z disku
+   do WGS84. Warp priamo nad vzdialeným zdrojom si dlaždice pýta v poradí
+   *cieľovej* mriežky — a každý skok späť v deflate prúde znamená
+   rozbaľovanie od začiatku, čiže môže stáť desiatky GB.
+3. **Pyramídy miesto rastra, keď to ide.** Pri cieli aspoň 2× hrubšom než
+   zdroj sa číta z `.ovr` (46 GB) a nie z hlavného rastra (151 GB) — a
+   vyberáme ho výslovne, nie s dôverou, že si ho GDAL nájde sám.
+4. **Sidecary sa nesmú schovať.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`
+   síce šetrí požiadavky, ale skryje `.ovr` aj `.tfw`.
 
-Pri výreze platí, že **sever je lacný a juh drahý** — raster sa číta po
-riadkoch od severu. S tým sa nedá nič robiť, deflate sa preskakovať nedá.
+**Pri výreze v plnom rozlíšení je sever lacný a juh drahý** — raster sa číta
+po riadkoch od severu, takže Vysoké Tatry stoja ~30 % archívu a Slovenský
+kras skoro celý. Pyramídy tu nepomôžu: pri 1 m chceš práve tie plné dáta.
+S tým sa nedá nič robiť, deflate sa preskakovať nedá.
+
+Preto beh vypisuje **každých 30 sekúnd**, koľko už stiahol, akou rýchlosťou
+a koľko odhadom ostáva — hodinový prechod cez 151 GB je inak v logu úplne
+ticho a nedá sa odlíšiť od zaseknutého behu.
 
 **Rozlíšenie vs. územie.** Pri 1 m má jedna 1°×1° dlaždica ~48 GB, takže:
 
