@@ -219,8 +219,9 @@ fi
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
-  echo "Ešte rýchlejšie: \`options: test_km2=2\` vyreže zo stredu výrezu"
-  echo "štvorec s 2 km² a na ňom spraví VŠETKO vrátane tieňovania."
+  echo "Ešte rýchlejšie je pole \`test_km2\` (predvolene \`4\`): vyreže zo"
+  echo "stredu výrezu štvorec s toľkými km² a na ňom spraví VŠETKO vrátane"
+  echo "tieňovania. Ostrý beh na celom výreze je \`test_km2: 0\`."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then
