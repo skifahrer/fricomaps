@@ -208,7 +208,7 @@ CONTOUR_CELLS_PER_S = 3.0e5
 TILES_PER_S = 25.0  # pri --jobs=12 a ~25 kB na dlaždicu
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from watch import hms, dir_mb, run_watched  # noqa: E402
+from watch import hms, dir_mb, run_watched, Heartbeat  # noqa: E402
 
 
 def run(cmd, **kw):
@@ -636,17 +636,31 @@ def box_blur_u8(a, r):
     return acc.astype(np.uint8)
 
 
-def load_band(fetcher, z, x0, x1, ty0, ty1):
+def load_band(fetcher, z, x0, x1, ty0, ty1, every=30):
     """Dlaždicové riadky [ty0, ty1) ako jeden obraz odtieňov šedej.
 
     Chýbajúca dlaždica ostane 255 (= úplne svetlá, teda určite nie skala),
     nie 0 – nula by sa vyhodnotila ako najtmavšie miesto v mozaike.
+
+    Dekódovanie tisícok JPEGov je najdlhšia tichá časť celého behu, preto
+    sa priebežne hlási, ktorý dlaždicový riadok je na rade.
     """
     w = (x1 - x0) * TILE
     h = (ty1 - ty0) * TILE
     band = np.full((h, w), 255, np.uint8)
+    t0 = last = time.time()
+    n = 0
     for ty in range(ty0, ty1):
+        now = time.time()
+        if every and now - last >= every:
+            last = now
+            hotovo = ty - ty0
+            eta = (now - t0) / max(1, hotovo) * (ty1 - ty - 0) if hotovo else 0
+            print(f"  … dekódovanie: riadok {hotovo + 1}/{ty1 - ty0}, "
+                  f"{n} dlaždíc, beží {hms(now - t0)}"
+                  + (f", ostáva {hms(eta)}" if hotovo else ""), flush=True)
         for tx in range(x0, x1):
+            n += 1
             p = fetcher.path(z, tx, ty)
             try:
                 if not os.path.exists(p) or os.path.getsize(p) == 0:
@@ -695,7 +709,7 @@ def bright_background(small, r):
     return np.where(c > 0.05, s / np.maximum(c, 1e-6), m1).astype(np.float32)
 
 
-def score_band(gray, dark, always, local_px, rel, blur, fill_px=0):
+def score_band(gray, dark, always, local_px, rel, blur, fill_px=0, every=0):
     """Šedá → „tmavosť" (Byte): o koľko je pixel pod referenciou.
 
     ref   = clip(pozadie − rel, always, dark)   (bez pozadia rovno `dark`)
@@ -706,9 +720,15 @@ def score_band(gray, dark, always, local_px, rel, blur, fill_px=0):
     hlavičku súboru – zámerne je to vypnuté, lebo tá jemná štruktúra JE
     to, čo chceme.
     """
+    def faza(text, t0):
+        if every:
+            print(f"  … tmavosť: {text} ({hms(time.time() - t0)})", flush=True)
+
+    t_f = time.time()
     gray = box_blur_u8(gray, blur)
     h, w = gray.shape
     if local_px > 0:
+        faza("miestne pozadie", t_f)
         small = block_mean(gray, BG_DOWN)
         bg = bright_background(small, max(1, int(round(local_px / BG_DOWN / 2))))
         np.subtract(bg, float(rel), out=bg)
@@ -716,6 +736,7 @@ def score_band(gray, dark, always, local_px, rel, blur, fill_px=0):
     else:
         bg = None
 
+    faza("prah tmavosti", t_f)
     out = np.empty((h, w), np.uint8)
     step = 2048
     for r in range(0, h, step):
@@ -732,6 +753,7 @@ def score_band(gray, dark, always, local_px, rel, blur, fill_px=0):
         out[r:r1] = g.astype(np.uint8)
 
     if fill_px > 0:
+        faza("vyplnenie", t_f)
         # Priemerná tmavosť v okolí namiesto tmavosti pixela. Počíta sa na
         # tom istom 8× zmenšení ako pozadie – pole hustoty je hladké, na
         # jemnejšej mriežke vyzerá rovnako. Obrys je potom odkrokovaný po
@@ -822,9 +844,20 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
             print(f"  … tmavosť: pás {bi + 1}/{n_bands} už je "
                   f"({dir_mb(tif):.0f} MB) – preskakujem", flush=True)
             continue
-        gray = load_band(fetcher, z, x0, x1, py0, py1)
-        score, blurred = score_band(gray, args.dark, args.dark_always,
-                                    local_px, args.rel, args.blur, args.fill_px)
+        # Tep okolo celého pásu: dekódovanie aj numpy fázy sú dlhé a tiché,
+        # takže bez neho z logu nepoznáš „počíta" od „zaseklo sa". Toto je
+        # záruka, že ticho nikdy nepresiahne `--heartbeat` sekúnd; riadky
+        # nižšie k tomu hovoria, čo sa práve deje.
+        hb = Heartbeat(f"pás {bi + 1}/{n_bands}", every=args.heartbeat)
+        hb.start()
+        try:
+            gray = load_band(fetcher, z, x0, x1, py0, py1,
+                             every=args.heartbeat)
+            score, blurred = score_band(gray, args.dark, args.dark_always,
+                                        local_px, args.rel, args.blur,
+                                        args.fill_px, every=args.heartbeat)
+        finally:
+            hb.stop()
         del gray
         top = (ty - py0) * TILE
         bot = top + (ty1 - ty) * TILE
