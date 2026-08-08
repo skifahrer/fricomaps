@@ -271,6 +271,21 @@ def main():
     for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
         values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
 
+    # RÝCHLY TEST PREGENERÚVA VŽDY VŠETKO, aj pri `rebuild: nic`.
+    #
+    # Testovací beh je na ladenie – meníš prah, interval alebo kód a chceš
+    # vidieť, čo z toho vyjde. Keby sa výsledok vrátil z cache, videl by si
+    # to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie
+    # nastavenia aj otlačok skriptov, ale nie všetko: pár km² prepočítať
+    # stojí minúty, kým jedno takto stratené kolo ladenia stojí viac.
+    #
+    # Cache ostrého behu je pritom v bezpečí: kľúč nesie `bboxkey` a ten je
+    # pri teste bboxom testovacieho štvorca, takže sa maže a prepisuje len
+    # cache toho testu.
+    if test_on:
+        for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
+            values[flag] = "true"
+
     lines = [f"opt_{k}={v}" for k, v in values.items()]
     if args.out:
         with open(args.out, "a") as f:
@@ -283,7 +298,11 @@ def main():
         print(f"  {k:<20} {values[k] or '(prázdne)':<24} {d}{mark}")
     if changed:
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")
-    if args.rebuild != "nic":
+    if test_on:
+        print("Pregenerovať: VŠETKO (rýchly test počíta vždy nanovo, nech "
+              f"neladíš na starom výsledku z cache; `rebuild: {args.rebuild}` "
+              "sa tým prebíja)")
+    elif args.rebuild != "nic":
         print(f"Pregenerovať: {args.rebuild}")
     print(f"\nVrstevnice: {contour_src}   Skaly: {rock_src}   "
           f"Tieňovanie: {shading_src}   Trasy: {values['trails']}")

@@ -575,6 +575,13 @@ nech sa pár km² mapy nedá zameniť s pokazeným buildom.
 Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
+**Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
+ním prah, interval alebo kód – a keby sa výsledok vrátil z cache, videl by si
+to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastavenia
+aj otlačok skriptov, ale nie všetko, a pár km² prepočítať stojí minúty, kým
+jedno takto stratené kolo ladenia stojí viac. Cache ostrého behu je pritom
+v bezpečí: v kľúči je bbox a ten je pri teste bboxom testovacieho štvorca.
+
 Beh do súhrnu vypíše, kde ten štvorec je:
 
 - **obrázok** s okolím (podklad je tieňovanie, červený štvorec = testované
@@ -1193,6 +1200,25 @@ najmenšia/priemerná/najväčšia plocha, koľko km² skalného terénu spolu) 
 prehľad, **čo prišlo z cache a čo sa naozaj počítalo** – takže sa hneď vidí,
 či mal beh trvať hodinu, alebo minútu.
 
+#### Nastavenia tohto behu
+
+Súhrn vypíše aj celý formulár, s akým bol beh spustený, a označí, čo bolo iné
+než predvolené:
+
+| pole | hodnota | |
+|---|---|---|
+| `region` | `presovsky` | default |
+| `area` | `mala_fatra` | **iné než default** |
+| `test` | `true` | default |
+| `rock_slope` | `45` | **iné než default** |
+
+Je to preto, že formulár *Run workflow* sa vždy otvorí s predvolenými
+hodnotami – GitHub si nepamätá, s čím si beh pustil naposledy, a v API to
+nikde nie je. Keď teda chceš beh zopakovať a zmeniť jedinú vec (typicky
+`rebuild`), z tohto bloku vidíš, čo treba nastaviť späť. Predvolené hodnoty
+si blok číta priamo z workflowu ([workers/summary-inputs.py](workers/summary-inputs.py)),
+takže sa s formulárom nemôžu rozísť.
+
 
 ## Značené trasy (turistika, cyklo, bežky)
 
@@ -1622,8 +1648,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
    | input | typ | čo robí |
    |---|---|---|
-   | `region` | výber | `slovensko` alebo kraj |
-   | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
+   | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
+   | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
    | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
@@ -1632,6 +1658,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=2`, mriežka na obrys skál `rock_res=1`) |
+
+   **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké
+   Tatry, rýchly test na 4 km². Formulár *Run workflow* sa totiž po každom
+   otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
+   pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
+   prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než
+   default, vypíše súhrn v bloku **Nastavenia tohto behu** – z neho sa dá
+   beh zopakovať bez hádania.
 
    **Prečo je vo formulári `test` a nie `rock_res`.** Polí je desať a je to
    strop, takže sa dá pridať len to, za čo niečo vypadne. Rýchly test sa
