@@ -593,6 +593,10 @@ to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastave
 aj otlačok skriptov, ale nie všetko, a pár km² prepočítať stojí minúty, kým
 jedno takto stratené kolo ladenia stojí viac. Cache ostrého behu je pritom
 v bezpečí: v kľúči je bbox a ten je pri teste bboxom testovacieho štvorca.
+Platí to aj pre skaly z tieňovania – tá podpipeline dostane `fresh=1`, takže
+nenadviaže na rozrobené obrysy z minulého behu. Zo stiahnutých **vstupov**
+(PBF, DEM dlaždice, JPG dlaždice tieňovania, Planetiler, glyfy) sa nezahadzuje
+nič: nie sú to výsledky a v kľúči majú dátum alebo otlačok zdroja.
 
 Beh do súhrnu vypíše, kde ten štvorec je:
 

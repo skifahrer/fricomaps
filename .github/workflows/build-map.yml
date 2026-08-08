@@ -465,7 +465,14 @@ jobs:
       # toho istého sa raz rozídu. Rozísť sa tu znamená skaly mimo mapy.
       area: ${{ needs.plan.outputs.test_km2 != '0' && needs.plan.outputs.area_bbox || inputs.area }}
       zoom: ${{ needs.plan.outputs.opt_rock_img_zoom }}
-      options: ${{ needs.plan.outputs.opt_rock_img_options }}
+      # Rýchly test nepoužije nič z cache – vrátane TEJTO podpipeline. Sama
+      # si totiž odkladá rozrobené obrysy a bez `fresh=1` by na ne nadviazala,
+      # takže by si po zmene prahu dostal polovicu starého výsledku a polovicu
+      # nového. Vlastné `rock_img_options` to vedia prebiť (`fresh=0`) – tokeny
+      # sa spracúvajú zľava doprava a posledná hodnota vyhráva.
+      # Stiahnuté JPG dlaždice sa nezahadzujú: to sú vstupné dáta z cudzieho
+      # (dobrovoľníckeho) servera, nie výsledok výpočtu.
+      options: ${{ needs.plan.outputs.test_km2 != '0' && format('fresh=1 {0}', needs.plan.outputs.opt_rock_img_options) || needs.plan.outputs.opt_rock_img_options }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
