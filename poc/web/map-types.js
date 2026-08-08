@@ -54,9 +54,6 @@ export const ROAD_SERVICE_CLASSES = [
   "motorcycle", "tyres", "picnic_site", "toilets", "drinking_water"
 ];
 
-/** Plochy lyžiarskych stredísk (`landuse`/`landcover`). */
-export const WINTER_SPORT_CLASSES = ["winter_sports", "ski_resort", "piste"];
-
 /** Vrstvy značených trás okrem lyžiarskych. */
 const OTHER_TRAILS = /^trail-(hiking|bicycle|mtb|horse)(-icon|-label)?$/;
 /** Vrstvy lyžiarskych trás. */
@@ -67,6 +64,12 @@ const ALL_TRAILS = /^trail-/;
 const TOPIC_LAYERS = ["poi-historic", "poi-mining", "poi-ski", "poi-road"];
 /** Skalné plochy z vrstevnicových dlaždíc. */
 const ROCKS = /^rock-/;
+/** Zjazdovky a bežky z vlastných dlaždíc (workers/features.yml). */
+const PISTES = /^piste-/;
+/** Prekážky: múry, ploty, živé ploty, zábradlia. */
+const BARRIERS = /^feature-(wall|fence|hedge)$/;
+/** Technická infraštruktúra: vedenia, potrubia, prieseky. */
+const INFRA = /^feature-(power|power-minor|pipeline|cutline)$/;
 
 export const MAP_TYPES = [
   {
@@ -80,8 +83,13 @@ export const MAP_TYPES = [
       // Nič, čo patrí inej mape.
       { match: { id: TOPIC_LAYERS }, visible: false },
       { match: { id: SKI_TRAILS }, visible: false },
-      { match: { id: "landuse-winter-sports" }, visible: false },
+      { match: { id: PISTES }, visible: false },
       { match: { id: "aerialway" }, minzoom: 12 },
+      // Násypy, zárezy, bralné hrany a vedenia sú v teréne orientačné body –
+      // na turistickej mape patria k tomu najužitočnejšiemu, takže ostávajú
+      // tak, ako ich dáva štýl. Ploty naopak až celkom zblízka, inak by
+      // z okrajov obcí bola šeď.
+      { match: { id: BARRIERS }, minzoomFloor: 16 },
       // Terén a chodníky sa objavia skôr než na základnej mape.
       { match: { id: ROCKS }, minzoom: 8 },
       { match: { id: "road-path" }, minzoom: 10 },
@@ -105,7 +113,10 @@ export const MAP_TYPES = [
     rules: [
       { match: { id: TOPIC_LAYERS }, visible: false },
       { match: { id: "poi-ski" }, visible: true, minzoom: 11 },
-      { match: { id: "landuse-winter-sports" }, visible: true },
+      // Zjazdovky sú tu hlavná kresba, nie doplnok – vidieť ich má byť
+      // z toho istého zoomu ako vleky, ku ktorým patria.
+      { match: { id: PISTES }, visible: true, minzoom: 9 },
+      { match: { id: BARRIERS }, visible: false },
       // Lyžiarske trasy a vleky sú tu hlavná kresba.
       { match: { id: SKI_TRAILS }, minzoom: 8 },
       { match: { id: "trail-ski-label" }, minzoom: 11 },
@@ -136,8 +147,15 @@ export const MAP_TYPES = [
       { match: { id: "contour-label" }, minzoom: 14 },
       { match: { id: ROCKS }, visible: false },
       { match: { id: ALL_TRAILS }, visible: false },
-      { match: { id: "landuse-winter-sports" }, visible: false },
+      { match: { id: PISTES }, visible: false },
       { match: { id: "hillshade" }, visible: false },
+      // Vodičovi je múr aj priesek jedno; parkovisko a cesta vo výstavbe
+      // naopak patria k tomu hlavnému, čo hľadá.
+      { match: { id: BARRIERS }, visible: false },
+      { match: { id: INFRA }, visible: false },
+      { match: { id: /^(cliff-line|ridge-line|feature-embankment|feature-cutting|feature-gully|feature-tree-row)/ }, visible: false },
+      { match: { id: "feature-parking" }, minzoom: 12 },
+      { match: { id: "road-construction" }, minzoom: 9 },
       // Chodníky a cestičky nie sú to, kadiaľ sa dá ísť autom.
       { match: { id: ["road-path", "road-steps", "road-footway"] }, visible: false },
       { match: { id: "road-cycleway" }, minzoomFloor: 15 },
@@ -166,8 +184,14 @@ export const MAP_TYPES = [
       { match: { id: ["road-path", "road-steps"] }, visible: false },
       { match: { id: "road-footway" }, minzoomFloor: 15 },
       { match: { id: "road-cycleway" }, visible: false },
-      { match: { id: "landuse-winter-sports" }, visible: false },
+      { match: { id: PISTES }, visible: false },
       { match: { id: ROCKS }, minzoom: 9 },
+      // Hradby, staré štôlne a haldy sú tu pamiatka, nie prekážka –
+      // preto sú vidieť skôr než na ostatných mapách.
+      { match: { id: "feature-wall" }, minzoom: 13 },
+      { match: { id: "feature-landfill" }, minzoom: 10 },
+      { match: { id: ["feature-fence", "feature-hedge"] }, visible: false },
+      { match: { id: INFRA }, visible: false },
       // Lom a halda sú tu pamiatka, nie priemysel – nech sú vidieť zavčasu.
       { match: { id: "landuse-quarry" }, minzoom: 8 },
       { match: { id: "poi-major" }, minzoom: 12 },

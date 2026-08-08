@@ -10,7 +10,7 @@
 # k súboru. Deväť kilobajtov markdownu je preto tu.
 #
 # Hodnoty z workflowu chodia cez prostredie (viď krok „Súhrn buildu"):
-#   REGION_NAME  R_PLAN R_CONTOURS R_SHADING_ROCKS R_TRAILS R_TERRAIN
+#   REGION_NAME  R_PLAN R_CONTOURS R_SHADING_ROCKS R_TRAILS R_FEATURES R_TERRAIN
 #   R_TILES R_ASSETS  SRC_CONTOURS SRC_ROCKS SRC_SHADING
 #   USED_CONTOURS USED_ROCKS USED_SHADING  SIZE_LIMIT_MB  PAGE_URL
 #   REGION_KEY  TEST_KM2 TEST_BBOX TEST_FULL_BBOX  (testovací režim)
@@ -42,6 +42,7 @@ fi
   echo "| Vrstevnice a skaly | ${R_CONTOURS} |"
   echo "| Skaly z tieňovania | ${R_SHADING_ROCKS} |"
   echo "| Značené trasy | ${R_TRAILS} |"
+  echo "| Krajinné prvky | ${R_FEATURES:-–} |"
   echo "| Tieňovanie a 3D terén | ${R_TERRAIN} |"
   echo "| Mapové dlaždice | ${R_TILES} |"
   echo "| Ikonky a fonty | ${R_ASSETS} |"

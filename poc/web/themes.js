@@ -41,8 +41,7 @@ import {
   HISTORIC_CLASSES,
   MINING_CLASSES,
   SKI_CLASSES,
-  ROAD_SERVICE_CLASSES,
-  WINTER_SPORT_CLASSES
+  ROAD_SERVICE_CLASSES
 } from "./map-types.js";
 
 /** Zoom, od ktorého je mapa plne detailná (nižšie sa orezáva). */
@@ -190,6 +189,27 @@ export const THEMES = {
     contourMajor: "#96764e",
     contourText: "#8a6a45",
     rockArea: "#b4aea6",
+    // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
+    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
+    cliffLine: "#7a6a58",
+    ridgeLine: "#a89880",
+    scrub: "#cfe0b4",
+    roadConstruction: "#e0c078",
+    parking: "#e8e4f0",
+    farmyard: "#eee4d2",
+    dam: "#b0a898",
+    embankment: "#a89078",
+    wall: "#8a7a66",
+    fence: "#a8a08e",
+    hedge: "#9dc088",
+    powerLine: "#9a94a8",
+    cutline: "#c8bfa8",
+    treeRow: "#8fbf78",
+    pisteArea: "#e8f2fa",
+    pisteLine: "#4a90c8",
+    featurePoi: "#3f7a6a",
+    trailFerrata: "#c04a1a",
     hillShadow: "#5a4a3a",
     hillHighlight: "#ffffff",
     hillAccent: "#8a7a6a",
@@ -286,6 +306,27 @@ export const THEMES = {
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
     rockArea: "#3c3c48",
+    // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
+    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
+    cliffLine: "#8a7a64",
+    ridgeLine: "#6a6050",
+    scrub: "#1d2a1b",
+    roadConstruction: "#6a5628",
+    parking: "#23202e",
+    farmyard: "#2a2419",
+    dam: "#3a3630",
+    embankment: "#5a4c3e",
+    wall: "#4e463a",
+    fence: "#3e3a34",
+    hedge: "#2a4028",
+    powerLine: "#4a4658",
+    cutline: "#3a352c",
+    treeRow: "#2f4a2a",
+    pisteArea: "#18232e",
+    pisteLine: "#3a7098",
+    featurePoi: "#6aa898",
+    trailFerrata: "#c05a2a",
     hillShadow: "#000000",
     hillHighlight: "#4a4a60",
     hillAccent: "#2a2a3a",
@@ -381,6 +422,27 @@ export const THEMES = {
     contourMajor: "#966034",
     contourText: "#7a4f28",
     rockArea: "#b9ab9c",
+    // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
+    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
+    cliffLine: "#6f5a44",
+    ridgeLine: "#9a8468",
+    scrub: "#bcd79a",
+    roadConstruction: "#d8a848",
+    parking: "#e6e2ee",
+    farmyard: "#e8dcc2",
+    dam: "#a89e8a",
+    embankment: "#9a7f60",
+    wall: "#7d6a52",
+    fence: "#a09680",
+    hedge: "#8ab86a",
+    powerLine: "#8e8898",
+    cutline: "#c2b596",
+    treeRow: "#77b45c",
+    pisteArea: "#e2f0f8",
+    pisteLine: "#2f86bc",
+    featurePoi: "#2f6f5c",
+    trailFerrata: "#b03c14",
     hillShadow: "#6a5030",
     hillHighlight: "#fffaf0",
     hillAccent: "#9a8060",
@@ -475,6 +537,27 @@ export const THEMES = {
     contourMajor: "#b0846a",
     contourText: "#9a7058",
     rockArea: "#c0b5ab",
+    // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
+    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
+    cliffLine: "#96745c",
+    ridgeLine: "#c0a488",
+    scrub: "#dbe6c4",
+    roadConstruction: "#dcb87c",
+    parking: "#efe8f0",
+    farmyard: "#f2e6d2",
+    dam: "#c4b8a8",
+    embankment: "#b89476",
+    wall: "#a08a70",
+    fence: "#c0b4a4",
+    hedge: "#b0cc98",
+    powerLine: "#b0a8b8",
+    cutline: "#ddd0b8",
+    treeRow: "#a8c890",
+    pisteArea: "#eef4f6",
+    pisteLine: "#6aa8c8",
+    featurePoi: "#5a8a78",
+    trailFerrata: "#c06038",
     hillShadow: "#8a6a58",
     hillHighlight: "#fffdf8",
     hillAccent: "#c0a090",
@@ -534,7 +617,11 @@ export const PALETTE_GROUPS = [
       ["sand", "Piesok"],
       ["ice", "Ľadovec"],
       ["wetland", "Mokraď"],
-      ["rock", "Skaly / suť"]
+      ["rock", "Skaly / suť"],
+      // Kosodrevina a kroviny sú v dlaždiciach ako `landcover subclass`, ale
+      // `class` majú `grass` – bez vlastnej farby by lúka a kosodrevina
+      // vyzerali rovnako, čo je v Tatrách dosť podstatný rozdiel.
+      ["scrub", "Kroviny a kosodrevina"]
     ]
   },
   {
@@ -551,7 +638,10 @@ export const PALETTE_GROUPS = [
       ["garden", "Záhrada / sad"],
       ["playground", "Ihrisko / zoo"],
       ["pitch", "Športovisko"],
-      ["winterSports", "Lyžiarske stredisko"]
+      ["winterSports", "Lyžiarske stredisko"],
+      ["parking", "Parkovisko"],
+      ["farmyard", "Hospodársky dvor"],
+      ["dam", "Priehradný múr a hať"]
     ]
   },
   {
@@ -577,7 +667,8 @@ export const PALETTE_GROUPS = [
       ["service", "Účelová cesta"],
       ["pedestrian", "Pešia zóna"],
       ["roadCasing", "Obrys ciest"],
-      ["roadText", "Popisok cesty"]
+      ["roadText", "Popisok cesty"],
+      ["roadConstruction", "Cesta vo výstavbe"]
     ]
   },
   {
@@ -610,6 +701,7 @@ export const PALETTE_GROUPS = [
       ["trailMtb", "Horská cyklotrasa (bez farby)"],
       ["trailSki", "Lyžiarska trasa (bez farby)"],
       ["trailHorse", "Jazdecká trasa (bez farby)"],
+      ["trailFerrata", "Ferrata (bez farby)"],
       ["trailHalo", "Podklad pod pásikom trasy"]
     ]
   },
@@ -633,7 +725,11 @@ export const PALETTE_GROUPS = [
       ["contour", "Vrstevnica"],
       ["contourMajor", "Hlavná vrstevnica"],
       ["contourText", "Popisok výšky"],
-      ["rockArea", "Skalné plochy (plná výplň)"]
+      ["rockArea", "Skalné plochy (plná výplň)"],
+      // Bralná hrana a hrebeň sú `natural=cliff/ridge/arete` – v dlaždiciach
+      // sú ako LÍNIE vo vrstve `mountain_peak`, nie ako skalná plocha z DEM.
+      ["cliffLine", "Bralná hrana (z OSM)"],
+      ["ridgeLine", "Hrebeň (z OSM)"]
     ]
   },
   {
@@ -658,6 +754,22 @@ export const PALETTE_GROUPS = [
       ["peakIcon", "Ikona vrcholu"],
       ["aerodromeIcon", "Ikona letiska"],
       ["onewayIcon", "Šípka jednosmerky"]
+    ]
+  },
+  {
+    id: "prvky",
+    label: "Krajinné prvky (vlastné dlaždice)",
+    keys: [
+      ["embankment", "Násyp a zárez"],
+      ["wall", "Múr a hradby"],
+      ["fence", "Plot a zábradlie"],
+      ["hedge", "Živý plot"],
+      ["powerLine", "Elektrické vedenie"],
+      ["cutline", "Priesek"],
+      ["treeRow", "Stromoradie"],
+      ["pisteArea", "Zjazdovka (plocha)"],
+      ["pisteLine", "Zjazdovka a bežka (čiara)"],
+      ["featurePoi", "Prameň, jaskyňa, rozhľadňa"]
     ]
   },
   {
@@ -708,6 +820,9 @@ export const LAYER_GROUPS = [
   { id: "cesty", label: "Cesty" },
   { id: "chodniky", label: "Chodníky a cestičky" },
   { id: "trasy", label: "Značené trasy" },
+  // Vlastné dlaždice s tým, čo schéma OpenMapTiles nemá – násypy, múry,
+  // ploty, vedenia, pramene, zjazdovky (workers/features.yml).
+  { id: "prvky", label: "Krajinné prvky (mimo schémy)" },
   { id: "doprava", label: "Železnica a ostatná doprava" },
   { id: "hranice", label: "Hranice" },
   { id: "popisky", label: "Popisky" },
@@ -792,6 +907,15 @@ const num = (prop, fallback) => ["coalesce", ["get", prop], fallback];
  */
 const RANGE_CLASSES = ["ridge", "arete", "massif", "range", "mountain_range"];
 
+/**
+ * Triedy `mountain_peak`, ktoré prídu ako **línia**, nie ako bod.
+ * `natural=cliff`, `ridge` a `arete` mapuje Planetiler do tej istej vrstvy
+ * ako vrcholy, ale s líniovou geometriou (MountainPeak.java, od z13). Bez
+ * tohto zoznamu dostane bralná hrana doprostred trojuholníček vrcholu aj
+ * s popiskom – symbolová vrstva totiž líniu umiestni ako bod.
+ */
+const PEAK_LINE_CLASSES = ["ridge", "arete", "cliff"];
+
 /** Triedy `place`, ktoré nie sú sídlom, ale geografickou oblasťou. */
 const GEO_PLACE_CLASSES = ["island", "archipelago", "peninsula", "region", "sea", "bay"];
 
@@ -828,6 +952,17 @@ export const TRAIL_TYPES = [
     palette: "trailHiking",
     icons: ["mountain", "triangle"],
     dash: null
+  },
+  {
+    // Ferrata je `route=via_ferrata` relácia ako každá iná značená trasa, len
+    // vedie po skale. Vlastný druh preto, že sa má na prvý pohľad odlíšiť od
+    // turistickej značky – po ferrate sa nedá ísť bez výstroja.
+    id: "ferrata",
+    label: "Ferraty",
+    short: "ferrata",
+    palette: "trailFerrata",
+    icons: ["climbing", "mountain", "triangle"],
+    dash: [1.5, 1.5]
   },
   {
     id: "bicycle",
@@ -1330,6 +1465,9 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  * @param {number} [opts.contoursMaxzoom] najvyšší zoom dlaždíc s vrstevnicami
  * @param {string} [opts.trailsUrl]       pmtiles:// URL so značenými trasami
  * @param {number} [opts.trailsMaxzoom]   najvyšší zoom dlaždíc s trasami
+ * @param {string} [opts.featuresUrl]     pmtiles:// URL s krajinnými prvkami,
+ *                                        ktoré schéma OpenMapTiles nemá
+ * @param {number} [opts.featuresMaxzoom] najvyšší zoom dlaždíc s prvkami
  * @param {string} [opts.demSource]       zdroj výšok (kľúč z DEM_SOURCES) –
  *                                        určuje atribúciu vrstevníc a skál
  * @param {string|null} [opts.demTiles]   raster-dem dlaždice pre hillshade
@@ -1361,6 +1499,8 @@ export function buildStyle({
   rocksMaxzoom = 16,
   trailsUrl = null,
   trailsMaxzoom = 14,
+  featuresUrl = null,
+  featuresMaxzoom = 14,
   demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
   demTilesSource = null,
@@ -1477,6 +1617,20 @@ export function buildStyle({
         '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> prispievatelia'
     };
   }
+  // Krajinné prvky, ktoré schéma OpenMapTiles nepozná vôbec: násypy, zárezy,
+  // múry, ploty, vedenia, prieseky, pramene, jaskyne, rozhľadne, parkoviská
+  // a zjazdovky. V celom `planetiler-openmaptiles` sa `embankment` ani raz
+  // nevyskytuje, takže sa tieto veci ťahajú z toho istého PBF druhýkrát
+  // vlastnou schémou (workers/features.yml) do vlastného .pmtiles.
+  if (featuresUrl) {
+    style.sources.features = {
+      type: "vector",
+      url: featuresUrl,
+      maxzoom: featuresMaxzoom,
+      attribution:
+        '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> prispievatelia'
+    };
+  }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
   // Vlastné dlaždice (workers/build-terrain.py) majú vo formulári vlastný
   // výber modelu, takže atribúcia ide podľa `demTilesSource` – a nie podľa
@@ -1537,10 +1691,24 @@ export function buildStyle({
   );
 
   // ================= krajinná pokrývka =================
+  // Trieda aj `subclass` naraz: schéma zlieva do `class=grass` úplne všetko
+  // od lúky po kosodrevinu a od záhradky po golfové ihrisko. Rozlíšiť sa to
+  // dá len cez `subclass`, ktorý pôvodnú hodnotu tagu nesie – preto tu sú
+  // aj vrstvy, ktoré `class` vôbec nepoužívajú. Poradie je poradím kreslenia:
+  // jemnejšie rozlíšenie ide navrch nad všeobecnejšiu triedu pod ním.
   const landcover = [
     ["wood", "Les", ["wood", "forest"], "forest", 0.9],
     ["grass", "Tráva a lúky", ["grass", "grassland", "meadow"], "grass", 0.7],
+    // Kosodrevina, kroviny, vresovisko a holina. V dlaždiciach majú
+    // `class=grass`, takže sa dovtedy kreslili ako lúka – v Tatrách je to
+    // rozdiel medzi „dá sa prejsť" a „nedá".
+    ["scrub", "Kroviny a kosodrevina", ["scrub", "shrubbery", "heath", "fell", "tundra"], "scrub", 0.85],
     ["farmland", "Polia", ["farmland"], "grass", 0.45],
+    // Záhrady, sady a vinice. Boli vo vrstve `landuse`, kde ich schéma nikdy
+    // nemá – `landuse` pozná len 26 tried a ani jedna z týchto medzi ne
+    // nepatrí. Odtiaľto sa trafia.
+    ["garden", "Záhrady a sady", ["garden", "allotments", "orchard", "vineyard", "plant_nursery"], "garden", 0.8],
+    ["golf", "Golfové ihriská", ["golf_course", "recreation_ground", "village_green"], "pitch", 0.6],
     ["wetland", "Mokrade", ["wetland", "swamp", "marsh", "bog"], "wetland", 0.8],
     ["rock", "Skaly a suť", ["rock", "scree", "bare_rock"], "rock", 0.8],
     ["sand", "Piesok", ["sand", "beach"], "sand", 1],
@@ -1564,18 +1732,27 @@ export function buildStyle({
   }
 
   // ================= využitie územia =================
+  // Zoznam tried je presne ten, ktorý schéma naozaj vydáva (26 hodnôt,
+  // Tables.java: osm_landuse_polygon). Triedy, ktoré tu boli navyše
+  // (`warehouse`, `danger_area`, `sports_centre`, `landfill`, `grave_yard`,
+  // celá vrstva `garden`), sa nemali ako trafiť – schéma ich do `landuse`
+  // nedáva. Záhrady a golf sa presunuli do `landcover`, skládka do vlastných
+  // dlaždíc s krajinnými prvkami; `grave_yard` schéma sama premapuje na
+  // `cemetery`.
   const landuse = [
     ["residential", "Obytná zóna", ["residential", "suburb", "neighbourhood", "quarter"], "residential"],
-    ["industrial", "Priemysel a obchod", ["industrial", "commercial", "retail", "garages", "warehouse"], "industrial"],
+    ["industrial", "Priemysel a obchod", ["industrial", "commercial", "retail", "garages"], "industrial"],
     ["railway", "Železničný areál", ["railway", "bus_station"], "industrial"],
-    ["cemetery", "Cintorín", ["cemetery", "grave_yard"], "cemetery"],
+    ["cemetery", "Cintorín", ["cemetery"], "cemetery"],
     ["hospital", "Nemocnica", ["hospital"], "hospital"],
     ["school", "Školstvo", ["school", "university", "college", "kindergarten", "library"], "school"],
-    ["military", "Vojenský priestor", ["military", "danger_area"], "military"],
-    ["quarry", "Lom a skládka", ["quarry", "landfill"], "quarry"],
-    ["garden", "Záhrady a sady", ["garden", "allotments", "orchard", "vineyard"], "garden"],
+    ["military", "Vojenský priestor", ["military"], "military"],
+    ["quarry", "Lom", ["quarry"], "quarry"],
     ["playground", "Ihriská a zoo", ["playground", "theme_park", "zoo"], "playground"],
-    ["pitch", "Športoviská", ["pitch", "stadium", "track", "sports_centre", "golf_course"], "pitch"]
+    ["pitch", "Športoviská", ["pitch", "stadium", "track"], "pitch"],
+    // `waterway=dam` ako plocha – teleso priehrady. V dlaždiciach je od
+    // začiatku, štýl ho nekreslil.
+    ["dam", "Priehrada (plocha)", ["dam"], "dam"]
   ];
   for (const [id, label, classes, paletteKey] of landuse) {
     add(
@@ -1590,23 +1767,49 @@ export function buildStyle({
     );
   }
 
-  // Lyžiarske stredisko ako plocha. V OpenMapTiles nie je vlastná trieda pre
-  // `landuse=winter_sports`, takže sa hľadá aj v `subclass` – kde dlaždice
-  // takú plochu nemajú, vrstva jednoducho nič nenakreslí.
-  add(
-    {
-      id: "landuse-winter-sports",
-      type: "fill",
-      "source-layer": "landuse",
-      filter: [
-        "any",
-        ["in", str("class"), ["literal", WINTER_SPORT_CLASSES]],
-        ["in", str("subclass"), ["literal", WINTER_SPORT_CLASSES]]
-      ],
-      paint: { "fill-color": c.winterSports, "fill-opacity": 0.75 }
-    },
-    ["uzemie", "Lyžiarske stredisko (plocha)", "area", { "fill-color": "winterSports" }]
-  );
+  // ---- plochy z vlastných dlaždíc ----
+  // Parkovisko, skládka, halda, hospodársky dvor. Schéma OpenMapTiles ich
+  // ako plochu nemá vôbec – `amenity=parking` je v nej len bod, `landfill`
+  // ani `farmyard` nie sú ani to. Kreslia sa hneď za `landuse`, lebo patria
+  // k tomu istému: čo sa s územím robí.
+  if (featuresUrl) {
+    const featureAreas = [
+      ["parking", "Parkoviská", ["parking"], "parking", 0.9],
+      ["landfill", "Skládky a haldy", ["landfill", "spoil_heap"], "quarry", 1],
+      ["farmyard", "Hospodárske dvory", ["farmyard", "greenhouse_horticulture"], "farmyard", 1],
+      ["brownfield", "Opustený priemysel", ["brownfield"], "industrial", 0.7],
+      ["shingle", "Kamenné polia", ["shingle"], "rock", 0.8]
+    ];
+    for (const [id, label, classes, paletteKey, opacity] of featureAreas) {
+      add(
+        {
+          id: `feature-${id}`,
+          type: "fill",
+          source: "features",
+          "source-layer": "feature_area",
+          filter: ["in", str("class"), ["literal", classes]],
+          paint: { "fill-color": c[paletteKey], "fill-opacity": opacity }
+        },
+        ["prvky", label, "area", { "fill-color": paletteKey }]
+      );
+    }
+
+    // ---- zjazdovky ----
+    // Vleky v dlaždiciach sú (`transportation class=aerialway`), trate nie:
+    // `piste:type` schéma nepozná. Na lyžiarskej mape tak boli vleky bez
+    // toho, k čomu vedú. Plocha aj os sú tá istá vrstva – uzavretá cesta
+    // vyjde ako plocha aj ako čiara, takže dostane výplň s obrysom.
+    add(
+      {
+        id: "piste-area",
+        type: "fill",
+        source: "features",
+        "source-layer": "piste",
+        paint: { "fill-color": c.pisteArea, "fill-opacity": 0.8 }
+      },
+      ["prvky", "Zjazdovky (plocha)", "area", { "fill-color": "pisteArea" }]
+    );
+  }
 
   add(
     {
@@ -1817,6 +2020,90 @@ export function buildStyle({
     );
   }
 
+  /**
+   * Hrana so zúbkami – bralo, násyp, zárez. Kolmé čiarky MapLibre nevie,
+   * takže sa robia druhou čiarou: široká, prerušovaná a odsunutá nabok
+   * (`line-offset`), z čoho pri hrane ostanú krátke hrubé kúsky. Kladný
+   * offset je vpravo v smere čiary a presne tam je podľa konvencie OSM
+   * dolná strana – `natural=cliff` aj `man_made=embankment` sa kreslia
+   * so zúbkami dole.
+   */
+  const hachure = ({ id, label, group, source, sourceLayer, filter,
+                     paletteKey, minzoom, width, teeth, opacity = 1 }) => {
+    const base = {
+      type: "line",
+      ...(source ? { source } : {}),
+      "source-layer": sourceLayer,
+      minzoom,
+      filter
+    };
+    add(
+      {
+        ...base,
+        id,
+        layout: { "line-cap": "butt", "line-join": "round" },
+        paint: {
+          "line-color": c[paletteKey],
+          "line-width": zl(width),
+          "line-opacity": opacity
+        }
+      },
+      [group, label, "line", { "line-color": paletteKey }]
+    );
+    add(
+      {
+        ...base,
+        id: `${id}-teeth`,
+        layout: { "line-cap": "butt" },
+        paint: {
+          "line-color": c[paletteKey],
+          "line-width": zl(teeth),
+          // Polovica šírky zúbka: čiara sa odsunie presne tak, aby sa
+          // dotýkala hrany a trčala z nej von.
+          "line-offset": zl(teeth.map(([z, w]) => [z, w / 2])),
+          "line-dasharray": [0.35, 2.2],
+          "line-opacity": opacity
+        }
+      },
+      [group, `${label} – zúbky`, "line", { "line-color": paletteKey }]
+    );
+  };
+
+  // ================= bralné hrany a hrebene z OSM =================
+  // Toto NIE SÚ skaly z výškového modelu (tie sú vyššie, vlastný .pmtiles).
+  // `natural=cliff`, `ridge` a `arete` sú v základných dlaždiciach od
+  // začiatku – Planetiler ich dáva ako línie do vrstvy `mountain_peak`
+  // (MountainPeak.java, od z13). Štýl ich dovtedy nekreslil vôbec, a čo
+  // horšie, symbolová vrstva „Vrcholy hôr" im dávala doprostred
+  // trojuholníček vrcholu, lebo `cliff` nebol medzi vylúčenými triedami.
+  hachure({
+    id: "cliff-line",
+    label: "Bralné hrany (OSM)",
+    group: "vrstevnice",
+    sourceLayer: "mountain_peak",
+    filter: ["==", str("class"), "cliff"],
+    paletteKey: "cliffLine",
+    minzoom: 13,
+    width: [[13, 0.6], [16, 1.4], [20, 3]],
+    teeth: [[13, 2.2], [16, 4.5], [20, 10]]
+  });
+  add(
+    {
+      id: "ridge-line",
+      type: "line",
+      "source-layer": "mountain_peak",
+      minzoom: 13,
+      filter: ["in", str("class"), ["literal", ["ridge", "arete"]]],
+      paint: {
+        "line-color": c.ridgeLine,
+        "line-width": zl([[13, 0.6], [16, 1.2], [20, 2.4]]),
+        "line-dasharray": [5, 3],
+        "line-opacity": 0.7
+      }
+    },
+    ["vrstevnice", "Hrebene a arety (OSM)", "line", { "line-color": "ridgeLine" }]
+  );
+
   // ================= letiská =================
   add(
     {
@@ -1855,6 +2142,54 @@ export function buildStyle({
       }
     },
     ["letiska", "Rolovacie dráhy", "line", { "line-color": "aeroway" }]
+  );
+
+  // ================= dopravné plochy =================
+  // Vrstva `transportation` nesie aj POLYGÓNY – pešiu zónu a námestie
+  // (`highway=pedestrian` + `area=yes`), mólo ako plochu a teleso mosta
+  // (`man_made=bridge`). Štýl mal nad ňou len líniové vrstvy, takže sa
+  // námestie nevyplnilo a plošné mólo zmizlo úplne. `fill` vrstva kreslí
+  // len plochy, takže `class` stačí na rozlíšenie.
+  add(
+    {
+      id: "bridge-area",
+      type: "fill",
+      "source-layer": "transportation",
+      minzoom: 13,
+      filter: ["==", str("class"), "bridge"],
+      paint: { "fill-color": c.roadCasing, "fill-opacity": 0.5 }
+    },
+    ["cesty", "Teleso mosta (plocha)", "area", { "fill-color": "roadCasing" }]
+  );
+  add(
+    {
+      id: "pedestrian-area",
+      type: "fill",
+      "source-layer": "transportation",
+      minzoom: 13,
+      filter: ["in", str("class"), ["literal", ["pedestrian", "path"]]],
+      paint: {
+        "fill-color": c.pedestrian,
+        "fill-outline-color": c.roadCasing
+      }
+    },
+    [
+      "cesty",
+      "Námestia a pešie zóny (plocha)",
+      "area",
+      { "fill-color": "pedestrian", "fill-outline-color": "roadCasing" }
+    ]
+  );
+  add(
+    {
+      id: "pier-area",
+      type: "fill",
+      "source-layer": "transportation",
+      minzoom: 13,
+      filter: ["==", str("class"), "pier"],
+      paint: { "fill-color": c.pier }
+    },
+    ["doprava", "Móla (plocha)", "area", { "fill-color": "pier" }]
   );
 
   // ================= budovy =================
@@ -1910,7 +2245,9 @@ export function buildStyle({
       [[8, 0.4], [10, 0.7], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 8],
     ["tertiary", "Cesty III. triedy", ["tertiary"], "secondary", "roadCasing",
       [[9, 0.35], [11, 0.6], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 9],
-    ["minor", "Miestne cesty", ["minor", "living_street", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
+    // `living_street` schéma nevydáva – `highway=living_street` mapuje na
+    // `minor` rovnako ako `residential` a `unclassified`.
+    ["minor", "Miestne cesty", ["minor", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
       [[11, 0.3], [12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 11],
     ["service", "Účelové cesty", ["service"], "service", "roadCasing",
       [[12, 0.3], [13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 12],
@@ -1976,7 +2313,10 @@ export function buildStyle({
     ["track", "Poľné a lesné cesty", ["==", str("class"), "track"], "track", [[11, 0.4], [13, 0.9], [14, 1.6], [16, 3.5], [20, 12]], [4, 2], 11],
     ["steps", "Schody", ["==", str("subclass"), "steps"], "steps", [[14, 1.2], [16, 3], [20, 10]], [1, 0.6], 14],
     ["cycleway", "Cyklotrasy", ["==", str("subclass"), "cycleway"], "cycleway", [[12, 0.4], [14, 1], [16, 2.2], [20, 8]], [3, 1.5], 12],
-    ["footway", "Chodníky a priechody", ["in", str("subclass"), ["literal", ["footway", "sidewalk", "crossing"]]], "footway", [[13, 0.6], [16, 2], [20, 7]], [2, 1.5], 13],
+    // `platform` a `corridor` majú tiež `class=path`. Bez nich sa nástupište
+    // ani chodba v podchode nenakreslili – filter ich prepúšťal len do
+    // vrstvy „turistické chodníky", ktorá ich vylučovala.
+    ["footway", "Chodníky, priechody a nástupištia", ["in", str("subclass"), ["literal", ["footway", "sidewalk", "crossing", "platform", "corridor"]]], "footway", [[13, 0.6], [16, 2], [20, 7]], [2, 1.5], 13],
     // `path` bez subclass (alebo path/bridleway) – ale nie `track`, ten má vlastnú vrstvu
     ["path", "Turistické chodníky", ["all", ["==", str("class"), "path"],
       ["in", str("subclass"), ["literal", ["path", "bridleway", ""]]]],
@@ -2004,6 +2344,55 @@ export function buildStyle({
 
   // --- povrchové cesty ---
   roadPass("", "", isSurface);
+
+  // --- cesty vo výstavbe ---
+  // Schéma pre ne má vlastné triedy (`motorway_construction` až
+  // `track_construction`) a v dlaždiciach sú od začiatku. Štýl ich nemal
+  // v žiadnom zozname, takže rozostavaná diaľnica bola v mape biele miesto.
+  // Jedna vrstva pre všetky: šírka podľa dôležitosti, ale kresba rovnaká –
+  // po tejto ceste sa zatiaľ ísť nedá a to je to podstatné.
+  add(
+    {
+      id: "road-construction",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 11,
+      filter: ["in", str("class"), ["literal", [
+        "motorway_construction", "trunk_construction", "primary_construction",
+        "secondary_construction", "tertiary_construction", "minor_construction",
+        "service_construction", "path_construction", "track_construction",
+        "raceway_construction"
+      ]]],
+      layout: { "line-cap": "butt", "line-join": "round" },
+      paint: {
+        "line-color": c.roadConstruction,
+        "line-width": zw([[11, 0.8], [14, 3], [16, 7], [20, 22]]),
+        "line-dasharray": [3, 2]
+      }
+    },
+    ["cesty", "Cesty vo výstavbe", "line", { "line-color": "roadConstruction" }]
+  );
+
+  // --- brody ---
+  // `brunnel=ford` je v dlaždiciach na ceste aj na chodníku. Bez tohto
+  // vyzerá brod ako obyčajný úsek cesty – a pritom je to práve to miesto,
+  // kde sa dá neprejsť.
+  add(
+    {
+      id: "road-ford",
+      type: "line",
+      "source-layer": "transportation",
+      minzoom: 14,
+      filter: ["==", str("brunnel"), "ford"],
+      layout: { "line-cap": "butt" },
+      paint: {
+        "line-color": c.water,
+        "line-width": zw([[14, 2], [16, 5], [20, 16]]),
+        "line-dasharray": [1, 1]
+      }
+    },
+    ["cesty", "Brody", "line", { "line-color": "water" }]
+  );
 
   // --- železnica ---
   add(
@@ -2113,6 +2502,159 @@ export function buildStyle({
         "Šípky jednosmeriek",
         "point",
         sdfIcons ? { "icon-color": "onewayIcon" } : {}
+      ]
+    );
+  }
+
+  // ================= krajinné prvky (línie) =================
+  // Vlastný .pmtiles (workers/features.yml). Kreslia sa nad cestami, lebo
+  // násyp aj zárez sú hrany PRI ceste – pod ňou by ich cesta prekryla.
+  if (featuresUrl) {
+    // Násyp a zárez majú zúbky ako bralo, len opačne: násyp klesá od hrany
+    // von (zúbky vpravo v smere čiary, tak to OSM konvencia mapuje), zárez
+    // stúpa – kreslí sa preto svetlejšie a s jemnejšími zúbkami.
+    hachure({
+      id: "feature-embankment",
+      label: "Násypy",
+      group: "prvky",
+      source: "features",
+      sourceLayer: "feature_line",
+      filter: ["==", str("class"), "embankment"],
+      paletteKey: "embankment",
+      minzoom: 13,
+      width: [[13, 0.7], [16, 1.5], [20, 3.2]],
+      teeth: [[13, 2], [16, 4], [20, 9]]
+    });
+    hachure({
+      id: "feature-cutting",
+      label: "Zárezy",
+      group: "prvky",
+      source: "features",
+      sourceLayer: "feature_line",
+      filter: ["==", str("class"), "cutting"],
+      paletteKey: "embankment",
+      minzoom: 13,
+      width: [[13, 0.6], [16, 1.2], [20, 2.6]],
+      teeth: [[13, 1.6], [16, 3.2], [20, 7]],
+      opacity: 0.75
+    });
+
+    // [id, popis, triedy, kľúč palety, stopy šírky, prerušovanie, minzoom]
+    const featureLines = [
+      ["power", "Elektrické vedenie", ["power_line"], "powerLine",
+        [[11, 0.5], [14, 0.9], [16, 1.4], [20, 3]], null, 11],
+      ["power-minor", "Vedenie nízkeho napätia", ["power_minor"], "powerLine",
+        [[14, 0.4], [16, 0.8], [20, 1.8]], [4, 3], 14],
+      ["cutline", "Prieseky", ["cutline"], "cutline",
+        [[13, 0.9], [16, 2.2], [20, 6]], [6, 3], 13],
+      ["pipeline", "Nadzemné potrubie", ["pipeline"], "powerLine",
+        [[13, 0.6], [16, 1.4], [20, 3]], [8, 3], 13],
+      ["dam", "Priehradné múry a hate", ["dam", "weir", "lock_gate"], "dam",
+        [[13, 1], [16, 3], [20, 8]], null, 13],
+      ["wall", "Múry a hradby", ["wall"], "wall",
+        [[14, 0.7], [16, 1.6], [20, 4]], null, 14],
+      ["hedge", "Živé ploty", ["hedge"], "hedge",
+        [[15, 0.9], [17, 1.8], [20, 4]], null, 15],
+      ["fence", "Ploty a zábradlia", ["fence"], "fence",
+        [[15, 0.4], [17, 0.8], [20, 1.8]], null, 15],
+      ["tree-row", "Stromoradia", ["tree_row"], "treeRow",
+        [[14, 0.9], [16, 1.8], [20, 4]], [1, 1.5], 14],
+      ["gully", "Výmole a zrázy", ["gully", "earth_bank"], "embankment",
+        [[14, 0.6], [16, 1.2], [20, 3]], [3, 2], 14]
+    ];
+    for (const [id, label, classes, paletteKey, stops, dash, mz] of featureLines) {
+      add(
+        {
+          id: `feature-${id}`,
+          type: "line",
+          source: "features",
+          "source-layer": "feature_line",
+          minzoom: mz,
+          filter: ["in", str("class"), ["literal", classes]],
+          layout: { "line-cap": "butt", "line-join": "round" },
+          paint: {
+            "line-color": c[paletteKey],
+            "line-width": zl(stops),
+            ...(dash ? { "line-dasharray": dash } : {})
+          }
+        },
+        ["prvky", label, "line", { "line-color": paletteKey }]
+      );
+    }
+
+    // ---- zjazdovky a bežky ----
+    // Farba podľa obťažnosti, ako na tabuli pri vleku. Odtiene sú tie isté
+    // kľúče palety ako pri značkách trás – modrá zjazdovka má byť tá istá
+    // modrá ako modrá značka, inak sa mapa rozpadne na dve sady farieb.
+    const pisteColour = [
+      "match",
+      str("difficulty"),
+      "novice", c.trailGreen,
+      "easy", c.trailBlue,
+      "intermediate", c.trailRed,
+      "advanced", c.trailBlack,
+      "expert", c.trailBlack,
+      "freeride", c.trailOrange,
+      c.pisteLine
+    ];
+    add(
+      {
+        id: "piste-line",
+        type: "line",
+        source: "features",
+        "source-layer": "piste",
+        minzoom: 11,
+        layout: { "line-cap": "round", "line-join": "round" },
+        paint: {
+          "line-color": pisteColour,
+          "line-width": zw([[11, 0.8], [14, 1.8], [16, 3], [20, 8]]),
+          "line-opacity": 0.9
+        }
+      },
+      [
+        "prvky",
+        "Zjazdovky a bežky (čiara)",
+        "line",
+        {},
+        ["pisteLine", "trailGreen", "trailBlue", "trailRed", "trailBlack", "trailOrange"]
+      ]
+    );
+    add(
+      {
+        id: "piste-label",
+        type: "symbol",
+        source: "features",
+        "source-layer": "piste",
+        minzoom: 13,
+        filter: ["any", ["has", "name"], ["has", "ref"]],
+        layout: {
+          "symbol-placement": "line",
+          "text-field": [
+            "case",
+            ["all", ["has", "ref"], ["has", "name"]],
+            ["concat", ["get", "ref"], " ", ["get", "name"]],
+            ["has", "name"],
+            ["get", "name"],
+            ["get", "ref"]
+          ],
+          "text-font": REG,
+          "text-size": zl([[13, 9], [16, 11], [20, 13]]),
+          "symbol-spacing": 380,
+          "text-max-angle": 30,
+          "text-offset": [0, 0.8]
+        },
+        paint: {
+          "text-color": pisteColour,
+          "text-halo-color": c.textHalo,
+          "text-halo-width": 1.6
+        }
+      },
+      [
+        "prvky",
+        "Zjazdovky – názvy",
+        "text",
+        { "text-halo-color": "textHalo" },
+        ["pisteLine", "trailGreen", "trailBlue", "trailRed", "trailBlack", "trailOrange"]
       ]
     );
   }
@@ -2601,6 +3143,62 @@ export function buildStyle({
     ["poi", "POI – všetky (z16+)", "point", poiPalette]
   );
 
+  // ---- body z vlastných dlaždíc ----
+  // Prameň, jaskyňa, vodopád, rozhľadňa, útulňa, kríž pri ceste, štôlňa.
+  // Schéma OpenMapTiles ich nemá: `natural=spring` prejde LEN ako plocha,
+  // takže studnička mapovaná uzlom – teda prakticky každá – v mape chýbala;
+  // `man_made=tower` schéma nepozná vôbec, takže rozhľadňa sa do dlaždíc
+  // dostala jedine vtedy, keď mala navyše `tourism=viewpoint`.
+  //
+  // Ikona sa hľadá rovnako ako pri POI: podľa `class`, a keď ju sada nemá,
+  // ostane len popisok – žiadne náhradné kolieska.
+  if (featuresUrl) {
+    const featureIcon = [
+      "case",
+      ["in", str("class"), ["literal", iconClasses]],
+      ["concat", str("class"), suffix],
+      ["in", str("subclass"), ["literal", iconClasses]],
+      ["concat", str("subclass"), suffix],
+      ""
+    ];
+    add(
+      {
+        id: "feature-point",
+        type: "symbol",
+        source: "features",
+        "source-layer": "feature_point",
+        minzoom: 12,
+        layout: {
+          ...poiLayout,
+          "icon-image": featureIcon,
+          // Výška patrí k prameňu aj k rozhľadni – je to prvé, čo človek
+          // pri plánovaní túry hľadá.
+          "text-field": [
+            "case",
+            ["has", "ele"],
+            ["concat", nameExpr, " ", ["to-string", ["round", num("ele", 0)]], " m"],
+            nameExpr
+          ]
+        },
+        paint: {
+          ...poiPaint,
+          "text-color": c.featurePoi,
+          ...(sdfIcons ? { "icon-color": c.featurePoi } : {})
+        }
+      },
+      [
+        "prvky",
+        "Pramene, jaskyne, rozhľadne a útulne",
+        "point",
+        {
+          "text-color": "featurePoi",
+          "text-halo-color": "textHalo",
+          ...(sdfIcons ? { "icon-color": "featurePoi", "icon-halo-color": "poiIconHalo" } : {})
+        }
+      ]
+    );
+  }
+
   // ---- tematické body ----
   // Každý typ mapy má skupinu bodov, ktorá je preň tá hlavná: hrady na
   // historickej, vleky na lyžiarskej, pumpy na cestnej. Sú to samostatné
@@ -2658,9 +3256,12 @@ export function buildStyle({
       type: "symbol",
       "source-layer": "mountain_peak",
       minzoom: 9,
-      // Hrebene a masívy majú vlastnú vrstvu (kurzíva, verzálky), tu by len
-      // prekážali – `mountain_peak` obsahuje aj ich.
-      filter: ["!", ["in", str("class"), ["literal", RANGE_CLASSES]]],
+      // Vylúčené sú všetky triedy, ktoré prídu ako línia – hrebeň, areta
+      // aj bralo. Pohoria a hrebene majú vlastnú popiskovú vrstvu (kurzíva,
+      // verzálky), bralo vlastnú kresbu so zúbkami. `cliff` tu predtým
+      // chýbal, takže každá bralná hrana dostala od z13 doprostred
+      // trojuholníček vrcholu aj s popiskom.
+      filter: ["!", ["in", str("class"), ["literal", PEAK_LINE_CLASSES]]],
       layout: {
         "icon-image": [
           "case",
@@ -2860,6 +3461,9 @@ export const CLICKABLE_LAYERS = [
   "poi-road",
   "mountain-peak",
   "aerodrome-label",
+  // Krajinné prvky z vlastných dlaždíc – popup povie, čo to je a v akej výške.
+  "feature-point",
+  "piste-line",
   // Značené trasy – po ceste ich vedie viac, popup povie, ktorá je ktorá.
   "trail-hiking",
   "trail-bicycle",

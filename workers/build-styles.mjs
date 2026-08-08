@@ -15,6 +15,8 @@
  *   --fonts-dir  … adresár s glyfmi na Pages – z neho sa vyberú fontstacky
  *   --overrides  … úpravy z developer módu (poc/web/style-overrides.json)
  *   --trails     … značené trasy z OSM relácií (vlastný .pmtiles)
+ *   --features   … krajinné prvky, ktoré schéma OpenMapTiles nemá –
+ *                  násypy, múry, vedenia, pramene, zjazdovky (vlastný .pmtiles)
  *   --dem-source … model, z ktorého sú vrstevnice a skaly – ide do atribúcie
  *   --dem-tiles-source … model, z ktorého sú výškové dlaždice (tieňovanie
  *                  a 3D terén). Vo formulári je to vlastný výber, takže to
@@ -67,6 +69,9 @@ const hasRocks = args.rocks === "true" || args.rocks === "1";
 // Značené trasy – rovnako voliteľné a v samostatnom .pmtiles.
 const trailsMaxzoom = Number(args["trails-maxzoom"] || 14);
 const hasTrails = args.trails === "true" || args.trails === "1";
+// Krajinné prvky – to isté: vlastný .pmtiles, vlastný maxzoom, voliteľné.
+const featuresMaxzoom = Number(args["features-maxzoom"] || 14);
+const hasFeatures = args.features === "true" || args.features === "1";
 // Zdroj výšok ovplyvňuje atribúciu vrstevníc a skál v štýle.
 const demSource = DEM_SOURCES[args["dem-source"]]
   ? args["dem-source"]
@@ -250,6 +255,10 @@ for (const type of MAP_TYPES) {
         ? `pmtiles://${baseUrl}/tiles/${region}-trails.pmtiles`
         : null,
       trailsMaxzoom,
+      featuresUrl: hasFeatures
+        ? `pmtiles://${baseUrl}/tiles/${region}-features.pmtiles`
+        : null,
+      featuresMaxzoom,
       demSource,
       demTiles,
       demTilesSource,
@@ -279,6 +288,7 @@ console.log(
 );
 console.log(
   `Značené trasy: ${hasTrails ? `áno (do z${trailsMaxzoom})` : "nie"}, ` +
+  `Krajinné prvky: ${hasFeatures ? `áno (do z${featuresMaxzoom})` : "nie"}, ` +
   `Vrstevnice: ${
     hasContours ? `áno (do z${contoursMaxzoom}, výšky: ${DEM_SOURCES[demSource].label})` : "nie"
   }, ` +
