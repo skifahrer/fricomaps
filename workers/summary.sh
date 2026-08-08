@@ -86,10 +86,23 @@ if [ "${source:-dem}" = "tienovanie" ]; then
     echo "| počet samostatných plôch | ${count:-?} |"
     echo "| zdroj | ${asset:-release dem-rocks-img} |"
     echo
-    echo "Tieto skaly sa v tomto behu **nepočítali**. Našiel ich workflow"
-    echo "*Skaly z tieňovaných dlaždíc* ako tmavé plochy v hillshade JPG"
-    echo "z freemap.sk a build si ich len stiahol z releasu \`dem-rocks-img\`."
-    echo "Podrobné čísla (prahy, zoom, koľko dlaždíc) sú v súhrne toho behu."
+    # Dve úplne iné situácie, ktoré tu kedysi mali jednu vetu: buď si build
+    # hotové polygóny len stiahol z releasu, alebo si podpipeline zavolal
+    # a tá ich v TOMTO behu spočítala. Tvrdiť to prvé aj v druhom prípade
+    # znamenalo, že beh počítal skaly a pod tabuľkou stálo „nepočítali sa".
+    if [ "${R_SHADING_ROCKS:-skipped}" = 'success' ]; then
+      echo "Tieto skaly **spočítal tento beh** – job *Skaly z tieňovania*,"
+      echo "ktorý si build zavolal sám. Hľadá ich ako tmavé plochy"
+      echo "v hillshade JPG dlaždiciach z freemap.sk (nie zo sklonu"
+      echo "výškového modelu), a hotové polygóny uložil do releasu"
+      echo "\`dem-rocks-img\`. Podrobné čísla (prahy, zoom, koľko dlaždíc)"
+      echo "sú v jeho časti tohto behu."
+    else
+      echo "Tieto skaly sa v tomto behu **nepočítali**. Našiel ich workflow"
+      echo "*Skaly z tieňovaných dlaždíc* ako tmavé plochy v hillshade JPG"
+      echo "z freemap.sk a build si ich len stiahol z releasu \`dem-rocks-img\`."
+      echo "Podrobné čísla (prahy, zoom, koľko dlaždíc) sú v súhrne toho behu."
+    fi
     echo
     echo "> ⚠️ Hillshade je osvetlený z jednej strany, takže sú v ňom tmavé"
     echo "> **severozápadné** steny a svetlé juhovýchodné. Táto vrstva teda"

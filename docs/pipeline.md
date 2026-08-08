@@ -253,6 +253,14 @@ Dve veci, na ktoré si treba dať pozor a sú vyriešené:
   z cache znamená ladiť ducha; kľúč síce nesie nastavenia aj otlačok
   skriptov, ale nie všetko. Cache ostrého behu tým netrpí – v kľúči je
   `bboxkey` a ten je pri teste bboxom štvorca.
+
+  Platí to aj pre **podpipeline skál z tieňovania**: tá si odkladá rozrobené
+  obrysy, takže by po zmene prahu nadviazala na polovicu starého výsledku.
+  Build jej preto pri teste posiela `fresh=1` (vpredu, nech to vlastné
+  `rock_img_options` vedia prebiť). Stiahnuté JPG dlaždice sa nezahadzujú –
+  to sú vstupné dáta z cudzieho dobrovoľníckeho servera, nie výsledok.
+  Rovnako ostávajú PBF, DEM dlaždice, Planetiler a glyfy: vstupy majú v kľúči
+  dátum alebo otlačok zdroja, takže cez ne starý výsledok neprejde.
 - **Skaly z tieňovania.** Tie počíta vlastný workflow, ktorý si výrez rieši
   sám – v testovacom režime mu preto ide dole rovno **bbox štvorca**, nie
   meno pohoria. Jeho vlastný prienik je s bboxom Slovenska, nie s regiónom,
