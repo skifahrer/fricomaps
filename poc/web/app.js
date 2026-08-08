@@ -35,6 +35,7 @@ const regionSelect = $("region");
 const contoursCheck = $("contours");
 const rocksCheck = $("rocks");
 const trailsCheck = $("trails");
+const featuresCheck = $("features");
 const terrainCheck = $("terrain");
 const hillshadeCheck = $("hillshade");
 const devCheck = $("devmode");
@@ -205,6 +206,13 @@ function styleFor(manifest) {
         ? `pmtiles://${baseUrl}/${region.trails}`
         : null,
     trailsMaxzoom: region.trails_maxzoom || 14,
+    // Krajinné prvky, ktoré schéma OpenMapTiles nemá – vlastný .pmtiles
+    // (násypy, múry, vedenia, prieseky, pramene, jaskyne, zjazdovky).
+    featuresUrl:
+      region.features && featuresCheck.checked
+        ? `pmtiles://${baseUrl}/${region.features}`
+        : null,
+    featuresMaxzoom: region.features_maxzoom || 14,
     demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
     // Tieňovanie má vo formulári pipeline vlastný výber modelu, takže
@@ -257,6 +265,10 @@ function applyStyle(manifest) {
     (region.trails
       ? `Značené trasy: ${region.trail_count || "?"} ` +
         `(pásiky vedľa cesty, farba podľa značky)<br>`
+      : "") +
+    (region.features
+      ? `Krajinné prvky do z${region.features_maxzoom || 14} ` +
+        `(násypy, múry, vedenia, pramene, zjazdovky)<br>`
       : "") +
     (hasOverrides(overrides) ? "Štýl s vlastnými úpravami (developer mode)<br>" : "") +
     `Vygenerované: ${new Date(manifest.built_at).toLocaleString("sk-SK")}<br>` +
@@ -351,7 +363,9 @@ function applyStyle(manifest) {
         return;
       }
       const title = p["name:sk"] || p.name || "(bez názvu)";
-      const detail = [p.subclass, p.class].filter(Boolean).join(" · ");
+      // `difficulty` je pri zjazdovkách to hlavné – modrá alebo čierna je
+      // odpoveď na to, prečo si tam človek klikol.
+      const detail = [p.subclass, p.class, p.difficulty].filter(Boolean).join(" · ");
       const ele = p.ele ? `<br><small>${p.ele} m n. m.</small>` : "";
       new maplibregl.Popup()
         .setLngLat(ev.lngLat)
@@ -464,6 +478,7 @@ async function main() {
     $("row-contours").hidden = !region.contours;
     $("row-rocks").hidden = !region.rocks;
     $("row-trails").hidden = !region.trails;
+    $("row-features").hidden = !region.features;
     $("row-terrain").hidden = manifest.dem === null;
     $("row-hillshade").hidden = manifest.dem === null;
   };
@@ -491,6 +506,9 @@ async function main() {
   rocksCheck.addEventListener("change", () => {
     applyStyle(manifest);
     dev?.refresh();
+  });
+  featuresCheck.addEventListener("change", () => {
+    applyStyle(manifest);
   });
   trailsCheck.addEventListener("change", () => {
     applyStyle(manifest);

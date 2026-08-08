@@ -77,6 +77,11 @@ DEFAULTS = {
     # PBF ako mapa, takže niet z čoho vyberať. Zapínač je preto tu a nie
     # štvrtý výber vo formulári, na ktorý už aj tak nie je miesto.
     "trails": ("true", "generovať značené trasy z OSM relácií"),
+    # Krajinné prvky (workers/features.yml): násypy, múry, ploty, vedenia,
+    # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
+    # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
+    "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
+    "features_maxzoom": ("14", "max zoom dlaždíc s krajinnými prvkami"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
@@ -263,6 +268,12 @@ def main():
         print(f"::error::Voľba „trails“ musí byť true alebo false, "
               f"nie „{values['trails']}“.", file=sys.stderr)
         return 1
+    # To isté pre krajinné prvky – `features=1` by ich ticho vyplo a zistilo
+    # by sa to až tým, že v mape nie sú násypy ani zjazdovky.
+    if values["features"] not in ("true", "false"):
+        print(f"::error::Voľba „features“ musí byť true alebo false, "
+              f"nie „{values['features']}“.", file=sys.stderr)
+        return 1
 
     if args.rebuild not in REBUILD:
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
@@ -286,7 +297,8 @@ def main():
     if args.rebuild != "nic":
         print(f"Pregenerovať: {args.rebuild}")
     print(f"\nVrstevnice: {contour_src}   Skaly: {rock_src}   "
-          f"Tieňovanie: {shading_src}   Trasy: {values['trails']}")
+          f"Tieňovanie: {shading_src}   Trasy: {values['trails']}   "
+          f"Krajinné prvky: {values['features']}")
     print("Rýchly test: " + (f"ZAPNUTÝ, {values['test_km2']} km² zo stredu "
                              f"výrezu (mapa sa otvorí tam)"
                              if test_on else "vypnutý – ostrý beh"))

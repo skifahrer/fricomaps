@@ -62,31 +62,31 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 ```
                     ┌──────────────┐
                     │  plan        │  región, bbox, PBF
-                    └──┬────┬───┬──┘
-              ┌────────┘    │   └───────────────┐
-              ▼             ▼                   ▼
-      ┌──────────────┐ ┌──────────┐      ┌─────────────┐
-      │ check-dem    │ │ trails   │      │ tiles       │  Planetiler
-      └──────┬───────┘ │ značené  │      │             │  → .pmtiles
-             ▼         │ trasy    │      └──────┬──────┘
-      ┌──────────────┐ └────┬─────┘             │
-      │ mirror-dem   │      │                   │   ┌─────────────┐
-      └──────┬───────┘      │                   │   │ assets      │
-             ▼              │                   │   │ ikonky+fonty│
-      ┌──────────────┐      │                   │   └──────┬──────┘
-      │ keys         │      │                   │          │
-      └──┬────────┬──┘      │                   │          │
-         ▼        ▼         │                   │          │
-  ┌───────────┐ ┌──────────┐│                   │          │
-  │ contours  │ │ terrain  ││                   │          │
-  │ vrstevnice│ │ tieňovanie                    │          │
-  │ + skaly   │ │ + 3D     ││                   │          │
-  └─────┬─────┘ └────┬─────┘│                   │          │
-        └────────────┴──────┴────┬──────────────┴──────────┘
-                                 ▼
-                          ┌─────────────┐
-                          │ deploy      │  zloží _site, nasadí, súhrn
-                          └─────────────┘
+                    └─┬───┬───┬──┬─┘
+              ┌───────┘   │   │  └────────────────┐
+              ▼           ▼   ▼                   ▼
+      ┌──────────────┐ ┌──────────┐        ┌─────────────┐
+      │ check-dem    │ │ trails   │        │ tiles       │  Planetiler
+      └──────┬───────┘ │ značené  │        │             │  → .pmtiles
+             ▼         │ trasy    │        └──────┬──────┘
+      ┌──────────────┐ ├──────────┤               │
+      │ mirror-dem   │ │ features │               │   ┌─────────────┐
+      └──────┬───────┘ │ prvky    │               │   │ assets      │
+             ▼         │ mimo     │               │   │ ikonky+fonty│
+      ┌──────────────┐ │ schémy   │               │   └──────┬──────┘
+      │ keys         │ └────┬─────┘               │          │
+      └──┬────────┬──┘      │                     │          │
+         ▼        ▼         │                     │          │
+  ┌───────────┐ ┌──────────┐│                     │          │
+  │ contours  │ │ terrain  ││                     │          │
+  │ vrstevnice│ │ tieňovanie                      │          │
+  │ + skaly   │ │ + 3D     ││                     │          │
+  └─────┬─────┘ └────┬─────┘│                     │          │
+        └────────────┴──────┴──────┬──────────────┴──────────┘
+                                   ▼
+                            ┌─────────────┐
+                            │ deploy      │  zloží _site, nasadí, súhrn
+                            └─────────────┘
 ```
 
 | job | čo robí | timeout | beží súbežne s |
@@ -98,6 +98,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
 | **trails** | OSM relácie trás → `{región}-trails.pmtiles` | 60 min | úplne so všetkým |
+| **features** | prvky mimo schémy OpenMapTiles → `{región}-features.pmtiles` | 90 min | úplne so všetkým |
 | **tiles** | PBF → `{región}.pmtiles` (Planetiler) | 150 min | contours, terrain, assets |
 | **assets** | SDF sprity a glyfy | 30 min | úplne so všetkým |
 | **deploy** | zlepí `_site`, štýly, manifest, kontrola, Pages, smoke test, súhrn | 45 min | — |
@@ -679,6 +680,62 @@ denne – cache by sa trafila len v ten istý deň. Vypína sa voľbou
 `options: trails=false` (jediná vrstva bez výberu zdroja – ide z toho istého
 PBF ako mapa, takže niet z čoho vyberať), zoom dlaždíc riadi `trails_maxzoom`
 (default 14).
+
+### `features` – čo schéma OpenMapTiles vôbec nemá
+
+**Schéma sa pozerá len na tridsať kľúčov.** V celom
+`openmaptiles/planetiler-openmaptiles` sa slovo `embankment` nevyskytuje ani
+raz – a rovnako `barrier` ako línia, `power`, `man_made=cutline`, `piste:type`,
+`natural=cave_entrance` či `man_made=tower`. Nie je to nastavenie, ktoré by sa
+dalo zapnúť: tie prvky v základných dlaždiciach jednoducho **nie sú**. Preto sa
+z toho istého PBF ťahajú druhýkrát, vlastnou schémou:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter --expressions=workers/features-filter.txt
+  → data/features.osm.pbf                      (Andorra: 3,4 MB → 198 kB)
+  → planetiler generate-custom --schema=workers/features.yml
+  → {región}-features.pmtiles
+```
+
+Štyri vrstvy, `class` rozlišuje čo to je:
+
+| vrstva | čo v nej je | od zoomu |
+|---|---|--:|
+| `feature_line` | násyp, zárez, múr, hradby, plot, živý plot, elektrické vedenie, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
+| `feature_area` | parkovisko, skládka, halda, hospodársky dvor, skleníky, opustený priemysel, kamenné pole | 11–14 |
+| `feature_point` | prameň, vodopád, jaskyňa, závrt, rozhľadňa, stožiar, vodojem, kríž pri ceste, pomník, archeologické nálezisko, štôlňa, útulňa, horský priechod, núdzový bod, geodetický bod | 11–15 |
+| `piste` | zjazdovka, bežkárska trať, skialp, sánkarská dráha – čiara aj plocha, s obťažnosťou | 11 |
+
+**Zoomy sú tu hlavné rozhodnutie, nie estetika.** Plotov je v OSM viac než
+všetkých ciest dokopy, takže idú až od z15; vedenie vysokého napätia je
+v otvorenej krajine orientačný bod na kilometre, takže od z11. Je to priamo
+veľkosť súboru.
+
+**Prečo predfilter.** Bez neho by Planetiler prečítal celý región druhýkrát,
+aj s indexom polôh uzlov. Zoznam tagov je vo `workers/features-filter.txt`
+vedľa schémy, nech sa obe menia na jednom mieste, a je zámerne **širší** než
+schéma – filter je hrubé sito, presné rozhodnutie robí `features.yml`. Overené,
+že nič nestráca: nad Andorrou dá filtrovaný aj nefiltrovaný PBF presne tie isté
+počty prvkov vo všetkých štyroch vrstvách.
+
+**Zjazdovka je raz čiara a raz plocha.** Uzavretá cesta s `piste:type` vyjde
+ako plocha AJ ako čiara, takže dostane výplň s obrysom; otvorená len čiaru
+(os zjazdovky). Obe idú do vrstvy zámerne – presne tak to má vyzerať.
+
+**Násyp aj bralo sa kreslia zúbkami.** Kolmé čiarky MapLibre nevie, takže sú
+z druhej čiary: širokej, prerušovanej a odsunutej nabok (`line-offset`).
+Kladný offset je vpravo v smere čiary a presne tam je podľa konvencie OSM
+dolná strana.
+
+Job sa **necachuje** a beží súbežne so všetkým ostatným. Vypína sa voľbou
+`options: features=false`, zoom dlaždíc riadi `features_maxzoom` (default 14).
+Podiel na rozpočte stránky je `BUDGET_FEATURES_PCT` (4 %).
+
+**Čo do `features` NEPATRÍ, hoci to tak vyzerá:** `natural=cliff`, `ridge`
+a `arete`. Tie v základných dlaždiciach **sú** – Planetiler ich dáva ako línie
+do vrstvy `mountain_peak` (od z13). Chýbala len kresba v štýle; teraz sú tam
+ako bralné hrany so zúbkami a hrebene čiarkovane.
 
 ### `tiles` – PBF → PMTiles (Planetiler)
 
