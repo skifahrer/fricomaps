@@ -108,10 +108,17 @@ jedným priechodom nad celou mozaikou.
 
 ── čo to stojí ─────────────────────────────────────────────────────────────
 
-Vysoké Tatry, z17: ~12 000 dlaždíc (~300 MB), mozaika 0,8 mld. pixelov,
-dokopy jednotky minút. z18 je štvornásobok všetkého. Dlaždice sa sťahujú do
-`--cache-dir` a pri opakovanom behu sa berú odtiaľ, takže ladenie prahov
-nestojí ani jeden request navyše.
+Nie je to štvornásobok na zoom, ako tu stálo predtým. Sťahovanie áno, ale
+obrysy nie – a tie sú to drahé. Namerané na Vysokých Tatrách (beh 31222472790):
+
+  z17   13 815 dlaždíc, 0,91 mld. buniek   obrysy ~50 min (odhad)
+  z18   55 260 dlaždíc, 3,62 mld. buniek   obrysy 2 h 41 min a NEDOPOČÍTALO SA
+                                           (sťahovanie pritom len 12 minút)
+
+Preto má `auto` okrem stropu na dlaždice aj rozpočet času (`--budget-min`)
+a obrysy sa nad ním zastavia s hláškou. Dlaždice sa sťahujú do `--cache-dir`
+a pri opakovanom behu sa berú odtiaľ, takže ani ladenie prahov, ani krok
+o zoom nižšie nestojí jeden request navyše.
 
 Sťahuje sa z dobrovoľníckej služby freemap.sk – `--jobs` je zámerne nízke.
 
@@ -150,10 +157,20 @@ TILE = 256
 # funkcia – na 8× menšej mriežke vyzerá rovnako a je 64× lacnejšie.
 BG_DOWN = 8
 
-# Namerané na GitHub runneri, len na odhad dopredu. gdal_contour nad hotovou
-# mozaikou ide ~3,5 mil. buniek/s (číslo prevzaté z rock-areas.py, rovnaký
-# nástroj aj rovnaký typ vstupu).
-CONTOUR_CELLS_PER_S = 3.5e6
+# Koľko buniek za sekundu zvládne `gdal_contour` nad hotovou mozaikou.
+#
+# Bolo tu 3,5 mil./s, prevzaté z rock-areas.py – „rovnaký nástroj, rovnaký typ
+# vstupu". Nebola to pravda a stálo to celý beh 31222472790: Vysoké Tatry na
+# z18 (3,62 mld. buniek) mali podľa toho odhadu trvať 17 minút, v skutočnosti
+# contour bežal 2 h 41 min, nevypísal ani jeden megabajt výstupu a zabil ho
+# timeout jobu. Skutočná rýchlosť je teda POD 375 tis. buniek/s, čiže aspoň
+# 9× menej. Rozdiel oproti skalám z DEM je v dátach: tam je izolínia sklonu
+# nad hladkým rastrom, tu je izolínia tmavosti nad zrnitým JPEGom – tá má
+# rádovo viac segmentov a práve tie contour stoja.
+#
+# 3e5 je bezpečná strana toho merania. Radšej nech `auto` zvolí o zoom nižšie
+# a beh dobehne, než aby sľuboval detail, ktorý sa nikdy nedopočíta.
+CONTOUR_CELLS_PER_S = 3.0e5
 TILES_PER_S = 25.0  # pri --jobs=12 a ~25 kB na dlaždicu
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -469,11 +486,15 @@ class Fetcher:
         return dt
 
 
-def probe_zoom(fetcher, bbox, zmax, zmin, max_tiles):
-    """Najvyšší zoom, na ktorom server naozaj vracia dlaždicu a ktorý sa ešte
-    zmestí do stropu `--max-tiles`.
+def probe_zoom(fetcher, bbox, zmax, zmin, max_tiles, budget_s):
+    """Najvyšší zoom, ktorý server naozaj dá a ktorý sa STIHNE spočítať.
 
-    Nedá sa to prečítať z metadát – XYZ šablóna žiadne nemá. Skúša sa preto
+    Dva stropy, lebo dve rôzne veci: `--max-tiles` chráni dobrovoľnícky server
+    (koľko requestov mu pošleme) a `--budget-min` chráni beh (koľko z toho
+    stihne `gdal_contour`). Ten druhý pribudol až po behu, ktorý sa na z18
+    nedopočítal ani za tri hodiny – dlaždíc bolo pritom pod stropom.
+
+    Zoom sa nedá prečítať z metadát – XYZ šablóna žiadne nemá. Skúša sa preto
     jedna dlaždica v strede územia, zhora nadol.
     """
     w, s, e, n = bbox
@@ -482,19 +503,27 @@ def probe_zoom(fetcher, bbox, zmax, zmin, max_tiles):
     for z in range(zmax, zmin - 1, -1):
         x0, y0, x1, y1 = tile_range(bbox, z)
         count = (x1 - x0) * (y1 - y0)
+        odhad = count * TILE * TILE / CONTOUR_CELLS_PER_S
         if count > max_tiles:
             print(f"  z{z:<3} {count:>8} dlaždíc  × nad strop {max_tiles}")
             continue
+        if budget_s and odhad > budget_s:
+            print(f"  z{z:<3} {count:>8} dlaždíc  × obrysy ~{hms(odhad)}, "
+                  f"rozpočet {hms(budget_s)}")
+            continue
         tx, ty = lonlat_to_tile(lon, lat, z)
         ok = fetcher.get(z, int(tx), int(ty))
-        print(f"  z{z:<3} {count:>8} dlaždíc  {'✓ dlaždica je' if ok else '× server nedal dlaždicu'}")
+        print(f"  z{z:<3} {count:>8} dlaždíc  "
+              f"{'✓ dlaždica je' if ok else '× server nedal dlaždicu'}"
+              + (f", obrysy ~{hms(odhad)}" if ok else ""))
         if ok:
             print(f"  vybrané         z{z}")
             print("─────────────────────────────────────────────────────", flush=True)
             return z
     print("─────────────────────────────────────────────────────", flush=True)
-    print("::error::Ani na jednom zoome sa nepodarilo stiahnuť skúšobnú "
-          "dlaždicu. Skontroluj --url alebo dostupnosť servera.")
+    print("::error::Žiadny zoom neprešiel: buď je výrez privelký na rozpočet "
+          "(zdvihni --budget-min alebo zmenši area), alebo server nedal ani "
+          "jednu skúšobnú dlaždicu (skontroluj --url).")
     return 0
 
 
@@ -860,10 +889,12 @@ def vectorize(tifs, args, tmp, out, lat_mid):
     # verzie GDALu najvrchnejšie pásmo nevytvoria.
     cliff_level = 0.5 + args.cliff
     levels = ["-fl", "0.5", "-fl", repr(cliff_level), "-fl", "256"]
+    # `max_s`: keby bol odhad opäť vedľa, beh sa zastaví na rozpočte a povie
+    # to – namiesto toho, aby ticho dobehol do timeoutu celého jobu.
     run_watched(["gdal_contour", "-p", "-amin", "dmin", "-amax", "dmax",
                  *levels, "-f", "GPKG", "-nln", "band", vrt, raw_gpkg],
                 "obrysy tmavých plôch", tmp=raw_gpkg,
-                every=args.heartbeat)
+                every=args.heartbeat, max_s=args.budget_min * 60)
 
     seq = os.path.join(tmp, "bands.geojsonl")
     # Ovládač GeoJSON prepočítava vždy do WGS84 – `-a_srs EPSG:4326` mu
@@ -1030,6 +1061,9 @@ def main():
     ap.add_argument("--zoom-min", type=int, default=12)
     ap.add_argument("--max-tiles", type=int, default=60000,
                     help="strop na počet dlaždíc – `auto` pod neho zíde sám")
+    ap.add_argument("--budget-min", type=float, default=100,
+                    help="koľko minút smú trvať obrysy; `auto` pod to zíde "
+                         "sám a beh sa nad tým zastaví (0 = bez stropu)")
     ap.add_argument("--dark", type=int, default=125,
                     help="absolútny strop: nad touto šedou nie je skala nikdy")
     ap.add_argument("--dark-always", type=int, default=70,
@@ -1084,7 +1118,7 @@ def main():
 
     if str(args.zoom).strip().lower() == "auto":
         z = probe_zoom(fetcher, args.bbox, args.zoom_max, args.zoom_min,
-                       args.max_tiles)
+                       args.max_tiles, args.budget_min * 60)
         if not z:
             return 1
     else:
@@ -1131,7 +1165,17 @@ def main():
 
     print("── Vektorizácia ─────────────────────────────────────", flush=True)
     t_vec = time.time()
-    st = vectorize(tifs, args, tmp, args.out, lat_mid)
+    try:
+        st = vectorize(tifs, args, tmp, args.out, lat_mid)
+    except TimeoutError:
+        # Odhad bol vedľa. Povedať to s číslom a s tým, čo zmeniť, je
+        # užitočnejšie než traceback – a stiahnuté dlaždice ostávajú v cache,
+        # takže ďalší beh na nižšom zoome nesťahuje nič.
+        print(f"::error::Obrysy sa nestihli do {args.budget_min:g} min. "
+              f"Skús nižší zoom (`zoom: {z - 1}`), menší výrez, alebo zdvihni "
+              f"rozpočet (`options: budget_min=…`). Dlaždice sú v cache, "
+              f"takže ďalší beh ich neťahá znova.", file=sys.stderr)
+        return 2
     vec_s = time.time() - t_vec
     if not st.get("n"):
         print("::warning::Nenašla sa ani jedna skalná plocha – prahy sú "

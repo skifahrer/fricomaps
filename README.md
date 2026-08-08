@@ -436,8 +436,19 @@ ktorý server dá a ktorý sa zmestí do stropu 60 000 dlaždíc. Vektorizuje sa
 **naraz nad celou mozaikou** (po častiach len raster tmavosti) – z rovnakého
 dôvodu ako pri skalách z DEM: diera prerezaná hranicou časti sa späť nezlepí.
 
-Vysoké Tatry na z17 sú ~12 000 dlaždíc (~300 MB) a jednotky minút; z18 je
-štvornásobok všetkého.
+**Zoom vyberá `auto` a nie je to štvornásobok na zoom.** Sťahovanie áno, ale
+obrysy nie — a tie sú to drahé. Namerané na Vysokých Tatrách:
+
+| zoom | dlaždice | mozaika | obrysy |
+|---|--:|--:|---|
+| z17 | 13 815 | 0,91 mld. px | ~50 min (odhad) |
+| z18 | 55 260 | 3,62 mld. px | **2 h 41 min a nedopočítalo sa** (sťahovanie pritom 12 min) |
+
+Preto má `auto` okrem stropu na dlaždice aj rozpočet času (`options:
+budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách teda
+zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
+bežal do timeoutu celého jobu. Stiahnuté dlaždice ostávajú v cache, takže
+ďalší beh o zoom nižšie neťahá ani jeden request navyše.
 
 **Ako to dostať do mapy:** stačí **Build map** s `area: vysoke_tatry`
 a `rock_source: tienovanie`. Nič sa dopredu púšťať nemusí – build si tú
