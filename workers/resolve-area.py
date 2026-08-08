@@ -10,16 +10,64 @@ Vstup je buď názov pohoria z workers/areas.json, alebo bbox `W,S,E,N`,
 alebo prázdno (= celý región). Vždy sa pretne s bboxom regiónu: mimo neho
 nie sú ani dáta, ani mapa.
 
+TESTOVACÍ REŽIM (`--test-km2`): z výrezu sa vyreže malý štvorec okolo jeho
+stredu. Zmysel je jediný – rýchlosť ladenia. Skaly, vrstevnice aj tieňovanie
+na celom pohorí sú desiatky minút, na 2 km² sú to sekundy až jednotky minút,
+takže sa dá prah alebo interval otestovať za jeden beh a nie za jeden obed.
+Kľúč dostane príponu `_test2`, aby si testovací výsledok nikdy nesadol do
+tej istej cache ani na ten istý asset ako ostrý.
+
 Použitie:
     python3 workers/resolve-area.py --region-bbox=W,S,E,N --area=vysoke_tatry
     → key=…, name=…, bbox=…, km2=… na stdout vo formáte key=value
 """
 import argparse
+import hashlib
 import json
 import math
 import os
 import re
 import sys
+
+# Koľko metrov je jeden stupeň. Zemepisná dĺžka sa krát kosínus šírky –
+# na 49° je stupeň dĺžky len asi dve tretiny stupňa šírky.
+M_PER_DEG_LAT = 110540.0
+M_PER_DEG_LON = 111320.0
+
+
+def bbox_km2(w, s, e, n):
+    return ((e - w) * M_PER_DEG_LON * math.cos(math.radians((s + n) / 2))
+            * (n - s) * M_PER_DEG_LAT) / 1e6
+
+
+def test_square(bbox, km2, at=""):
+    """Malý štvorec s plochou ~`km2` vnútri `bbox`.
+
+    Stred je stred výrezu, ak `at` nehovorí inak (`lon,lat`). Keď by štvorec
+    vyliezol von, posunie sa dovnútra – nie oreže: polovičný testovací výrez
+    by mal inú plochu než akú si pýtal a čísla z behu by neplatili.
+    """
+    w, s, e, n = bbox
+    clon = (w + e) / 2.0
+    clat = (s + n) / 2.0
+    if at.strip():
+        parts = [float(v) for v in at.split(",")]
+        if len(parts) != 2:
+            raise ValueError(f"test_at musí byť `lon,lat`, nie „{at}“")
+        clon, clat = parts
+
+    strana_m = math.sqrt(km2 * 1e6)
+    dlat = strana_m / M_PER_DEG_LAT / 2.0
+    dlon = strana_m / (M_PER_DEG_LON * math.cos(math.radians(clat))) / 2.0
+
+    # Väčší štvorec než samotný výrez nemá zmysel dorábať – vtedy je testovací
+    # výrez celý výrez a je to v poriadku.
+    if 2 * dlon >= (e - w) or 2 * dlat >= (n - s):
+        return [w, s, e, n]
+
+    clon = min(max(clon, w + dlon), e - dlon)
+    clat = min(max(clat, s + dlat), n - dlat)
+    return [clon - dlon, clat - dlat, clon + dlon, clat + dlat]
 
 
 def main():
@@ -27,6 +75,12 @@ def main():
     ap.add_argument("--region-bbox", required=True)
     ap.add_argument("--area", default="")
     ap.add_argument("--areas", default="workers/areas.json")
+    ap.add_argument("--test-km2", type=float, default=0.0,
+                    help="testovací režim: vyrezať štvorec s približne toľkými "
+                         "km² okolo stredu výrezu (0 = vypnuté)")
+    ap.add_argument("--test-at", default="",
+                    help="stred testovacieho štvorca ako `lon,lat` "
+                         "(prázdne = stred výrezu)")
     ap.add_argument("--out", default="", help="kam zapísať (default stdout)")
     args = ap.parse_args()
 
@@ -40,7 +94,10 @@ def main():
     if not raw:
         key, name, bbox = "cely", "celý región", region
     elif "," in raw:
-        key, name = "vyrez", f"vlastný výrez {raw}"
+        # Hash v kľúči, lebo kľúč ide do mien cache aj assetov: dva rôzne
+        # vlastné výrezy sa pod spoločným „vyrez" prepisovali navzájom.
+        h = hashlib.sha1(raw.encode()).hexdigest()[:6]
+        key, name = f"vyrez_{h}", f"vlastný výrez {raw}"
         bbox = [float(v) for v in raw.split(",")]
     else:
         areas = json.load(open(args.areas))
@@ -63,9 +120,30 @@ def main():
               file=sys.stderr)
         return 1
 
-    km2 = (e - w) * 111.32 * math.cos(math.radians((s + n) / 2)) * (n - s) * 110.54
-    out = [f"key={key}", f"name={name}", f"bbox={w},{s},{e},{n}",
-           f"km2={km2:.0f}", f"cells_1m={km2 * 1e6:.0f}"]
+    out = []
+    if args.test_km2 > 0:
+        # Celý výrez ide von tiež: obrázok „kde to je" potrebuje okolie,
+        # inak je to štvorec bez kontextu.
+        out.append(f"full_bbox={w},{s},{e},{n}")
+        out.append(f"full_km2={bbox_km2(w, s, e, n):.0f}")
+        try:
+            w, s, e, n = test_square([w, s, e, n], args.test_km2, args.test_at)
+        except ValueError as exc:
+            print(f"::error::{exc}", file=sys.stderr)
+            return 1
+        # Do kľúča, nie len do mena: kľúč je v menách cache aj assetov
+        # a testovací výsledok sa nesmie tváriť ako ostrý.
+        key = f"{key}_test{args.test_km2:g}"
+        if args.test_at.strip():
+            key += "_" + hashlib.sha1(args.test_at.encode()).hexdigest()[:4]
+        name = f"{name} – test {args.test_km2:g} km²"
+        out.append("test=1")
+        out.append(f"test_km2={args.test_km2:g}")
+
+    km2 = bbox_km2(w, s, e, n)
+    out += [f"key={key}", f"name={name}", f"bbox={w},{s},{e},{n}",
+            f"km2={km2:.0f}", f"cells_1m={km2 * 1e6:.0f}",
+            f"center={(w + e) / 2:.5f},{(s + n) / 2:.5f}"]
     text = "\n".join(out) + "\n"
     if args.out:
         with open(args.out, "a") as f:

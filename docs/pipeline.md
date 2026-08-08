@@ -161,6 +161,40 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
+### `plan` – testovací režim (`test_km2`)
+
+`options: test_km2=2` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²**
+a pustí na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút
+sú minúty, takže sa dá prah alebo interval overiť za jeden beh.
+
+Technicky je to **to isté orezanie regiónu ako `crop_bbox`**, len bbox
+nezadávaš ty. To je celý trik: orezaním REGIÓNU (a nie len výrezu) sa zmenší
+aj to, čo sa inak počíta na celý kraj – tieňovanie a mapové dlaždice. Výrez
+sa potom pretína s už orezaným regiónom, takže vyjde ten istý štvorec bez
+druhého výpočtu. Oboje naraz je chyba: obe veci orezávajú to isté.
+
+Dve veci, na ktoré si treba dať pozor a sú vyriešené:
+
+- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test2`, takže si
+  testovací beh nesadne na to, čo počítal ostrý.
+- **Skaly z tieňovania.** Tie počíta vlastný workflow, ktorý si výrez rieši
+  sám – v testovacom režime mu preto ide dole rovno **bbox štvorca**, nie
+  meno pohoria. Jeho vlastný prienik je s bboxom Slovenska, nie s regiónom,
+  takže by mu pri niektorých kombináciách vyšiel iný štvorec – a to by
+  znamenalo skaly mimo mapy.
+
+Beh do súhrnu vypíše, **kde ten štvorec je**: obrázok s okolím (podklad je
+tieňovanie z freemap.sk, červený štvorec = testované územie, modrý = celý
+výrez), súradnice a odkaz, ktorý otvorí hotovú mapu presne tam. Robí to
+`workers/test-locator.py`. Bez toho je „nenašlo ani jednu skalu" nečitateľné:
+nevie sa, či sú prísne prahy, alebo len štvorec padol na lúku pod lesom.
+
+Obrázok sa nasadí spolu so stránkou (`_site/kde-to-je.png`), preto ho súhrn
+vie priamo ukázať – z artefaktu by sa musel sťahovať. Odkaz do mapy má tvar
+`#map=16/49.17/20.11&region=…`; poloha v adrese je vlastnosť viewra
+(`hash: "map"` v MapLibre), takže sa rovnakým odkazom dá poslať aj ľubovoľné
+iné miesto a `F5` nehodí mapu späť na celý región.
+
 ### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 
 **OpenStreetMap výškové dáta neobsahuje** – má len bodový tag `ele` na
@@ -1008,9 +1042,9 @@ job „Stiahnuť dlaždice" (strop 2 h)
 XYZ dlaždice   https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
    │           paralelné sťahovanie s trvalým spojením, disková cache
    ├─► artefakt `dlazdice-tienovania-…`   samotné JPG
-   └─► cache + výstup `zoom` pre druhý job
+   └─► cache + výstupy `bbox`, `key`, `zoom` pre ďalšie joby
 
-job „Skaly z tieňovania" (strop 3 h)
+job „Obrysy po blokoch" (strop 3 h)      ← toto je tá drahá časť
 ───────────────────────────────────────────────────────────────────────
 mozaika šedej v EPSG:3857     dlaždice sú v ňom natívne → 1 px = 1 px,
    │                          žiadne prevzorkovanie
@@ -1019,28 +1053,52 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
    │                          ref   = clip(pozadie − rel, dark_always, dark)
    │                          po pásoch dlaždicových riadkov, s presahom,
    │                          na disk ako komprimovaný GTiff
+   ├─► artefakt `nahlad-…`     PNG mozaika vedľa masky + histogram
    ▼
 gdal_contour -p -fl 0,5 -fl (0,5+cliff)     PO BLOKOCH (block_tiles=8,
    │                          teda 2048 px) → pásma ako polygóny, s dierami
+   └─► cache `_rozrobene/…/bloky/b00000.geojsonl…`
+
+job „Skaly z tieňovania" (strop 1 h)
+───────────────────────────────────────────────────────────────────────
+zlepenie blokov do jedného prúdu
    ▼
-zlepenie plôch na hraniciach blokov (ST_Union, spatialite)
+plochy rozseknuté hranicou bloku (ST_Union, spatialite)
    ▼
--explodecollections → filter plôch a dier → -simplify → smooth-polygons.py
+filter plôch a dier → -simplify → smooth-polygons.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
    ├─► release `dem-rocks-img`   pre Build map (výber `rock_source: tienovanie`)
    ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
-   └─► artefakt `nahlad-…`         PNG náhľad + histogram + čísla
+   └─► artefakt `cisla-…`          namerané hodnoty behu
 ```
 
-**Prečo dva joby a nie dva kroky.** Strop času platí na job. Sťahovanie
+**Prečo tri joby a nie tri kroky.** Strop času platí na JOB. Sťahovanie
 z dobrovoľníckeho servera je desiatky minút a obrysy ďalšiu hodinu; dokopy
-sa to do jedného rozpočtu zmestiť nemusí a keď dôjde čas, padne aj to, čo
-už bolo hotové. Rozdelené má každá časť celý svoj rozpočet, dáta si podávajú
-cache (kľúč nesie číslo behu, takže sa druhý job trafí presne na to, čo prvý
-uložil) a zvolený zoom ide medzi nimi ako výstup jobu – pri `auto` sa teda
-sonda nepúšťa dvakrát. Bonus: obrázky vypadnú ako artefakt hneď po stiahnutí,
-teda aj vtedy, keď vektorizácia neskôr padne.
+sa to do jedného rozpočtu zmestiť nemusí a keď dôjde čas, padne aj to, čo už
+bolo hotové. Rozdelené má každá časť celý svoj rozpočet a v Actions je vidieť,
+na ktorej beh práve je – z jedného trojhodinového jobu sa to prečítať nedalo.
+
+Dva vedľajšie efekty, pre ktoré to stojí za to aj bez stropu času:
+
+- **Každý job odloží svoj výsledok hneď.** Obrázky sú v artefakte po stiahnutí,
+  náhľad po rastri tmavosti – teda aj vtedy, keď to za nimi nedobehne. Predtým
+  sa oboje odkladalo až na konci, čiže presne keď to bolo najmenej treba.
+- **Zmena `min_area` je posledný job (minúty), nie celý výpočet.** Obrysy sú
+  v cache a zlepovanie s filtrom sa dá pustiť nad nimi znova.
+
+Ako si dáta podávajú: dlaždice majú vlastný kľúč cache (`shading-tiles-…`),
+rozrobené druhý (`shading-vektor-…`) – tretí job obnovuje len ten druhý,
+takže nesťahuje gigabajty JPEGov, ktoré nepotrebuje. Kľúče nesú číslo behu,
+takže sa ďalší job trafí presne na to, čo uložil predošlý; `restore-keys`
+hľadá po predpone, takže sa dá nadviazať aj na starší beh. Zvolený zoom ide
+medzi jobmi ako výstup – pri `auto` sa sonda nepúšťa trikrát.
+
+**Testovací režim** (výber `test`) vyreže zo stredu výrezu štvorec s pár km².
+Nie je to iný algoritmus, len menší bbox – celé je to jeden prepínač
+v `resolve-area.py`. Kľúč dostane príponu `_test2`, takže si testovací
+výsledok nesadne do tej istej cache ani na ten istý asset ako ostrý. Beh
+navyše vypíše obrázok, kde ten štvorec leží (viď nižšie).
 
 ### Prečo `gdal_contour`, a nie `gdal_polygonize`
 
@@ -1086,12 +1144,23 @@ v pixeloch, takže to isté nastavenie platí na z17 aj z18 rovnako.
 Vysoké Tatry na z17: ~12 000 dlaždíc (~300 MB), mozaika 0,8 mld. pixelov,
 jednotky minút. z18 je štvornásobok všetkého (~0,4 m na pixel).
 
-### Prečo sa vektorizuje naraz
+### Prečo sa nakoniec vektorizuje po blokoch
 
-Rovnaký dôvod ako pri skalách z DEM a rovnako namerané: diera prerezaná
-hranicou časti sa zmení na zárez v okraji a späť sa už nezlepí. Po častiach
-sa preto počíta **len raster tmavosti**, a `gdal_contour` ide jedným
-priechodom nad celou mozaikou.
+Pôvodne to bol jeden priechod `gdal_contour` nad celou mozaikou – z rovnakého
+dôvodu ako pri skalách z DEM: diera prerezaná hranicou časti sa zmení na
+zárez v okraji a späť sa už nezlepí.
+
+**Nedobehlo to.** `gdal_contour -p` skladá uzavreté prstence a v zrnitom
+JPEGu ich je toľko, že to rastie rýchlejšie než lineárne: 3,62 mld. pixelov
+(z18 na Vysokých Tatrách) bežalo **2 h 41 min a nedopočítalo sa**, pričom
+pamäť ostala na 0,7 GB – čiže to nebola pamäť, ale čas.
+
+Odvtedy sa vektorizuje po blokoch (`block_tiles=8`, teda 2048 px): ohraničená
+pamäť, priebežný výstup a pokračovanie po páde. Pôvodná námietka platí ďalej,
+preto sa plochy dotýkajúce sa hranice bloku na konci zlepia cez `ST_Union`
+(spatialite) – a len tie, ktoré sa jej naozaj dotýkajú, nie všetko so
+všetkým. Keď spatialite chýba, beh pokračuje a povie to; v skalách budú
+vidieť rovné rezy.
 
 ### Ako sa pipeline predstavuje
 

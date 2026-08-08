@@ -33,7 +33,7 @@ on:
           - presovsky
           - kosicky
       area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Vlastný bbox cez options: area_bbox=W,S,E,N"
+        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejšie: options: test_km2=2 vyreže zo stredu štvorec s 2 km² a spraví na ňom VŠETKO vrátane tieňovania. Vlastný bbox cez options: area_bbox=W,S,E,N"
         required: false
         default: cely_region
         type: choice
@@ -121,7 +121,7 @@ on:
           - teren
           - vsetko
       options:
-        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Zoznam kľúčov je vo workers/parse-options.py"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Rýchly testovací beh: `test_km2=2`. Zoznam kľúčov je vo workers/parse-options.py"
         required: false
         default: ""
         type: string
@@ -419,7 +419,11 @@ jobs:
       contents: write
     uses: ./.github/workflows/shading-rocks.yml
     with:
-      area: ${{ inputs.area }}
+      # V testovacom režime ide dole rovno bbox testovacieho štvorca, nie meno
+      # pohoria. Ten workflow by si síce vedel štvorec spočítať sám, ale
+      # z vlastného prieniku (SK) namiesto prieniku s regiónom – a dva výpočty
+      # toho istého sa raz rozídu. Rozísť sa tu znamená skaly mimo mapy.
+      area: ${{ needs.plan.outputs.test_km2 != '0' && needs.plan.outputs.area_bbox || inputs.area }}
       zoom: ${{ needs.plan.outputs.opt_rock_img_zoom }}
       options: ${{ needs.plan.outputs.opt_rock_img_options }}
 
@@ -439,6 +443,10 @@ jobs:
       bbox: ${{ steps.region.outputs.bbox }}
       bboxkey: ${{ steps.region.outputs.bboxkey }}
       day: ${{ steps.day.outputs.d }}
+      # Testovací režim: bbox pred orezaním (na obrázok „kde to je") a odkaz
+      # do hotovej mapy, ktorý súhrn behu ukáže.
+      full_bbox: ${{ steps.region.outputs.full_bbox }}
+      test_km2: ${{ steps.opts.outputs.opt_test_km2 }}
       area_key: ${{ steps.area.outputs.key }}
       area_name: ${{ steps.area.outputs.name }}
       area_bbox: ${{ steps.area.outputs.bbox }}
@@ -598,6 +606,36 @@ jobs:
           # ----- voliteľné orezanie na menšie územie -----
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
           CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
+
+          # TESTOVACÍ REŽIM (`options: test_km2=2`) je to isté orezanie, len
+          # bbox nezadávaš ty – vyreže sa štvorec zo stredu zvoleného výrezu.
+          # Orezaním REGIÓNU (a nie len výrezu) sa zmenší úplne všetko:
+          # vrstevnice, skaly aj tieňovanie, ktoré sa inak počíta na celý kraj.
+          # Presne o to ide – celý beh na 2 km² namiesto vrstvy po vrstve.
+          TEST_KM2='${{ steps.opts.outputs.opt_test_km2 }}'
+          TEST=""
+          if [ "${TEST_KM2:-0}" != "0" ]; then
+            if [ -n "$CROP" ]; then
+              echo '::error::Naraz crop_bbox aj test_km2 nejde – oboje orezáva región. Nechaj jedno z nich.'
+              exit 1
+            fi
+            AREA='${{ inputs.area }}'
+            AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
+            [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
+            RES=$(python3 workers/resolve-area.py \
+              --region-bbox="$BBOX" --area="$AREA" \
+              --test-km2="$TEST_KM2" \
+              --test-at='${{ steps.opts.outputs.opt_test_at }}')
+            CROP=$(printf '%s\n' "$RES" | sed -n 's/^bbox=//p')
+            [ -n "$CROP" ] || { echo "::error::Testovací štvorec sa nepodarilo spočítať."; exit 1; }
+            TEST=1
+            # Okolie pre obrázok „kde to je" je CELÝ výrez pred zmenšením
+            # (napr. Vysoké Tatry), nie celý región – z mapy Slovenska by
+            # bol štvorec s 2 km² neviditeľný bod.
+            printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
+            echo "Testovací režim: $TEST_KM2 km² → $CROP"
+          fi
+
           if [ -n "$CROP" ]; then
             if [ -z "$CACHED" ]; then
               command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
@@ -610,8 +648,15 @@ jobs:
               mv data/region-crop.osm.pbf data/region.osm.pbf
             fi
             BBOX="$CROP"
-            KEY="${KEY}_crop"
-            NAME="$NAME (výrez)"
+            # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa
+            # nesmie tváriť ako ostrý a prepísať mu vrstevnice na celý kraj.
+            if [ -n "$TEST" ]; then
+              KEY="${KEY}_test${TEST_KM2}"
+              NAME="$NAME – test ${TEST_KM2} km²"
+            else
+              KEY="${KEY}_crop"
+              NAME="$NAME (výrez)"
+            fi
           fi
 
           echo "key=$KEY"   >> "$GITHUB_OUTPUT"
@@ -649,7 +694,11 @@ jobs:
           # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
           # zistiť to po hodine sťahovania nie. Platí to pre oba výbery, kde
           # sa `ugkk` dá zvoliť (vrstevnice aj skaly); v tieňovaní nie je.
-          if [ "$AREA_KEY" = 'cely' ]; then
+          #
+          # V testovacom režime je „celý región" už orezaný na pár km², takže
+          # tie dôvody neplatia – práve naopak, 1 m LiDAR na 2 km² je presne
+          # to, čo sa takým behom overuje.
+          if [ "$AREA_KEY" = 'cely' ] && [ '${{ steps.opts.outputs.opt_test_km2 }}' = '0' ]; then
             for pair in \
               "contour_source:${{ inputs.contour_source }}" \
               "rock_source:${{ inputs.rock_source }}"; do
@@ -666,6 +715,34 @@ jobs:
               exit 1
             fi
           fi
+
+      # Testovací štvorec má pár km² – z čísel sa nedá povedať, či padol na
+      # hrebeň so stenami alebo na lúku, a keď padne na lúku, „nenašlo ani
+      # jednu skalu" nehovorí nič o prahoch. Obrázok ide do stránky (nie len
+      # do artefaktu), aby ho súhrn behu vedel priamo ukázať.
+      - name: Kde je testovací výrez
+        if: ${{ steps.opts.outputs.opt_test_km2 != '0' }}
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pillow
+          mkdir -p _site
+          python3 workers/test-locator.py \
+            --bbox='${{ steps.region.outputs.bbox }}' \
+            --full-bbox='${{ steps.region.outputs.full_bbox }}' \
+            --name='${{ steps.region.outputs.name }}' \
+            --layers="vrstevnice: ${{ inputs.contour_source }} · skaly: ${{ inputs.rock_source }} · tieňovanie: ${{ inputs.shading_source }}" \
+            --png=_site/kde-to-je.png --md=/tmp/kde-to-je.md
+          cat /tmp/kde-to-je.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Odlož obrázok testovacieho výrezu
+        if: ${{ always() && hashFiles('_site/kde-to-je.png') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-plan
+          path: _site
+          retention-days: 1
+          if-no-files-found: ignore
 
       - name: Cache PBF regiónu (save)
         if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
@@ -2034,4 +2111,8 @@ jobs:
           USED_SHADING: ${{ needs.terrain.outputs.dem_source || '(nebežalo)' }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
+          TEST_BBOX: ${{ needs.plan.outputs.bbox }}
+          TEST_FULL_BBOX: ${{ needs.plan.outputs.full_bbox }}
         run: bash workers/summary.sh

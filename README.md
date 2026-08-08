@@ -464,15 +464,30 @@ budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách te
 zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
 bežal do timeoutu celého jobu.
 
-**Sťahovanie a vektorizácia sú dva joby.** *Stiahnuť dlaždice* (strop 2 h)
-a *Skaly z tieňovania* (strop 3 h). Nie dva kroky jedného jobu: strop času
-platí na job, a sťahovanie z dobrovoľníckeho servera býva desiatky minút,
-kým obrysy ďalšiu hodinu — dokopy sa to do jedného rozpočtu zmestiť nemusí
-a keď dôjde čas, padne aj to, čo už bolo hotové. Takto má každá časť celý
-svoj rozpočet, dáta si podávajú cache a artefakt, a obrázky vypadnú ako
-artefakt hneď po stiahnutí — teda aj vtedy, keď vektorizácia neskôr padne.
-Zvolený zoom ide z prvého jobu do druhého ako výstup, takže sa pri `auto`
-nehádá dvakrát.
+**Sú z toho tri joby**, nie jeden — strop času totiž platí na job:
+
+| job | strop | čo robí | čo po ňom ostane |
+|---|--:|---|---|
+| Stiahnuť dlaždice | 2 h | JPG z freemap.sk | cache + artefakt `dlazdice-tienovania-…` |
+| Obrysy po blokoch | 3 h | raster tmavosti, `gdal_contour` po blokoch | cache s rozrobeným + artefakt `nahlad-…` |
+| Skaly z tieňovania | 1 h | zlepenie blokov, švy, filter, vyhladenie | polygóny, release, čísla |
+
+Sťahovanie býva desiatky minút a obrysy ďalšiu hodinu — dokopy sa to do
+jedného rozpočtu zmestiť nemusí, a keď čas dôjde, padne aj to, čo už bolo
+hotové. Rozdelené má každá časť celý svoj rozpočet a v Actions je vidieť,
+na ktorej beh práve je. Vedľajší efekt, ktorý stojí za to: **každý job odloží
+svoj výsledok hneď**, takže obrázky aj náhľad sú po ruke aj vtedy, keď to za
+nimi ešte nedobehlo. A zmena `min_area` je odteraz posledný job (minúty), nie
+celý výpočet odznova.
+
+Dáta si joby podávajú cache: dlaždice pod vlastným kľúčom, rozrobené pod
+druhým (takže sa gigabajty JPEGov neukladajú dvakrát). Zvolený zoom ide
+z prvého jobu ďalej ako výstup, takže sa pri `auto` nehádá trikrát.
+
+**Testovací režim** (`test: 2`) vyreže zo stredu výrezu štvorec s 2 km².
+Ladenie prahov je potom minúty namiesto hodín — a beh do súhrnu vypíše
+obrázok s okolím (červený štvorec = testované územie), súradnice a odkaz,
+ktorý otvorí hotovú mapu presne tam.
 
 **Čo je hotové, sa nepočíta znova.** Rozrobené leží v cache dlaždíc, ktorá
 sa ukladá aj po páde a po timeoute:
@@ -501,6 +516,35 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
+| len rýchlo overiť, či to vôbec niečo nájde | `options: test_km2=2` (viď nižšie) |
+
+### Testovací režim: 2 km² namiesto celého pohoria
+
+`options: test_km2=2` vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
+a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
+celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
+kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
+jeden beh a nie za jeden obed.
+
+Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
+cache ani na tie isté uložené výsledky** ako ostrý.
+
+Beh do súhrnu vypíše, kde ten štvorec je:
+
+- **obrázok** s okolím (podklad je tieňovanie, červený štvorec = testované
+  územie, modrý = celý výrez) — nasadí sa spolu so stránkou, takže ho súhrn
+  ukáže priamo;
+- **súradnice** stredu aj bbox;
+- **odkaz do hotovej mapy** na tie súradnice, plus OSM a Freemap na porovnanie.
+
+Bez toho je totiž „nenašlo ani jednu skalu" nečitateľné: nevie sa, či sú
+prísne prahy, alebo len štvorec padol na lúku pod lesom.
+
+| chcem | ako |
+|---|---|
+| iná veľkosť | `options: test_km2=5` |
+| iné miesto než stred výrezu | `options: "test_km2=2 test_at=20.30,49.24"` (`lon,lat`) |
+| to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` |
 
 Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build z
 dobrovoľníckeho servera freemap.sk neťahá nič. Tieňovanie na **celý región**
