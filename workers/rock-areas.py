@@ -8,16 +8,23 @@ sklonu terénu:
 
     DEM → EPSG:3035 (metre) → gdaldem slope → mozaika sklonu →
     gdal_contour -p (izolínie sklonu ako PLOCHY) → rozbitie na plochy →
-    filter najmenšej plochy → trieda `steep` / `cliff`
+    filter najmenšej plochy → plná plocha (bez dier)
 
 TVAR PLÔCH: obrys je izolínia sklonu, čiže presne tá čiara, kde terén
 prekročí prah. Skala tak má taký tvar, aký naozaj má – zubatý pás pod
 hrebeňom, oblúk okolo žľabu, ostrov brala v suti.
 
-DIERY: kde je vnútri steny miesto s menším sklonom (police, terasa, zarastený
-stupeň), vypadne z plochy **diera** – tá plocha sa nezafarbí, aj keď je
-dookola všade nad prahom. Presne to robí `gdal_contour -p`: pásmo [prah, ∞)
-je polygón s vnútornými prstencami tam, kde hodnota pod prah klesla.
+PLNÉ PLOCHY (predvolene, `--plne`): von ide jedno pásmo [prah, ∞) v jednej
+triede a len jeho VONKAJŠÍ prstenec. Skala je tak na mape jedna súvislá sivá
+plocha – kreslí sa plnou farbou bez priehľadnosti, takže by sa každá diera aj
+každý prekryv prejavili ako škvrna. `--plne=0` vráti pôvodné správanie:
+
+  DIERY: kde je vnútri steny miesto s menším sklonom (police, terasa,
+  zarastený stupeň), vypadne z plochy **diera** – tá plocha sa nezafarbí, aj
+  keď je dookola všade nad prahom. Presne to robí `gdal_contour -p`: pásmo
+  [prah, ∞) je polygón s vnútornými prstencami tam, kde hodnota pod prah
+  klesla. K tomu druhé pásmo `cliff` (od `--cliff`), ktoré leží v diere
+  pásma `steep`.
 
 PREČO SA VEKTORIZUJE NARAZ, A NIE PO ČASTIACH: keď sa každá časť územia
 vektorizovala zvlášť a výsledky sa lepili (`-clipsrc` + `ST_Union`), diera
@@ -382,7 +389,13 @@ def main():
                     help="mriežka na sklon v metroch, alebo `auto` = "
                          "najjemnejšia, ktorá sa zmestí do rozpočtu času")
     ap.add_argument("--slope", type=float, default=50.0, help="prah sklonu v stupňoch")
-    ap.add_argument("--cliff", type=float, default=65.0, help="prah triedy `cliff`")
+    ap.add_argument("--cliff", type=float, default=65.0,
+                    help="prah triedy `cliff` (použije sa len bez `--plne`)")
+    # Plné plochy: jedno pásmo a zaplnené diery. Dokopy z toho je „jedna
+    # skala = jedna sivá plocha", nič v ničom a nič presvitajúce.
+    ap.add_argument("--plne", type=int, default=1,
+                    help="1 = plné plochy (jedno pásmo, diery zaplnené), "
+                         "0 = pásma steep/cliff a diery ako predtým")
     ap.add_argument("--min-area", type=float, default=-1.0,
                     help="najmenšia plocha v m²; -1 = jedna bunka mriežky "
                          "(menší útvar už nie je tvar terénu, ale jedna bunka)")
@@ -461,10 +474,16 @@ def main():
         print(f"Vektorizujem sklon jedným priechodom nad celým územím "
               f"({cells/1e9:.2f} mld. buniek, odhad "
               f"{hms(cells / CONTOUR_CELLS_PER_S)})…", flush=True)
+        # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediná úroveň, teda
+        # jediné pásmo „sklon nad prahom". Druhá úroveň (`cliff`) mala zmysel,
+        # kým sa kreslila tmavšie – ležala v diere pásma `steep` a spolu
+        # dláždili územie bez prekryvu. Odkedy sú všetky plochy jedna sivá bez
+        # priehľadnosti, je z nej len dvojnásobok prstencov na obtiahnutie.
+        urovne = ([repr(args.slope * SCALE)] if args.plne else
+                  [repr(args.slope * SCALE), repr(args.cliff * SCALE)])
         try:
-            run_watched(["gdal_contour", "-p",
-                         "-fl", repr(args.slope * SCALE), repr(args.cliff * SCALE),
-                         "-amin", "smin", "-amax", "smax",
+            run_watched(["gdal_contour", "-p", "-fl"] + urovne +
+                        ["-amin", "smin", "-amax", "smax",
                          "-f", "GPKG", "-nln", "band", vrt, bands],
                         "gdal_contour", tmp=tmp,
                         max_rss_mb=args.max_rss_gb * 1024)
@@ -482,10 +501,12 @@ def main():
         # rozbitie NErieši – vnútorné prstence ostávajú v svojej ploche.
         exploded = os.path.join(tmp, "rock-exploded.gpkg")
         lo, hi = int(args.slope), int(args.cliff)
+        trieda = ("'steep' AS class" if args.plne else
+                  f"CASE WHEN smin >= {args.cliff * SCALE} THEN 'cliff' "
+                  f"ELSE 'steep' END AS class")
         run(["ogr2ogr", "-f", "GPKG", exploded, bands, "band", "-nln", "rock",
              "-dialect", "SQLITE",
-             "-sql", f"SELECT CASE WHEN smin >= {args.cliff * SCALE} THEN 'cliff' "
-                     f"ELSE 'steep' END AS class, geom FROM band "
+             "-sql", f"SELECT {trieda}, geom FROM band "
                      f"WHERE smin >= {args.slope * SCALE}",
              "-explodecollections", "-nlt", "POLYGON"])
         os.remove(bands)
@@ -494,25 +515,43 @@ def main():
             return 1
 
         # ---------- 4. filter najmenšej plochy + atribúty ----------
-        # Diery sa NEZAPĹŇAJÚ ani nefiltrujú: presne o ne ide. Miesto pod
-        # prahom vnútri steny má ostať nezafarbené, aj keď je dookola všade
-        # sklon nad prahom.
+        # S `--plne` sa diery ZAPĹŇAJÚ: von ide len vonkajší prstenec, takže
+        # skala je na mape jedna súvislá sivá plocha. Bez neho ostávajú –
+        # miesto pod prahom vnútri steny (polica, terasa) sa nezafarbí, aj keď
+        # je dookola všade sklon nad prahom.
         stage = exploded
         final_metric = os.path.join(tmp, "rock-final.gpkg")
+        geom = ("ST_BuildArea(ST_ExteriorRing(geom))" if args.plne else "geom")
         sql = (f"SELECT class, CASE WHEN class = 'cliff' THEN {hi} ELSE {lo} END "
-               f"AS slope, CAST(ST_Area(geom) AS INTEGER) AS area, geom "
-               f"FROM rock WHERE ST_Area(geom) >= {args.min_area}")
+               f"AS slope, CAST(ST_Area({geom}) AS INTEGER) AS area, "
+               f"{geom} AS geom "
+               f"FROM rock WHERE ST_Area({geom}) >= {args.min_area}")
         simplify = ["-simplify", repr(args.simplify)] if args.simplify else []
         try:
             run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln", "rock",
                  "-dialect", "SQLITE", "-sql", sql] + simplify)
         except subprocess.CalledProcessError:
-            print("::warning::Filter najmenšej plochy (ST_Area) nefunguje – "
-                  "skaly idú bez neho.")
-            sql = sql.replace(f" WHERE ST_Area(geom) >= {args.min_area}", "")
-            sql = sql.replace("CAST(ST_Area(geom) AS INTEGER) AS area, ", "")
-            run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln", "rock",
-                 "-dialect", "SQLITE", "-sql", sql] + simplify)
+            # `ST_BuildArea` je zo spatialite a nemusí byť. Skaly s dierami sú
+            # lepšie než žiadne skaly, tak sa najprv skúsi vynechať zapĺňanie
+            # a až potom celý filter.
+            if args.plne:
+                print("::warning::Zapĺňanie dier (ST_BuildArea) nefunguje – "
+                      "spatialite pravdepodobne chýba. Skaly idú s dierami.")
+                geom = "geom"
+                sql = (f"SELECT class, CASE WHEN class = 'cliff' THEN {hi} "
+                       f"ELSE {lo} END AS slope, "
+                       f"CAST(ST_Area(geom) AS INTEGER) AS area, geom "
+                       f"FROM rock WHERE ST_Area(geom) >= {args.min_area}")
+            try:
+                run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln",
+                     "rock", "-dialect", "SQLITE", "-sql", sql] + simplify)
+            except subprocess.CalledProcessError:
+                print("::warning::Filter najmenšej plochy (ST_Area) nefunguje – "
+                      "skaly idú bez neho.")
+                sql = sql.replace(f" WHERE ST_Area(geom) >= {args.min_area}", "")
+                sql = sql.replace("CAST(ST_Area(geom) AS INTEGER) AS area, ", "")
+                run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln",
+                     "rock", "-dialect", "SQLITE", "-sql", sql] + simplify)
 
         # ---------- 5. zaoblenie obrysu ----------
         # Zjednodušenie vyššie zmaže schodíky, ale to, čo po ňom ostane, sú
@@ -561,6 +600,7 @@ def main():
                 f.write(f"grid_m={res:g}\n")
                 f.write(f"min_area_m2={args.min_area:g}\n")
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
+                f.write(f"plne={int(bool(args.plne))}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
                 f.write(f"simplify_m={args.simplify:g}\n")
                 f.write(f"smooth_passes={args.smooth}\n")

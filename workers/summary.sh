@@ -112,16 +112,27 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo "| priemerná plocha | ${avg_m2:-?} m² |"
     echo "| najväčšia plocha | ${max_ha:-?} ha |"
     echo "| skalného terénu spolu | ${total_km2:-?} km² |"
-    echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°, krok ${slope_step_deg:-?}°) |"
-    echo "| plôch s dierou (miesto pod prahom vnútri skaly) | ${with_holes:-0} |"
-    echo "| vykrojené dierami | ${holes_km2:-0} km² |"
+    if [ "${plne:-1}" = '1' ]; then
+      echo "| prah sklonu | ≥ ${slope_deg:-?}° (krok ${slope_step_deg:-?}°) |"
+      echo "| plochy | **plné** – bez dier, jedna trieda |"
+    else
+      echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°, krok ${slope_step_deg:-?}°) |"
+      echo "| plôch s dierou (miesto pod prahom vnútri skaly) | ${with_holes:-0} |"
+      echo "| vykrojené dierami | ${holes_km2:-0} km² |"
+    fi
     echo "| zjednodušenie obrysu | ${simplify_m:-?} m |"
     echo "| zaoblenie rohov (Chaikin) | ${smooth_passes:-0}× |"
     echo
     echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
-    echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
-    echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
-    echo "všade sklon nad prahom."
+    if [ "${plne:-1}" = '1' ]; then
+      echo "Plochy sú **plné**: miesto pod prahom vnútri skaly (polica, terasa)"
+      echo "sa nevykrojí a v mape je celá skala jedna súvislá sivá plocha."
+      echo "Vrátiť diery a triedu \`cliff\`: \`options: rock_plne=0\`."
+    else
+      echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
+      echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
+      echo "všade sklon nad prahom."
+    fi
     if [ "${area_key:-cely}" != "cely" ]; then
       echo
       echo "> ⚠️ **Vrstevnice aj skaly sú len na výreze „${area_name}“.**"
