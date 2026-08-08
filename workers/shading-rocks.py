@@ -1686,8 +1686,17 @@ def main():
               f"{'-plne' if args.plne else ''}"
               f"-zd{int(bool(args.zapln_diery))}")
     tmp = os.path.join(args.cache_dir, "_rozrobene", podpis)
-    if args.fresh:
+    # `fresh` znamená „nenadväzuj na rozrobené z PREDOŠLÉHO behu". To je vec
+    # fáz, ktoré rozrobené vyrábajú. Fáza `spojit` ho len číta – a beží ako
+    # samostatný job PO fáze `vektor`, takže by nezmazala starú prácu, ale tú,
+    # ktorú pred pár minútami vyrobil job vedľa. Skončilo by to na „Chýbajú
+    # obrysy blokov" a vyzeralo by to ako stratená cache. (Presne to sa aj
+    # stalo, keď build začal posielať `fresh=1` do všetkých troch fáz.)
+    if args.fresh and args.phase != "spojit":
         shutil.rmtree(tmp, ignore_errors=True)
+    elif args.fresh:
+        print("  `fresh` sa vo fáze `spojit` ignoruje: zlepuje sa to, čo "
+              "vyrobila fáza `vektor` v tomto behu.", flush=True)
     os.makedirs(tmp, exist_ok=True)
     if os.listdir(tmp):
         print(f"── Rozrobené z predošlého behu ──────────────────────")
