@@ -8,11 +8,13 @@ a workflow sa preto prestal načítať – beh skončil ako „failure" s nula j
 lebo GitHub ten súbor ani neprijal. Deväť najpoužívanejších vecí ostalo
 samostatnými inputmi, zvyšok sa píše do jedného poľa:
 
-    rock_slope=55 rock_res=1 contour_interval=5
+    rock_res=1 rock_maxzoom=15 trails=false
 
 Nie je to len obchádzka limitu: formulár s 26 poľami sa aj tak nedal použiť.
 Takto sú v ňom veci, ktoré meníš pri každom behu, a ostatné majú rozumné
-predvolené hodnoty.
+predvolené hodnoty. Ktoré to sú, sa časom mení: `rock_res` (mriežka na obrys
+skál) sa prestavuje len s iným zdrojom výšok, kým veľkosť rýchleho testu
+(`test_km2`) pri každom ladení – tak si vymenili miesto.
 
 TRI VÝBERY ZDROJA namiesto jedného `dem_source` a zoznamu `layers`:
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
@@ -25,9 +27,9 @@ Neznámy kľúč je chyba, nie ticho ignorovaná hodnota – preklep v `rock_slo
 by inak znamenal, že sa celý beh spustí s iným nastavením, než si myslíš.
 
 Použitie:
-    python3 workers/parse-options.py --options="rock_slope=55" \\
+    python3 workers/parse-options.py --options="rock_res=1" \\
         --rebuild=skaly --contour-source=sonny --rock-source=dmr5 \\
-        --shading-source=sonny --out=$GITHUB_OUTPUT
+        --shading-source=sonny --test-km2=4 --out=$GITHUB_OUTPUT
 """
 import argparse
 import json
@@ -41,15 +43,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULTS = {
     "crop_bbox": ("", "orezať región na west,south,east,north"),
     "area_bbox": ("", "vlastný výrez W,S,E,N namiesto pohoria z výberu"),
-    # TESTOVACÍ REŽIM. Vyreže z výrezu malý štvorec a na ňom spraví VŠETKO –
-    # vrstevnice, skaly aj tieňovanie. Zmysel je jediný: rýchlosť ladenia.
-    # Pohorie je desiatky minút na vrstvu, 2 km² sú sekundy až minúty, takže
-    # sa dá prah alebo interval overiť za jeden beh. Beh vypíše do súhrnu
-    # obrázok „kde to je" a odkaz, ktorý otvorí hotovú mapu presne tam.
-    # Je to voľba a nie input, lebo `workflow_dispatch` dovolí najviac desať
-    # inputov a všetkých desať je obsadených.
-    "test_km2": ("0", "testovací režim: počítať len štvorec s toľkými km² "
-                      "(0 = vypnuté, typicky 2)"),
+    # Stred testovacieho štvorca. Samotná veľkosť (`test_km2`) je input vo
+    # formulári – mení sa pri každom behu, kým miesto skoro nikdy.
     "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
@@ -65,6 +60,11 @@ DEFAULTS = {
     # triede. V mape sa kreslí jednou sivou bez priehľadnosti, takže by
     # sa každý prekryv a každá diera prejavili ako škvrna.
     "rock_plne": ("1", "1 = skaly ako plné plochy, 0 = s dierami a triedou cliff"),
+    # Mriežka na obrys skál. Bol to samostatný input, ale strop je desať
+    # a rýchly testovací beh (`test_km2`) sa mení pri každom ladení, kým
+    # mriežku má zmysel prestaviť len s iným zdrojom výšok – `auto` ju vyberie
+    # z bunky DEM a rozpočtu času a vypíše do logu, prečo práve tú.
+    "rock_res": ("auto", "mriežka na obrys skál v metroch, alebo `auto`"),
     "contour_smoothing": ("0", "zjemnenie DEM v oblúkových sekundách"),
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
     "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),
@@ -98,6 +98,8 @@ DEFAULTS = {
 MOVED = {
     "rock_source": "je samostatný input vo formulári (výber zdroja skál), "
                    "nie voľba",
+    "test_km2": "je samostatný input vo formulári (rýchly test na pár km², "
+                "predvolene 4; ostrý beh je 0), nie voľba",
     "dem_source": "sa rozpadol na tri inputy vo formulári – `contour_source`, "
                   "`rock_source` a `shading_source`, každá vrstva má svoj "
                   "zdroj",
@@ -154,6 +156,8 @@ def main():
                     help="zdroj skál: výškový model, `tienovanie`, alebo `ziadne`")
     ap.add_argument("--shading-source", default=NONE,
                     help="zdroj výšok pre tieňovanie a 3D terén, alebo `ziadne`")
+    ap.add_argument("--test-km2", default="0",
+                    help="rýchly test na štvorci s toľkými km² (0 = ostrý beh)")
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
@@ -180,6 +184,25 @@ def main():
             return 1
         values[k] = v
         changed[k] = v
+
+    # ---------- rýchly test na pár km² ----------
+    # Číslo z formulára ide do mena cache aj do kľúča uložených výsledkov
+    # (`…_test4`) a inde sa porovnáva s „0" ako s reťazcom, takže sa tu
+    # normalizuje: prázdne pole je 0 a `4.0` aj `4` dajú to isté „4".
+    # Nečíslo je chyba – `test_km2: štyri` by inak ticho spustilo ostrý beh
+    # na celý kraj namiesto minútového testu.
+    test_km2 = (args.test_km2 or "0").strip() or "0"
+    try:
+        n = float(test_km2)
+    except ValueError:
+        print(f"::error::test_km2 musí byť číslo (0 = ostrý beh na celý "
+              f"výrez), nie „{test_km2}“.", file=sys.stderr)
+        return 1
+    if n < 0:
+        print(f"::error::test_km2 nemôže byť záporné („{test_km2}“). "
+              f"0 = ostrý beh na celý výrez.", file=sys.stderr)
+        return 1
+    values["test_km2"] = f"{n:g}"
 
     # ---------- tri výbery zdroja ----------
     # Čo sa smie kde vybrať, hovorí `for` v dem-sources.json – ten istý
@@ -235,7 +258,7 @@ def main():
     print("Nastavenia:")
     for k in sorted(values):
         mark = "  ←" if k in changed else ""
-        d = DEFAULTS.get(k, ("", "z výberov zdroja / rebuild"))[1]
+        d = DEFAULTS.get(k, ("", "z inputov formulára (zdroje / rebuild / test)"))[1]
         print(f"  {k:<20} {values[k] or '(prázdne)':<24} {d}{mark}")
     if changed:
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")

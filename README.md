@@ -336,7 +336,7 @@ zdrojového DEM. Pri Sonnym (20 m) z toho vždy vyjde **2 m** – jemnejšia
 mriežka by len interpolovala medzi tými istými výškami, stála 4× viac času a
 nepridala ani jeden nový tvar terénu. Skutočný skok v detaile prinesie až
 `rock_source: ugkk` (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
-natvrdo (`rock_res: 1`).
+natvrdo (`options: rock_res=1`).
 
 > **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
 > obrys odkrokovaný. Skutočný detail je ale stropený zdrojom: Sonny má pre
@@ -546,17 +546,24 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
-| len rýchlo overiť, či to vôbec niečo nájde | `options: test_km2=2` (viď nižšie) |
+| len rýchlo overiť, či to vôbec niečo nájde | `test_km2: 4` (predvolené, viď nižšie) |
 
-### Testovací režim: 2 km² namiesto celého pohoria
+### Testovací režim: pár km² namiesto celého pohoria
 
-`options: test_km2=2` vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
-a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
-celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
-kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
-jeden beh a nie za jeden obed.
+Pole **`test_km2`** vyreže **zo stredu zvoleného výrezu štvorec s toľkými
+km²** a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa
+pritom celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta
+na celý kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval
+overiť za jeden beh a nie za jeden obed.
 
-Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
+**Predvolené sú 4 km², teda rýchly beh.** Ostrý build na celý výrez chce
+vedomé `test_km2: 0`. Opačné poradie (predvolene ostrý) znamenalo, že sa
+každé ladenie prahu platilo desiatkami minút, kým si niekto spomenul dopísať
+voľbu do textového poľa — a to je práve tá vec, ktorá sa mení pri každom
+behu. Za miesto vo formulári zaplatila mriežka `rock_res`, ktorá sa naopak
+prestavuje len s iným zdrojom výšok; je z nej voľba (`options: rock_res=1`).
+
+Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
 Beh do súhrnu vypíše, kde ten štvorec je:
@@ -572,8 +579,9 @@ prísne prahy, alebo len štvorec padol na lúku pod lesom.
 
 | chcem | ako |
 |---|---|
-| iná veľkosť | `options: test_km2=5` |
-| iné miesto než stred výrezu | `options: "test_km2=2 test_at=20.30,49.24"` (`lon,lat`) |
+| iná veľkosť | `test_km2: 5` |
+| ostrý beh na celom výreze | `test_km2: 0` |
+| iné miesto než stred výrezu | `options: test_at=20.30,49.24` (`lon,lat`) |
 | to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` |
 
 Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build z
@@ -1092,8 +1100,9 @@ hranicu časti, takže susedné kusy na seba nadväzujú bez medzery ani prekryv
 ~2 hodiny.**
 
 Ovládanie vo workflowe: `rock_source` (z ktorého modelu – alebo `ziadne`,
-čím sa skaly vypnú), `rock_slope` (od akého sklonu je terén skala, default
-50°) a `rock_res` (mriežka obrysu v metroch alebo `auto`, default `auto`).
+čím sa skaly vypnú) a `rock_slope` (od akého sklonu je terén skala, default
+50°); mriežka obrysu je voľba `options: rock_res=…` (číslo v metroch alebo
+`auto`, default `auto`).
 Ostatné ladenie je v `env:` na začiatku
 [build-map.yml](.github/workflows/build-map.yml): `ROCK_SIMPLIFY` (0 = presný
 obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
@@ -1600,14 +1609,21 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
+   | `test_km2` | text | **rýchly test**: spraviť všetko len na štvorci s toľkými km² zo stredu výrezu (default `4`, ostrý beh na celý výrez je `0`) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
-   | `rock_res` | text | mriežka na obrys skál – `auto` (odporúčané) alebo číslo v metroch |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
-   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` |
+   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. mriežka na obrys skál `rock_res=1`) |
+
+   **Prečo je vo formulári `test_km2` a nie `rock_res`.** Polí je desať a je
+   to strop, takže sa dá pridať len to, za čo niečo vypadne. Veľkosť rýchleho
+   testu sa mení pri každom ladení; mriežku na obrys skál má zmysel prestaviť
+   len s iným zdrojom výšok, a aj vtedy ju `auto` vyberie z bunky DEM
+   a rozpočtu času lepšie, než sa háda ručne. `rock_res` je preto späť ako
+   voľba: `options: rock_res=1`.
 
    **Tri výbery zdroja, jeden na vrstvu.** Kým to bol jeden `dem_source` pre
    všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly

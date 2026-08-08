@@ -178,9 +178,15 @@ a #52. Opraviť sa to dá jedine v nastaveniach:
 
 ### `plan` – testovací režim (`test_km2`)
 
-`options: test_km2=2` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²**
+Input `test_km2` vyreže zo stredu zvoleného výrezu **štvorec s toľkými km²**
 a pustí na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút
 sú minúty, takže sa dá prah alebo interval overiť za jeden beh.
+
+**Predvolené sú 4 km²**, ostrý beh na celý výrez je `test_km2: 0`. Je to
+input vo formulári a nie voľba v `options`, lebo sa mení pri každom ladení;
+miesto uvoľnila mriežka `rock_res` (desať inputov je strop), z ktorej je
+naopak voľba. Stred štvorca je stále voľba `test_at=lon,lat` – ten sa
+prestavuje zriedka.
 
 Technicky je to **to isté orezanie regiónu ako `crop_bbox`**, len bbox
 nezadávaš ty. To je celý trik: orezaním REGIÓNU (a nie len výrezu) sa zmenší
@@ -190,7 +196,7 @@ druhého výpočtu. Oboje naraz je chyba: obe veci orezávajú to isté.
 
 Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
-- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test2`, takže si
+- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test4`, takže si
   testovací beh nesadne na to, čo počítal ostrý.
 - **Skaly z tieňovania.** Tie počíta vlastný workflow, ktorý si výrez rieši
   sám – v testovacom režime mu preto ide dole rovno **bbox štvorca**, nie
@@ -483,7 +489,8 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   zdroj (`rock_source: ugkk`, 1 m LiDAR → auto ide na 0,5 m).
 
   Výber sa celý vypíše do logu, aj s tým, koľko by ktorá mriežka trvala.
-  Namiesto čísla sa dá `rock_res` zadať aj natvrdo (`1`, `2`, …).
+  Namiesto čísla sa dá `rock_res` zadať aj natvrdo – je to voľba, nie input
+  vo formulári: `options: rock_res=1`.
 
   Najmenšia ponechaná plocha je **jedna bunka vybranej mriežky** (pri 2 m
   teda 4 m²) – menší útvar už nie je tvar terénu, ale rohy jedinej bunky.
