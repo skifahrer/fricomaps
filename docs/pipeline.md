@@ -161,20 +161,44 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### `plan` – Pages musí brať zdroj z Actions
+### `plan` – Pages si beh prepne sám na Actions
 
-Prvý krok behu overí nielen to, že sú Pages zapnuté, ale aj `build_type`.
-Keď je `legacy`, znamená to, že zdroj je **vetva**, nie Actions – a vtedy
-popri nás beží zabudovaný Jekyll builder („pages build and deployment").
-Ten pri KAŽDOM pushi do vetvy nasadí koreň repozitára, teda README, a mapu,
-ktorú nasadil tento workflow, prepíše.
+Na stránke má byť **mapa, nie README**, a rozhoduje o tom jediné nastavenie
+repozitára: `build_type`. Keď je `legacy`, zdroj Pages je **vetva**, nie
+Actions – a vtedy popri nás beží zabudovaný Jekyll builder („pages build and
+deployment"). Ten pri KAŽDOM pushi do vetvy nasadí koreň repozitára, teda
+README, a mapu, ktorú nasadil tento workflow, prepíše.
 
 Navonok to vyzerá, že sa mapa „sama pokazila": beh Build map je zelený,
 nasadenie prebehlo, a na stránke je README. V Actions je to vidieť ako beh
 `pages build and deployment` s eventom `dynamic`, ktorý sa spustí po merge –
-hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51
-a #52. Opraviť sa to dá jedine v nastaveniach:
-**Settings → Pages → Build and deployment → Source: GitHub Actions.**
+hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51,
+#52 a znova po #54 a #55.
+
+Prvý krok behu preto nastavenie **nielen kontroluje, ale aj opravuje**:
+
+| stav na začiatku | čo krok spraví |
+|---|---|
+| `build_type: workflow` | nič (jedno GET volanie) |
+| `build_type: legacy` | `PUT /repos/{owner}/{repo}/pages` s `build_type=workflow` |
+| Pages vôbec nie sú zapnuté | `POST /repos/{owner}/{repo}/pages` s `build_type=workflow` |
+| prepnúť sa nepodarilo | `::error::` s návodom a koniec behu v tretej sekunde |
+
+Po zápise sa hodnota **prečíta znova** a až tá rozhoduje. Keby `PUT` prešlo
+a nastavenie ostalo staré, beh by dobehol do zelena a na stránke by aj tak
+bolo README – čiže presne tá chyba, ktorú to má riešiť, len tichšia.
+
+Job na to potrebuje `permissions: pages: write` (predtým mal `read`). Nie je
+to nové právo v behu – na úrovni workflowu `pages: write` je, lebo sa ním
+nasadzuje; teraz ho má aj príprava. Keby token na zmenu nastavenia nestačil
+(na to treba admin práva), správanie je pôvodné: zastaviť beh hneď, a nie po
+hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+
+Na konci behu to ešte raz overí smoke test: stiahne koreň nasadenej stránky
+a hľadá v ňom `id="map"`. Ostatné kontroly pýtajú súbory, ktoré README nemá
+(dlaždice, štýly, sprity) – tie by prepísanú stránku nechytili, keby na nej
+z predošlého nasadenia ostali. Toto je tá jediná otázka, na ktorej
+návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 

@@ -1608,7 +1608,13 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
 ## Prvé spustenie
 
-1. **Zapni GitHub Pages:** Settings → Pages → Source: **GitHub Actions**.
+1. **Pages si beh zapne sám.** Prvý krok skontroluje nastavenie repozitára
+   a keď zdroj Pages nie je *GitHub Actions*, prepne ho (a keď Pages nie sú
+   zapnuté vôbec, zapne ich). Je to preto, že na stránke má byť **mapa a nie
+   README**: pri zdroji „vetva" beží popri nás zabudovaný Jekyll builder,
+   ktorý po každom pushi nasadí koreň repozitára a mapu prepíše. Keby na to
+   token nemal práva, beh sa zastaví v tretej sekunde s návodom –
+   Settings → Pages → Build and deployment → Source: **GitHub Actions**.
 2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*.
    Formulár má **desať polí** – viac `workflow_dispatch` inputov GitHub
    neprijme (pri 26 sa workflow prestal načítať a beh skončil ako „failure"
