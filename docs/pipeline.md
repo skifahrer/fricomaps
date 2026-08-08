@@ -221,14 +221,14 @@ návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 
-Switch `test` vyreže zo stredu zvoleného výrezu **štvorec so 4 km²** a pustí
+Switch `test` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²** a pustí
 na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút sú
 minúty, takže sa dá prah alebo interval overiť za jeden beh.
 
 **Predvolene je zapnutý**, ostrý beh na celý výrez ho chce odškrtnúť. Je to
 switch vo formulári a nie voľba v `options`, lebo sa preklikáva pri každom
 behu; miesto uvoľnila mriežka `rock_res` (desať inputov je strop), z ktorej
-je naopak voľba. Veľkosť (`test_km2=2`) a stred (`test_at=lon,lat`) ostali
+je naopak voľba. Veľkosť (`test_km2=5`) a stred (`test_at=lon,lat`) ostali
 voľbami – tie sa prestavujú zriedka. `test_km2` bez zapnutého switchu je
 chyba: inak by to bolo číslo, ktoré nič nerobí.
 
@@ -244,7 +244,7 @@ druhého výpočtu. Oboje naraz je chyba: obe veci orezávajú to isté.
 
 Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
-- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test4`, takže si
+- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test2`, takže si
   testovací beh nesadne na to, čo počítal ostrý.
 - **Pregenerúva sa vždy všetko.** `parse-options.py` pri zapnutom teste
   prebije `rebuild` a zapne všetky tri príznaky (`contours_rebuild`,
@@ -280,7 +280,7 @@ viewer ju zahodí (`dropPosFromHash`) a nechá rozhodnúť bbox. Bez toho by
 `F5` po testovacom builde otvoril mapu nad prázdnom dvadsať kilometrov
 vedľa – a to vyzerá ako pokazený build, nie ako stará adresa. Manifest nesie
 pri regióne aj `test_km2`, takže to viewer vie aj napísať do panelu
-(`Rýchly test: 4 km² zo stredu výrezu`).
+(`Rýchly test: 2 km² zo stredu výrezu`).
 
 ### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 
