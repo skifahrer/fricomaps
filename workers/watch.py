@@ -68,17 +68,25 @@ def proc_rss_mb(pid):
 class Heartbeat(threading.Thread):
     """Každých `every` sekúnd povie, že sa stále niečo deje – a čo."""
 
-    def __init__(self, label, pid=None, tmp=None, every=30, max_rss_mb=0):
+    def __init__(self, label, pid=None, tmp=None, every=30, max_rss_mb=0,
+                 max_s=0):
         super().__init__(daemon=True)
         self.label, self.pid, self.tmp = label, pid, tmp
-        self.every, self.max_rss_mb = every, max_rss_mb
+        self.every, self.max_rss_mb, self.max_s = every, max_rss_mb, max_s
         self.t0 = time.time()
         self.stop_flag = threading.Event()
         self.killed_for_memory = False
+        self.killed_for_time = False
 
     def run(self):
         while not self.stop_flag.wait(self.every):
-            parts = [f"beží {hms(time.time() - self.t0)}"]
+            beh = time.time() - self.t0
+            # S rozpočtom sa hlási aj to, koľko z neho je preč. Bez toho sa
+            # z „beží 2:41:30" nedá poznať, či to smeruje do cieľa alebo do
+            # steny – a to je jediné, čo počas dlhého behu potrebuješ vedieť.
+            parts = [f"beží {hms(beh)}" + (
+                f" z {hms(self.max_s)} ({100 * beh / self.max_s:.0f} %)"
+                if self.max_s else "")]
             rss = proc_rss_mb(self.pid) if self.pid else 0
             if rss:
                 parts.append(f"pamäť {rss / 1024:.1f} GB")
@@ -95,16 +103,36 @@ class Heartbeat(threading.Thread):
                 except OSError:
                     pass
                 return
+            # Strop na čas. Bez neho zlý odhad znamená, že sa beh nezastaví
+            # sám, ale až na timeoute celého jobu – teda po hodinách a bez
+            # jediného použiteľného výstupu. (Presne to sa stalo behu
+            # 31222472790: `gdal_contour` bežal 2:41 a zabil ho runner.)
+            if self.max_s and beh > self.max_s:
+                self.killed_for_time = True
+                print(f"::error::{self.label} beží {hms(beh)}, rozpočet je "
+                      f"{hms(self.max_s)} – zastavujem. Radšej to povedať "
+                      f"teraz než na timeoute celého jobu.", flush=True)
+                try:
+                    os.kill(self.pid, 9)
+                except OSError:
+                    pass
+                return
 
     def stop(self):
         self.stop_flag.set()
 
 
-def run_watched(cmd, label, tmp=None, max_rss_mb=0, every=30):
-    """Spustí príkaz, priebežne hlási, že žije, a prekladá progress GDALu."""
+def run_watched(cmd, label, tmp=None, max_rss_mb=0, every=30, max_s=0):
+    """Spustí príkaz, priebežne hlási, že žije, a prekladá progress GDALu.
+
+    `max_rss_mb` a `max_s` sú stropy: po ich prekročení sa proces zastaví
+    a vyletí `MemoryError`, resp. `TimeoutError` – nie tichý beh do timeoutu
+    celého jobu.
+    """
     t0 = time.time()
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    hb = Heartbeat(label, proc.pid, tmp, every=every, max_rss_mb=max_rss_mb)
+    hb = Heartbeat(label, proc.pid, tmp, every=every, max_rss_mb=max_rss_mb,
+                   max_s=max_s)
     hb.start()
     tail, line, last = b"", b"", -1
     try:
@@ -137,6 +165,8 @@ def run_watched(cmd, label, tmp=None, max_rss_mb=0, every=30):
         hb.stop()
     if hb.killed_for_memory:
         raise MemoryError(label)
+    if hb.killed_for_time:
+        raise TimeoutError(label)
     if proc.returncode != 0:
         raise subprocess.CalledProcessError(proc.returncode, cmd)
     size = f", {dir_mb(tmp):.0f} MB" if tmp and os.path.exists(tmp) else ""
