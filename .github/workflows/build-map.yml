@@ -1719,6 +1719,7 @@ jobs:
       contents: read
       pages: write
       id-token: write
+      actions: read     # súhrn číta joby a ich logy, keď niečo spadne
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

@@ -212,3 +212,52 @@ fi
 if [ "$PAGE_URL" != '' ]; then
   echo -e "\n[Otvoriť mapu](${PAGE_URL})" >> "$S"
 fi
+
+# ---- čo spadlo ----
+# Tabuľka jobov hore povie „failure" a tým to končí – ktorý krok, ako dlho
+# bežal a čo vlastne vypísal, sa dá zistiť len prehrabaním sa logom. Tu je
+# to rovno: krok, trvanie a posledné `::error::` z logu toho jobu.
+#
+# Zvlášť pri `cancelled`: to nie je pád, ale zrušenie – buď timeoutom jobu
+# (potom trvanie sedí na jeho strop), alebo zvonku. Bez trvania sa to
+# nerozlíši. Beh 31222472790 bol práve toto: tri hodiny a runner ho zabil.
+#
+# `|| true` všade: keď na to token nemá právo alebo je log ešte nedostupný,
+# nemá to zhodiť súhrn – zvyšok tabuliek je aj tak užitočný.
+SPADLO=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+  --jq '.jobs[]
+        | select(.conclusion == "failure" or .conclusion == "cancelled")
+        | [.id, .name, .conclusion, .started_at, .completed_at,
+           ([.steps[]? | select(.conclusion == "failure" or .conclusion == "cancelled")
+             | .name] | first // "—"),
+           .html_url] | @tsv' 2>/dev/null || true)
+
+if [ -n "$SPADLO" ]; then
+  { echo; echo "## Čo spadlo"; echo; } >> "$S"
+  while IFS=$'\t' read -r jid jname jconcl jstart jend jstep jurl; do
+    [ -n "${jname:-}" ] || continue
+    if [ -n "${jstart:-}" ] && [ -n "${jend:-}" ]; then
+      TRVALO=$(( $(date -d "$jend" +%s) - $(date -d "$jstart" +%s) ))
+    else
+      TRVALO=0
+    fi
+    {
+      echo "### [$jname]($jurl) – $jconcl po $(hms "$TRVALO")"
+      echo
+      echo "Zastavilo sa na kroku **$jstep**."
+      if [ "$jconcl" = "cancelled" ] && [ "$TRVALO" -gt 3000 ]; then
+        echo
+        echo "> Zrušené po $(hms "$TRVALO") – to nie je pád, to je strop."
+        echo "> Buď timeout jobu, alebo rozpočet výpočtu. Skús menší výrez,"
+        echo "> nižší zoom alebo hrubšiu mriežku."
+      fi
+    } >> "$S"
+    # Posledné chybové riadky z logu. Čas na začiatku riadku ide preč – je
+    # to šum, ktorý v súhrne akurát zalomí tabuľku.
+    CHYBY=$(gh api "repos/$GITHUB_REPOSITORY/actions/jobs/$jid/logs" 2>/dev/null \
+      | grep -a "##\[error\]" | tail -3 | sed 's/^[0-9TZ:.-]* //' || true)
+    if [ -n "$CHYBY" ]; then
+      { echo; echo '```'; echo "$CHYBY"; echo '```'; echo; } >> "$S"
+    fi
+  done <<< "$SPADLO"
+fi

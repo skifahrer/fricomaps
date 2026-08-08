@@ -81,7 +81,12 @@ class Heartbeat(threading.Thread):
     def run(self):
         while not self.stop_flag.wait(self.every):
             beh = time.time() - self.t0
-            parts = [f"beží {hms(beh)}"]
+            # S rozpočtom sa hlási aj to, koľko z neho je preč. Bez toho sa
+            # z „beží 2:41:30" nedá poznať, či to smeruje do cieľa alebo do
+            # steny – a to je jediné, čo počas dlhého behu potrebuješ vedieť.
+            parts = [f"beží {hms(beh)}" + (
+                f" z {hms(self.max_s)} ({100 * beh / self.max_s:.0f} %)"
+                if self.max_s else "")]
             rss = proc_rss_mb(self.pid) if self.pid else 0
             if rss:
                 parts.append(f"pamäť {rss / 1024:.1f} GB")
