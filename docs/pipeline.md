@@ -176,17 +176,22 @@ hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51
 a #52. Opraviť sa to dá jedine v nastaveniach:
 **Settings → Pages → Build and deployment → Source: GitHub Actions.**
 
-### `plan` – testovací režim (`test_km2`)
+### `plan` – rýchly test (switch `test`)
 
-Input `test_km2` vyreže zo stredu zvoleného výrezu **štvorec s toľkými km²**
-a pustí na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút
-sú minúty, takže sa dá prah alebo interval overiť za jeden beh.
+Switch `test` vyreže zo stredu zvoleného výrezu **štvorec so 4 km²** a pustí
+na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút sú
+minúty, takže sa dá prah alebo interval overiť za jeden beh.
 
-**Predvolené sú 4 km²**, ostrý beh na celý výrez je `test_km2: 0`. Je to
-input vo formulári a nie voľba v `options`, lebo sa mení pri každom ladení;
-miesto uvoľnila mriežka `rock_res` (desať inputov je strop), z ktorej je
-naopak voľba. Stred štvorca je stále voľba `test_at=lon,lat` – ten sa
-prestavuje zriedka.
+**Predvolene je zapnutý**, ostrý beh na celý výrez ho chce odškrtnúť. Je to
+switch vo formulári a nie voľba v `options`, lebo sa preklikáva pri každom
+behu; miesto uvoľnila mriežka `rock_res` (desať inputov je strop), z ktorej
+je naopak voľba. Veľkosť (`test_km2=2`) a stred (`test_at=lon,lat`) ostali
+voľbami – tie sa prestavujú zriedka. `test_km2` bez zapnutého switchu je
+chyba: inak by to bolo číslo, ktoré nič nerobí.
+
+Ďalej v pipeline z toho ide jedno číslo (`opt_test_km2`): 0 = ostrý beh,
+inak strana štvorca v km². Vypočíta ho `parse-options.py` zo switchu
+a veľkosti, takže sa nikde inde nemusí riešiť „zapnuté a koľko".
 
 Technicky je to **to isté orezanie regiónu ako `crop_bbox`**, len bbox
 nezadávaš ty. To je celý trik: orezaním REGIÓNU (a nie len výrezu) sa zmenší
@@ -215,6 +220,17 @@ vie priamo ukázať – z artefaktu by sa musel sťahovať. Odkaz do mapy má tv
 `#map=16/49.17/20.11&region=…`; poloha v adrese je vlastnosť viewra
 (`hash: "map"` v MapLibre), takže sa rovnakým odkazom dá poslať aj ľubovoľné
 iné miesto a `F5` nehodí mapu späť na celý región.
+
+**Samotná mapa sa otvorí na štvorci aj bez odkazu.** Rýchly test oreže celý
+región, takže je ten štvorec bboxom regiónu v manifeste a viewer sa naň
+nastaví ako na hocijaký iný región – nie je to zvláštna vetva v kóde.
+Zvláštna vetva je len jedna, a rieši opačný problém: keď poloha v adrese
+mieri **mimo nasadeného bboxu** (hash z minulej návštevy, starý odkaz),
+viewer ju zahodí (`dropPosFromHash`) a nechá rozhodnúť bbox. Bez toho by
+`F5` po testovacom builde otvoril mapu nad prázdnom dvadsať kilometrov
+vedľa – a to vyzerá ako pokazený build, nie ako stará adresa. Manifest nesie
+pri regióne aj `test_km2`, takže to viewer vie aj napísať do panelu
+(`Rýchly test: 4 km² zo stredu výrezu`).
 
 ### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 

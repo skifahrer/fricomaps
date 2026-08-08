@@ -13,8 +13,10 @@ samostatnými inputmi, zvyšok sa píše do jedného poľa:
 Nie je to len obchádzka limitu: formulár s 26 poľami sa aj tak nedal použiť.
 Takto sú v ňom veci, ktoré meníš pri každom behu, a ostatné majú rozumné
 predvolené hodnoty. Ktoré to sú, sa časom mení: `rock_res` (mriežka na obrys
-skál) sa prestavuje len s iným zdrojom výšok, kým veľkosť rýchleho testu
-(`test_km2`) pri každom ladení – tak si vymenili miesto.
+skál) sa prestavuje len s iným zdrojom výšok, kým rýchly test sa zapína
+a vypína pri každom behu – tak si vymenili miesto. Zapnutie je switch `test`,
+veľkosť štvorca ostala voľbou (`test_km2`, default 4 km²): jedno sa preklikáva
+stále, druhé skoro nikdy.
 
 TRI VÝBERY ZDROJA namiesto jedného `dem_source` a zoznamu `layers`:
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
@@ -29,7 +31,7 @@ by inak znamenal, že sa celý beh spustí s iným nastavením, než si myslíš
 Použitie:
     python3 workers/parse-options.py --options="rock_res=1" \\
         --rebuild=skaly --contour-source=sonny --rock-source=dmr5 \\
-        --shading-source=sonny --test-km2=4 --out=$GITHUB_OUTPUT
+        --shading-source=sonny --test=true --out=$GITHUB_OUTPUT
 """
 import argparse
 import json
@@ -43,8 +45,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULTS = {
     "crop_bbox": ("", "orezať región na west,south,east,north"),
     "area_bbox": ("", "vlastný výrez W,S,E,N namiesto pohoria z výberu"),
-    # Stred testovacieho štvorca. Samotná veľkosť (`test_km2`) je input vo
-    # formulári – mení sa pri každom behu, kým miesto skoro nikdy.
+    # RÝCHLY TEST. Zapína ho switch `test` vo formulári; tu je len veľkosť
+    # a miesto štvorca – oboje sa mení zriedka, kým samotné zapnutie pri
+    # každom behu. Platí to len pri zapnutom switchi: `test_km2` bez neho je
+    # chyba, nie ticho ignorované číslo.
+    "test_km2": ("4", "veľkosť štvorca pri zapnutom switchi `test` (km²)"),
     "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
@@ -61,9 +66,9 @@ DEFAULTS = {
     # sa každý prekryv a každá diera prejavili ako škvrna.
     "rock_plne": ("1", "1 = skaly ako plné plochy, 0 = s dierami a triedou cliff"),
     # Mriežka na obrys skál. Bol to samostatný input, ale strop je desať
-    # a rýchly testovací beh (`test_km2`) sa mení pri každom ladení, kým
-    # mriežku má zmysel prestaviť len s iným zdrojom výšok – `auto` ju vyberie
-    # z bunky DEM a rozpočtu času a vypíše do logu, prečo práve tú.
+    # a switch rýchleho testu sa preklikáva pri každom ladení, kým mriežku má
+    # zmysel prestaviť len s iným zdrojom výšok – `auto` ju vyberie z bunky
+    # DEM a rozpočtu času a vypíše do logu, prečo práve tú.
     "rock_res": ("auto", "mriežka na obrys skál v metroch, alebo `auto`"),
     "contour_smoothing": ("0", "zjemnenie DEM v oblúkových sekundách"),
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
@@ -98,8 +103,8 @@ DEFAULTS = {
 MOVED = {
     "rock_source": "je samostatný input vo formulári (výber zdroja skál), "
                    "nie voľba",
-    "test_km2": "je samostatný input vo formulári (rýchly test na pár km², "
-                "predvolene 4; ostrý beh je 0), nie voľba",
+    "test": "je switch vo formulári (rýchly test na pár km²), nie voľba. "
+            "Veľkosť štvorca je voľba `test_km2`",
     "dem_source": "sa rozpadol na tri inputy vo formulári – `contour_source`, "
                   "`rock_source` a `shading_source`, každá vrstva má svoj "
                   "zdroj",
@@ -156,8 +161,9 @@ def main():
                     help="zdroj skál: výškový model, `tienovanie`, alebo `ziadne`")
     ap.add_argument("--shading-source", default=NONE,
                     help="zdroj výšok pre tieňovanie a 3D terén, alebo `ziadne`")
-    ap.add_argument("--test-km2", default="0",
-                    help="rýchly test na štvorci s toľkými km² (0 = ostrý beh)")
+    ap.add_argument("--test", default="false",
+                    help="switch rýchleho testu: true = počítať len štvorec "
+                         "s `test_km2` km²")
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
@@ -186,23 +192,38 @@ def main():
         changed[k] = v
 
     # ---------- rýchly test na pár km² ----------
-    # Číslo z formulára ide do mena cache aj do kľúča uložených výsledkov
-    # (`…_test4`) a inde sa porovnáva s „0" ako s reťazcom, takže sa tu
-    # normalizuje: prázdne pole je 0 a `4.0` aj `4` dajú to isté „4".
-    # Nečíslo je chyba – `test_km2: štyri` by inak ticho spustilo ostrý beh
-    # na celý kraj namiesto minútového testu.
-    test_km2 = (args.test_km2 or "0").strip() or "0"
+    # Zo switchu a veľkosti vyjde jedno číslo, s ktorým ďalej pracuje celý
+    # workflow: 0 = ostrý beh, čokoľvek iné = strana štvorca v km². Ide do
+    # mena cache aj do kľúča uložených výsledkov (`…_test4`) a inde sa
+    # porovnáva s „0" ako s reťazcom, takže sa tu aj normalizuje – `4.0`
+    # aj `4` dajú to isté „4".
+    test_on = (args.test or "false").strip().lower()
+    if test_on not in ("true", "false"):
+        print(f"::error::Switch „test“ musí byť true alebo false, "
+              f"nie „{args.test}“.", file=sys.stderr)
+        return 1
+    test_on = test_on == "true"
+
+    size = (values["test_km2"] or "").strip()
     try:
-        n = float(test_km2)
+        n = float(size)
     except ValueError:
-        print(f"::error::test_km2 musí byť číslo (0 = ostrý beh na celý "
-              f"výrez), nie „{test_km2}“.", file=sys.stderr)
+        print(f"::error::Voľba „test_km2“ musí byť číslo v km², "
+              f"nie „{size}“.", file=sys.stderr)
         return 1
-    if n < 0:
-        print(f"::error::test_km2 nemôže byť záporné („{test_km2}“). "
-              f"0 = ostrý beh na celý výrez.", file=sys.stderr)
+    if n <= 0:
+        # Vypína sa switchom, nie nulou – inak sú na to isté dve páky a raz
+        # si budú protirečiť („switch zapnutý, veľkosť 0“ nie je nič).
+        print(f"::error::Voľba „test_km2“ musí byť väčšia než nula "
+              f"(„{size}“). Rýchly test sa vypína odškrtnutím switchu "
+              f"„test“.", file=sys.stderr)
         return 1
-    values["test_km2"] = f"{n:g}"
+    if "test_km2" in changed and not test_on:
+        print("::error::`test_km2` má zmysel len so zapnutým switchom „test“ "
+              "– takto by sa nič nespočítalo inak. Zaškrtni `test`, alebo "
+              "vymaž `test_km2` z options.", file=sys.stderr)
+        return 1
+    values["test_km2"] = f"{n:g}" if test_on else "0"
 
     # ---------- tri výbery zdroja ----------
     # Čo sa smie kde vybrať, hovorí `for` v dem-sources.json – ten istý
@@ -266,6 +287,9 @@ def main():
         print(f"Pregenerovať: {args.rebuild}")
     print(f"\nVrstevnice: {contour_src}   Skaly: {rock_src}   "
           f"Tieňovanie: {shading_src}   Trasy: {values['trails']}")
+    print("Rýchly test: " + (f"ZAPNUTÝ, {values['test_km2']} km² zo stredu "
+                             f"výrezu (mapa sa otvorí tam)"
+                             if test_on else "vypnutý – ostrý beh"))
     return 0
 
 

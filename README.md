@@ -546,22 +546,31 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
-| len rýchlo overiť, či to vôbec niečo nájde | `test_km2: 4` (predvolené, viď nižšie) |
+| len rýchlo overiť, či to vôbec niečo nájde | switch `test` (predvolene zapnutý, viď nižšie) |
 
-### Testovací režim: pár km² namiesto celého pohoria
+### Rýchly test: pár km² namiesto celého pohoria
 
-Pole **`test_km2`** vyreže **zo stredu zvoleného výrezu štvorec s toľkými
-km²** a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa
-pritom celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta
-na celý kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval
-overiť za jeden beh a nie za jeden obed.
+Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec so 4 km²**
+a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
+celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
+kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
+jeden beh a nie za jeden obed.
 
-**Predvolené sú 4 km², teda rýchly beh.** Ostrý build na celý výrez chce
-vedomé `test_km2: 0`. Opačné poradie (predvolene ostrý) znamenalo, že sa
-každé ladenie prahu platilo desiatkami minút, kým si niekto spomenul dopísať
-voľbu do textového poľa — a to je práve tá vec, ktorá sa mení pri každom
-behu. Za miesto vo formulári zaplatila mriežka `rock_res`, ktorá sa naopak
-prestavuje len s iným zdrojom výšok; je z nej voľba (`options: rock_res=1`).
+**Predvolene je zapnutý.** Ostrý build na celý výrez ho chce odškrtnúť.
+Opačné poradie znamenalo, že sa každé ladenie prahu platilo desiatkami minút,
+kým si niekto spomenul dopísať voľbu do textového poľa — a to je práve tá
+vec, ktorá sa preklikáva pri každom behu. Veľkosť štvorca sa naopak mení
+zriedka, tak ostala voľbou (`options: test_km2=2`). Za miesto vo formulári
+zaplatila mriežka `rock_res`, ktorá sa prestavuje len s iným zdrojom výšok;
+je z nej tiež voľba (`options: rock_res=1`).
+
+**Mapa sa otvorí rovno na tom štvorci.** Nie je to zvláštny prípad vo viewri:
+testom sa oreže celý región, takže je ten štvorec bboxom regiónu v manifeste
+a mapa sa naň nastaví ako na hocijaký iný región. Navrch viewer zahodí polohu
+z adresy (`#map=…`), keď mieri mimo nasadeného bboxu — inak by `F5` alebo
+starý odkaz otvorili mapu nad prázdnom dvadsať kilometrov vedľa a vyzeralo by
+to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 4 km²`,
+nech sa pár km² mapy nedá zameniť s pokazeným buildom.
 
 Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
@@ -579,10 +588,10 @@ prísne prahy, alebo len štvorec padol na lúku pod lesom.
 
 | chcem | ako |
 |---|---|
-| iná veľkosť | `test_km2: 5` |
-| ostrý beh na celom výreze | `test_km2: 0` |
+| iná veľkosť | `options: test_km2=5` |
+| ostrý beh na celom výreze | odškrtnúť switch `test` |
 | iné miesto než stred výrezu | `options: test_at=20.30,49.24` (`lon,lat`) |
-| to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` |
+| to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` v „Skaly z tieňovaných dlaždíc“ (tam je to počet km², nie switch) |
 
 Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build z
 dobrovoľníckeho servera freemap.sk neťahá nič. Tieňovanie na **celý región**
@@ -1609,21 +1618,21 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `vysoke_tatry`, `tatry`, `slovensky_raj`, `mala_fatra`… |
-   | `test_km2` | text | **rýchly test**: spraviť všetko len na štvorci s toľkými km² zo stredu výrezu (default `4`, ostrý beh na celý výrez je `0`) |
+   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
-   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. mriežka na obrys skál `rock_res=1`) |
+   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=2`, mriežka na obrys skál `rock_res=1`) |
 
-   **Prečo je vo formulári `test_km2` a nie `rock_res`.** Polí je desať a je
-   to strop, takže sa dá pridať len to, za čo niečo vypadne. Veľkosť rýchleho
-   testu sa mení pri každom ladení; mriežku na obrys skál má zmysel prestaviť
-   len s iným zdrojom výšok, a aj vtedy ju `auto` vyberie z bunky DEM
-   a rozpočtu času lepšie, než sa háda ručne. `rock_res` je preto späť ako
-   voľba: `options: rock_res=1`.
+   **Prečo je vo formulári `test` a nie `rock_res`.** Polí je desať a je to
+   strop, takže sa dá pridať len to, za čo niečo vypadne. Rýchly test sa
+   zapína a vypína pri každom behu — to je switch. Jeho veľkosť aj mriežka na
+   obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=2`,
+   `rock_res=1`); mriežku navyše `auto` vyberie z bunky DEM a rozpočtu času
+   lepšie, než sa háda ručne.
 
    **Tri výbery zdroja, jeden na vrstvu.** Kým to bol jeden `dem_source` pre
    všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly

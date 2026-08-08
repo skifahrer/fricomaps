@@ -219,9 +219,10 @@ fi
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
-  echo "Ešte rýchlejšie je pole \`test_km2\` (predvolene \`4\`): vyreže zo"
-  echo "stredu výrezu štvorec s toľkými km² a na ňom spraví VŠETKO vrátane"
-  echo "tieňovania. Ostrý beh na celom výreze je \`test_km2: 0\`."
+  echo "Ešte rýchlejší je switch \`test\` (predvolene zapnutý): vyreže zo"
+  echo "stredu výrezu štvorec so 4 km², spraví na ňom VŠETKO vrátane"
+  echo "tieňovania a mapu otvorí rovno tam. Ostrý beh na celom výreze ho"
+  echo "chce odškrtnúť; iná veľkosť je \`options: test_km2=2\`."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then
