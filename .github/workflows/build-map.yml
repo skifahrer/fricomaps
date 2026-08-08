@@ -36,8 +36,10 @@ on:
           - banskobystricky
           - presovsky
           - kosicky
+      # Celý kraj trvá ~40 min, jedno pohorie ~2. Ešte rýchlejší je switch
+      # `test` pod týmto. Vlastný bbox: `options: area_bbox=W,S,E,N`.
       area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejší je switch test pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
+        description: "Pohorie, na ktorom sa počítajú vrstevnice a skaly"
         required: false
         default: vysoke_tatry
         type: choice
@@ -66,8 +68,12 @@ on:
       # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
       # Kľúč testovacieho behu má príponu `_test4`, takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
+      # Spraví VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci zo
+      # stredu výrezu – z desiatok minút sú minúty a mapa sa otvorí rovno
+      # tam. Iná veľkosť: `options: test_km2=2`. Iné miesto:
+      # `options: test_at=lon,lat`.
       test:
-        description: "RÝCHLY TEST – spraviť VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci 4 km² zo stredu výrezu: z desiatok minút sú minúty a mapa sa otvorí rovno tam. Iná veľkosť cez options: test_km2=2, iné miesto cez options: test_at=lon,lat"
+        description: "Rýchly test: počítať len 4 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -78,8 +84,10 @@ on:
       # zapínač je tým pádom v tom istom poli ako zdroj a nie vedľa neho,
       # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
       # Zoznam zdrojov drží workers/dem-sources.json (stráži to Lint workflows).
+      # sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m.
+      # dmr5 = ÚGKK DMR 5.0 (LLS), 5 m. ugkk = 1 m LiDAR, LEN na výrez.
       contour_source:
-        description: "VRSTEVNICE – z ktorého modelu terénu. sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m. dmr5 = ÚGKK DMR 5.0 (LLS), 5 m. ugkk = 1 m LiDAR, LEN na výrez. ziadne = negenerovať"
+        description: "Vrstevnice – z ktorého modelu terénu (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -89,8 +97,11 @@ on:
           - dmr5
           - ugkk
           - ziadne
+      # Buď zo sklonu výškového modelu (sonny / dmr35 / dmr5 / ugkk), alebo
+      # `tienovanie` = hotové polygóny z workflowu „Skaly z tieňovaných
+      # dlaždíc“ – ten si build v prípade potreby zavolá sám.
       rock_source:
-        description: "SKALY – zo sklonu ktorého modelu (sonny / dmr35 / dmr5 / ugkk), alebo tienovanie = hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc“ (treba ho najprv pustiť na ten istý výrez). ziadne = negenerovať"
+        description: "Skaly – zo sklonu modelu, alebo z tieňovania (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -101,8 +112,10 @@ on:
           - ugkk
           - tienovanie
           - ziadne
+      # `ugkk` tu nie je: 1 m LiDAR máme len na výrez, kým tieňovanie sa
+      # robí na celý región.
       shading_source:
-        description: "TIEŇOVANIE A 3D TERÉN – z ktorého modelu. ugkk tu nie je: 1 m LiDAR máme len na výrez, tieňovanie sa robí na celý región. ziadne = negenerovať"
+        description: "Tieňovanie a 3D terén – z ktorého modelu (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -112,17 +125,20 @@ on:
           - dmr5
           - ziadne
       contour_interval:
-        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie, 20 = redšie). Každá 10. sa kreslí ako hlavná, každá 5. ako polovičná"
+        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie)"
         required: false
         default: "10"
         type: string
       rock_slope:
-        description: "Od akého sklonu (°) je terén skala – 50 = steny, 40 = aj strmé svahy (oveľa väčšie plochy)"
+        description: "Od akého sklonu (°) je terén skala (50 = steny, 40 = aj strmé svahy)"
         required: false
         default: "50"
         type: string
+      # Zmaže cache aj uloženú verziu v release. Pri zapnutom switchi `test`
+      # sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto
+      # pole je vtedy jedno.
       rebuild:
-        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu). Pri zapnutom switchi test sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto pole je vtedy jedno"
+        description: "Čo pregenerovať nanovo, aj keď to už je v cache"
         required: false
         default: nic
         type: choice
@@ -132,8 +148,13 @@ on:
           - skaly
           - teren
           - vsetko
+      # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
+      # Veľkosť rýchleho testu: `test_km2=2` (default 4).
+      # Mriežka na obrys skál: `rock_res=1` (default auto).
+      # Celý zoznam aj s predvolenými hodnotami je vo workers/parse-options.py
+      # a neznámy kľúč je chyba, nie ticho ignorovaná hodnota.
       options:
-        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Veľkosť rýchleho testu: `test_km2=2` (default 4). Mriežka na obrys skál: `rock_res=1` (default auto). Zoznam kľúčov je vo workers/parse-options.py"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota (viď workers/parse-options.py)"
         required: false
         default: ""
         type: string
