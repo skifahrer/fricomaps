@@ -1015,6 +1015,41 @@ def raster_size(vrt):
     return int(m.group(1)), int(m.group(2))
 
 
+def skontroluj_jednotky(src, x0, y0, x1, y1):
+    """Sú súradnice prvého bloku v metroch, ako ich čaká výpočet plochy?
+
+    PREČO: `filter_stream` počíta plochu zo súradníc, akoby boli metrické
+    (EPSG:3857). Keby ovládač GeoJSON medzitým prepočítal na stupne, každá
+    skala vyjde rádovo 1e-9 m², spadne pod `min_area` a výsledok je NULA
+    plôch – po hodine počítania a bez jedinej chybovej hlášky. Presne to sa
+    stalo behu 31245134321.
+
+    Overiť sa to dá lacno: prvý vrchol prvého bloku musí ležať v jeho
+    vlastnom rozsahu. Stupne (rádovo desiatky) sa do metrov (rádovo milióny)
+    nezmestia, takže sa to pozná hneď.
+    """
+    with open(src) as f:
+        for line in f:
+            if not line.strip():
+                continue
+            g = (json.loads(line).get("geometry") or {})
+            polys = ([g["coordinates"]] if g.get("type") == "Polygon"
+                     else g.get("coordinates") or [])
+            if not polys or not polys[0]:
+                continue
+            x, y = polys[0][0][0][:2]
+            rez = max(abs(x1 - x0), abs(y1 - y0))
+            if (min(x0, x1) - rez <= x <= max(x0, x1) + rez
+                    and min(y0, y1) - rez <= y <= max(y0, y1) + rez):
+                return
+            raise RuntimeError(
+                f"obrysy prišli v iných súradniciach, než v akých sa počíta "
+                f"plocha: prvý vrchol [{x:.2f}, {y:.2f}], blok má byť "
+                f"[{x0:.0f}…{x1:.0f}, {y1:.0f}…{y0:.0f}] v metroch "
+                f"(EPSG:3857). Vyzerá to na prepočet do stupňov – pozri "
+                f"vyhodenie <SRS> z okna bloku.")
+
+
 def oznac_svy(src, dst, x0, y0, x1, y1, res):
     """Označí útvary, ktoré sa dotýkajú hranice bloku (`sev=1`).
 
@@ -1101,11 +1136,29 @@ def contour_blocks(vrt, args, tmp, cliff_level, ox, oy, res):
         # dát, takže výrez bloku nič nestojí.
         run(["gdal_translate", "-q", "-of", "VRT", "-srcwin",
              str(bx), str(by), str(bw), str(bh), vrt, okno])
+        # A TERAZ TO DÔLEŽITÉ: z okna sa vyhodí <SRS>.
+        #
+        # Ovládač GeoJSON prepočítava do WGS84 vždy, keď zdroj vie, v čom je.
+        # Contour nad rastrom s EPSG:3857 by teda vypísal STUPNE – a `filter`
+        # počíta plochu zo súradníc ako z metrov, takže by každá skala vyšla
+        # rádovo 1e-9 m² a spadla pod `min_area`. Presne to sa aj stalo:
+        # 976 725 plôch, z toho 0 ponechaných (beh 31245134321). Predtým to
+        # držal `-a_srs EPSG:4326` na `ogr2ogr`, ktorý súradnice len preznačí
+        # a neprepočíta; po prechode na bloky ten krok zmizol a s ním aj trik.
+        # Bez SRS nemá čo prepočítať a súradnice ostanú metrické.
+        with open(okno) as f:
+            xml = f.read()
+        with open(okno, "w") as f:
+            f.write(re.sub(r"\s*<SRS[^>]*>.*?</SRS>", "", xml, flags=re.S))
         part = cesta + ".part"
         run(["gdal_contour", "-p", "-q", "-amin", "dmin", "-amax", "dmax",
-             *levels, "-f", "GeoJSONSeq", "-nln", "band", okno, part])
-        oznac_svy(part, cesta, ox + bx * res, oy - by * res,
-                  ox + (bx + bw) * res, oy - (by + bh) * res, res)
+             *levels, "-f", "GeoJSONSeq", "-nln", "band",
+             "-lco", "COORDINATE_PRECISION=2", okno, part])
+        x_od, y_od = ox + bx * res, oy - by * res
+        x_do, y_do = ox + (bx + bw) * res, oy - (by + bh) * res
+        if i == 0:
+            skontroluj_jednotky(part, x_od, y_od, x_do, y_do)
+        oznac_svy(part, cesta, x_od, y_od, x_do, y_do, res)
 
         el = time.time() - t0
         spravene = i + 1 - hotovych
@@ -1232,6 +1285,14 @@ def vectorize(tifs, args, tmp, out, lat_mid):
           f"(pod {args.min_area:g} m² preč), diery {st['holes']} ostali, "
           f"{st['holes_dropped']} pod {args.min_hole:g} m² preč", flush=True)
     if not st["n"]:
+        if st["n_in"] > 1000:
+            # Tisíce útvarov a ani jeden dosť veľký nie je „prísny prah" –
+            # taký prah by ich neprepustil vôbec. Skôr je zle jednotka plochy.
+            print(f"::warning::Filter zahodil VŠETKÝCH {st['n_in']} útvarov "
+                  f"ako menšie než {args.min_area:g} m². Pri takom počte to "
+                  f"nevyzerá na prísny prah, ale na to, že plocha sa počíta "
+                  f"v iných jednotkách než v metroch – skontroluj súradnice "
+                  f"v {seq}.", flush=True)
         return st
 
     metric = os.path.join(tmp, "rock-metric.gpkg")
@@ -1515,6 +1576,10 @@ def main():
     t_vec = time.time()
     try:
         st = vectorize(tifs, args, tmp, args.out, lat_mid)
+    except RuntimeError as exc:
+        # Napr. kontrola jednotiek. Hláška je zrozumiteľná, traceback nie.
+        print(f"::error::{exc}", file=sys.stderr)
+        return 2
     except TimeoutError:
         # Odhad bol vedľa. Povedať to s číslom a s tým, čo zmeniť, je
         # užitočnejšie než traceback – a stiahnuté dlaždice ostávajú v cache,
