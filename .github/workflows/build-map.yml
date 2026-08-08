@@ -60,20 +60,20 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
-      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (4 km² sedia skoro
+      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (2 km² sedia skoro
       # vždy), kým test sa zapína a vypína pri každom behu – a to je presne
       # rozdiel medzi switchom a textovým poľom. Veľkosť ostala ako voľba
       # `test_km2=2`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
       # odškrtnúť – opačné poradie znamenalo, že sa každé ladenie prahu
       # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
-      # Kľúč testovacieho behu má príponu `_test4`, takže si nesadne do cache
+      # Kľúč testovacieho behu má príponu `_test2`, takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
       # Spraví VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci zo
       # stredu výrezu – z desiatok minút sú minúty a mapa sa otvorí rovno
-      # tam. Iná veľkosť: `options: test_km2=2`. Iné miesto:
+      # tam. Iná veľkosť: `options: test_km2=5`. Iné miesto:
       # `options: test_at=lon,lat`.
       test:
-        description: "Rýchly test: počítať len 4 km² zo stredu výrezu"
+        description: "Rýchly test: počítať len 2 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -149,7 +149,7 @@ on:
           - teren
           - vsetko
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
-      # Veľkosť rýchleho testu: `test_km2=2` (default 4).
+      # Veľkosť rýchleho testu: `test_km2=5` (default 2).
       # Mriežka na obrys skál: `rock_res=1` (default auto).
       # Celý zoznam aj s predvolenými hodnotami je vo workers/parse-options.py
       # a neznámy kľúč je chyba, nie ticho ignorovaná hodnota.
@@ -720,7 +720,7 @@ jobs:
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
           CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
 
-          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) je to isté
+          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) je to isté
           # orezanie, len bbox nezadávaš ty – vyreže sa štvorec zo stredu
           # zvoleného výrezu. Orezaním REGIÓNU (a nie len výrezu) sa zmenší
           # úplne všetko: vrstevnice, skaly aj tieňovanie, ktoré sa inak

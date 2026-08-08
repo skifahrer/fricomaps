@@ -250,9 +250,9 @@ python3 workers/summary-inputs.py \
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
   echo "Ešte rýchlejší je switch \`test\` (predvolene zapnutý): vyreže zo"
-  echo "stredu výrezu štvorec so 4 km², spraví na ňom VŠETKO vrátane"
+  echo "stredu výrezu štvorec s 2 km², spraví na ňom VŠETKO vrátane"
   echo "tieňovania a mapu otvorí rovno tam. Ostrý beh na celom výreze ho"
-  echo "chce odškrtnúť; iná veľkosť je \`options: test_km2=2\`."
+  echo "chce odškrtnúť; iná veľkosť je \`options: test_km2=5\`."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then

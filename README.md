@@ -562,7 +562,7 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 
 ### Rýchly test: pár km² namiesto celého pohoria
 
-Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec so 4 km²**
+Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
 a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
 celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
 kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
@@ -572,7 +572,7 @@ jeden beh a nie za jeden obed.
 Opačné poradie znamenalo, že sa každé ladenie prahu platilo desiatkami minút,
 kým si niekto spomenul dopísať voľbu do textového poľa — a to je práve tá
 vec, ktorá sa preklikáva pri každom behu. Veľkosť štvorca sa naopak mení
-zriedka, tak ostala voľbou (`options: test_km2=2`). Za miesto vo formulári
+zriedka, tak ostala voľbou (`options: test_km2=5`). Za miesto vo formulári
 zaplatila mriežka `rock_res`, ktorá sa prestavuje len s iným zdrojom výšok;
 je z nej tiež voľba (`options: rock_res=1`).
 
@@ -581,10 +581,10 @@ testom sa oreže celý región, takže je ten štvorec bboxom regiónu v manifes
 a mapa sa naň nastaví ako na hocijaký iný región. Navrch viewer zahodí polohu
 z adresy (`#map=…`), keď mieri mimo nasadeného bboxu — inak by `F5` alebo
 starý odkaz otvorili mapu nad prázdnom dvadsať kilometrov vedľa a vyzeralo by
-to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 4 km²`,
+to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 2 km²`,
 nech sa pár km² mapy nedá zameniť s pokazeným buildom.
 
-Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
+Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
 **Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
@@ -1734,17 +1734,17 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
-   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
+   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 2 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
-   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=2`, mriežka na obrys skál `rock_res=1`) |
+   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
    **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké
-   Tatry, rýchly test na 4 km². Formulár *Run workflow* sa totiž po každom
+   Tatry, rýchly test na 2 km². Formulár *Run workflow* sa totiž po každom
    otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
    pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
    prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než
@@ -1754,7 +1754,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    **Prečo je vo formulári `test` a nie `rock_res`.** Polí je desať a je to
    strop, takže sa dá pridať len to, za čo niečo vypadne. Rýchly test sa
    zapína a vypína pri každom behu — to je switch. Jeho veľkosť aj mriežka na
-   obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=2`,
+   obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=5`,
    `rock_res=1`); mriežku navyše `auto` vyberie z bunky DEM a rozpočtu času
    lepšie, než sa háda ručne.
 
