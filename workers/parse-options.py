@@ -64,7 +64,14 @@ DEFAULTS = {
     # Plné plochy: skala je jedna súvislá plocha bez dier a v jednej
     # triede. V mape sa kreslí jednou sivou bez priehľadnosti, takže by
     # sa každý prekryv a každá diera prejavili ako škvrna.
-    "rock_plne": ("1", "1 = skaly ako plné plochy, 0 = s dierami a triedou cliff"),
+    "rock_plne": ("1", "1 = jedna trieda skál (žiadna plocha vnútri inej), "
+                       "0 = triedy steep/cliff ako predtým"),
+    # Diery v skalách sú medzery medzi vláknami siete žliabkov a police
+    # vnútri stien – čiže presne ten tvar, pre ktorý sa skaly počítajú.
+    # Zapnuté zapĺňanie z nich spravilo súvislé plochy bez detailu; preto
+    # je vypnuté a je to samostatná voľba, nie súčasť `rock_plne`.
+    "rock_zapln_diery": ("0", "1 = zaplniť diery v skalách (súvislé plochy "
+                              "namiesto tvaru) – neodporúča sa"),
     # Mriežka na obrys skál. Bol to samostatný input, ale strop je desať
     # a switch rýchleho testu sa preklikáva pri každom ladení, kým mriežku má
     # zmysel prestaviť len s iným zdrojom výšok – `auto` ju vyberie z bunky

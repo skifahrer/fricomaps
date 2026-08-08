@@ -17,13 +17,17 @@
 # Formát je ten istý, len atribúty sa líšia – skaly z DEM majú `slope`, skaly
 # z obrázka `dark`. Vždy je vyplnený len jeden z nich.
 #
-# PLNÉ PLOCHY: obe cesty predvolene vyrábajú plochy BEZ dier a v jedinej
-# triede. Kým sa `steep` a `cliff` kreslili rôzne tmavo, malo zmysel mať dve
-# pásma – `cliff` ležal v diere `steep`u a spolu dláždili územie bez prekryvu.
-# Odkedy je všetko jedna sivá bez priehľadnosti, je z dvoch pásiem len
-# dvojnásobok práce a riziko, že sa niekde prekryjú a plocha vyjde tmavšia.
-# Atribút `class` ostáva (vždy `steep`), nech sa schéma nemení pri každom
-# preladení.
+# JEDNA TRIEDA: obe cesty predvolene vyrábajú plochy v jedinej triede, teda
+# žiadnu plochu vnútri inej. Kým sa `steep` a `cliff` kreslili rôzne tmavo,
+# malo zmysel mať dve pásma – `cliff` ležal v diere `steep`u a spolu dláždili
+# územie bez prekryvu. Odkedy je všetko jedna sivá bez priehľadnosti, je
+# z dvoch pásiem len dvojnásobok práce a riziko, že sa niekde prekryjú
+# a plocha vyjde tmavšia. Atribút `class` ostáva (vždy `steep`), nech sa
+# schéma nemení pri každom preladení.
+#
+# DIERY V PLOCHÁCH SÚ SÚČASŤ TVARU: police vnútri stien a medzery medzi
+# vláknami siete žliabkov. Krátko sa zapĺňali a zo skál boli súvislé plochy
+# bez detailu; odvtedy ostávajú a zapĺňanie je vlastná (vypnutá) voľba.
 schema_name: FricoMaps skaly
 schema_description: Skalné plochy z výškového modelu alebo z tieňovaných dlaždíc
 attribution: <a href="https://sonny.4lima.de/">Sonny's LiDAR DTM</a> / <a href="https://spacedata.copernicus.eu/">Copernicus DEM</a> / <a href="https://www.freemap.sk/">freemap.sk</a>

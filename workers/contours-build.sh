@@ -14,7 +14,7 @@
 #   CONTOUR_INTERVAL OPT_CONTOUR_LINES OPT_CONTOUR_SOURCE
 #   OPT_CONTOUR_SMOOTHING OPT_CONTOUR_MAXZOOM OPT_ROCK_MAXZOOM
 #   ROCK_SLOPE_IN ROCK_RES_IN OPT_ROCKS OPT_ROCK_DEM OPT_ROCK_SOURCE
-#   OPT_ROCK_PLNE
+#   OPT_ROCK_PLNE OPT_ROCK_ZAPLN_DIERY
 #   OPT_ROCK_IMG_ASSET OPT_ROCKS_REBUILD
 #   OPT_SIZE_LIMIT_MB OPT_UGKK_FALLBACK
 # a k tomu `env:` celého workflowu (ROCK_* , *_RELEASE,
@@ -307,6 +307,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
       --plne="${OPT_ROCK_PLNE:-1}" \
+      --zapln-diery="${OPT_ROCK_ZAPLN_DIERY:-0}" \
       --smooth="$ROCK_SMOOTH" \
       --stats=contours-out/rock-stats.txt \
       --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \

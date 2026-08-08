@@ -22,10 +22,15 @@ name: Skaly z tieňovaných dlaždíc
 # – tie druhé teda táto cesta systematicky prehliadne. Zato má rozlíšenie,
 # na aké si sami sklon nespočítame (z17 ≈ 0,8 m na pixel).
 #
-# PLNÉ PLOCHY: výstupom je jedna súvislá plocha na skalu – bez dier a v jednej
-# triede. V mape sa kreslí jednou sivou bez priehľadnosti, takže sa prekryv
-# nikde neprejaví a plochy sa nemusia ani zlepovať. `options: plne=0` vráti
-# pôvodné dve pásma s dierami.
+# JEDNA TRIEDA: výstupom je jedno pásmo, teda žiadna plocha vnútri inej.
+# V mape sa kreslí jednou sivou bez priehľadnosti, takže sa prekryv nikde
+# neprejaví a plochy sa nemusia ani zlepovať. `options: plne=0` vráti pôvodné
+# dve pásma (`steep` a `cliff`).
+#
+# DIERY V PLOCHÁCH OSTÁVAJÚ. Sú to medzery medzi vláknami siete žliabkov –
+# čiže presne tá štruktúra, pre ktorú sa skaly z tieňovania robia. Krátko sa
+# zapĺňali a bola to chyba: z pol pohoria bola jedna súvislá plocha bez
+# detailu. `options: zapln_diery=1` to vráti, ak by to niekto chcel.
 #
 # PRVÝ BEH JE LADIACI. Predvolené prahy sú kvalifikovaný odhad, nie nameraná
 # hodnota. Artefakt `nahlad-…` obsahuje PNG „mozaika vedľa nájdených plôch"
@@ -103,7 +108,7 @@ on:
         default: "7"
         type: string
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Plochy s dierami a s triedou `cliff` ako kedysi: `plne=0`. Zlepiť plochy na hraniciach blokov: `zlepit=1`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Aj trieda `cliff` ako kedysi: `plne=0`. Súvislé plochy bez dier: `zapln_diery=1` (zožerie detail). Zlepiť plochy na hraniciach blokov: `zlepit=1`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
         required: false
         default: ""
         type: string
@@ -180,7 +185,8 @@ env:
   # a tieto z obrázka, takže sa nesmú pomiešať ani omylom.
   ROCK_IMG_RELEASE: dem-rocks-img
   # Verzia algoritmu v mene assetu. Zmena algoritmu = iné skaly.
-  ROCK_IMG_ALGO: v1
+  # v2: diery v plochách ostávajú (v1 ich zapĺňal a zožral tým detail)
+  ROCK_IMG_ALGO: v2
   # Bbox Slovenska – `resolve-area.py` pretína výrez s „regiónom", a tu je
   # regiónom celé územie, na ktorom tá dlaždicová vrstva vôbec existuje.
   SK_BBOX: "16.79,47.71,22.58,49.63"

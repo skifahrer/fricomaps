@@ -116,10 +116,13 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo "| najväčšia plocha | ${max_ha:-?} ha |"
     echo "| skalného terénu spolu | ${total_km2:-?} km² |"
     if [ "${plne:-1}" = '1' ]; then
-      echo "| prah sklonu | ≥ ${slope_deg:-?}° (krok ${slope_step_deg:-?}°) |"
-      echo "| plochy | **plné** – bez dier, jedna trieda |"
+      echo "| prah sklonu | ≥ ${slope_deg:-?}° (krok ${slope_step_deg:-?}°), jedna trieda |"
     else
       echo "| prah sklonu | ≥ ${slope_deg:-?}° (steny od ${cliff_deg:-?}°, krok ${slope_step_deg:-?}°) |"
+    fi
+    if [ "${zapln_diery:-0}" = '1' ]; then
+      echo "| diery | **zaplnené** (\`rock_zapln_diery=1\`) – detail tvaru je preč |"
+    else
       echo "| plôch s dierou (miesto pod prahom vnútri skaly) | ${with_holes:-0} |"
       echo "| vykrojené dierami | ${holes_km2:-0} km² |"
     fi
@@ -127,14 +130,15 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo "| zaoblenie rohov (Chaikin) | ${smooth_passes:-0}× |"
     echo
     echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
-    if [ "${plne:-1}" = '1' ]; then
-      echo "Plochy sú **plné**: miesto pod prahom vnútri skaly (polica, terasa)"
-      echo "sa nevykrojí a v mape je celá skala jedna súvislá sivá plocha."
-      echo "Vrátiť diery a triedu \`cliff\`: \`options: rock_plne=0\`."
+    if [ "${zapln_diery:-0}" = '1' ]; then
+      echo "Diery sú **zaplnené** (\`options: rock_zapln_diery=1\`), takže"
+      echo "z každej skaly je súvislá plocha bez vnútorného tvaru. Vypnutie"
+      echo "toho prepínača vráti police a medzery tam, kam patria."
     else
       echo "Kde je vnútri steny miesto s menším sklonom (polica, terasa),"
       echo "vypadne z plochy **diera** a nezafarbí sa – aj keď je dookola"
-      echo "všade sklon nad prahom."
+      echo "všade sklon nad prahom. Práve tie diery robia tvar skaly"
+      echo "čitateľným."
     fi
     if [ "${area_key:-cely}" != "cely" ]; then
       echo

@@ -8,23 +8,22 @@ sklonu terénu:
 
     DEM → EPSG:3035 (metre) → gdaldem slope → mozaika sklonu →
     gdal_contour -p (izolínie sklonu ako PLOCHY) → rozbitie na plochy →
-    filter najmenšej plochy → plná plocha (bez dier)
+    filter najmenšej plochy → jedna trieda, diery ostávajú
 
 TVAR PLÔCH: obrys je izolínia sklonu, čiže presne tá čiara, kde terén
 prekročí prah. Skala tak má taký tvar, aký naozaj má – zubatý pás pod
 hrebeňom, oblúk okolo žľabu, ostrov brala v suti.
 
-PLNÉ PLOCHY (predvolene, `--plne`): von ide jedno pásmo [prah, ∞) v jednej
-triede a len jeho VONKAJŠÍ prstenec. Skala je tak na mape jedna súvislá sivá
-plocha – kreslí sa plnou farbou bez priehľadnosti, takže by sa každá diera aj
-každý prekryv prejavili ako škvrna. `--plne=0` vráti pôvodné správanie:
+JEDNA TRIEDA (predvolene, `--plne`): von ide jedno pásmo [prah, ∞), teda
+žiadna plocha vnútri inej plochy. `--plne=0` vráti aj druhé pásmo `cliff`
+(od `--cliff`), ktoré leží v diere pásma `steep`.
 
-  DIERY: kde je vnútri steny miesto s menším sklonom (police, terasa,
-  zarastený stupeň), vypadne z plochy **diera** – tá plocha sa nezafarbí, aj
-  keď je dookola všade nad prahom. Presne to robí `gdal_contour -p`: pásmo
-  [prah, ∞) je polygón s vnútornými prstencami tam, kde hodnota pod prah
-  klesla. K tomu druhé pásmo `cliff` (od `--cliff`), ktoré leží v diere
-  pásma `steep`.
+DIERY: kde je vnútri steny miesto s menším sklonom (police, terasa, zarastený
+stupeň), vypadne z plochy **diera** – tá plocha sa nezafarbí, aj keď je
+dookola všade nad prahom. Presne to robí `gdal_contour -p`: pásmo [prah, ∞) je
+polygón s vnútornými prstencami tam, kde hodnota pod prah klesla. Práve tie
+diery robia tvar skaly čitateľným; `--zapln-diery=1` ich zaplní a zo skál
+budú súvislé klaksy.
 
 PREČO SA VEKTORIZUJE NARAZ, A NIE PO ČASTIACH: keď sa každá časť územia
 vektorizovala zvlášť a výsledky sa lepili (`-clipsrc` + `ST_Union`), diera
@@ -394,8 +393,10 @@ def main():
     # Plné plochy: jedno pásmo a zaplnené diery. Dokopy z toho je „jedna
     # skala = jedna sivá plocha", nič v ničom a nič presvitajúce.
     ap.add_argument("--plne", type=int, default=1,
-                    help="1 = plné plochy (jedno pásmo, diery zaplnené), "
-                         "0 = pásma steep/cliff a diery ako predtým")
+                    help="1 = jedno pásmo a jedna trieda (žiadna plocha "
+                         "vnútri inej), 0 = pásma steep/cliff ako predtým")
+    ap.add_argument("--zapln-diery", type=int, default=0,
+                    help="1 = zaplniť diery (súvislé plochy namiesto tvaru)")
     ap.add_argument("--min-area", type=float, default=-1.0,
                     help="najmenšia plocha v m²; -1 = jedna bunka mriežky "
                          "(menší útvar už nie je tvar terénu, ale jedna bunka)")
@@ -515,13 +516,17 @@ def main():
             return 1
 
         # ---------- 4. filter najmenšej plochy + atribúty ----------
-        # S `--plne` sa diery ZAPĹŇAJÚ: von ide len vonkajší prstenec, takže
-        # skala je na mape jedna súvislá sivá plocha. Bez neho ostávajú –
-        # miesto pod prahom vnútri steny (polica, terasa) sa nezafarbí, aj keď
-        # je dookola všade sklon nad prahom.
+        # DIERY OSTÁVAJÚ: miesto pod prahom vnútri steny (polica, terasa,
+        # zarastený stupeň) sa nezafarbí, aj keď je dookola všade sklon nad
+        # prahom. Práve ony robia tvar skaly čitateľným.
+        #
+        # `--zapln-diery=1` ich zaplní (von ide len vonkajší prstenec). Bolo
+        # to kedysi súčasťou `--plne` a bola to chyba – zo skál vyšli súvislé
+        # klaksy, v ktorých nebolo vidieť žiaden detail.
         stage = exploded
         final_metric = os.path.join(tmp, "rock-final.gpkg")
-        geom = ("ST_BuildArea(ST_ExteriorRing(geom))" if args.plne else "geom")
+        geom = ("ST_BuildArea(ST_ExteriorRing(geom))"
+                if args.zapln_diery else "geom")
         sql = (f"SELECT class, CASE WHEN class = 'cliff' THEN {hi} ELSE {lo} END "
                f"AS slope, CAST(ST_Area({geom}) AS INTEGER) AS area, "
                f"{geom} AS geom "
@@ -534,7 +539,7 @@ def main():
             # `ST_BuildArea` je zo spatialite a nemusí byť. Skaly s dierami sú
             # lepšie než žiadne skaly, tak sa najprv skúsi vynechať zapĺňanie
             # a až potom celý filter.
-            if args.plne:
+            if args.zapln_diery:
                 print("::warning::Zapĺňanie dier (ST_BuildArea) nefunguje – "
                       "spatialite pravdepodobne chýba. Skaly idú s dierami.")
                 geom = "geom"
@@ -601,6 +606,7 @@ def main():
                 f.write(f"min_area_m2={args.min_area:g}\n")
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
                 f.write(f"plne={int(bool(args.plne))}\n")
+                f.write(f"zapln_diery={int(bool(args.zapln_diery))}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
                 f.write(f"simplify_m={args.simplify:g}\n")
                 f.write(f"smooth_passes={args.smooth}\n")
