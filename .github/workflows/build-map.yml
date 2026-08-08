@@ -122,7 +122,7 @@ on:
         default: "50"
         type: string
       rebuild:
-        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
+        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu). Pri zapnutom switchi test sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto pole je vtedy jedno"
         required: false
         default: nic
         type: choice
@@ -901,8 +901,13 @@ jobs:
       # Cache sa v GitHube nedá prepísať – kľúč, ktorý raz existuje, ostane so
       # starým obsahom. Pregenerovanie preto starý záznam najprv zmaže; až
       # potom má zmysel počítať nanovo a uložiť to pod ten istý kľúč.
+      # POZOR na `if:` s výstupom jobu: výstupy sú REŤAZCE a reťazec „false"
+      # je vo výraze pravdivý (nepravdivý je len prázdny). `if: ${{ x }}` teda
+      # platí vždy a `if: ${{ !x }}` nikdy – preto sa tu všade porovnáva
+      # s 'true' doslova. Bez toho sa cache reštore nikdy nespustil a každý
+      # beh počítal vrstevnice, skaly aj tieňovanie odznova.
       - name: Pregenerovanie – zmaž staré cache
-        if: ${{ needs.plan.outputs.opt_contours_rebuild || needs.plan.outputs.opt_rocks_rebuild || needs.plan.outputs.opt_terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours_rebuild == 'true' || needs.plan.outputs.opt_rocks_rebuild == 'true' || needs.plan.outputs.opt_terrain_rebuild == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1000,7 +1005,7 @@ jobs:
       # záznam už zmazal krok „Pregenerovanie", nech sa dá uložiť nový.
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
-        if: ${{ needs.plan.outputs.opt_contours == 'true' && !needs.plan.outputs.opt_contours_rebuild && !needs.plan.outputs.opt_rocks_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_contours_rebuild != 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: contours-out
@@ -1237,7 +1242,7 @@ jobs:
 
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
-        if: ${{ needs.plan.outputs.opt_terrain == 'true' && !needs.plan.outputs.opt_terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_terrain == 'true' && needs.plan.outputs.opt_terrain_rebuild != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out

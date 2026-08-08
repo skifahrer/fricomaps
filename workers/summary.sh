@@ -230,6 +230,16 @@ python3 workers/summary-inputs.py \
   echo "verzie v release \`dem-rocks\`), \`teren\` alebo \`vsetko\`."
   echo "Najprv sa zmaže príslušná cache – inak by sa stará verzia"
   echo "len vrátila späť."
+  # Tabuľka „Nastavenia tohto behu" vyššie ukazuje `rebuild` tak, ako bol
+  # vo formulári – pri zapnutom teste by teda tvrdila `nic`, hoci sa počítalo
+  # všetko nanovo. Bez tejto vety by to vyzeralo ako chyba súhrnu.
+  if [ "${TEST_KM2:-0}" != '0' ]; then
+    echo
+    echo "V tomto behu to však nebolo treba: **rýchly test pregenerúva vždy"
+    echo "všetko**, aj pri \`rebuild: nic\` – inak by si ladil na výsledku,"
+    echo "ktorý sa vrátil z cache. Cache ostrého behu to nemaže, testovací"
+    echo "štvorec má vlastný kľúč."
+  fi
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."

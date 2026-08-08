@@ -575,6 +575,13 @@ nech sa pár km² mapy nedá zameniť s pokazeným buildom.
 Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
+**Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
+ním prah, interval alebo kód – a keby sa výsledok vrátil z cache, videl by si
+to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastavenia
+aj otlačok skriptov, ale nie všetko, a pár km² prepočítať stojí minúty, kým
+jedno takto stratené kolo ladenia stojí viac. Cache ostrého behu je pritom
+v bezpečí: v kľúči je bbox a ten je pri teste bboxom testovacieho štvorca.
+
 Beh do súhrnu vypíše, kde ten štvorec je:
 
 - **obrázok** s okolím (podklad je tieňovanie, červený štvorec = testované
