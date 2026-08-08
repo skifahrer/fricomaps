@@ -188,7 +188,7 @@ export const THEMES = {
     contour: "#b09070",
     contourMajor: "#96764e",
     contourText: "#8a6a45",
-    rockArea: "#b4aea6",
+    rockArea: "#b3b3b3",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -305,7 +305,7 @@ export const THEMES = {
     contour: "#4a4436",
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
-    rockArea: "#3c3c48",
+    rockArea: "#45454a",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -421,7 +421,7 @@ export const THEMES = {
     contour: "#b3835a",
     contourMajor: "#966034",
     contourText: "#7a4f28",
-    rockArea: "#b9ab9c",
+    rockArea: "#b0aeac",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -536,7 +536,7 @@ export const THEMES = {
     contour: "#c8a488",
     contourMajor: "#b0846a",
     contourText: "#9a7058",
-    rockArea: "#c0b5ab",
+    rockArea: "#bcb9b6",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.

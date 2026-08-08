@@ -273,17 +273,22 @@ raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
 neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
 v `workers/smooth-polygons.py`.
 
-**Plochy sú plné.** Skala je v mape jedna súvislá sivá plocha: jedna trieda,
-žiadne diery, jedna farba bez priehľadnosti. Priehľadnosť by totiž znamenala,
+**Jedna trieda, jedna sivá.** Skala je v mape jedna plocha v jednej sivej bez
+priehľadnosti — žiadna plocha vnútri inej. Priehľadnosť by totiž znamenala,
 že každý prekryv je vidieť — dve plochy cez seba vyjdú tmavšie než jedna,
 a stačí na to plocha rozseknutá hranicou bloku alebo `cliff` ležiaci v diere
 `steep`u. Plná farba to rieši na úrovni kreslenia a plochy sa nemusia ani
 zlepovať, ani strážiť proti sebe.
 
-Predtým to boli dve polopriehľadné triedy (`steep` ≥ 50°, `cliff` ≥ 65°)
-a diera všade, kde bolo vnútri steny miesto pod prahom (polica, terasa).
+Predtým to boli dve polopriehľadné triedy (`steep` ≥ 50°, `cliff` ≥ 65°).
 Vrátiť sa to dá: `options: rock_plne=0`, prípadne `rock_img_options=plne=0`
 pre skaly z tieňovania.
+
+**Diery v plochách ostávajú** — tam, kde je vnútri steny miesto pod prahom
+(polica, terasa, zarastený stupeň). Krátko sa zapĺňali spolu s tým prechodom
+na jednu triedu a bola to chyba: zo skál boli súvislé klaksy, v ktorých nebolo
+vidieť žiaden tvar. `options: rock_zapln_diery=1` to vráti, ak by to niekto
+naozaj chcel.
 
 **Skaly majú vlastné dlaždice.** `{región}-rocks.pmtiles`, oddelene od
 vrstevníc — a to kvôli maxzoomu: každý `.pmtiles` má len jeden a tie dve
@@ -487,8 +492,10 @@ budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách te
 zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
 bežal do timeoutu celého jobu.
 
-**Plné plochy, jedna sivá.** Výstupom je jedna súvislá plocha na skalu — bez
-dier a v jednej triede (`options: plne=0` vráti pôvodné dve pásma s dierami).
+**Jedna trieda, jedna sivá.** Výstupom je jedno pásmo, teda žiadna plocha
+vnútri inej (`options: plne=0` vráti pôvodné dve pásma). Diery **ostávajú** —
+sú to medzery medzi vláknami siete žliabkov a práve ony sú tá štruktúra;
+`options: zapln_diery=1` ich zaplní a detail tým zmizne.
 V mape sa kreslí plnou farbou bez priehľadnosti, takže sa prekryv nikde
 neprejaví a plochy sa nemusia ani zlepovať. Vedľajší efekt, ktorý sa počíta:
 jedno pásmo namiesto dvoch je polovica prstencov na obtiahnutie, a to je tá

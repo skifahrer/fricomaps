@@ -503,6 +503,7 @@ jobs:
       opt_contour_maxzoom: ${{ steps.opts.outputs.opt_contour_maxzoom }}
       opt_rock_maxzoom: ${{ steps.opts.outputs.opt_rock_maxzoom }}
       opt_rock_plne: ${{ steps.opts.outputs.opt_rock_plne }}
+      opt_rock_zapln_diery: ${{ steps.opts.outputs.opt_rock_zapln_diery }}
       opt_contour_smoothing: ${{ steps.opts.outputs.opt_contour_smoothing }}
       opt_trails_maxzoom: ${{ steps.opts.outputs.opt_trails_maxzoom }}
       opt_features_maxzoom: ${{ steps.opts.outputs.opt_features_maxzoom }}
@@ -912,7 +913,7 @@ jobs:
             # (a oba otlačky). Zdroj skál je v ňom aj preto, že `sonny`
             # a `tienovanie` dávajú úplne iné plochy – jedny sa nesmú vrátiť
             # z cache namiesto druhých.
-            echo "contours=contours-v8-c$CS$DC-r$RS$DR-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-rz${{ needs.plan.outputs.opt_rock_maxzoom }}p${{ needs.plan.outputs.opt_rock_plne }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-${{ inputs.rock_slope }}g${{ needs.plan.outputs.opt_rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
+            echo "contours=contours-v9-c$CS$DC-r$RS$DR-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-rz${{ needs.plan.outputs.opt_rock_maxzoom }}p${{ needs.plan.outputs.opt_rock_plne }}d${{ needs.plan.outputs.opt_rock_zapln_diery }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-${{ inputs.rock_slope }}g${{ needs.plan.outputs.opt_rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
             # Stiahnuté DEM dlaždice. Sú v podpriečinku podľa zdroja, takže
             # jeden job môže mať naraz dva modely (vrstevnice z jedného,
             # skaly z druhého) – kľúč preto nesie obe mená.
@@ -1071,6 +1072,7 @@ jobs:
           OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
           OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
           OPT_ROCK_PLNE: ${{ needs.plan.outputs.opt_rock_plne }}
+          OPT_ROCK_ZAPLN_DIERY: ${{ needs.plan.outputs.opt_rock_zapln_diery }}
           ROCK_SLOPE_IN: ${{ inputs.rock_slope }}
           ROCK_RES_IN: ${{ needs.plan.outputs.opt_rock_res }}
           OPT_ROCKS: ${{ needs.plan.outputs.opt_rocks }}

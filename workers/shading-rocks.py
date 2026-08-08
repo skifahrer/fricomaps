@@ -11,12 +11,15 @@ TMAVÉ PLOCHY. Nič sa nepočíta z výšok, čítajú sa obrázky:
     raster „tmavosti" → gdal_contour -p (izolínia tmavosti ako PLOCHY) →
     filter plôch → zjemnenie + zaoblenie obrysu → rock.gpkg
 
-PLNÉ PLOCHY (predvolene, `--plne`): jedno pásmo, jedna trieda, žiadne diery.
-V mape sa skaly kreslia jednou sivou bez priehľadnosti, takže by sa každá
-diera aj každý prekryv prejavili ako škvrna – a v jemnej sieti žliabkov
-z tieňovania sú dier tisíce. Vedľajší efekt, ktorý sa počíta: jedno pásmo
-namiesto dvoch je polovica prstencov na obtiahnutie, a `gdal_contour` je tá
-najdrahšia fáza celého behu. `--plne=0` vráti pásma `steep`/`cliff` s dierami.
+JEDNA TRIEDA (predvolene, `--plne`): jedno pásmo, teda žiadna plocha vnútri
+inej plochy. Kým sa `steep` a `cliff` kreslili rôzne tmavo, malo zmysel mať
+pásma dve; odkedy je všetko jedna sivá bez priehľadnosti, je z druhého len
+dvojnásobok prstencov na obtiahnutie – a `gdal_contour` je tá najdrahšia fáza
+celého behu. `--plne=0` vráti pásma `steep`/`cliff`.
+
+DIERY OSTÁVAJÚ. Sú to medzery medzi vláknami siete žliabkov a práve ony sú tá
+štruktúra – bez nich je z pol pohoria jedna súvislá plocha, v ktorej nie je
+vidieť nič. `--zapln-diery=1` ich zaplní, ak by niekto chcel súvislé klaksy.
 
 PREČO TO MÔŽE FUNGOVAŤ: tieňovanie je obraz sklonu. Kde je stena, tam je
 tieň – a hires vrstva freemap.sk je robená z 1 m LiDARu, takže pri z18 vyjde
@@ -909,7 +912,7 @@ def ring_area(ring):
 
 
 def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
-                  every=30, plne=True):
+                  every=30, zapln_diery=False):
     """Prúdový filter nad GeoJSONSeq: odrobinky preč, dierky preč, triedy von.
 
     Vstup je už rozbitý na samostatné plochy (`-explodecollections`), takže
@@ -921,13 +924,15 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
     (= cos²(šírka)). Mercator naťahuje mierku 1/cos(šírka), takže bez toho
     by pri 49° vyšla plocha 2,3× väčšia, než v skutočnosti je.
 
-    S `plne` (predvolene) sa diery NEKRESLIA vôbec – von ide len vonkajší
-    prstenec. Skala má byť na mape jedna súvislá sivá plocha; polica alebo
-    terasa vnútri steny je síce pravdivá diera, ale v jemnej sieti žliabkov
-    z tieňovania ich sú tisíce a plocha z toho vyzerá ako sito. Bez `plne`
-    sa diery zahadzujú podľa VLASTNEJ plochy, nie podľa plochy celku:
+    DIERY OSTÁVAJÚ. Sú to medzery medzi vláknami tej siete žliabkov a práve
+    ony sú tá štruktúra – bez nich je z pol pohoria jedna súvislá plocha,
+    v ktorej nie je vidieť nič (namerané: zapnuté zapĺňanie zožralo detail
+    úplne). Zahadzujú sa podľa VLASTNEJ plochy, nie podľa plochy celku:
     svetlá polica vnútri steny je platná diera a má ostať, jednopixelová
     dierka po zrne JPEGu nie.
+
+    `zapln_diery` ich zaplní – je to voľba pre prípad, že by niekto chcel
+    súvislé klaksy namiesto siete, nie predvolené správanie.
     """
     n_in = n_out = 0
     holes_kept = holes_drop = 0
@@ -967,7 +972,7 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
                 n_in += 1
                 area = abs(ring_area(poly[0])) * merc_factor
                 rings = [poly[0]]
-                if plne:
+                if zapln_diery:
                     holes_drop += len(poly) - 1
                 else:
                     for hole in poly[1:]:
@@ -1368,11 +1373,12 @@ def spoj(args, tmp, out, cliff_level, merc):
     filt = os.path.join(tmp, "rock.geojsonl")
     st = filter_stream(seq, filt, args.min_area, args.min_hole,
                        cliff_level, merc, every=args.heartbeat,
-                       plne=bool(args.plne))
+                       zapln_diery=bool(args.zapln_diery))
     print(f"  filter: {st['n_in']} → {st['n']} plôch "
           f"(pod {args.min_area:g} m² preč), "
-          + (f"diery zahodené ({st['holes_dropped']}) – plné plochy"
-             if args.plne else
+          + (f"diery ZAPLNENÉ ({st['holes_dropped']} zahodených) – "
+             f"tvar plôch je preč, `zapln_diery=0` ho vráti"
+             if args.zapln_diery else
              f"diery {st['holes']} ostali, {st['holes_dropped']} pod "
              f"{args.min_hole:g} m² preč"), flush=True)
     if not st["n"]:
@@ -1590,8 +1596,14 @@ def main():
     # Plné plochy: bez dier a bez druhého pásma. Viď `contour_blocks`
     # a `filter_stream` – dokopy z toho je „jedna skala = jedna sivá plocha".
     ap.add_argument("--plne", type=int, default=1,
-                    help="1 = plné plochy (jedno pásmo, diery zaplnené), "
-                         "0 = pásma steep/cliff a diery ako predtým")
+                    help="1 = jedno pásmo a jedna trieda (žiadna plocha "
+                         "vnútri inej), 0 = pásma steep/cliff ako predtým")
+    # Zapĺňanie dier bolo kedysi súčasťou `--plne` a bola to chyba: diery sú
+    # medzery medzi vláknami siete žliabkov, čiže presne tá štruktúra, pre
+    # ktorú sa skaly z tieňovania robia. Zapnuté z nich spravilo súvislé
+    # plochy, v ktorých nebolo vidieť nič.
+    ap.add_argument("--zapln-diery", type=int, default=0,
+                    help="1 = zaplniť diery (súvislé plochy namiesto siete)")
     ap.add_argument("--zlepit", type=int, default=0,
                     help="1 = zlepiť plochy rozseknuté hranicou bloku "
                          "(ST_Union, potrebuje spatialite)")
@@ -1671,7 +1683,8 @@ def main():
               f"-m{args.min_area:g}-h{args.min_hole:g}"
               # Plné plochy menia PÁSMA, teda aj obsah blokov – bez toho
               # by po prepnutí nadviazal na obrysy z iného nastavenia.
-              f"{'-plne' if args.plne else ''}")
+              f"{'-plne' if args.plne else ''}"
+              f"-zd{int(bool(args.zapln_diery))}")
     tmp = os.path.join(args.cache_dir, "_rozrobene", podpis)
     if args.fresh:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1832,6 +1845,7 @@ def main():
                 ("out_mb", f"{out_mb:.1f}"), ("mb_per_km2", f"{per_km2:.1f}"),
                 ("min_area_m2", f"{args.min_area:g}"),
                 ("plne", int(bool(args.plne))),
+                ("zapln_diery", int(bool(args.zapln_diery))),
                 ("zlepene", int(bool(args.zlepit))),
                 ("min_hole_m2", f"{args.min_hole:g}"),
                 ("simplify_m", f"{args.simplify:.2f}"), ("smooth", args.smooth),
