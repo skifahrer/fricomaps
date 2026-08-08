@@ -21,6 +21,12 @@ DIERY OSTÁVAJÚ. Sú to medzery medzi vláknami siete žliabkov a práve ony s�
 štruktúra – bez nich je z pol pohoria jedna súvislá plocha, v ktorej nie je
 vidieť nič. `--zapln-diery=1` ich zaplní, ak by niekto chcel súvislé klaksy.
 
+POZADIE SA ZAHADZUJE. `gdal_contour -p` nevyrobí len pásmo skál, ale VŠETKY
+pásma – vrátane toho POD prahom, čiže „všetko, čo skala nie je". Je to jeden
+obrovský polygón na blok a keď prejde ďalej, prekryje mapu súvislou plochou,
+v ktorej nie je vidieť ani skaly, ani obrysy. Filter ho preto vyhadzuje podľa
+`dmin` a beh navyše kričí, keď skaly vyjdú na viac než 60 % územia.
+
 PREČO TO MÔŽE FUNGOVAŤ: tieňovanie je obraz sklonu. Kde je stena, tam je
 tieň – a hires vrstva freemap.sk je robená z 1 m LiDARu, takže pri z18 vyjde
 jeden pixel na ~0,4 m terénu. Ťaháme z17 (~0,8 m/px) – na z18 sú to 4×
@@ -901,6 +907,13 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
 
 # ------------------------------------------------------------------ vektor --
 
+def bbox_km2(bbox):
+    """Plocha bboxu v km² – len na kontrolu, či výsledok nepokrýva všetko."""
+    w, s_, e, n = bbox
+    return ((e - w) * 111.32 * math.cos(math.radians((s_ + n) / 2))
+            * (n - s_) * 110.54)
+
+
 def ring_area(ring):
     """Plocha prstenca (shoelace) v jednotkách súradníc, so znamienkom."""
     s = 0.0
@@ -912,7 +925,7 @@ def ring_area(ring):
 
 
 def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
-                  every=30, zapln_diery=False):
+                  every=30, zapln_diery=False, min_level=0.5):
     """Prúdový filter nad GeoJSONSeq: odrobinky preč, dierky preč, triedy von.
 
     Vstup je už rozbitý na samostatné plochy (`-explodecollections`), takže
@@ -935,6 +948,7 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
     súvislé klaksy namiesto siete, nie predvolené správanie.
     """
     n_in = n_out = 0
+    n_pozadie = 0
     holes_kept = holes_drop = 0
     total = 0.0
     n_cliff = 0
@@ -964,6 +978,18 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
                 dmin = float(dmin)
             except (TypeError, ValueError):
                 dmin = 0.0
+            # POZADIE PREČ. `gdal_contour -p -fl 0,5 -fl 256` nevyrobí len
+            # pásmo skál, ale VŠETKY pásma – vrátane toho pod prahom, teda
+            # „všetko, čo skala nie je". To je jeden obrovský polygón na blok
+            # a keď prejde ďalej, prekryje mapu súvislou plochou, v ktorej
+            # nie je vidieť ani skaly, ani obrysy. (Presne to sa dialo:
+            # skaly z tieňovania boli sivá plocha cez celý výrez.)
+            #
+            # Pri skalách z DEM to nikdy nenastalo – `rock-areas.py` má
+            # `WHERE smin >= prah` priamo v SQL. Tu ten filter chýbal.
+            if dmin < min_level:
+                n_pozadie += 1
+                continue
             cls = "cliff" if dmin >= cliff_level else "steep"
 
             for poly in parts:
@@ -1008,6 +1034,7 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
                 n_cliff += (cls == "cliff")
     os.replace(part, dst)
     return {"n_in": n_in, "n": n_out, "cliff": n_cliff, "total_m2": total,
+            "pozadie": n_pozadie,
             "max_m2": biggest, "holes": holes_kept, "holes_dropped": holes_drop}
 
 
@@ -1325,7 +1352,7 @@ def obrysy(tifs, args, tmp, cliff_level):
     return n_blokov
 
 
-def spoj(args, tmp, out, cliff_level, merc):
+def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     """Obrysy blokov → hotový rock.gpkg v EPSG:4326.
 
     Druhá polovica vektorizácie: zlepenie blokov, plochy rozseknuté hranicou
@@ -1373,14 +1400,30 @@ def spoj(args, tmp, out, cliff_level, merc):
     filt = os.path.join(tmp, "rock.geojsonl")
     st = filter_stream(seq, filt, args.min_area, args.min_hole,
                        cliff_level, merc, every=args.heartbeat,
-                       zapln_diery=bool(args.zapln_diery))
+                       zapln_diery=bool(args.zapln_diery), min_level=0.5)
     print(f"  filter: {st['n_in']} → {st['n']} plôch "
-          f"(pod {args.min_area:g} m² preč), "
+          f"({st.get('pozadie', 0)} pásiem pod prahom = pozadie preč, "
+          f"pod {args.min_area:g} m² preč), "
           + (f"diery ZAPLNENÉ ({st['holes_dropped']} zahodených) – "
              f"tvar plôch je preč, `zapln_diery=0` ho vráti"
              if args.zapln_diery else
              f"diery {st['holes']} ostali, {st['holes_dropped']} pod "
              f"{args.min_hole:g} m² preč"), flush=True)
+    # Poistka proti návratu tej istej chyby: keď jedna plocha pokrýva
+    # väčšinu územia, nie je to skala, ale pozadie. Ticho by z toho bola
+    # zase sivá deka cez celú mapu.
+    # Súčet, nie najväčšia plocha: pozadie je jeden polygón NA BLOK, takže
+    # pri mnohých blokoch nie je ani jeden z nich veľký voči celku – ale
+    # dokopy pokryjú takmer všetko. Na skutočných dátach je pokrytie skalami
+    # jednotky až nižšie desiatky percent; 60 % nedosiahne ani Vysoké Tatry.
+    spolu_km2 = st.get("total_m2", 0) / 1e6
+    if uzemie_km2 > 0 and spolu_km2 > 0.6 * uzemie_km2:
+        print(f"::warning::Skaly pokrývajú {spolu_km2:.2f} km² z "
+              f"{uzemie_km2:.2f} km² územia ({100 * spolu_km2 / uzemie_km2:.0f} %). "
+              f"Toľko skál nikde nie je – vyzerá to, že do výsledku prešlo "
+              f"pásmo POD prahom (pozadie). V mape z toho bude súvislá plocha "
+              f"bez detailu a bez obrysov.", flush=True)
+
     if not st["n"]:
         if st["n_in"] > 1000:
             # Tisíce útvarov a ani jeden dosť veľký nie je „prísny prah" –
@@ -1797,7 +1840,8 @@ def main():
     print("── Spojenie blokov a filter ─────────────────────────", flush=True)
     t_sp = time.time()
     try:
-        st = spoj(args, tmp, args.out, cliff_level, merc)
+        st = spoj(args, tmp, args.out, cliff_level, merc,
+                  uzemie_km2=bbox_km2(args.bbox))
     except RuntimeError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
