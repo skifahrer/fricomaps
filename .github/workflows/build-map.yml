@@ -466,6 +466,10 @@ jobs:
       bbox: ${{ steps.region.outputs.bbox }}
       bboxkey: ${{ steps.region.outputs.bboxkey }}
       day: ${{ steps.day.outputs.d }}
+      # `legacy` = zdroj Pages je vetva a mapu prepíše najbližší push.
+      # Ide von, aby to súhrn vedel povedať nahlas a smoke test vedel,
+      # či je prázdny koreň stránky chyba, alebo známa príčina.
+      pages_build_type: ${{ steps.pages-src.outputs.build_type }}
       # Testovací režim: bbox pred orezaním (na obrázok „kde to je") a odkaz
       # do hotovej mapy, ktorý súhrn behu ukáže.
       full_bbox: ${{ steps.region.outputs.full_bbox }}
@@ -531,12 +535,21 @@ jobs:
       # README. Stalo sa to po mergoch #50, #51, #52 a znova #54 a #55, takže
       # to už nie je nehoda, ale niečo, čo sa vracia.
       #
-      # Preto sa to tu nielen kontroluje, ale rovno aj PREPÍNA späť. Je to
-      # jedno PUT volanie a je idempotentné – keď je nastavenie správne,
-      # neurobí sa nič. Keď na to token práva nemá, ostáva pôvodné správanie:
-      # zastaviť beh hneď na začiatku (tri sekundy) s návodom, a nie až po
-      # hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+      # Prepnúť sa to skúsi rovno tu – je to jedno PUT volanie a je
+      # idempotentné. Keď ho token neprejde, beh POKRAČUJE a mapu nasadí.
+      #
+      # Zhadzovať beh hneď na začiatku bola chyba a stála celý deň behov:
+      # `GITHUB_TOKEN` na zmenu zdroja Pages nestačí (mení sa ním nastavenie
+      # repozitára, nie obsah stránky), takže sa beh zastavil po troch
+      # sekundách a mapa nebola ŽIADNA. Pritom nasadenie funguje aj pri
+      # zdroji z vetvy – mapa na stránke je, len ju prepíše najbližší push
+      # do master. Radšej mapa, ktorá vydrží do ďalšieho mergu, než nič.
+      #
+      # Preto: skúsiť, nahlas povedať, čo API odpovedalo, a ísť ďalej.
+      # Odpoveď sa NEZAHADZUJE do /dev/null – bez nej sa z logu nedalo
+      # zistiť, či je to chýbajúce právo, alebo niečo iné.
       - name: Zapni GitHub Pages a prepni zdroj na Actions
+        id: pages-src
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -546,14 +559,14 @@ jobs:
           PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
 
           if [ -z "$PAGES" ]; then
-            # Pages nie je zapnuté vôbec. Skúsime ho rovno založiť so zdrojom
-            # `workflow` – na to treba právo `pages: write`, ktoré tento job má.
             echo "GitHub Pages nie je zapnuté – zapínam so zdrojom GitHub Actions…"
-            if gh api -X POST "repos/$GITHUB_REPOSITORY/pages" \
-                 -f 'build_type=workflow' >/dev/null 2>&1; then
+            if ODPOVED=$(gh api -X POST "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' 2>&1); then
               echo "  ✓ zapnuté"
               PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
             else
+              echo "  API odpovedalo: $ODPOVED"
+              # Bez zapnutých Pages sa nasadiť NEDÁ – tu zastaviť treba.
               echo "::error::GitHub Pages nie je zapnuté a tokenu sa ho nepodarilo zapnúť (na to treba admin práva). $RUCNE"
               exit 1
             fi
@@ -561,21 +574,27 @@ jobs:
 
           BT=$(printf '%s' "$PAGES" | jq -r '.build_type // "?"')
           if [ "$BT" != 'workflow' ]; then
-            echo "Pages berie zdroj z vetvy (build_type=$BT) – prepínam na GitHub Actions…"
-            if gh api -X PUT "repos/$GITHUB_REPOSITORY/pages" \
-                 -f 'build_type=workflow' >/dev/null 2>&1; then
+            echo "Pages berie zdroj z vetvy (build_type=$BT) – skúšam prepnúť na GitHub Actions…"
+            if ODPOVED=$(gh api -X PUT "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' 2>&1); then
               # Overiť, a nie veriť: keby PUT prešlo a nastavenie ostalo staré,
               # build by dobehol do zelena a na stránke by aj tak bolo README.
               BT=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type // "?"' 2>/dev/null || echo '?')
               [ "$BT" = 'workflow' ] && echo "  ✓ prepnuté (build_type=$BT)"
+            else
+              echo "  API odpovedalo: $ODPOVED"
             fi
           fi
 
+          echo "build_type=$BT" >> "$GITHUB_OUTPUT"
           if [ "$BT" != 'workflow' ]; then
-            echo "::error::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions, a tokenu sa to nepodarilo prepnúť. Zabudovaný Jekyll builder potom po každom pushi prepíše mapu obsahom repozitára (uvidíš README). $RUCNE"
-            exit 1
+            # VAROVANIE, nie chyba. Mapa sa nasadí a bude na stránke; zmizne
+            # až pri najbližšom pushi do master, keď ju prepíše zabudovaný
+            # Jekyll builder obsahom repozitára (uvidíš README).
+            echo "::warning::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions, a tokenu sa to nepodarilo prepnúť. Mapa sa nasadí, ale najbližší push do master ju prepíše obsahom repozitára (uvidíš README). $RUCNE"
+          else
+            echo "Pages je zapnuté a berie z Actions ✓ – nasadí sa mapa z tohto behu"
           fi
-          echo "Pages je zapnuté a berie z Actions ✓ – nasadí sa mapa z tohto behu"
 
       # PBF sa mení denne, tak je v kľúči dátum – v ten istý deň sa už
       # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
@@ -2389,8 +2408,12 @@ jobs:
           # otvorí adresu. Jekyll z README vyrobí stránku bez `id="map"`.
           if curl -sL "$BASE/" | grep -q 'id="map"'; then
             echo "  ✓ na koreni stránky je mapa"
+          elif [ '${{ needs.plan.outputs.pages_build_type }}' != 'workflow' ]; then
+            # Príčinu poznáme z prvého kroku a opraviť sa dá len v nastaveniach
+            # repozitára – červený beh by k tomu nič nepridal.
+            echo "::warning::Na $BASE/ nie je mapa, ale README: zdroj Pages je vetva (build_type=${{ needs.plan.outputs.pages_build_type }}), takže obsah prepísal zabudovaný Jekyll builder. Settings → Pages → Source: 'GitHub Actions'."
           else
-            echo "::error::Na $BASE/ nie je mapa – vyzerá to na stránku vyrobenú z README zabudovaným Jekyll builderom. Skontroluj Settings → Pages → Source: 'GitHub Actions'."
+            echo "::error::Na $BASE/ nie je mapa, hoci zdroj Pages je Actions – niečo je inak, než čakáme. Pozri, čo sa nasadilo."
             fail=1
           fi
 
@@ -2426,6 +2449,7 @@ jobs:
           USED_SHADING: ${{ needs.terrain.outputs.dem_source || '(nebežalo)' }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TEST_BBOX: ${{ needs.plan.outputs.bbox }}
