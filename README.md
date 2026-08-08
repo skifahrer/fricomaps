@@ -1413,7 +1413,11 @@ a kosodrevina odlíšená od lúky (`landcover subclass=scrub/heath/fell`).
 ### Ovládanie
 
 Vo workflowe: `options: features=false` (vypnutie) a `features_maxzoom`
-(default 14). V mape sa prvky vypínajú prepínačom **Krajinné prvky**
+(default 15). Nižšia hodnota nie je zakázaná, ale **ticho zahodí** triedy
+s vyšším `min_zoom` – Planetiler o tom nepovie nič, preto na to job
+upozorní varovaním. Pri z14 takto chýbali ploty, živé ploty, geodetické body
+a hraničné kamene; z15 stojí 1,6× väčší súbor (nameraná Andorra: 248 kB →
+394 kB), čo sú pri jednotkách MB drobné. V mape sa prvky vypínajú prepínačom **Krajinné prvky**
 v paneli ⚙. Vrstvy sú v developer móde v skupine **Krajinné prvky (mimo
 schémy)**, farby v rovnomennej skupine palety. Job sa **necachuje** a beží
 súbežne so všetkým ostatným; podiel na rozpočte stránky je
