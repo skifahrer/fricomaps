@@ -182,20 +182,38 @@ Prvý krok behu preto nastavenie **nielen kontroluje, ale aj opravuje**:
 | `build_type: workflow` | nič (jedno GET volanie) |
 | `build_type: legacy` | `PUT /repos/{owner}/{repo}/pages` s `build_type=workflow` |
 | Pages vôbec nie sú zapnuté | `POST /repos/{owner}/{repo}/pages` s `build_type=workflow` |
-| prepnúť sa nepodarilo | `::error::` s návodom a koniec behu v tretej sekunde |
+| prepnúť sa nepodarilo | `::warning::`, beh **pokračuje** a mapu nasadí |
 
 Po zápise sa hodnota **prečíta znova** a až tá rozhoduje. Keby `PUT` prešlo
 a nastavenie ostalo staré, beh by dobehol do zelena a na stránke by aj tak
 bolo README – čiže presne tá chyba, ktorú to má riešiť, len tichšia.
 
-Job na to potrebuje `permissions: pages: write` (predtým mal `read`). Nie je
-to nové právo v behu – na úrovni workflowu `pages: write` je, lebo sa ním
-nasadzuje; teraz ho má aj príprava. Keby token na zmenu nastavenia nestačil
-(na to treba admin práva), správanie je pôvodné: zastaviť beh hneď, a nie po
-hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+**A `PUT` neprejde.** Job má `permissions: pages: write` aj na úrovni
+workflowu, a aj tak vracia API chybu (beh 31265537441):
+
+```
+Pages berie zdroj z vetvy (build_type=legacy) – prepínam na GitHub Actions…
+::error::… a tokenu sa to nepodarilo prepnúť.
+```
+
+Dáva to zmysel: `build_type` je nastavenie **repozitára**, nie obsah stránky,
+takže naň `GITHUB_TOKEN` právo nemá – `pages: write` dovolí nasadzovať, nie
+prestavovať zdroj. Odpoveď API sa preto **vypisuje do logu** a nezahadzuje sa
+do `/dev/null`, ako to bolo predtým; bez nej sa z behu nedalo zistiť, či je to
+chýbajúce právo alebo niečo iné.
+
+**Prečo to beh nezhadzuje.** Zastaviť sa hneď v tretej sekunde znelo rozumne,
+ale stálo to celý deň behov: mapa nebola ŽIADNA. Pritom nasadenie funguje aj
+pri zdroji z vetvy — mapa na stránke po behu **je**, len ju prepíše najbližší
+push do `master`. Mapa, ktorá vydrží do ďalšieho mergu, je lepšia než nič,
+a opraviť to z CI aj tak nejde. Beh preto pokračuje, do logu dá `::warning::`
+a do súhrnu blok s jednorazovým návodom.
 
 Na konci behu to ešte raz overí smoke test: stiahne koreň nasadenej stránky
-a hľadá v ňom `id="map"`. Ostatné kontroly pýtajú súbory, ktoré README nemá
+a hľadá v ňom `id="map"`. Keď tam nie je a `build_type` je `legacy`, je to
+`::warning::` — príčinu poznáme z prvého kroku a červený beh by k nej nič
+nepridal. Keď je `build_type` `workflow` a mapa na koreni aj tak chýba, je to
+`::error::`: vtedy je niečo inak, než čakáme. Ostatné kontroly pýtajú súbory, ktoré README nemá
 (dlaždice, štýly, sprity) – tie by prepísanú stránku nechytili, keby na nej
 z predošlého nasadenia ostali. Toto je tá jediná otázka, na ktorej
 návštevníkovi záleží: čo vidí, keď otvorí adresu.

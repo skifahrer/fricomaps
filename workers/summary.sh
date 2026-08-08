@@ -13,6 +13,7 @@
 #   REGION_NAME  R_PLAN R_CONTOURS R_SHADING_ROCKS R_TRAILS R_TERRAIN
 #   R_TILES R_ASSETS  SRC_CONTOURS SRC_ROCKS SRC_SHADING
 #   USED_CONTOURS USED_ROCKS USED_SHADING  SIZE_LIMIT_MB  PAGE_URL
+#   PAGES_BUILD_TYPE  (`legacy` = mapu prepíše najbližší push)
 #   REGION_KEY  TEST_KM2 TEST_BBOX TEST_FULL_BBOX  (testovací režim)
 #   INPUTS_JSON  (celý formulár ako JSON – blok „Nastavenia tohto behu")
 # Očakáva aj `gh` a premenné GITHUB_* od runnera.
@@ -251,6 +252,30 @@ python3 workers/summary-inputs.py \
 
 if [ "$PAGE_URL" != '' ]; then
   echo -e "\n[Otvoriť mapu](${PAGE_URL})" >> "$S"
+fi
+
+# ---- Pages berie zdroj z vetvy ----
+# Toto patrí hore a nahlas: mapa síce je nasadená a odkaz vyššie funguje,
+# ale najbližší push do master ju prepíše obsahom repozitára. Beh o tom
+# nemôže spraviť nič – je to nastavenie repozitára a `GITHUB_TOKEN` naň
+# nemá práva (mení sa ním repozitár, nie obsah stránky).
+if [ -n "${PAGES_BUILD_TYPE:-}" ] && [ "$PAGES_BUILD_TYPE" != 'workflow' ]; then
+  {
+    echo
+    echo "> ### ⚠️ Mapu na Pages prepíše najbližší merge"
+    echo ">"
+    echo "> Zdroj GitHub Pages je nastavený na **vetvu**, nie na Actions"
+    echo "> (\`build_type=$PAGES_BUILD_TYPE\`). Popri tomto workflowe preto beží"
+    echo "> zabudovaný Jekyll builder (*pages build and deployment*), ktorý pri"
+    echo "> každom pushi do \`master\` nasadí koreň repozitára – teda README –"
+    echo "> a mapu z tohto behu prepíše."
+    echo ">"
+    echo "> Mapa je **teraz nasadená a funguje**; zmizne až pri ďalšom mergi."
+    echo ">"
+    echo "> **Oprava je jednorazová a musíš ju spraviť ty** (token na zmenu"
+    echo "> nastavení repozitára práva nemá):"
+    echo "> **Settings → Pages → Build and deployment → Source: \`GitHub Actions\`**"
+  } >> "$S"
 fi
 
 # ---- kde je testovací výrez ----
