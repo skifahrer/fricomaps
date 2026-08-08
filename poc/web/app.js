@@ -12,7 +12,11 @@ import {
   DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
   DEM_SOURCES,
-  TRAIL_TYPES
+  TRAIL_TYPES,
+  MAP_TYPES,
+  DEFAULT_MAP_TYPE,
+  mapTypeDef,
+  normalizeMapType
 } from "./themes.js";
 import { initDevMode, loadOverrides, saveOverrides } from "./devmode.js";
 import { parsePatternName, renderPattern } from "./patterns.js";
@@ -26,6 +30,7 @@ maplibregl.addProtocol("pmtiles", protocol.tile);
 
 const $ = (id) => document.getElementById(id);
 const themeSelect = $("theme");
+const mapTypeSelect = $("maptype");
 const regionSelect = $("region");
 const contoursCheck = $("contours");
 const trailsCheck = $("trails");
@@ -42,6 +47,18 @@ const devEl = $("dev");
 for (const [key, t] of Object.entries(THEMES)) {
   themeSelect.add(new Option(t.label, key));
 }
+
+// Typ mapy hovorí, **čo** mapa ukazuje (téma len to, ako to vyzerá).
+for (const t of MAP_TYPES) {
+  mapTypeSelect.add(new Option(t.label, t.id));
+}
+mapTypeSelect.value = (() => {
+  try {
+    return normalizeMapType(localStorage.getItem("fricomaps.maptype"));
+  } catch {
+    return DEFAULT_MAP_TYPE;
+  }
+})();
 
 // ---------- zbalené ovládanie ----------
 function setPanel(open) {
@@ -119,6 +136,7 @@ function styleFor(manifest) {
 
   return buildStyle({
     theme: themeSelect.value,
+    mapType: mapTypeSelect.value,
     tilesUrl: `pmtiles://${baseUrl}/${region.pmtiles}`,
     spriteUrl: set ? set.spriteUrl : `${baseUrl}/sprites/osm-liberty`,
     glyphsUrl:
@@ -161,8 +179,11 @@ function applyStyle(manifest) {
   document.body.classList.toggle("dark", themeKey === "tmava");
   hillshadeCheck.checked = overrides.hillshade === true;
 
+  const kind = mapTypeDef(mapTypeSelect.value);
+
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
+    `Mapa: <b>${kind.label}</b> – ${kind.note}<br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
     (region.contours
       ? `Vrstevnice po ${region.contour_interval || 10} m` +
@@ -293,6 +314,7 @@ function setDevMode(on, manifest) {
     root: devEl,
     getStyle: () => currentStyle,
     getTheme: () => themeSelect.value,
+    getMapType: () => mapTypeSelect.value,
     getMap: () => map,
     getIconSets: () => iconSets,
     onChange: (next) => {
@@ -367,6 +389,17 @@ async function main() {
 
   themeSelect.addEventListener("change", () => {
     applyStyle(manifest);
+    dev?.refresh();
+  });
+  mapTypeSelect.addEventListener("change", () => {
+    try {
+      localStorage.setItem("fricomaps.maptype", mapTypeSelect.value);
+    } catch {
+      /* súkromný režim – typ mapy sa jednoducho nezapamätá */
+    }
+    applyStyle(manifest);
+    // Developer mode ladí vždy tú mapu, ktorá je na obrazovke – zoznam vrstiev
+    // aj rozsah úprav sa preto musia prekresliť.
     dev?.refresh();
   });
   contoursCheck.addEventListener("change", () => {

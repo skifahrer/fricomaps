@@ -125,14 +125,23 @@ export const PATTERNS = [
 export const PATTERN_IDS = PATTERNS.map((p) => p.id);
 const PATTERN_BY_ID = Object.fromEntries(PATTERNS.map((p) => [p.id, p]));
 
-/** Prerušovanie čiar – `line-dasharray` v násobkoch šírky čiary. */
+/**
+ * Prerušovanie čiar – `line-dasharray` v násobkoch šírky čiary.
+ *
+ * Zoznam je jediný zdroj pravdy: rovnaké predvoľby ponúka developer mode
+ * (výber „Čiara" v štýle vrstvy aj pri okraji) a rovnaké mená sa ukladajú do
+ * `style-overrides.json`, takže sa dajú zapiecť do štýlu pre web aj iOS.
+ */
 export const DASH_PRESETS = [
   { id: "solid", label: "Plná", dash: null },
   { id: "dashed", label: "Čiarkovaná", dash: [4, 2] },
   { id: "dashed-long", label: "Dlhé čiarky", dash: [8, 3] },
   { id: "dashed-fine", label: "Krátke čiarky", dash: [2, 1.5] },
   { id: "dotted", label: "Bodkovaná", dash: [1, 2] },
+  { id: "dotted-dense", label: "Bodkovaná hustá", dash: [0.8, 1] },
+  { id: "dotted-sparse", label: "Bodkovaná riedka", dash: [1, 4] },
   { id: "dash-dot", label: "Čiarka-bodka", dash: [5, 1.5, 1, 1.5] },
+  { id: "dash-dot-dot", label: "Čiarka-bodka-bodka (náučný chodník)", dash: [6, 1.5, 1, 1.5, 1, 1.5] },
   { id: "rail", label: "Šrafovanie (železnica)", dash: [0.3, 2.5] },
   { id: "ties", label: "Priečky", dash: [1, 3] },
   { id: "ladder", label: "Rebrík (lanovka)", dash: [6, 2] }
@@ -143,6 +152,19 @@ const DASH_BY_ID = Object.fromEntries(DASH_PRESETS.map((d) => [d.id, d]));
 
 /** `line-dasharray` pre daný preset (`null` = plná čiara). */
 export const dashArray = (id) => DASH_BY_ID[id]?.dash ?? null;
+
+/**
+ * Náhľad prerušovania ako `stroke-dasharray` do SVG. Kým je výber čiary len
+ * text v rozbaľovačke, nie je z neho vidieť, ako čiara naozaj vyzerá –
+ * developer mode preto kreslí vedľa neho ukážku.
+ *
+ * @param {string} id     predvoľba
+ * @param {number} scale  hrúbka čiary v ukážke (dasharray je v jej násobkoch)
+ */
+export function dashPreview(id, scale = 2) {
+  const d = dashArray(id);
+  return d ? d.map((n) => Math.max(0.1, n * scale)).join(" ") : "";
+}
 
 /** Predvolený predpis vzoru – doplní, čo používateľ nezadal. */
 export function patternSpec(spec = {}) {

@@ -69,8 +69,12 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
   a `custom_name`. Bbox sa prečíta z PBF hlavičky (alebo zadaj `custom_bbox`).
+- **Typy máp:** [poc/web/map-types.js](poc/web/map-types.js) – **turistická,
+  lyžiarska, cestná, historická** a základná („všetko"). Typ mapy hovorí, *čo*
+  mapa ukazuje; téma len to, *ako* to vyzerá. Viď
+  [Typy máp](#typy-máp--čo-ktorá-mapa-ukazuje).
 - **Témy a štýlovanie:** [poc/web/themes.js](poc/web/themes.js) – 4 farebné
-  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~135 vrstiev pokrývajúcich celú
+  témy (Svetlá, Tmavá, Outdoor, Retro/Pastel), ~140 vrstiev pokrývajúcich celú
   OpenMapTiles schému: krajinná pokrývka, využitie územia, voda a vodné toky,
   budovy (od z16 v 3D), cesty vrátane chodníkov/cyklotrás/schodov, mosty a
   tunely, železnice, lanovky, hranice až po obce, súpisné čísla, vrcholy hôr,
@@ -78,7 +82,8 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   jemný obrys (`textHalo`), aby zostali čitateľné nad ľubovoľným podkladom;
   pohoria, hrebene a geografické oblasti sa od nízkych zoomov kreslia
   kurzívou a verzálkami, aby sa nepliedli so sídlami.
-  Ten istý generátor vyrába statické `styles/{region}-{tema}.json` pre iOS.
+  Ten istý generátor vyrába statické `styles/{region}-{typ mapy}-{tema}.json`
+  pre iOS (predvolený typ aj pod starým menom `{region}-{tema}.json`).
 - **Značené trasy:** turistické chodníky, cyklotrasy, bežky a jazdecké trasy
   z OSM relácií – ako farebné pásiky **vedľa** cesty, s názvom pozdĺž trasy.
   Viď [Značené trasy](#značené-trasy-turistika-cyklo-bežky).
@@ -1208,6 +1213,40 @@ celé sú to pár minút a závisí to od PBF, ktoré sa mení denne.
 Súhrn buildu píše, koľko trás sa v území našlo, koľko z nich má názov, po
 koľkých cestách vedú a koľko z tých ciest nesie viac trás naraz.
 
+## Typy máp – čo ktorá mapa ukazuje
+
+Jedna mapa nemôže byť dobrá turistická aj dobrá cestná naraz. Turista chce
+skaly, chodníky a čo najviac detailu; vodič chce cesty, pumpy a odpočívadlá
+a vrstevnice mu majú len naznačiť kopec. Preto sa z jedného zoznamu vrstiev
+generuje **päť máp**, každá s vlastným profilom
+([poc/web/map-types.js](poc/web/map-types.js)):
+
+| typ mapy | čo ukazuje | čo zámerne nie |
+|---|---|---|
+| **Turistická** (predvolená) | skaly od z8, turistické chodníky od z10, značené trasy od z8, vrcholy od z8, plný detail | lyžiarske trasy a strediská |
+| **Lyžiarska** | lyžiarske a bežkárske trasy od z8, vleky a lanovky od z9, strediská a ich body, skaly | ostatné značené trasy až od z14 a stlmené |
+| **Cestná** | cesty, pumpy, nabíjačky, odpočívadlá, servis a parkoviská od z10; vrstevnice **len po 50 m** a stlmené | vrstevnice po 10 m, skaly, chodníky, značené trasy, tieňovanie; krajina je stlmená, bežné POI až od z15 |
+| **Historická** | hrady, zámky, pamiatky, bane, štôlne, haldy a lomy od z9, POI od z12, terén ako pri turistickej | turistické chodníky, schody a značené trasy |
+| **Základná (všetko)** | všetky vrstvy tak, ako ich generuje štýl – na ladenie | – |
+
+Profil je len **predvolený stav**: v developer móde sa dá každej mape
+nastaviť po svojom (viď nižšie), takže „na cestnej mape toto nechcem"
+neznamená „nikde to nechcem".
+
+Typ mapy sa vyberá v paneli ⚙ (výber **Typ mapy**) a pamätá si ho prehliadač.
+Pipeline generuje `styles/{región}-{typ mapy}-{téma}.json` pre každú
+kombináciu – teda 5 × 4 = 20 štýlov, plus predvolený typ aj pod pôvodným
+menom `{región}-{téma}.json`, aby fungovali staršie odkazy.
+
+**Tematické body.** Každý typ mapy má skupinu bodov, ktorá je preň tá hlavná –
+`poi-historic` (hrady, zrúcaniny, pamätníky, archeológia), `poi-mining`
+(bane, štôlne, haldy, lomy), `poi-ski` (vleky, lanovky, požičovne, školy)
+a `poi-road` (pumpy, nabíjačky, odpočívadlá, servis). Sú to samostatné vrstvy:
+väčšie, s vlastnou farbou v palete a s prednosťou pri umiestňovaní popiskov,
+takže sa zapnú skôr než ostatné POI a v developer móde sa ladia zvlášť.
+Filtrujú sa podľa `class`/`subclass` z OpenMapTiles – zoznamy tried sú štedré,
+trieda, ktorú dlaždice neobsahujú, sa jednoducho nikdy netrafí.
+
 ## Developer mode – ladenie mapy v prehliadači
 
 Mapa sa dá doladiť priamo vo viewri, bez čakania na pipeline. Zapína sa
@@ -1215,19 +1254,55 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 
 | záložka | čo sa v nej dá |
 |---|---|
-| **Vrstvy** | všetkých ~135 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (`od z` / `do z`), farby všetkých `*-color` vlastností, **ikona** pri symbolových vrstvách, **vzor**, **okraj** a prerušovanie čiary. Riadok sa rozklikne kliknutím na názov |
+| **Vrstvy** | všetkých ~140 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (pásik z0–z20 aj `od z` / `do z`), farby všetkých `*-color` vlastností, **ikona** pri symbolových vrstvách, **druh čiary**, hrúbka a krytie, **vzor** a **okraj**. Riadok sa rozklikne kliknutím na názov |
 | **Prvky** | inšpektor: klik do mapy vypíše **všetko, čo je pod kurzorom** – naraz zo všetkých vrstiev, s celým obsahom dlaždice. Viď nižšie |
-| **Paleta** | ~85 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Paleta** | ~90 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
 | **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
 
-**Prehliadanie po zoomoch.** Nad zoznamom je posuvník zoomu: nastavíš zoom
-(mapa tam skočí) a zoznam ukáže, čo je na ňom naozaj povolené – hlavička
-skupiny má počítadlo `aktívne/všetky`, každý riadok svoj rozsah (`z13–16`,
-`z9+`, `vždy`) a vrstvy, ktoré sa na danom zoome neorežú, ostávajú výrazné.
-Prepínač **len aktívne** schová zvyšok. Posuvník sleduje aj bežné zoomovanie
-myšou, takže sa dá ísť zoom po zoome a hneď vidieť, čo pribudlo.
+### Každá mapa zvlášť
+
+Developer mode ladí vždy **tú mapu, ktorá je práve na obrazovke** (výber *Typ
+mapy* v paneli ⚙). Nad zoznamom vrstiev aj v záložke POI je preto prepínač
+rozsahu:
+
+| rozsah | kam sa úprava zapíše |
+|---|---|
+| **len táto mapa** | `maps.<typ mapy>` – platí len pre ňu (napr. „na cestnej mape nechcem vrstevnice po 10 m") |
+| **všetky mapy** | `layers` / `poi` – platí pre všetky typy máp naraz |
+
+Pri každom je v zátvorke počet úprav, ktoré ten priečinok drží. Vrstva
+upravená v práve zvolenom rozsahu má v riadku modrú bodku. Zapnutie alebo
+vypnutie vrstvy v rozsahu *všetky mapy* zároveň zruší výnimky nastavené
+v jednotlivých mapách – inak by tlačidlo tvrdilo, že vrstvu zapína, a nič by
+sa nestalo.
+
+Keď vrstvu vypína profil typu mapy (lyžiarske trasy na turistickej mape),
+zapnutie sa uloží ako výslovné `visible: true` – iba „prestať ju vypínať"
+by tam nestačilo.
+
+### Zoom: čo sa na ňom zobrazí a čo nie
+
+Zoom nie je len informácia, ale hlavný nástroj: **nastav zoom a povedz, čo na
+ňom má a nemá byť.**
+
+- **Posuvník zoomu** (mapa tam skočí) + skratky `z4 z8 z10 z12 z14 z16 z18 z20`
+  na zoomy, kde sa mapa láme. Posuvník sleduje aj bežné zoomovanie myšou.
+- **Štítok s rozsahom v riadku** (`z13–16`, `z9+`, `vždy`) je **prepínač**:
+  klik povie, či sa vrstva na aktuálnom zoome kresliť má, alebo nie. Rozsah
+  ostáva jeden súvislý interval – zapnutie natiahne bližší koniec, vypnutie
+  ustúpi tým, ktorý je bližšie. Keď by z rozsahu neostalo nič, vrstva sa rovno
+  vypne.
+- **Pásik zoomov z0–z20** v detaile vrstvy: jedna bunka = jeden zoom,
+  zvýraznené sú tie, na ktorých sa vrstva kreslí, oranžový rámček je aktuálny
+  zoom. Klik do bunky ju zapne alebo vypne – z pásika je hneď vidieť, čo
+  vrstva robí.
+- **Tlačidlá `od z…` / `do z…`** v detaile nastavia hranicu na aktuálny zoom,
+  `⟲` vráti pôvodný rozsah.
+- **Hromadne:** zaškrtni vrstvy a použi `Zobraziť od z…` alebo `Skryť na z…`.
+- Hlavička skupiny má počítadlo `aktívne/všetky`, vrstvy orezané zoomom sú
+  bledé a prepínač **len aktívne** schová zvyšok.
 
 **Inšpektor prvkov (záložka Prvky).** Mapa je poskladaná z desiatok vrstiev
 nad sebou: na jednom mieste býva plocha, cesta, jej obrys, vrstevnica, pásik
@@ -1245,13 +1320,31 @@ značky, sieťou, pruhom a odkazom do OSM. Polomer výberu (predvolene 6 px) sa
 dá zmeniť; k dispozícii sú aj súradnice kliknutého miesta a odkaz naň
 v OpenStreetMape.
 
-**Vzory, okraje a prerušovanie.** Ploche aj čiare sa dá dať opakujúci sa vzor
-(18 predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, tehly,
-krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou ťahu
-a krytím. Okraj je pri ploche obrysová čiara, pri čiare širší obrys pod ňou
-(casing) – oboje s farbou, šírkou, prerušovaním a krytím. Samotná čiara má
-navyše 9 predvolieb prerušovania (čiarkovaná, bodkovaná, šrafovanie
-železnice, priečky, rebrík lanovky…).
+### Druh čiary a výplň plochy
+
+Detail vrstvy je rozdelený na sekcie **Zoom → Farby → Ikona → Štýl čiary /
+Štýl plochy → Okraj**, takže je vidieť, čo sa kde nastavuje.
+
+**Štýl čiary** (línie): výber druhu čiary s **náhľadom** vedľa rozbaľovačky –
+12 predvolieb: plná, čiarkovaná, dlhé čiarky, krátke čiarky, bodkovaná,
+bodkovaná hustá, bodkovaná riedka, čiarka-bodka, **čiarka-bodka-bodka
+(náučný chodník)**, šrafovanie železnice, priečky, rebrík lanovky. K tomu
+hrúbka a krytie čiary. Malý chodník sa teda spraví bodkovaný a náučný
+chodník čiarka-bodka-bodka jedným výberom – a keďže úprava vie ísť len do
+jednej mapy, môže to platiť napríklad iba na turistickej.
+
+**Štýl plochy** (plochy a 3D): krytie výplne + opakujúci sa **vzor** (18
+predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, tehly,
+krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
+ťahu a krytím.
+
+**Okraj** je pri ploche obrysová čiara, pri čiare širší obrys pod ňou
+(casing) – oboje s farbou, šírkou, druhom čiary (tá istá ponuka s náhľadom)
+a krytím.
+
+Číselné polia (hrúbka, krytie) sú prázdne s nápisom `auto`, keď je hodnota
+v štýle zadaná interpoláciou podľa zoomu; vyplnením sa nahradí pevnou
+hodnotou, vymazaním sa vráti pôvodná interpolácia.
 
 Vzory nie sú hotové obrázky: **názov obrázka je jeho predpis**
 (`pat:trees:2f5a28:22:12`), takže si ho prehliadač dokreslí sám cez
@@ -1320,7 +1413,7 @@ Formát súboru:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "icons": "osm-bright",
   "palette": { "outdoor": { "forest": "#a8cc8e", "trailRed": "#cc2222" } },
   "layers": {
@@ -1334,9 +1427,28 @@ Formát súboru:
     "housenumber":      { "visible": false },
     "road-motorway":    { "minzoom": 6, "maxzoom": 20 }
   },
-  "poi": { "hidden": ["fast_food"] }
+  "poi": { "hidden": ["fast_food"] },
+
+  "maps": {
+    "turisticka": {
+      "layers": {
+        "road-path":  { "dash": "dotted", "paint": { "line-width": 2 } },
+        "trail-ski":  { "visible": true }
+      },
+      "poi": { "hidden": [] }
+    },
+    "cestna": {
+      "layers": { "poi-road": { "minzoom": 8 } },
+      "poi": { "hidden": ["picnic_site"] }
+    }
+  }
 }
 ```
+
+`layers` a `poi` platia pre **všetky** typy máp, `maps.<typ>` len pre jeden a
+prebíja spoločné nastavenie (`paint` sa mieša po jednotlivých vlastnostiach).
+Súbory z verzie 1 (bez `maps`) sa načítajú bez zmeny – všetko z nich sa berie
+ako spoločné.
 
 Prehliadač uprednostní to, čo má uložené v `localStorage`; ak tam nič nie je,
 použije `style-overrides.json` zo stránky. Tlačidlo **Vymazať všetky zmeny**
@@ -1369,6 +1481,11 @@ vyzeral ostro, najvyšší zoom sa generuje bez zjednodušovania geometrie:
 | 14–15 | plný detail, POI filtrované na `rank <= 24`, aby mapa nebola zahltená |
 | 16+ | **všetko bez filtra** – všetky body, línie aj plochy, 3D budovy |
 | 17+ | navyše súpisné čísla domov |
+
+Toto je základ; **typ mapy tieto hranice posúva** – turistická púšťa skaly,
+chodníky a trasy skôr (z8–z10), cestná naopak bežné POI až od z15 a chodníky
+vôbec. Konkrétne posuny sú v [poc/web/map-types.js](poc/web/map-types.js)
+a dajú sa prekliknúť v developer móde.
 
 **Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB a do toho sa musia
 zmestiť dlaždice **aj vrstevnice, fonty a sprity** – nie každé zvlášť. Celé

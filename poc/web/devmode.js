@@ -5,8 +5,14 @@
  *   - vypísať **všetky** vrstvy štýlu po skupinách, s druhom (plocha / línia /
  *     bod / popisok / 3D / reliéf) a filtrom, zapnúť/vypnúť ich a nastaviť im
  *     rozsah zoomu – teda presne definovať, čo sa kedy zobrazuje,
+ *   - robiť to **zvlášť pre každý typ mapy** (turistická, lyžiarska, cestná,
+ *     historická, základná): prepínač *len táto mapa / všetky mapy* hovorí,
+ *     kam sa úprava zapíše, takže „na cestnej mape toto nechcem" nemusí
+ *     znamenať „nikde to nechcem",
  *   - prezerať mapu po zoomoch: nastavíš zoom a zoznam ukáže, ktoré vrstvy
- *     sú na ňom naozaj povolené a ktoré sa orežú,
+ *     sú na ňom naozaj povolené a ktoré sa orežú – a jedným klikom sa dá na
+ *     tom zoome vrstva zapnúť či vypnúť (pásik zoomov z0–z20 v detaile
+ *     vrstvy, alebo štítok s rozsahom priamo v riadku),
  *   - kliknúť do mapy a dostať **všetko, čo je pod kurzorom** – každý prvok
  *     zo všetkých vrstiev naraz, aj so všetkými atribútmi z dlaždice, plus
  *     zoznam značených trás, ktoré tadiaľ vedú (ich pásiky sú posunuté vedľa
@@ -38,11 +44,16 @@ import {
   mergedPalette,
   selectedIconSource,
   TRAIL_TYPES,
-  TRAIL_MARK_COLOURS
+  TRAIL_MARK_COLOURS,
+  DEFAULT_MAP_TYPE,
+  mapTypeDef,
+  mapTypeHidden,
+  normalizeMapType
 } from "./themes.js";
-import { PATTERNS, DASH_PRESETS } from "./patterns.js";
+import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
 
 const STORAGE_KEY = "fricomaps.overrides";
+const SCOPE_KEY = "fricomaps.devscope";
 const KIND_LABELS = Object.fromEntries(LAYER_KINDS.map((k) => [k.id, k.label]));
 const GROUP_LABELS = Object.fromEntries(LAYER_GROUPS.map((g) => [g.id, g.label]));
 /** Meno značky z dlaždíc → kľúč palety (rovnako ako v štýle). */
@@ -56,6 +67,15 @@ export function loadOverrides() {
     return normalizeOverrides(JSON.parse(raw)).overrides;
   } catch {
     return emptyOverrides();
+  }
+}
+
+/** Kam sa naposledy zapisovali úpravy: `map` (len táto mapa) alebo `all`. */
+function loadScope() {
+  try {
+    return localStorage.getItem(SCOPE_KEY) === "all" ? "all" : "map";
+  } catch {
+    return "map";
   }
 }
 
@@ -145,8 +165,11 @@ async function copyText(text, button) {
 const zoomRangeText = (layer) => {
   const mn = layer.minzoom ?? 0;
   const mx = layer.maxzoom ?? MAX_DISPLAY_Z + 4;
-  if (mn <= 0 && layer.maxzoom == null) return "vždy";
-  if (layer.maxzoom == null) return `z${mn}+`;
+  // Nad MAX_DISPLAY_Z sa priblížiť nedá, takže „do z21" a „bez hornej hranice"
+  // je pre čitateľa to isté.
+  const noTop = mx > MAX_DISPLAY_Z;
+  if (mn <= 0 && noTop) return "vždy";
+  if (noTop) return `z${mn}+`;
   return `z${mn}–${mx}`;
 };
 
@@ -156,21 +179,78 @@ const activeAt = (layer, z) => {
   return z >= (layer.minzoom ?? 0) && z < (layer.maxzoom ?? 25);
 };
 
+/** Je vrstva vypnutá (nie orezaná zoomom)? */
+const isHiddenLayer = (layer) => (layer.layout || {}).visibility === "none";
+
+/**
+ * Aký rozsah zoomu má vrstva mať, keď sa na zoome `z` má (ne)kresliť.
+ *
+ * Rozsah je jeden súvislý interval `<minzoom, maxzoom)`, takže „na tomto
+ * zoome áno / nie" znamená posunúť jeho koniec:
+ *   - zapnutie mimo rozsahu natiahne bližší koniec až po `z`,
+ *   - vypnutie vnútri rozsahu ustúpi tým koncom, ktorý je bližšie.
+ * Keď by z rozsahu nič neostalo, vráti `{ hide: true }` – vtedy je poctivejšie
+ * vrstvu vypnúť než jej nastaviť prázdny interval.
+ *
+ * @returns {{minzoom?: number|undefined, maxzoom?: number|undefined, hide?: boolean, show?: boolean}}
+ */
+function zoomRangeFor(layer, z, on) {
+  const mn = layer.minzoom ?? 0;
+  const mx = layer.maxzoom ?? MAX_DISPLAY_Z + 1;
+  const top = MAX_DISPLAY_Z + 1;
+
+  if (on) {
+    const patch = { show: true };
+    if (z < mn) patch.minzoom = z;
+    // `maxzoom` je horná hranica bez rovnosti – aby sa vrstva kreslila aj na
+    // `z`, musí siahať o krok vyššie. Hodnotu treba zapísať aj na samom
+    // vrchu: vrstva môže mať vlastný `maxzoom` zo štýlu (POI má 16), takže
+    // „zmazať úpravu" by ju na z20 nezaplo.
+    if (z >= mx) patch.maxzoom = Math.min(z + 1, top);
+    return patch;
+  }
+
+  // Vrstva sa na tom zoome aj tak nekreslí – netreba nič meniť.
+  if (z < mn || z >= mx) return {};
+  // Bližší koniec ustúpi; pri rovnakej vzdialenosti sa oreže zospodu, lebo
+  // mapa sa častejšie ladí smerom „od akého zoomu sa to objaví".
+  if (z - mn <= mx - 1 - z) {
+    return z + 1 >= mx ? { hide: true } : { minzoom: z + 1 };
+  }
+  return z <= mn ? { hide: true } : { maxzoom: z };
+}
+
 /**
  * @param {object} opts
  * @param {HTMLElement} opts.root      prázdny kontajner pre panel
  * @param {() => object} opts.getStyle aktuálny (už upravený) MapLibre štýl
  * @param {() => string} opts.getTheme kľúč aktuálnej témy
+ * @param {() => string} [opts.getMapType] id práve zobrazeného typu mapy
  * @param {() => object} opts.getMap   inštancia mapy
  * @param {() => object[]} [opts.getIconSets] nasadené sady ikoniek
  * @param {(overrides: object) => void} opts.onChange  prekresli mapu
  */
-export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onChange }) {
+export function initDevMode({
+  root,
+  getStyle,
+  getTheme,
+  getMapType,
+  getMap,
+  getIconSets,
+  onChange
+}) {
   let overrides = loadOverrides();
   let tab = "layers";
   let search = "";
   let kindFilter = new Set();
   let onlyActive = false;
+  /** Ktorý typ mapy sa práve ladí (a teda kam patria úpravy „len táto mapa"). */
+  const mapTypeId = () => normalizeMapType(getMapType ? getMapType() : DEFAULT_MAP_TYPE);
+  /**
+   * Kam sa zapisujú úpravy vrstiev a POI: `map` = len do práve zobrazeného
+   * typu mapy, `all` = do spoločných, ktoré platia pre všetky.
+   */
+  let editScope = loadScope();
   let zoomView = getMap()?.getZoom?.() ?? 10;
   const selectedLayers = new Set();
   const selectedPaletteKeys = new Set();
@@ -457,38 +537,98 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     );
     const nLayers = Object.keys(overrides.layers).length;
     const nPoi = overrides.poi.hidden.length;
+    const perMap = Object.entries(overrides.maps)
+      .map(([id, m]) => `${mapTypeDef(id).label} ${Object.keys(m.layers).length}`)
+      .join(", ");
     status.textContent = hasOverrides(overrides)
-      ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev · ${nPoi} skrytých POI · ` +
-        `ikony ${selectedIconSource(overrides)} · uložené v prehliadači`
+      ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
+        `${nPoi} skrytých POI · ikony ${selectedIconSource(overrides)}` +
+        (perMap ? ` · po mapách: ${perMap}` : "") +
+        " · uložené v prehliadači"
       : "Žiadne zmeny – mapa beží na pôvodnom štýle.";
   }
 
   // ---------- pomocníci nad overrides ----------
-  const layerOverride = (id) => overrides.layers[id];
+  // Úpravy sú v dvoch priečinkoch: spoločné (`overrides.layers`) a pre jeden
+  // typ mapy (`overrides.maps[<typ>].layers`). Čítanie ich mieša rovnako ako
+  // generátor štýlu, zápis ide do toho, ktorý je práve zvolený.
+
+  /** Priečinok pre daný typ mapy; `create` ho v prípade potreby založí. */
+  function mapBucket(create = false) {
+    const id = mapTypeId();
+    if (!overrides.maps[id] && create) {
+      overrides.maps[id] = { layers: {}, poi: { hidden: [] } };
+    }
+    return overrides.maps[id];
+  }
+
+  /** Prázdne priečinky sa nemajú vláčiť do `style-overrides.json`. */
+  function pruneMaps() {
+    for (const [id, m] of Object.entries(overrides.maps)) {
+      if (!Object.keys(m.layers || {}).length && !(m.poi?.hidden || []).length) {
+        delete overrides.maps[id];
+      }
+    }
+  }
+
+  const baseLayerOverride = (id) => overrides.layers[id];
+  const mapLayerOverride = (id) => mapBucket()?.layers?.[id];
+
+  /** Úprava vrstvy tak, ako ju vidí mapa: spoločná a nad ňou tá pre túto mapu. */
+  function layerOverride(id) {
+    const base = baseLayerOverride(id);
+    const own = mapLayerOverride(id);
+    if (!base) return own;
+    if (!own) return base;
+    return {
+      ...base,
+      ...own,
+      ...(base.paint || own.paint
+        ? { paint: { ...(base.paint || {}), ...(own.paint || {}) } }
+        : {})
+    };
+  }
+
+  /** Úprava v tom priečinku, do ktorého sa práve zapisuje. */
+  const scopedOverride = (id) =>
+    editScope === "all" ? baseLayerOverride(id) : mapLayerOverride(id);
 
   function setLayerOverride(id, patch) {
-    const cur = { ...(overrides.layers[id] || {}) };
+    const bucket = editScope === "all" ? overrides.layers : mapBucket(true).layers;
+    const cur = { ...(bucket[id] || {}) };
     for (const [k, v] of Object.entries(patch)) {
       if (v === undefined) delete cur[k];
       else cur[k] = v;
     }
     if (cur.paint && !Object.keys(cur.paint).length) delete cur.paint;
-    if (Object.keys(cur).length) overrides.layers[id] = cur;
-    else delete overrides.layers[id];
+    if (Object.keys(cur).length) bucket[id] = cur;
+    else delete bucket[id];
+    pruneMaps();
   }
 
   function setLayerPaint(id, prop, value) {
-    const cur = { ...((overrides.layers[id] || {}).paint || {}) };
+    const cur = { ...((scopedOverride(id) || {}).paint || {}) };
     if (value === undefined) delete cur[prop];
     else cur[prop] = value;
     setLayerOverride(id, { paint: Object.keys(cur).length ? cur : undefined });
   }
 
-  /** Zmení jednu vlastnosť vzoru / okraja bez toho, aby zmazala ostatné. */
+  /**
+   * Zmení jednu vlastnosť vzoru / okraja bez toho, aby zmazala ostatné.
+   * Vychádza sa zo zlúčenej úpravy, takže doladenie vzoru v jednej mape
+   * prevezme, čo je nastavené spoločne, a nezačne od nuly.
+   */
   function patchSub(id, key, patch) {
-    const cur = { ...((overrides.layers[id] || {})[key] || {}) };
+    const cur = { ...((layerOverride(id) || {})[key] || {}) };
     setLayerOverride(id, { [key]: { ...cur, ...patch } });
   }
+
+  /** Koľko úprav drží daný priečinok (do popisku prepínača rozsahu). */
+  const countScope = (scope) =>
+    scope === "all"
+      ? Object.keys(overrides.layers).length + overrides.poi.hidden.length
+      : Object.keys(mapBucket()?.layers || {}).length +
+        (mapBucket()?.poi?.hidden || []).length;
 
   function setPaletteColor(key, value) {
     const theme = getTheme();
@@ -605,17 +745,117 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
   }
 
   function isHidden(layer) {
-    return (layer.layout || {}).visibility === "none";
+    return isHiddenLayer(layer);
   }
 
+  /**
+   * Zapnutie a vypnutie vrstvy.
+   *
+   * Zapnutie nie je vždy len „prestaň ju vypínať": vrstvu môže vypínať profil
+   * typu mapy (lyžiarske trasy na turistickej mape) alebo spoločná úprava –
+   * vtedy treba do tejto mapy zapísať výslovné `visible: true`, inak by sa
+   * odstránením úpravy nič nezmenilo.
+   */
   function setVisible(ids, visible) {
-    for (const id of ids) setLayerOverride(id, { visible: visible ? undefined : false });
+    const byProfile = mapTypeHidden(getStyle()?.layers || [], mapTypeId());
+    for (const id of ids) {
+      // „Všetky mapy" musí znamenať naozaj všetky: výnimka nastavená
+      // v niektorej mape by inak spoločné rozhodnutie potichu prebila.
+      if (editScope === "all") clearMapVisibility(id);
+
+      if (!visible) {
+        setLayerOverride(id, { visible: false });
+        continue;
+      }
+      const forcedOff =
+        byProfile.has(id) ||
+        (editScope === "map" && baseLayerOverride(id)?.visible === false);
+      setLayerOverride(id, { visible: forcedOff ? true : undefined });
+    }
   }
 
-  /** Posuvník zoomu + prehľad, koľko vrstiev je na ňom povolených. */
+  /** Zahodí výnimku „zobraziť/skryť" tejto vrstvy vo všetkých typoch máp. */
+  function clearMapVisibility(id) {
+    for (const m of Object.values(overrides.maps)) {
+      const own = m.layers?.[id];
+      if (!own || own.visible === undefined) continue;
+      delete own.visible;
+      if (!Object.keys(own).length) delete m.layers[id];
+    }
+    pruneMaps();
+  }
+
+  /**
+   * „Na tomto zoome áno / nie" – to hlavné, čo od prehliadania po zoomoch
+   * človek chce. Rozsah vrstvy sa posunie tak, aby zoom `z` do neho patril
+   * (alebo nepatril); keď by z rozsahu nič neostalo, vrstva sa rovno vypne.
+   */
+  function setZoomAt(layer, z, on) {
+    const patch = zoomRangeFor(layer, z, on);
+    if (patch.hide) {
+      setVisible([layer.id], false);
+      return;
+    }
+    if (patch.show && isHidden(layer)) setVisible([layer.id], true);
+    const { minzoom, maxzoom } = patch;
+    if ("minzoom" in patch || "maxzoom" in patch) {
+      setLayerOverride(layer.id, {
+        ...("minzoom" in patch ? { minzoom } : {}),
+        ...("maxzoom" in patch ? { maxzoom } : {})
+      });
+    }
+  }
+
+  /** Prepínač, do ktorého priečinka idú úpravy (a čo je práve na obrazovke). */
+  function scopeBar() {
+    const type = mapTypeDef(mapTypeId());
+    const chip = (id, label, title) =>
+      el("button", {
+        type: "button",
+        class: `dev-chip${editScope === id ? " on" : ""}`,
+        text: `${label} (${countScope(id)})`,
+        title,
+        onclick: () => {
+          editScope = id;
+          try {
+            localStorage.setItem(SCOPE_KEY, id);
+          } catch {
+            /* súkromný režim – rozsah sa jednoducho nezapamätá */
+          }
+          renderBody();
+        }
+      });
+
+    return el("div", { class: "dev-scope" }, [
+      el("div", { class: "dev-scoperow" }, [
+        el("span", { class: "dev-bulklabel", text: `Mapa: ${type.label}` }),
+        chip("map", "len táto mapa", `Úpravy sa zapíšu len pre mapu „${type.label}".`),
+        chip("all", "všetky mapy", "Úpravy sa zapíšu spoločne pre všetky typy máp.")
+      ]),
+      el("p", { class: "dev-note", text: type.note })
+    ]);
+  }
+
+  /** Celé číslo zoomu, s ktorým sa pracuje pri „na tomto zoome áno/nie". */
+  const zoomCell = () => Math.min(MAX_DISPLAY_Z, Math.max(0, Math.floor(zoomView)));
+
+  function goToZoom(z) {
+    zoomView = Math.min(MAX_DISPLAY_Z, Math.max(0, Number(z)));
+    getMap()?.jumpTo({ zoom: zoomView });
+    renderBody();
+  }
+
+  /**
+   * Posuvník zoomu + prehľad, koľko vrstiev je na ňom povolených.
+   *
+   * Zoom je tu hlavný nástroj, nie len informácia: nastav zoom a potom
+   * jedným klikom (štítok s rozsahom v riadku, pásik v detaile, alebo
+   * hromadne pre vybrané vrstvy) povedz, čo na ňom má a nemá byť.
+   */
   function zoomBar() {
     const all = listedLayers();
     const active = all.filter((l) => activeAt(l, zoomView)).length;
+    const z = zoomCell();
 
     const slider = el("input", {
       type: "range",
@@ -634,16 +874,22 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
       value: String(Math.round(zoomView * 10) / 10)
     });
 
-    const goTo = (z) => {
-      zoomView = Math.min(MAX_DISPLAY_Z, Math.max(0, Number(z)));
-      getMap()?.jumpTo({ zoom: zoomView });
-      renderBody();
-    };
     slider.addEventListener("input", () => {
       number.value = slider.value;
     });
-    slider.addEventListener("change", () => goTo(slider.value));
-    number.addEventListener("change", () => goTo(number.value));
+    slider.addEventListener("change", () => goToZoom(slider.value));
+    number.addEventListener("change", () => goToZoom(number.value));
+
+    // Skoky na zoomy, kde sa mapa naozaj láme (prehľad → okres → mesto →
+    // ulica → detail), nech sa nemusí trafovať posuvníkom.
+    const jumps = [4, 8, 10, 12, 14, 16, 18, 20].map((zz) =>
+      el("button", {
+        type: "button",
+        class: `dev-chip${z === zz ? " on" : ""}`,
+        text: `z${zz}`,
+        onclick: () => goToZoom(zz)
+      })
+    );
 
     return el("div", { class: "dev-zoombar" }, [
       el("div", { class: "dev-zoomrow" }, [
@@ -651,9 +897,10 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
         slider,
         number
       ]),
+      el("div", { class: "dev-chips" }, jumps),
       el("div", { class: "dev-zoominfo" }, [
         el("span", {
-          text: `Na tomto zoome kreslí mapa ${active} zo ${all.length} vrstiev.`
+          text: `Na z${z} kreslí mapa ${active} zo ${all.length} vrstiev.`
         }),
         el("button", {
           type: "button",
@@ -664,6 +911,47 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
             renderBody();
           }
         })
+      ]),
+      el("p", {
+        class: "dev-note",
+        text:
+          `Štítok s rozsahom v riadku (napr. z13–16) je prepínač: klik povie, ` +
+          `či sa vrstva na z${z} kresliť má, alebo nie. Celý rozsah sa dá ` +
+          `naklikať v pásiku v detaile vrstvy.`
+      })
+    ]);
+  }
+
+  /**
+   * Pásik zoomov z0–z20: jedna bunka = jeden zoom, zvýraznené sú tie, na
+   * ktorých sa vrstva kreslí. Klik do bunky ju zapne alebo vypne – rozsah
+   * ostáva súvislý, takže z pásika je rovno vidieť, čo vrstva robí.
+   */
+  function zoomStrip(layer) {
+    const now = zoomCell();
+    const cells = [];
+    for (let z = 0; z <= MAX_DISPLAY_Z; z++) {
+      const on = activeAt(layer, z);
+      cells.push(
+        el("button", {
+          type: "button",
+          class: `dev-cell${on ? " on" : ""}${z === now ? " now" : ""}`,
+          title: `z${z}: ${on ? "kreslí sa – klik vypne" : "nekreslí sa – klik zapne"}`,
+          onclick: () => {
+            setZoomAt(layer, z, !on);
+            apply({ immediate: true });
+          }
+        })
+      );
+    }
+    return el("div", { class: "dev-stripwrap" }, [
+      el("div", { class: "dev-strip" }, cells),
+      el("div", { class: "dev-striplabels" }, [
+        el("span", { text: "z0" }),
+        el("span", { text: "z5" }),
+        el("span", { text: "z10" }),
+        el("span", { text: "z15" }),
+        el("span", { text: "z20" })
       ])
     ]);
   }
@@ -751,6 +1039,35 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
           apply();
         }
       }),
+      // Hromadné „na tomto zoome áno/nie": vyber vrstvy, nastav zoom a jedným
+      // tlačidlom povedz, čo na ňom má byť vidieť.
+      el("button", {
+        type: "button",
+        class: "dev-btn",
+        text: `Zobraziť od z${zoomCell()}`,
+        title: `Vybraným vrstvám nastaví minzoom na ${zoomCell()}`,
+        onclick: () => {
+          for (const id of selectedLayers) {
+            setLayerOverride(id, { minzoom: zoomCell() });
+          }
+          setVisible(selectedLayers, true);
+          apply();
+        }
+      }),
+      el("button", {
+        type: "button",
+        class: "dev-btn",
+        text: `Skryť na z${zoomCell()}`,
+        title: `Vybrané vrstvy sa na z${zoomCell()} kresliť nebudú`,
+        onclick: () => {
+          const style = getStyle();
+          for (const id of selectedLayers) {
+            const layer = style.layers.find((l) => l.id === id);
+            if (layer) setZoomAt(layer, zoomCell(), false);
+          }
+          apply();
+        }
+      }),
       bulkColor,
       el("button", {
         type: "button",
@@ -783,9 +1100,12 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
       el("button", {
         type: "button",
         class: "dev-btn danger",
-        text: "Reset výberu",
+        text: editScope === "all" ? "Reset (všetky mapy)" : "Reset (táto mapa)",
+        title: "Zahodí úpravy vybraných vrstiev v tom priečinku, do ktorého sa práve zapisuje",
         onclick: () => {
-          for (const id of selectedLayers) delete overrides.layers[id];
+          const bucket = editScope === "all" ? overrides.layers : mapBucket()?.layers;
+          if (bucket) for (const id of selectedLayers) delete bucket[id];
+          pruneMaps();
           apply();
         }
       })
@@ -855,6 +1175,7 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     }
 
     return el("div", {}, [
+      scopeBar(),
       zoomBar(),
       searchInput,
       chips,
@@ -880,18 +1201,23 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
       if (label) label.textContent = `Vybraných: ${selectedLayers.size}`;
     });
 
-    const cls = `dev-row${o ? " changed" : ""}${hidden ? " off" : ""}${
-      inactive && !hidden ? " inactive" : ""
-    }`;
+    // Riadok rozlišuje „mám to upravené v tejto mape" od „mám to upravené
+    // spoločne" – inak by sa nedalo poznať, kde úprava vlastne sedí.
+    const scoped = scopedOverride(layer.id);
+    const cls =
+      `dev-row${o ? " changed" : ""}${scoped ? " scoped" : ""}` +
+      `${hidden ? " off" : ""}${inactive && !hidden ? " inactive" : ""}`;
     const head = el("div", { class: cls }, [
       check,
       el("button", {
         type: "button",
         class: "dev-mini",
-        title: hidden ? "Zobraziť vrstvu" : "Skryť vrstvu",
+        title: hidden
+          ? `Zobraziť vrstvu (${editScope === "all" ? "vo všetkých mapách" : "v tejto mape"})`
+          : `Skryť vrstvu (${editScope === "all" ? "vo všetkých mapách" : "v tejto mape"})`,
         text: hidden ? "🚫" : "👁",
         onclick: () => {
-          setLayerOverride(layer.id, { visible: hidden ? undefined : false });
+          setVisible([layer.id], hidden);
           apply();
         }
       }),
@@ -909,16 +1235,88 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
         el("span", { text: `${open ? "▾ " : "▸ "}${meta["frico:label"] || layer.id}` }),
         el("small", { text: layer.id })
       ]),
-      el("span", {
+      // Štítok s rozsahom je zároveň prepínač „na tomto zoome áno / nie" –
+      // to je pri prezeraní po zoomoch tá najčastejšia úprava vôbec.
+      el("button", {
+        type: "button",
         class: `dev-zrange${inactive ? " off" : ""}`,
         text: zoomRangeText(layer),
         title: inactive
-          ? `Na zoome ${zoomView.toFixed(1)} sa nekreslí`
-          : `Na zoome ${zoomView.toFixed(1)} sa kreslí`
+          ? `Na z${zoomCell()} sa nekreslí – klikni, nech sa kreslí`
+          : `Na z${zoomCell()} sa kreslí – klikni, nech sa nekreslí`,
+        onclick: () => {
+          setZoomAt(layer, zoomCell(), inactive);
+          apply({ immediate: true });
+        }
       })
     ]);
 
     return el("div", { class: "dev-item" }, [head, open ? layerDetails(layer) : null]);
+  }
+
+  /** Nadpis sekcie v detaile vrstvy – aby bolo vidieť, čo sa kde nastavuje. */
+  const sectionTitle = (text, note) =>
+    el("div", { class: "dev-h5" }, [
+      el("span", { text }),
+      note ? el("small", { text: note }) : null
+    ]);
+
+  /**
+   * Výber prerušovania čiary s náhľadom. Samotný názov („Čiarkovaná") o čiare
+   * veľa nepovie – vedľa výberu sa preto rovno kreslí, ako bude vyzerať.
+   */
+  function dashField({ label, value, onChange }) {
+    const preview = el("span", { class: "dev-dash" });
+    const draw = (id) => {
+      const d = dashPreview(id, 2);
+      preview.innerHTML =
+        `<svg width="54" height="10" viewBox="0 0 54 10" aria-hidden="true">` +
+        `<line x1="1" y1="5" x2="53" y2="5" stroke="currentColor" stroke-width="2"` +
+        (d ? ` stroke-dasharray="${d}"` : "") +
+        `/></svg>`;
+    };
+    draw(value);
+    const field = selectField({
+      label,
+      value,
+      options: DASH_PRESETS.map((d) => [d.id, d.label]),
+      onChange: (v) => {
+        draw(v);
+        onChange(v);
+      }
+    });
+    return el("span", { class: "dev-dashrow" }, [field, preview]);
+  }
+
+  /**
+   * Číselná vlastnosť z `paint` (šírka čiary, krytie). Väčšina z nich je
+   * v štýle zadaná interpoláciou podľa zoomu – vtedy je pole prázdne
+   * a v ňom nápoveda; vyplnením sa nahradí konštantou, vymazaním sa vráti
+   * pôvodná interpolácia.
+   */
+  function paintNumber({ layer, prop, label, min, max, step }) {
+    const o = layerOverride(layer.id) || {};
+    const cur = (layer.paint || {})[prop];
+    const isNum = typeof cur === "number";
+    const field = numberField({
+      label,
+      value: isNum ? Math.round(cur * 100) / 100 : undefined,
+      min,
+      max,
+      step,
+      // Do políčka sa „podľa zoomu" nezmestí, patrí teda do bublinky.
+      placeholder: isNum ? "" : "auto",
+      onChange: (v) => {
+        setLayerPaint(layer.id, prop, v);
+        apply({ immediate: true });
+      }
+    });
+    if (!isNum) {
+      field.querySelector("input").title =
+        `${prop} sa v štýle mení podľa zoomu – vyplnením sa nahradí pevnou hodnotou`;
+    }
+    if (o.paint && o.paint[prop] !== undefined) field.classList.add("changed");
+    return field;
   }
 
   function layerDetails(layer) {
@@ -927,6 +1325,8 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     const parts = [];
 
     // ---- rozsah zoomu ----
+    // Zoom je prvý, lebo „čo je vidieť kedy" je najčastejšia otázka: pásik
+    // ukáže celý rozsah naraz a klikom sa mení, čísla sú na jemné doladenie.
     const zoomField = (prop, label) =>
       numberField({
         label,
@@ -940,14 +1340,49 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
           apply({ immediate: true });
         }
       });
+    parts.push(sectionTitle("Zoom", "klik do pásika = na tom zoome áno / nie"));
+    parts.push(zoomStrip(layer));
     parts.push(
       el("div", { class: `dev-fields${o.minzoom != null || o.maxzoom != null ? " changed" : ""}` }, [
         zoomField("minzoom", "od z"),
-        zoomField("maxzoom", "do z")
+        zoomField("maxzoom", "do z"),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: `od z${zoomCell()}`,
+          title: `Vrstva sa začne kresliť až od z${zoomCell()}`,
+          onclick: () => {
+            setLayerOverride(layer.id, { minzoom: zoomCell() });
+            apply({ immediate: true });
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: `do z${zoomCell()}`,
+          title: `Vrstva sa nad z${zoomCell()} kresliť prestane`,
+          onclick: () => {
+            setLayerOverride(layer.id, { maxzoom: zoomCell() });
+            apply({ immediate: true });
+          }
+        }),
+        o.minzoom != null || o.maxzoom != null
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              title: "Späť na pôvodný rozsah",
+              text: "⟲",
+              onclick: () => {
+                setLayerOverride(layer.id, { minzoom: undefined, maxzoom: undefined });
+                apply({ immediate: true });
+              }
+            })
+          : null
       ])
     );
 
     // ---- farby ----
+    if (colorProps(layer).length) parts.push(sectionTitle("Farby"));
     for (const [prop, value] of colorProps(layer)) {
       const paletteKey = paletteMap[prop];
       const overridden = !!(o.paint && o.paint[prop]);
@@ -1019,6 +1454,7 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     // (POI podľa triedy) sa vyberajú z dát, nie zo zoznamu.
     const iconNow = (layer.layout || {})["icon-image"];
     if (layer.type === "symbol" && typeof iconNow === "string") {
+      parts.push(sectionTitle("Ikona"));
       const set = (getIconSets?.() || []).find(
         (s) => s.id === selectedIconSource(overrides)
       ) || (getIconSets?.() || [])[0];
@@ -1054,19 +1490,54 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
 
     if (!canDecorate(layer)) return el("div", { class: "dev-details" }, parts);
 
-    // ---- prerušovanie čiary ----
-    if (layer.type === "line") {
+    const isLine = layer.type === "line";
+    parts.push(
+      sectionTitle(
+        isLine ? "Štýl čiary" : "Štýl plochy",
+        isLine ? "plná, čiarkovaná, bodkovaná…" : "výplň a vzor"
+      )
+    );
+
+    // ---- prerušovanie a hrúbka čiary ----
+    // Toto je to, čím sa náučný chodník odlíši od zvyšku: druh čiary
+    // (`line-dasharray`) plus jej hrúbka a krytie.
+    if (isLine) {
       parts.push(
-        el("div", { class: "dev-sub" }, [
-          selectField({
+        el("div", { class: `dev-sub${o.dash ? " changed" : ""}` }, [
+          dashField({
             label: "Čiara",
             value: o.dash || "solid",
-            options: DASH_PRESETS.map((d) => [d.id, d.label]),
             onChange: (v) => {
               setLayerOverride(layer.id, { dash: v === "solid" ? undefined : v });
               apply({ immediate: true });
             }
+          }),
+          paintNumber({
+            layer,
+            prop: "line-width",
+            label: "hrúbka",
+            min: 0,
+            max: 40,
+            step: 0.5
+          }),
+          paintNumber({
+            layer,
+            prop: "line-opacity",
+            label: "krytie",
+            min: 0,
+            max: 1,
+            step: 0.1
           })
+        ])
+      );
+    } else {
+      // Plocha: krytie výplne. Vzor a okraj sú nižšie – spolu je z toho
+      // „šrafovaná plocha s prerušovaným okrajom", ktorá sa dá naklikať.
+      const opacityProp =
+        layer.type === "fill-extrusion" ? "fill-extrusion-opacity" : "fill-opacity";
+      parts.push(
+        el("div", { class: "dev-sub" }, [
+          paintNumber({ layer, prop: opacityProp, label: "krytie", min: 0, max: 1, step: 0.05 })
         ])
       );
     }
@@ -1138,6 +1609,9 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     // ---- okraj ----
     const out = o.outline;
     const isArea = layer.type !== "line";
+    parts.push(
+      sectionTitle("Okraj", isArea ? "obrys plochy" : "širší obrys pod čiarou")
+    );
     const outlineRow = [
       selectField({
         label: "Okraj",
@@ -1178,10 +1652,9 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
             apply({ immediate: true });
           }
         }),
-        selectField({
-          label: "vzor",
+        dashField({
+          label: "čiara",
           value: out.dash || "solid",
-          options: DASH_PRESETS.map((d) => [d.id, d.label]),
           onChange: (v) => {
             patchSub(layer.id, "outline", { dash: v === "solid" ? undefined : v });
             apply({ immediate: true });
@@ -1707,8 +2180,22 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }
 
+  /** Skryté POI triedy: spoločné aj tie pre práve zobrazený typ mapy. */
+  const poiHiddenAll = () =>
+    new Set([...overrides.poi.hidden, ...(mapBucket()?.poi?.hidden || [])]);
+
+  function setPoiHidden(cls, hide) {
+    const bucket = editScope === "all" ? overrides.poi : mapBucket(true).poi;
+    const next = new Set(bucket.hidden);
+    if (hide) next.add(cls);
+    else next.delete(cls);
+    bucket.hidden = [...next].sort();
+    pruneMaps();
+  }
+
   function renderPoi() {
-    const hidden = new Set(overrides.poi.hidden);
+    const hidden = poiHiddenAll();
+    const inBase = new Set(overrides.poi.hidden);
     const known = new Map(poiClasses);
     for (const h of hidden) if (!known.has(h)) known.set(h, 0);
     const list = [...known.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
@@ -1717,17 +2204,23 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
       const check = el("input", { type: "checkbox", class: "dev-check" });
       check.checked = !hidden.has(cls);
       check.addEventListener("change", () => {
-        const next = new Set(overrides.poi.hidden);
-        if (check.checked) next.delete(cls);
-        else next.add(cls);
-        overrides.poi.hidden = [...next].sort();
+        setPoiHidden(cls, !check.checked);
         apply({ rerender: false });
       });
+      // Trieda skrytá spoločne sa v rozsahu „len táto mapa" vrátiť nedá –
+      // nech je jasné, prečo odškrtnutie nič neurobí.
+      const stuck = editScope === "map" && inBase.has(cls);
       return el("label", { class: `dev-prow${hidden.has(cls) ? " off" : ""}` }, [
         check,
         el("span", { class: "dev-name" }, [
           el("span", { text: cls }),
-          el("small", { text: count ? `${count} v zobrazenom výreze` : "skryté" })
+          el("small", {
+            text: stuck
+              ? "skryté pre všetky mapy – prepni rozsah"
+              : count
+              ? `${count} v zobrazenom výreze`
+              : "skryté"
+          })
         ])
       ]);
     });
@@ -1739,6 +2232,7 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
           "Ktoré body sa zobrazujú. Zoznam sa načíta z dlaždíc v aktuálnom výreze – " +
           "prejdi mapu tam, kde POI chceš, a načítaj znova."
       }),
+      scopeBar(),
       el("div", { class: "dev-bulk on" }, [
         el("button", {
           type: "button",
@@ -1752,9 +2246,11 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
         el("button", {
           type: "button",
           class: "dev-btn danger",
-          text: "Zobraziť všetky",
+          text: editScope === "all" ? "Zobraziť všetky (všade)" : "Zobraziť všetky (táto mapa)",
           onclick: () => {
-            overrides.poi.hidden = [];
+            if (editScope === "all") overrides.poi.hidden = [];
+            else if (mapBucket()) mapBucket().poi.hidden = [];
+            pruneMaps();
             apply();
           }
         })
@@ -1793,7 +2289,9 @@ export function initDevMode({ root, getStyle, getTheme, getMap, getIconSets, onC
           "Úpravy sú priebežne uložené v prehliadači. Stiahni ich ako " +
           "<code>style-overrides.json</code> a nahraj cez workflow " +
           "<b>Uložiť úpravy štýlu do zdrojáku</b> (Actions → Run workflow → " +
-          "vlož obsah súboru). Pipeline ich zapečie do mapy pre web aj iOS."
+          "vlož obsah súboru). Pipeline ich zapečie do mapy pre web aj iOS.<br>" +
+          "V súbore je <code>layers</code> a <code>poi</code> spoločné pre " +
+          "všetky typy máp, <code>maps</code> drží to, čo platí len pre jednu."
       }),
       el("div", { class: "dev-bulk on" }, [
         el("button", {
