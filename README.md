@@ -408,7 +408,9 @@ Predvolené hodnoty nie sú odhad – sú namerané na výreze z tej vrstvy
   Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
   polovičné dáta**: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
   aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
-  útvary, o ktoré ide.
+  útvary, o ktoré ide. Predvolené `min_area` je preto dnes **5 m²** – ~8
+  pixelov na z17, teda hranica, pod ktorou je už len zrno JPEGu. Tabuľka
+  ostáva pri nameraných 200 a 50.
 
 **Prvý beh je ladiaci.** Predvolené prahy sú kvalifikovaný odhad, nie
 nameraná hodnota – tá dlaždicová vrstva sa nedá ochutnať dopredu. Beh preto
@@ -456,6 +458,16 @@ Preto má `auto` okrem stropu na dlaždice aj rozpočet času (`options:
 budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách teda
 zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
 bežal do timeoutu celého jobu.
+
+**Sťahovanie a vektorizácia sú dva joby.** *Stiahnuť dlaždice* (strop 2 h)
+a *Skaly z tieňovania* (strop 3 h). Nie dva kroky jedného jobu: strop času
+platí na job, a sťahovanie z dobrovoľníckeho servera býva desiatky minút,
+kým obrysy ďalšiu hodinu — dokopy sa to do jedného rozpočtu zmestiť nemusí
+a keď dôjde čas, padne aj to, čo už bolo hotové. Takto má každá časť celý
+svoj rozpočet, dáta si podávajú cache a artefakt, a obrázky vypadnú ako
+artefakt hneď po stiahnutí — teda aj vtedy, keď vektorizácia neskôr padne.
+Zvolený zoom ide z prvého jobu do druhého ako výstup, takže sa pri `auto`
+nehádá dvakrát.
 
 **Čo je hotové, sa nepočíta znova.** Rozrobené leží v cache dlaždíc, ktorá
 sa ukladá aj po páde a po timeoute:

@@ -11,7 +11,11 @@ name: Skaly z tieňovaných dlaždíc
 #   Build map  s  výberom  rock_source: tienovanie    ─►  vrstva `rock` v mape
 #
 # Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
-# rozhoduje, čo je tmavé, a prečo sa vektorizuje naraz a nie po dlaždiciach.
+# rozhoduje, čo je tmavé, a prečo sa vektorizuje po blokoch.
+#
+# Sú tu DVA joby: `dlazdice` stiahne obrázky, `rocks` z nich spraví polygóny.
+# Dôvod je pri jobe `dlazdice` – v skratke: strop času platí na job a na obe
+# časti naraz nemusí stačiť.
 #
 # ČO OD TOHO ČAKAŤ: hillshade je obraz sklonu, ale osvetleného z jednej
 # strany. Severozápadné steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie
@@ -80,9 +84,9 @@ on:
         default: "25"
         type: string
       min_area:
-        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny"
+        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny. 5 m² je ~8 pixelov na z17"
         required: false
-        default: "50"
+        default: "5"
         type: string
       options:
         description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
@@ -120,7 +124,7 @@ on:
         type: string
       min_area:
         required: false
-        default: "50"
+        default: "5"
         type: string
       options:
         required: false
@@ -165,8 +169,99 @@ env:
   MAX_TILES: "60000"
 
 jobs:
+  # ---------- 1. stiahnuť dlaždice ----------
+  # Vlastný job, a nie prvý krok toho druhého: každý job má vlastný strop
+  # času. Sťahovanie z dobrovoľníckeho servera je desiatky minút a obrysy
+  # ďalšiu hodinu; dokopy to na jeden job nemusí stačiť a keď dôjde čas,
+  # padne aj to, čo už bolo hotové. Takto má každá časť celý svoj rozpočet
+  # a medzi nimi si dáta podávajú cache a artefakt.
+  #
+  # GDAL tu netreba – sťahujú sa obrázky, nič sa nepočíta.
+  dlazdice:
+    name: Stiahnuť dlaždice
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      key: ${{ steps.area.outputs.key }}
+      name: ${{ steps.area.outputs.name }}
+      bbox: ${{ steps.area.outputs.bbox }}
+      km2: ${{ steps.area.outputs.km2 }}
+      # Pri `zoom: auto` ho vyberá sonda a rozpočet. Ide von, aby ho druhý
+      # job nemusel hádať znova.
+      zoom: ${{ steps.dl.outputs.zoom }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Nástroje
+        run: python3 -m pip install --quiet numpy pillow
+
+      - name: Výrez → bbox
+        id: area
+        run: |
+          set -euo pipefail
+          python3 workers/resolve-area.py \
+            --region-bbox="$SK_BBOX" \
+            --area='${{ inputs.area }}' \
+            --out="$GITHUB_OUTPUT"
+
+      # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
+      # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
+      # v sebe číslo behu, aby sa dal doplniť aj neúplný obsah: cache sa
+      # v GitHube prepísať nedá, takže bez toho by prvý (hoc aj prerušený)
+      # beh zamkol obsah navždy. Hľadá sa cez `restore-keys` po predpone.
+      - name: Cache dlaždíc (restore)
+        id: tiles-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: tiles-cache
+          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+          restore-keys: |
+            shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-
+
+      - name: Stiahni dlaždice
+        id: dl
+        run: |
+          set -euo pipefail
+          python3 workers/shading-rocks.py \
+            --bbox='${{ steps.area.outputs.bbox }}' \
+            --url="$SHADING_URL" \
+            --zoom='${{ inputs.zoom }}' \
+            --max-tiles="$MAX_TILES" \
+            --cache-dir=tiles-cache \
+            --phase=stiahnut \
+            --zoom-out="$GITHUB_OUTPUT" \
+            --options='${{ inputs.options }}' \
+            --out=data/rock.gpkg
+
+      - name: Cache dlaždíc (save)
+        if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: tiles-cache
+          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+
+      # Samotné obrázky, z ktorých sa skaly hľadajú. `compression-level: 0`:
+      # JPG je už komprimovaný, balenie by len ukradlo minúty.
+      - name: Odlož stiahnuté dlaždice ako artefakt
+        if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.dl.outputs.zoom }}
+          # Medzivýsledky (pásy rastra, obrysy) v cache byť majú, v artefakte
+          # s obrázkami nie.
+          path: |
+            tiles-cache
+            !tiles-cache/_rozrobene
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: ignore
+
+  # ---------- 2. vektorizácia ----------
   rocks:
     name: Skaly z tieňovania
+    needs: dlazdice
     runs-on: ubuntu-latest
     timeout-minutes: 180
     outputs:
@@ -193,28 +288,16 @@ jobs:
           # prvej dlaždice. (Presne to sa stalo v behu 31215692174.)
           gdalinfo --version
 
-      - name: Výrez → bbox
-        id: area
-        run: |
-          set -euo pipefail
-          python3 workers/resolve-area.py \
-            --region-bbox="$SK_BBOX" \
-            --area='${{ inputs.area }}' \
-            --out="$GITHUB_OUTPUT"
-
-      # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
-      # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
-      # v sebe číslo behu, aby sa dal doplniť aj neúplný obsah: cache sa
-      # v GitHube prepísať nedá, takže bez toho by prvý (hoc aj prerušený)
-      # beh zamkol obsah navždy. Hľadá sa cez `restore-keys` po predpone.
+      # Dlaždice aj rozrobené si podáva cache. Kľúč je ten istý ako v prvom
+      # jobe vrátane čísla behu, takže sa trafí presne to, čo práve uložil.
       - name: Cache dlaždíc (restore)
         id: tiles-cache
         uses: actions/cache/restore@v4
         with:
           path: tiles-cache
-          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+          key: shading-tiles-${{ needs.dlazdice.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
           restore-keys: |
-            shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-
+            shading-tiles-${{ needs.dlazdice.outputs.key }}-z${{ inputs.zoom }}-
 
       - name: Skaly z tmavých plôch
         id: rocks
@@ -222,9 +305,10 @@ jobs:
           set -euo pipefail
           mkdir -p data out
           python3 workers/shading-rocks.py \
-            --bbox='${{ steps.area.outputs.bbox }}' \
+            --bbox='${{ needs.dlazdice.outputs.bbox }}' \
             --url="$SHADING_URL" \
-            --zoom='${{ inputs.zoom }}' \
+            --phase=vektor \
+            --zoom='${{ needs.dlazdice.outputs.zoom }}' \
             --max-tiles="$MAX_TILES" \
             --dark='${{ inputs.dark }}' \
             --dark-always='${{ inputs.dark_always }}' \
@@ -241,7 +325,7 @@ jobs:
           # s rôznymi prahmi nikdy neprepíšu. Zoom sa berie zo štatistiky,
           # nie zo vstupu – pri `auto` je až tam.
           . out/rock-img-stats.txt
-          ASSET="rockimg-${{ steps.area.outputs.key }}-z${zoom}-d${dark}-a${dark_always}-r${rel}-c${cliff_delta}-${ROCK_IMG_ALGO}.gpkg.zst"
+          ASSET="rockimg-${{ needs.dlazdice.outputs.key }}-z${zoom}-d${dark}-a${dark_always}-r${rel}-c${cliff_delta}-${ROCK_IMG_ALGO}.gpkg.zst"
           {
             echo "asset=$ASSET"
             echo "zoom=$zoom"
@@ -249,15 +333,21 @@ jobs:
             echo "total_km2=$total_km2"
           } >> "$GITHUB_OUTPUT"
 
-      # Uloží sa aj vtedy, keď ďalšie kroky spadnú – stiahnuté dlaždice sú
-      # to jediné, čo stálo cudzí server.
-      - name: Cache dlaždíc (save)
+      # Uloží sa aj vtedy, keď vektorizácia spadne alebo ju zabije timeout –
+      # v `tiles-cache/_rozrobene` sú vtedy hotové pásy rastra a obrysy,
+      # a ďalší beh na ne nadviaže namiesto počítania odznova.
+      #
+      # Kľúč má na konci `-v`, nie čisté číslo behu: pod tým už leží to, čo
+      # uložil job `dlazdice`, a existujúci kľúč sa v GitHube prepísať nedá –
+      # uloženie by ticho neurobilo nič. `restore-keys` hľadá po predpone,
+      # takže sa ďalší beh trafí na tento (novší) záznam aj tak.
+      - name: Cache dlaždíc a rozrobeného (save)
         if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: tiles-cache
-          key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
+          key: shading-tiles-${{ needs.dlazdice.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}-v
 
       - name: GeoJSON navyše
         run: |
@@ -271,7 +361,7 @@ jobs:
       - name: Odlož polygóny ako artefakt
         uses: actions/upload-artifact@v4
         with:
-          name: skaly-obrazok-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
+          name: skaly-obrazok-${{ needs.dlazdice.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
           path: |
             data/rock.gpkg
             out/rock.geojson
@@ -279,30 +369,15 @@ jobs:
           compression-level: 9
           if-no-files-found: error
 
-      # Samotné stiahnuté tieňovanie – tie isté JPG dlaždice, z ktorých sa
-      # skaly počítali. Cache ich drží medzi behmi, ale pozrieť sa na ne dá
-      # len takto. `compression-level: 0`: JPG je už komprimovaný, balenie by
-      # len ukradlo minúty. Pri z18 na veľké pohorie to je aj vyše gigabajtu –
-      # preto kratšia doba držania než pri polygónoch.
-      - name: Odlož stiahnuté dlaždice ako artefakt
-        if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
-          # Bez vylúčenia by v artefakte s obrázkami skončili aj medzivýsledky
-          # (pásy rastra, obrysy) – tie v cache byť majú, v artefakte nie.
-          path: |
-            tiles-cache
-            !tiles-cache/_rozrobene
-          retention-days: 14
-          compression-level: 0
-          if-no-files-found: ignore
+      # Samotné dlaždice sa tu už neodkladajú – urobil to job `dlazdice`
+      # (artefakt `dlazdice-tienovania-…`) hneď po stiahnutí, teda aj vtedy,
+      # keď sa vektorizácia vôbec nedostane do cieľa.
 
       - name: Odlož náhľad a čísla
         if: ${{ always() && hashFiles('out/preview.png') != '' }}
         uses: actions/upload-artifact@v4
         with:
-          name: nahlad-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
+          name: nahlad-${{ needs.dlazdice.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
           path: |
             out/preview.png
             out/rock-img-stats.txt
@@ -335,7 +410,7 @@ jobs:
           {
             echo "## Skaly z tieňovaných dlaždíc"
             echo
-            echo "**${{ steps.area.outputs.name }}** – bbox \`${{ steps.area.outputs.bbox }}\` (${{ steps.area.outputs.km2 }} km²)"
+            echo "**${{ needs.dlazdice.outputs.name }}** – bbox \`${{ needs.dlazdice.outputs.bbox }}\` (${{ needs.dlazdice.outputs.km2 }} km²)"
             echo
           } >> "$GITHUB_STEP_SUMMARY"
 
