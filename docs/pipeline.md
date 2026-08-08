@@ -793,7 +793,8 @@ Kladný offset je vpravo v smere čiary a presne tam je podľa konvencie OSM
 dolná strana.
 
 Job sa **necachuje** a beží súbežne so všetkým ostatným. Vypína sa voľbou
-`options: features=false`, zoom dlaždíc riadi `features_maxzoom` (default 14).
+`options: features=false`, zoom dlaždíc riadi `features_maxzoom` (default 15 –
+nižšia hodnota ticho zahodí triedy s vyšším `min_zoom`, job na to upozorní).
 Podiel na rozpočte stránky je `BUDGET_FEATURES_PCT` (4 %).
 
 **Čo do `features` NEPATRÍ, hoci to tak vyzerá:** `natural=cliff`, `ridge`

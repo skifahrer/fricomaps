@@ -1500,7 +1500,7 @@ export function buildStyle({
   trailsUrl = null,
   trailsMaxzoom = 14,
   featuresUrl = null,
-  featuresMaxzoom = 14,
+  featuresMaxzoom = 15,
   demSource = DEFAULT_DEM_SOURCE,
   demTiles = DEFAULT_DEM_TILES,
   demTilesSource = null,

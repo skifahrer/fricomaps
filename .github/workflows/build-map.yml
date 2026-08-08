@@ -1678,8 +1678,16 @@ jobs:
 
           # ---- 2. dlaždice ----
           FZ='${{ needs.plan.outputs.opt_features_maxzoom }}'
-          case "$FZ" in ''|*[!0-9]*) FZ=14 ;; esac
+          case "$FZ" in ''|*[!0-9]*) FZ=15 ;; esac
           if [ "$FZ" -gt 16 ]; then FZ=16; fi
+
+          # Poistka proti tichej strate: čo má v schéme `min_zoom` nad
+          # maxzoomom, Planetiler zahodí bez slova. Viď workers/features.yml.
+          TOPZ=$(grep -oE 'min_zoom: [0-9]+' workers/features.yml \
+                 | grep -oE '[0-9]+' | sort -n | tail -1)
+          if [ "${TOPZ:-0}" -gt "$FZ" ]; then
+            echo "::warning::workers/features.yml má triedy s min_zoom až ${TOPZ}, ale dlaždice idú po z${FZ} – tie sa do nich vôbec nedostanú. Zdvihni features_maxzoom na ${TOPZ}, alebo tým triedam zníž min_zoom."
+          fi
 
           T_PM=$(date +%s)
           OUT="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
@@ -2144,7 +2152,7 @@ jobs:
             --trails='${{ needs.trails.outputs.enabled || 'false' }}' \
             --trails-maxzoom='${{ needs.trails.outputs.maxzoom || '14' }}' \
             --features='${{ needs.features.outputs.enabled || 'false' }}' \
-            --features-maxzoom='${{ needs.features.outputs.maxzoom || '14' }}' \
+            --features-maxzoom='${{ needs.features.outputs.maxzoom || '15' }}' \
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
@@ -2199,7 +2207,7 @@ jobs:
             --argjson tmaxzoom '${{ needs.trails.outputs.maxzoom || '14' }}' \
             --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
             --argjson features '${{ needs.features.outputs.enabled || 'false' }}' \
-            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '14' }}' \
+            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '15' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
             --argjson rocks '${{ needs.contours.outputs.rocks_enabled || 'false' }}' \

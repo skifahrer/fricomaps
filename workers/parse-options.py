@@ -88,7 +88,12 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
-    "features_maxzoom": ("14", "max zoom dlaždíc s krajinnými prvkami"),
+    # 15, nie 14: schéma má triedy s `min_zoom: 15` (ploty, živé ploty,
+    # geodetické body, hraničné kamene). Čo má min_zoom nad maxzoomom
+    # archívu, Planetiler ZAHODÍ BEZ SLOVA – pri 14 ich v dlaždiciach bola
+    # presne nula. Nárast je 1,6× (Andorra 248 kB → 394 kB), čo je pri
+    # jednotkách MB nič.
+    "features_maxzoom": ("15", "max zoom dlaždíc s krajinnými prvkami"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.

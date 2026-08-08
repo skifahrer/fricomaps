@@ -22,6 +22,15 @@
 # ZOOMY sú tu to hlavné rozhodnutie. Plotov je v OSM viac než všetkých ciest
 # dokopy, takže idú až od z15; vedenie vysokého napätia je orientačný bod na
 # kilometre, takže od z11. Nie je to estetika, je to veľkosť súboru.
+#
+# POZOR NA `min_zoom` NAD MAXZOOMOM ARCHÍVU. Čo má tu vyšší `min_zoom`, než
+# je maxzoom vygenerovaných dlaždíc, Planetiler zahodí – a NEPOVIE O TOM NIČ.
+# Presne to sa raz stalo: ploty, živé ploty, geodetické body a hraničné
+# kamene majú `min_zoom: 15`, dlaždice sa robili po z14 a v mape ich bola
+# nula. Preto je `features_maxzoom` predvolene 15 a job v build-map.yml
+# porovná najvyšší `min_zoom` v tomto súbore so zvoleným maxzoomom a rozdiel
+# ohlási varovaním. Znížiť maxzoom kvôli veľkosti je legitímne – len to má
+# byť vidieť, nie sa to dozvedieť z chýbajúcich plotov v mape.
 schema_name: FricoMaps krajinné prvky
 schema_description: >-
   Násypy, zárezy, múry, ploty, elektrické vedenia, prieseky, stromoradia,
