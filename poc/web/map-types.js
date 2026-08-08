@@ -84,7 +84,6 @@ export const MAP_TYPES = [
       { match: { id: "aerialway" }, minzoom: 12 },
       // Terén a chodníky sa objavia skôr než na základnej mape.
       { match: { id: ROCKS }, minzoom: 8 },
-      { match: { id: "rock-outline" }, minzoom: 10 },
       { match: { id: "road-path" }, minzoom: 10 },
       { match: { id: "road-track" }, minzoom: 10 },
       { match: { id: "road-cycleway" }, minzoom: 11 },
@@ -115,7 +114,6 @@ export const MAP_TYPES = [
       // Ostatné trasy až zblízka – inak by zo zjazdovky spravili spleť.
       { match: { id: OTHER_TRAILS }, minzoomFloor: 14, opacity: 0.7 },
       { match: { id: ROCKS }, minzoom: 8 },
-      { match: { id: "rock-outline" }, minzoom: 10 },
       { match: { id: "road-path" }, minzoomFloor: 13 },
       { match: { id: "poi-major" }, minzoom: 13 },
       { match: { id: "mountain-peak" }, minzoom: 8 }

@@ -362,7 +362,13 @@
     <select id="region"></select>
     <div class="row" id="row-contours" hidden>
       <input type="checkbox" id="contours" checked />
-      <label for="contours" style="margin:0">Vrstevnice a skaly</label>
+      <label for="contours" style="margin:0">Vrstevnice</label>
+    </div>
+    <!-- Skaly majú vlastný .pmtiles (vlastný maxzoom), tak aj vlastný
+         prepínač – dajú sa zapnúť bez vrstevníc a naopak. -->
+    <div class="row" id="row-rocks" hidden>
+      <input type="checkbox" id="rocks" checked />
+      <label for="rocks" style="margin:0">Skalné plochy</label>
     </div>
     <div class="row" id="row-trails" hidden>
       <input type="checkbox" id="trails" checked />

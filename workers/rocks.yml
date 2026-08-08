@@ -1,0 +1,57 @@
+# Planetiler custom schema – SAMOTNÉ skalné plochy, vlastný .pmtiles.
+#
+# PREČO ZVLÁŠŤ, A NIE SPOLU S VRSTEVNICAMI: každý .pmtiles má jeden maxzoom
+# a tie dve vrstvy ho chcú úplne iný. Vrstevnice sú čiary cez celý kraj –
+# každý zoom navyše ich zdvojnásobí a rozpočet stránky sa minie okolo z14.
+# Skaly sú plochy len tam, kde je terén strmý, takže sa do vyššieho zoomu
+# zmestia bez problémov – a práve pri priblížení je vidieť, či obrys sedí na
+# terén. Kým boli v jednom súbore, museli sa obe uskromniť na to nižšie.
+#
+# Nad `maxzoom` sa dlaždice naťahujú overzoomom, takže sa skaly zobrazujú až
+# do maximálneho zoomu mapy; z vyššieho maxzoomu je ostrejší tvar, nie väčší
+# rozsah zoomov.
+#
+# Vstup `data/rock.gpkg` vyrába jedna z dvoch ciest:
+#   gdaldem slope → gdal_contour -p → ogr2ogr   (workers/rock-areas.py)
+#   tmavé plochy v hillshade JPG                (workers/shading-rocks.py)
+# Formát je ten istý, len atribúty sa líšia – skaly z DEM majú `slope`, skaly
+# z obrázka `dark`. Vždy je vyplnený len jeden z nich.
+#
+# PLNÉ PLOCHY: obe cesty predvolene vyrábajú plochy BEZ dier a v jedinej
+# triede. Kým sa `steep` a `cliff` kreslili rôzne tmavo, malo zmysel mať dve
+# pásma – `cliff` ležal v diere `steep`u a spolu dláždili územie bez prekryvu.
+# Odkedy je všetko jedna sivá bez priehľadnosti, je z dvoch pásiem len
+# dvojnásobok práce a riziko, že sa niekde prekryjú a plocha vyjde tmavšia.
+# Atribút `class` ostáva (vždy `steep`), nech sa schéma nemení pri každom
+# preladení.
+schema_name: FricoMaps skaly
+schema_description: Skalné plochy z výškového modelu alebo z tieňovaných dlaždíc
+attribution: <a href="https://sonny.4lima.de/">Sonny's LiDAR DTM</a> / <a href="https://spacedata.copernicus.eu/">Copernicus DEM</a> / <a href="https://www.freemap.sk/">freemap.sk</a>
+
+sources:
+  rock:
+    type: geopackage
+    local_path: data/rock.gpkg
+    projection: EPSG:4326
+
+layers:
+  # min_zoom 9, nie 13: skaly majú byť vidieť všade, kde sú – veľká stena je
+  # čitateľná aj z prehľadového zoomu. Malé plochy sa nižšími zoomami netreba
+  # báť, Planetiler zahodí všetko pod pixel sám (min_feature_size platí na
+  # každom zoome okrem najvyššieho, kde ho zámerne vypíname).
+  - id: rock
+    features:
+      - source: rock
+        geometry: polygon
+        min_zoom: 9
+        attributes:
+          - key: class
+          # sklon v stupňoch – len pri skalách z DEM
+          - key: slope
+            type: integer
+          # o koľko stupňov šedej pod prahom – len pri skalách z tieňovania
+          - key: dark
+            type: integer
+          # plocha v m² – nech sa dá v štýle rozlíšiť bralo od odrobinky
+          - key: area
+            type: integer

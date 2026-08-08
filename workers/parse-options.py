@@ -56,6 +56,15 @@ DEFAULTS = {
     "ugkk_fallback": ("true", "keď 1 m LiDAR nie je, počítať zo Sonnyho"),
     "ugkk_urls": ("", "priame URL na ÚGKK dáta (posledná záchrana)"),
     "contour_maxzoom": ("14", "max zoom dlaždíc s vrstevnicami"),
+    # Skaly majú od vrstevníc oddelený .pmtiles, takže aj vlastný maxzoom.
+    # 16 je tvrdý strop Planetilera; vyššie zoomy rieši overzoom, takže sa
+    # skaly zobrazujú do maximálneho zoomu mapy tak či tak – z vyššieho
+    # maxzoomu je ostrejší tvar, nie väčší rozsah zoomov.
+    "rock_maxzoom": ("16", "max zoom dlaždíc so skalami (strop Planetilera je 16)"),
+    # Plné plochy: skala je jedna súvislá plocha bez dier a v jednej
+    # triede. V mape sa kreslí jednou sivou bez priehľadnosti, takže by
+    # sa každý prekryv a každá diera prejavili ako škvrna.
+    "rock_plne": ("1", "1 = skaly ako plné plochy, 0 = s dierami a triedou cliff"),
     "contour_smoothing": ("0", "zjemnenie DEM v oblúkových sekundách"),
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
     "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),

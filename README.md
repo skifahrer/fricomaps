@@ -244,14 +244,15 @@ DEM
   → gdal_translate -ot Int16      sklon v stotinách ° na disk (mozaika celého
                                   územia sa vo Float32 nezmestí)
   → gdalbuildvrt                  mozaika sklonu, a až nad ňou NARAZ:
-  → gdal_contour -p -fl …         izolínie sklonu ako PLOCHY, aj s dierami
+  → gdal_contour -p -fl …         izolínia sklonu ako PLOCHY
                                   (hladší okraj než polygonizácia po pixeloch)
   → -explodecollections           samostatné skaly
-  → filter najmenšej plochy       + `class`: steep (≥50°) / cliff (≥65°)
+  → ST_BuildArea(ST_ExteriorRing) PLNÉ plochy – von ide len vonkajší prstenec
+  → filter najmenšej plochy
   → -simplify                     preč so schodíkmi po hranách buniek
   → smooth-polygons.py            zaoblenie rohov, ktoré po zjednodušení
                                   ostali ostré (Chaikin, 2 prechody)
-  → vrstva `rock` v {región}-contours.pmtiles  – vektor, ako všetko ostatné
+  → vrstva `rock` v {región}-rocks.pmtiles  – VLASTNÉ dlaždice, vlastný maxzoom
 ```
 
 **Tvar plôch je tvar terénu.** Obrys je izolínia sklonu, teda presne tá čiara,
@@ -267,11 +268,27 @@ raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
 neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
 v `workers/smooth-polygons.py`.
 
-**Čo nie je nad prahom, sa nezafarbí.** Keď je vnútri steny miesto s menším
-sklonom – polica, terasa, zarastený stupeň – vypadne z plochy **diera**, aj
-keď je dookola všade sklon nad prahom. Diery sa nezapĺňajú ani nefiltrujú a
-obrys ich obkreslí rovnako ako vonkajšiu hranicu, takže je polica v mape
-vidieť.
+**Plochy sú plné.** Skala je v mape jedna súvislá sivá plocha: jedna trieda,
+žiadne diery, jedna farba bez priehľadnosti. Priehľadnosť by totiž znamenala,
+že každý prekryv je vidieť — dve plochy cez seba vyjdú tmavšie než jedna,
+a stačí na to plocha rozseknutá hranicou bloku alebo `cliff` ležiaci v diere
+`steep`u. Plná farba to rieši na úrovni kreslenia a plochy sa nemusia ani
+zlepovať, ani strážiť proti sebe.
+
+Predtým to boli dve polopriehľadné triedy (`steep` ≥ 50°, `cliff` ≥ 65°)
+a diera všade, kde bolo vnútri steny miesto pod prahom (polica, terasa).
+Vrátiť sa to dá: `options: rock_plne=0`, prípadne `rock_img_options=plne=0`
+pre skaly z tieňovania.
+
+**Skaly majú vlastné dlaždice.** `{región}-rocks.pmtiles`, oddelene od
+vrstevníc — a to kvôli maxzoomu: každý `.pmtiles` má len jeden a tie dve
+vrstvy ho chcú úplne iný. Vrstevnice sú čiary cez celý kraj a rozpočet
+stránky minú okolo z14; skaly sú plochy len tam, kde je terén strmý, takže sa
+do z16 (tvrdý strop Planetilera) zmestia. Kým boli v jednom súbore, museli sa
+obe uskromniť na to nižšie — a na skalách to bolo vidieť, lebo práve pri
+priblížení sa pozerá, či obrys sedí na terén. Nad maxzoomom sa dlaždice
+naťahujú overzoomom, takže sú skaly vidieť **až do maximálneho zoomu mapy**.
+Vo viewri majú vlastný prepínač, takže sa dajú zapnúť aj bez vrstevníc.
 
 **Vektorizuje sa naraz nad celým územím – a je to nutné.** Sklon sa pre kraj
 nedá spočítať jedným rasterom (pri 2 m je to vyše 3 miliárd buniek), takže sa
@@ -413,9 +430,10 @@ Predvolené hodnoty nie sú odhad – sú namerané na výreze z tej vrstvy
   Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
   polovičné dáta**: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
   aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
-  útvary, o ktoré ide. Predvolené `min_area` je preto dnes **5 m²** – ~8
-  pixelov na z17, teda hranica, pod ktorou je už len zrno JPEGu. Tabuľka
-  ostáva pri nameraných 200 a 50.
+  útvary, o ktoré ide. Predvolené `min_area` je preto dnes **7 m²** – ~11
+  pixelov na z17, teda blízko hranice, pod ktorou je už len zrno JPEGu.
+  Tabuľka ostáva pri nameraných 200 a 50. `min_hole` sa neuplatňuje, kým sú
+  plochy plné (diery sa nekreslia vôbec).
 
 **Prvý beh je ladiaci.** Predvolené prahy sú kvalifikovaný odhad, nie
 nameraná hodnota – tá dlaždicová vrstva sa nedá ochutnať dopredu. Beh preto
@@ -463,6 +481,18 @@ Preto má `auto` okrem stropu na dlaždice aj rozpočet času (`options:
 budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách teda
 zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
 bežal do timeoutu celého jobu.
+
+**Plné plochy, jedna sivá.** Výstupom je jedna súvislá plocha na skalu — bez
+dier a v jednej triede (`options: plne=0` vráti pôvodné dve pásma s dierami).
+V mape sa kreslí plnou farbou bez priehľadnosti, takže sa prekryv nikde
+neprejaví a plochy sa nemusia ani zlepovať. Vedľajší efekt, ktorý sa počíta:
+jedno pásmo namiesto dvoch je polovica prstencov na obtiahnutie, a to je tá
+najdrahšia fáza celého behu.
+
+**Zoom dlaždíc končí na 17** (~0,8 m na pixel). Na z18 sú to štvornásobne
+dlaždice a obrysy rastú ešte rýchlejšie — 3,62 mld. pixelov bežalo 2 h 41 min
+a nedopočítalo sa. Mapa z toho nemá nič: skaly sa zobrazujú do maximálneho
+zoomu tak či tak, z vyššieho zdroja by bol ostrejší tvar, nie väčší rozsah.
 
 **Sú z toho tri joby**, nie jeden — strop času totiž platí na job:
 
@@ -555,9 +585,9 @@ Keby v release aj tak nič nebolo (napr. keď ten job spadol), build to povie
 a **nespadne späť na skaly z DEM** – tichá zámena jedného zdroja za druhý by
 bola horšia než zastavenie.
 
-Vrstva je tá istá `rock` v tých istých dlaždiciach, s triedami `steep`
-a `cliff`, takže štýl netreba meniť. Líši sa len atribút: skaly z DEM majú
-`slope` (stupne sklonu), skaly z obrázka `dark` (o koľko stupňov šedej pod
+Vrstva je tá istá `rock` v tých istých dlaždiciach (`{región}-rocks.pmtiles`),
+takže štýl netreba meniť. Líši sa len atribút: skaly z DEM majú `slope`
+(stupne sklonu), skaly z obrázka `dark` (o koľko stupňov šedej pod
 referenciou). V manifeste je `rock_source`, takže je v mape vidieť, odkiaľ
 tie plochy sú.
 

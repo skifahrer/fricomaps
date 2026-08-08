@@ -33,6 +33,7 @@ const themeSelect = $("theme");
 const mapTypeSelect = $("maptype");
 const regionSelect = $("region");
 const contoursCheck = $("contours");
+const rocksCheck = $("rocks");
 const trailsCheck = $("trails");
 const terrainCheck = $("terrain");
 const hillshadeCheck = $("hillshade");
@@ -167,6 +168,13 @@ function styleFor(manifest) {
         ? `pmtiles://${baseUrl}/${region.contours}`
         : null,
     contoursMaxzoom: region.contours_maxzoom || 14,
+    // Skaly majú vlastný .pmtiles s vlastným maxzoomom – v mape sú vidieť
+    // do maximálneho zoomu (nad `maxzoom` sa dlaždice naťahujú overzoomom).
+    rocksUrl:
+      region.rocks && rocksCheck.checked
+        ? `pmtiles://${baseUrl}/${region.rocks}`
+        : null,
+    rocksMaxzoom: region.rocks_maxzoom || 16,
     trailsUrl:
       region.trails && trailsCheck.checked
         ? `pmtiles://${baseUrl}/${region.trails}`
@@ -202,9 +210,16 @@ function applyStyle(manifest) {
     `Mapa: <b>${kind.label}</b> – ${kind.note}<br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
     (region.contours
-      ? `Vrstevnice po ${region.contour_interval || 10} m` +
-        (region.rock_slope ? `, skaly od ${region.rock_slope}°` : "") +
-        `<br>Výšky: ${
+      ? `Vrstevnice po ${region.contour_interval || 10} m<br>`
+      : "") +
+    (region.rocks
+      ? `Skalné plochy do z${region.rocks_maxzoom || 16}` +
+        (region.rock_slope ? `, od ${region.rock_slope}°` : "") +
+        (region.rock_source ? ` (${region.rock_source})` : "") +
+        "<br>"
+      : "") +
+    (region.contours || region.rocks
+      ? `Výšky: ${
           (DEM_SOURCES[region.dem_source] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).label
         }<br>`
       : "") +
@@ -405,6 +420,7 @@ async function main() {
   const syncControls = () => {
     const region = manifest.regions[regionSelect.value];
     $("row-contours").hidden = !region.contours;
+    $("row-rocks").hidden = !region.rocks;
     $("row-trails").hidden = !region.trails;
     $("row-terrain").hidden = manifest.dem === null;
     $("row-hillshade").hidden = manifest.dem === null;
@@ -427,6 +443,10 @@ async function main() {
     dev?.refresh();
   });
   contoursCheck.addEventListener("change", () => {
+    applyStyle(manifest);
+    dev?.refresh();
+  });
+  rocksCheck.addEventListener("change", () => {
     applyStyle(manifest);
     dev?.refresh();
   });

@@ -9,12 +9,20 @@ TMAVÉ PLOCHY. Nič sa nepočíta z výšok, čítajú sa obrázky:
 
     XYZ dlaždice (JPG) → mozaika odtieňov šedej v EPSG:3857 →
     raster „tmavosti" → gdal_contour -p (izolínia tmavosti ako PLOCHY) →
-    filter plochy a dier → zjemnenie + zaoblenie obrysu → rock.gpkg
+    filter plôch → zjemnenie + zaoblenie obrysu → rock.gpkg
+
+PLNÉ PLOCHY (predvolene, `--plne`): jedno pásmo, jedna trieda, žiadne diery.
+V mape sa skaly kreslia jednou sivou bez priehľadnosti, takže by sa každá
+diera aj každý prekryv prejavili ako škvrna – a v jemnej sieti žliabkov
+z tieňovania sú dier tisíce. Vedľajší efekt, ktorý sa počíta: jedno pásmo
+namiesto dvoch je polovica prstencov na obtiahnutie, a `gdal_contour` je tá
+najdrahšia fáza celého behu. `--plne=0` vráti pásma `steep`/`cliff` s dierami.
 
 PREČO TO MÔŽE FUNGOVAŤ: tieňovanie je obraz sklonu. Kde je stena, tam je
 tieň – a hires vrstva freemap.sk je robená z 1 m LiDARu, takže pri z18 vyjde
-jeden pixel na ~0,4 m terénu. To je jemnejšie, než na čo vieme rozumne
-spočítať sklon sami.
+jeden pixel na ~0,4 m terénu. Ťaháme z17 (~0,8 m/px) – na z18 sú to 4×
+dlaždice a obrysy rastú ešte rýchlejšie, pričom mapa z toho nemá nič.
+Aj tak je to jemnejšie, než na čo vieme rozumne spočítať sklon sami.
 
 PREČO TO MÔŽE KLAMAŤ: tmavý nie je len sklon, ale sklon NA ODVRÁTENEJ STRANE.
 Rovnako strmá stena otočená k slnku je na hillshade najsvetlejšia zo všetkého.
@@ -901,7 +909,7 @@ def ring_area(ring):
 
 
 def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
-                  every=30):
+                  every=30, plne=True):
     """Prúdový filter nad GeoJSONSeq: odrobinky preč, dierky preč, triedy von.
 
     Vstup je už rozbitý na samostatné plochy (`-explodecollections`), takže
@@ -913,7 +921,11 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
     (= cos²(šírka)). Mercator naťahuje mierku 1/cos(šírka), takže bez toho
     by pri 49° vyšla plocha 2,3× väčšia, než v skutočnosti je.
 
-    Diery sa zahadzujú podľa VLASTNEJ plochy, nie podľa plochy celku:
+    S `plne` (predvolene) sa diery NEKRESLIA vôbec – von ide len vonkajší
+    prstenec. Skala má byť na mape jedna súvislá sivá plocha; polica alebo
+    terasa vnútri steny je síce pravdivá diera, ale v jemnej sieti žliabkov
+    z tieňovania ich sú tisíce a plocha z toho vyzerá ako sito. Bez `plne`
+    sa diery zahadzujú podľa VLASTNEJ plochy, nie podľa plochy celku:
     svetlá polica vnútri steny je platná diera a má ostať, jednopixelová
     dierka po zrne JPEGu nie.
     """
@@ -955,14 +967,17 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
                 n_in += 1
                 area = abs(ring_area(poly[0])) * merc_factor
                 rings = [poly[0]]
-                for hole in poly[1:]:
-                    a = abs(ring_area(hole)) * merc_factor
-                    if a >= min_hole:
-                        rings.append(hole)
-                        area -= a
-                        holes_kept += 1
-                    else:
-                        holes_drop += 1
+                if plne:
+                    holes_drop += len(poly) - 1
+                else:
+                    for hole in poly[1:]:
+                        a = abs(ring_area(hole)) * merc_factor
+                        if a >= min_hole:
+                            rings.append(hole)
+                            area -= a
+                            holes_kept += 1
+                        else:
+                            holes_drop += 1
                 if area < min_area:
                     continue
                 fo.write(json.dumps({
@@ -1155,7 +1170,14 @@ def contour_blocks(vrt, args, tmp, cliff_level, ox, oy, res):
     bloky = [(bx, by)
              for by in range(0, h_px, blok)
              for bx in range(0, w_px, blok)]
-    levels = ["-fl", "0.5", "-fl", repr(cliff_level), "-fl", "256"]
+    # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediné pásmo [0,5; 256).
+    # Dve pásma (`steep` a `cliff`) mali zmysel, kým sa kreslili rôzne tmavo –
+    # `cliff` ležal v diere `steep`u a spolu dláždili územie bez prekryvu.
+    # Odkedy sú všetky plochy jedna sivá bez priehľadnosti, je z toho len
+    # dvojnásobok prstencov na obtiahnutie (a `gdal_contour` je tá najdrahšia
+    # fáza celého behu). Jedno pásmo = jedna plocha, nič v ničom.
+    levels = (["-fl", "0.5", "-fl", "256"] if args.plne else
+              ["-fl", "0.5", "-fl", repr(cliff_level), "-fl", "256"])
     d = os.path.join(tmp, "bloky")
     os.makedirs(d, exist_ok=True)
 
@@ -1332,14 +1354,27 @@ def spoj(args, tmp, out, cliff_level, merc):
         os.replace(part, seq)
         print(f"  spojenie blokov: {n} útvarov z {n_blokov} blokov", flush=True)
 
-    seq = zlep_svy(seq, tmp, cliff_level, args)
+    # Zlepovanie plôch rozseknutých hranicou bloku je len kozmetika: odkedy
+    # majú všetky plochy tú istú sivú bez priehľadnosti, dva kusy vedľa seba
+    # vyzerajú ako jeden. Stojí pritom `ST_Union` nad všetkým, čo sa hranice
+    # dotýka, a spatialite navyše – preto predvolene vypnuté (`zlepit=1` ho
+    # vráti). Cena za to je, že `area` je plocha kusa, nie celej skaly.
+    if args.zlepit:
+        seq = zlep_svy(seq, tmp, cliff_level, args)
+    else:
+        print("  švy: nezlepujem (`options: zlepit=1` to zapne) – rovnaká "
+              "sivá bez priehľadnosti spoj aj tak nepotrebuje", flush=True)
 
     filt = os.path.join(tmp, "rock.geojsonl")
     st = filter_stream(seq, filt, args.min_area, args.min_hole,
-                       cliff_level, merc, every=args.heartbeat)
+                       cliff_level, merc, every=args.heartbeat,
+                       plne=bool(args.plne))
     print(f"  filter: {st['n_in']} → {st['n']} plôch "
-          f"(pod {args.min_area:g} m² preč), diery {st['holes']} ostali, "
-          f"{st['holes_dropped']} pod {args.min_hole:g} m² preč", flush=True)
+          f"(pod {args.min_area:g} m² preč), "
+          + (f"diery zahodené ({st['holes_dropped']}) – plné plochy"
+             if args.plne else
+             f"diery {st['holes']} ostali, {st['holes_dropped']} pod "
+             f"{args.min_hole:g} m² preč"), flush=True)
     if not st["n"]:
         if st["n_in"] > 1000:
             # Tisíce útvarov a ani jeden dosť veľký nie je „prísny prah" –
@@ -1492,7 +1527,14 @@ def main():
     ap.add_argument("--url", default="https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg",
                     help="XYZ šablóna s {z}/{x}/{y}")
     ap.add_argument("--zoom", default="auto", help="číslo alebo `auto`")
-    ap.add_argument("--zoom-max", type=int, default=19, help="odkiaľ `auto` skúša")
+    # z17 je strop, nie z19. Vyššie zoomy síce server dá, ale na z18 sú to 4×
+    # dlaždice a obrysy rastú ešte rýchlejšie – 3,62 mld. pixelov na z18 nad
+    # Vysokými Tatrami bežalo 2 h 41 min a nedopočítalo sa. Mapa z toho
+    # nemá nič: z17 je ~0,8 m na pixel a plocha sa zobrazuje do maximálneho
+    # zoomu tak či tak (dlaždice sa naťahujú overzoomom).
+    ap.add_argument("--zoom-max", type=int, default=17,
+                    help="najvyšší zoom, na ktorý sa vôbec pýtame dlaždíc "
+                         "(odtiaľ `auto` skúša nadol)")
     ap.add_argument("--zoom-min", type=int, default=12)
     ap.add_argument("--max-tiles", type=int, default=60000,
                     help="strop na počet dlaždíc – `auto` pod neho zíde sám")
@@ -1540,11 +1582,19 @@ def main():
     ap.add_argument("--fill", type=float, default=0.0,
                     help="spriemerovať tmavosť v okne toľkých METROV – zo "
                          "siete žliabkov spraví súvislú plochu (0 = vypnuté)")
-    # 5 m² je ~8 pixelov na z17. Zámerne nízko: tmavé miesta v tieňovaní nie
+    # 7 m² je ~11 pixelov na z17. Zámerne nízko: tmavé miesta v tieňovaní nie
     # sú súvislé steny, ale hustá sieť žliabkov a mikrotieňov – a práve tá
     # jemná štruktúra je to, čo z hillshade chceme (viď hlavičku súboru).
-    ap.add_argument("--min-area", type=float, default=5.0,
+    ap.add_argument("--min-area", type=float, default=7.0,
                     help="najmenšia skalná plocha v m²")
+    # Plné plochy: bez dier a bez druhého pásma. Viď `contour_blocks`
+    # a `filter_stream` – dokopy z toho je „jedna skala = jedna sivá plocha".
+    ap.add_argument("--plne", type=int, default=1,
+                    help="1 = plné plochy (jedno pásmo, diery zaplnené), "
+                         "0 = pásma steep/cliff a diery ako predtým")
+    ap.add_argument("--zlepit", type=int, default=0,
+                    help="1 = zlepiť plochy rozseknuté hranicou bloku "
+                         "(ST_Union, potrebuje spatialite)")
     ap.add_argument("--min-hole", type=float, default=10.0,
                     help="najmenšia diera, ktorá sa zachová, v m²")
     ap.add_argument("--simplify", type=float, default=-1,
@@ -1618,7 +1668,10 @@ def main():
     # rôzne behy nemôžu pomiešať.
     podpis = (f"z{z}-d{args.dark}-a{args.dark_always}-r{args.rel}"
               f"-c{args.cliff}-l{args.local:g}-f{args.fill:g}-b{int(args.blur)}"
-              f"-m{args.min_area:g}-h{args.min_hole:g}")
+              f"-m{args.min_area:g}-h{args.min_hole:g}"
+              # Plné plochy menia PÁSMA, teda aj obsah blokov – bez toho
+              # by po prepnutí nadviazal na obrysy z iného nastavenia.
+              f"{'-plne' if args.plne else ''}")
     tmp = os.path.join(args.cache_dir, "_rozrobene", podpis)
     if args.fresh:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1778,6 +1831,8 @@ def main():
                 ("fill_m", f"{args.fill:g}"),
                 ("out_mb", f"{out_mb:.1f}"), ("mb_per_km2", f"{per_km2:.1f}"),
                 ("min_area_m2", f"{args.min_area:g}"),
+                ("plne", int(bool(args.plne))),
+                ("zlepene", int(bool(args.zlepit))),
                 ("min_hole_m2", f"{args.min_hole:g}"),
                 ("simplify_m", f"{args.simplify:.2f}"), ("smooth", args.smooth),
                 ("seconds", int(time.time() - t_all)),

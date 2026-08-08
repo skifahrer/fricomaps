@@ -161,6 +161,21 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
+### `plan` – Pages musí brať zdroj z Actions
+
+Prvý krok behu overí nielen to, že sú Pages zapnuté, ale aj `build_type`.
+Keď je `legacy`, znamená to, že zdroj je **vetva**, nie Actions – a vtedy
+popri nás beží zabudovaný Jekyll builder („pages build and deployment").
+Ten pri KAŽDOM pushi do vetvy nasadí koreň repozitára, teda README, a mapu,
+ktorú nasadil tento workflow, prepíše.
+
+Navonok to vyzerá, že sa mapa „sama pokazila": beh Build map je zelený,
+nasadenie prebehlo, a na stránke je README. V Actions je to vidieť ako beh
+`pages build and deployment` s eventom `dynamic`, ktorý sa spustí po merge –
+hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51
+a #52. Opraviť sa to dá jedine v nastaveniach:
+**Settings → Pages → Build and deployment → Source: GitHub Actions.**
+
 ### `plan` – testovací režim (`test_km2`)
 
 `options: test_km2=2` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²**
@@ -311,13 +326,19 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   kde svah prekročí prah. Vzniká tak zubatý pás pod hrebeňom, oblúk okolo
   žľabu, ostrov brala v suti. Do augusta 2026 tu bola mriežka štvorčekov
   (`rock_piece`); je preč, lebo skaly štvorcové nie sú.
-- **Diery: čo nie je nad prahom, sa nezafarbí.** Keď je vnútri steny miesto
-  s menším sklonom – polica, terasa, zarastený stupeň – vypadne z plochy
-  **diera**, aj keď je dookola všade sklon nad prahom. Robí to priamo
+- **Plné plochy, jedna sivá.** Skala je v mape jedna súvislá plocha: jedno
+  pásmo, jedna trieda, žiadne diery, plná farba bez priehľadnosti. Von ide
+  len vonkajší prstenec (`ST_BuildArea(ST_ExteriorRing(geom))`).
+
+  Priehľadnosť by totiž znamenala, že každý prekryv je vidieť – dve plochy
+  cez seba vyjdú tmavšie než jedna. Plná farba to rieši na úrovni kreslenia,
+  takže sa plochy nemusia strážiť proti sebe.
+
+  `options: rock_plne=0` vráti pôvodné správanie: dve pásma (`steep` od
+  prahu, `cliff` od `--cliff`) a **diery** tam, kde je vnútri steny miesto
+  s menším sklonom (polica, terasa, zarastený stupeň). Robí ich priamo
   `gdal_contour -p`: pásmo `[prah, ∞)` je polygón s vnútornými prstencami
-  tam, kde hodnota pod prah klesla. Diery sa nezapĺňajú ani nefiltrujú a
-  vrstva `rock-outline` ich obkreslí rovnako ako vonkajší obrys, takže je
-  polica v mape vidieť.
+  tam, kde hodnota pod prah klesla.
 - **Vektorizuje sa naraz, nie po častiach – a je to nutné.** Pôvodne sa každá
   časť územia vektorizovala zvlášť, orezala (`-clipsrc`) a výsledky sa lepili
   cez `ST_Union`. To diery ničí: diera prerezaná hranicou časti sa zmení na
@@ -1055,17 +1076,15 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
    │                          na disk ako komprimovaný GTiff
    ├─► artefakt `nahlad-…`     PNG mozaika vedľa masky + histogram
    ▼
-gdal_contour -p -fl 0,5 -fl (0,5+cliff)     PO BLOKOCH (block_tiles=8,
-   │                          teda 2048 px) → pásma ako polygóny, s dierami
+gdal_contour -p -fl 0,5 -fl 256             PO BLOKOCH (block_tiles=8,
+   │                          teda 2048 px) → JEDNO pásmo ako polygóny
    └─► cache `_rozrobene/…/bloky/b00000.geojsonl…`
 
 job „Skaly z tieňovania" (strop 1 h)
 ───────────────────────────────────────────────────────────────────────
 zlepenie blokov do jedného prúdu
    ▼
-plochy rozseknuté hranicou bloku (ST_Union, spatialite)
-   ▼
-filter plôch a dier → -simplify → smooth-polygons.py
+filter plôch (diery sa nekreslia) → -simplify → smooth-polygons.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
    ├─► release `dem-rocks-img`   pre Build map (výber `rock_source: tienovanie`)
@@ -1093,6 +1112,23 @@ takže nesťahuje gigabajty JPEGov, ktoré nepotrebuje. Kľúče nesú číslo b
 takže sa ďalší job trafí presne na to, čo uložil predošlý; `restore-keys`
 hľadá po predpone, takže sa dá nadviazať aj na starší beh. Zvolený zoom ide
 medzi jobmi ako výstup – pri `auto` sa sonda nepúšťa trikrát.
+
+**Plné plochy a jedna sivá.** Výstupom je jedna súvislá plocha na skalu –
+jedno pásmo, jedna trieda, žiadne diery. Dôvod je v kreslení: v mape sa skaly
+kreslia plnou farbou bez priehľadnosti, takže by sa každá diera aj každý
+prekryv prejavili ako škvrna. Priehľadnosť totiž znamená, že dve plochy cez
+seba vyjdú tmavšie než jedna – a stačí na to plocha rozseknutá hranicou bloku
+alebo `cliff` ležiaci v diere `steep`u. Plná farba to rieši na úrovni
+kreslenia, takže sa plochy nemusia ani zlepovať (`zlepit=1` to vráti), ani
+strážiť proti sebe. Vedľajší efekt, ktorý sa počíta: jedno pásmo namiesto
+dvoch je polovica prstencov na obtiahnutie, a `gdal_contour` je tá najdrahšia
+fáza celého behu. `options: plne=0` vráti pôvodné správanie.
+
+**Zoom dlaždíc končí na 17.** Server dá aj vyššie, ale na z18 sú to
+štvornásobne dlaždice a obrysy rastú ešte rýchlejšie – 3,62 mld. pixelov
+bežalo 2 h 41 min a nedopočítalo sa. Mapa z toho nemá nič: skaly majú vlastný
+`.pmtiles` a zobrazujú sa do maximálneho zoomu tak či tak, takže z vyššieho
+zdroja by bol ostrejší tvar, nie väčší rozsah zoomov.
 
 **Testovací režim** (výber `test`) vyreže zo stredu výrezu štvorec s pár km².
 Nie je to iný algoritmus, len menší bbox – celé je to jeden prepínač
@@ -1235,8 +1271,8 @@ podľa toho nastavená:
 | vec | hodnota | prečo |
 |---|---|---|
 | `fill` | **0 (vypnuté)** | spriemerovanie tmavosti v okolí zo siete spraví súvislú plochu; merané: `fill=40` dá 10 útvarov a 35 % pokrytie namiesto 78 útvarov a 15 % |
-| `min_area` | 5 m² | `200` zmazal práve tie drobné útvary, o ktoré ide, a `50` v tom pokračoval o stupeň jemnejšie; 5 m² je ~8 pixelov na z17, teda hranica, pod ktorou je to už len zrno JPEGu |
-| `min_hole` | 10 m² | medzery medzi vláknami siete SÚ tá štruktúra |
+| `min_area` | 7 m² | `200` zmazal práve tie drobné útvary, o ktoré ide, a `50` v tom pokračoval o stupeň jemnejšie; 7 m² je ~11 pixelov na z17, teda blízko hranice, pod ktorou je to už len zrno JPEGu |
+| `min_hole` | — | neuplatňuje sa: plochy sú plné, diery sa nekreslia (`plne=0` ich vráti, vtedy platí 10 m²) |
 | `simplify` | 1 px | pod pixel je už len zrno JPEGu |
 | `smooth` | 1× Chaikin | druhý prechod zdvojnásobí body za obrys, ktorý nikto nerozozná |
 
@@ -1248,7 +1284,7 @@ Merané na výreze 1260×1933 px z Vysokých Tatier, prepočítané na z18:
 | **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
 
 Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
-polovičné dáta**. Predvolené `min_area` je preto dnes ešte nižšie – 5 m²;
+polovičné dáta**. Predvolené `min_area` je preto dnes ešte nižšie – 7 m²;
 tabuľka je nameraná pri 200 a 50 a nechávame ju tak, ako bola nameraná.
 
 **Počet útvarov neexploduje, body áno.** Sieť je pospájaná – 16 útvarov

@@ -2,8 +2,8 @@ name: Skaly z tieňovaných dlaždíc
 
 # POKUSNÁ druhá cesta k skalám: nepočíta sa sklon z DEM, ale hľadajú sa TMAVÉ
 # PLOCHY v hotovom hillshade z freemap.sk. Výstup je ten istý formát ako
-# u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326, triedy `steep`
-# a `cliff` – takže si ho „Build map" vie vypýtať namiesto vlastného výpočtu:
+# u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326 – takže si ho
+# „Build map" vie vypýtať namiesto vlastného výpočtu:
 #
 #   Skaly z tieňovaných dlaždíc  ─►  release `dem-rocks-img`
 #                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
@@ -13,14 +13,19 @@ name: Skaly z tieňovaných dlaždíc
 # Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
 # rozhoduje, čo je tmavé, a prečo sa vektorizuje po blokoch.
 #
-# Sú tu DVA joby: `dlazdice` stiahne obrázky, `rocks` z nich spraví polygóny.
-# Dôvod je pri jobe `dlazdice` – v skratke: strop času platí na job a na obe
-# časti naraz nemusí stačiť.
+# Sú tu TRI joby: `dlazdice` stiahne obrázky, `vektor` z nich spraví obrysy
+# a `skaly` ich zlepí a vyfiltruje. Dôvod je pri jobe `dlazdice` – v skratke:
+# strop času platí na job a na všetko naraz nemusí stačiť.
 #
 # ČO OD TOHO ČAKAŤ: hillshade je obraz sklonu, ale osvetleného z jednej
 # strany. Severozápadné steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie
 # – tie druhé teda táto cesta systematicky prehliadne. Zato má rozlíšenie,
-# na aké si sami sklon nespočítame (z18 ≈ 0,4 m na pixel).
+# na aké si sami sklon nespočítame (z17 ≈ 0,8 m na pixel).
+#
+# PLNÉ PLOCHY: výstupom je jedna súvislá plocha na skalu – bez dier a v jednej
+# triede. V mape sa kreslí jednou sivou bez priehľadnosti, takže sa prekryv
+# nikde neprejaví a plochy sa nemusia ani zlepovať. `options: plne=0` vráti
+# pôvodné dve pásma s dierami.
 #
 # PRVÝ BEH JE LADIACI. Predvolené prahy sú kvalifikovaný odhad, nie nameraná
 # hodnota. Artefakt `nahlad-…` obsahuje PNG „mozaika vedľa nájdených plôch"
@@ -52,14 +57,12 @@ on:
           - strazovske_vrchy
           - male_karpaty
       zoom:
-        description: "Zoom dlaždíc. auto = najvyšší, ktorý server dá a ktorý sa zmestí do stropu na počet dlaždíc"
+        description: "Zoom dlaždíc, z ktorých sa skaly počítajú. auto = najvyšší, ktorý sa zmestí do stropu na počet dlaždíc a do rozpočtu času. z17 je strop zámerne: na z18 sú to 4× dlaždice a obrysy rastú ešte rýchlejšie, pričom mapa z toho nemá nič – plochy sa zobrazujú do maximálneho zoomu tak či tak"
         required: false
         default: auto
         type: choice
         options:
           - auto
-          - "19"
-          - "18"
           - "17"
           - "16"
           - "15"
@@ -95,12 +98,12 @@ on:
         default: "25"
         type: string
       min_area:
-        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny. 5 m² je ~8 pixelov na z17"
+        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny. 7 m² je ~11 pixelov na z17"
         required: false
-        default: "5"
+        default: "7"
         type: string
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Plochy s dierami a s triedou `cliff` ako kedysi: `plne=0`. Zlepiť plochy na hraniciach blokov: `zlepit=1`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
         required: false
         default: ""
         type: string
@@ -141,7 +144,7 @@ on:
         type: string
       min_area:
         required: false
-        default: "5"
+        default: "7"
         type: string
       options:
         required: false

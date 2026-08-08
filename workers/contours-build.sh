@@ -12,11 +12,13 @@
 # „Vrstevnice a skaly z DEM" v build-map.yml):
 #   REGION_BBOX REGION_KEY AREA_KEY_IN AREA_NAME_IN AREA_BBOX_IN AREA_KM2
 #   CONTOUR_INTERVAL OPT_CONTOUR_LINES OPT_CONTOUR_SOURCE
-#   OPT_CONTOUR_SMOOTHING OPT_CONTOUR_MAXZOOM
+#   OPT_CONTOUR_SMOOTHING OPT_CONTOUR_MAXZOOM OPT_ROCK_MAXZOOM
 #   ROCK_SLOPE_IN ROCK_RES_IN OPT_ROCKS OPT_ROCK_DEM OPT_ROCK_SOURCE
+#   OPT_ROCK_PLNE
 #   OPT_ROCK_IMG_ASSET OPT_ROCKS_REBUILD
 #   OPT_SIZE_LIMIT_MB OPT_UGKK_FALLBACK
-# a k tomu `env:` celého workflowu (ROCK_* , *_RELEASE, BUDGET_CONTOURS_PCT)
+# a k tomu `env:` celého workflowu (ROCK_* , *_RELEASE,
+# BUDGET_CONTOURS_PCT, BUDGET_ROCKS_PCT)
 # plus GH_TOKEN.
 
 set -euo pipefail
@@ -304,6 +306,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     python3 workers/rock-areas.py --dem="$ROCK_VRT" --bbox="$AREA_BBOX" \
       --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
+      --plne="${OPT_ROCK_PLNE:-1}" \
       --smooth="$ROCK_SMOOTH" \
       --stats=contours-out/rock-stats.txt \
       --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
@@ -387,35 +390,64 @@ CZ="$OPT_CONTOUR_MAXZOOM"
 case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
 if [ "$CZ" -gt 16 ]; then CZ=16; fi
 
-# Vrstevnice a mapa idú na tú istú stránku, takže si rozpočet delia.
-# Viac než ~40 % naň nesmú zobrať, inak by na mapu ostalo tak málo,
-# že by sa musela orezať o niekoľko zoomov. Prepočet z hotového GPKG
-# je lacný (sekundy), na rozdiel od sťahovania DEM.
+# Skaly majú VLASTNÝ .pmtiles a vlastný maxzoom. Každý .pmtiles má totiž
+# len jeden a tie dve vrstvy ho chcú úplne iný: vrstevnice sú čiary cez
+# celý kraj a rozpočet minú okolo z14, skaly sú plochy len tam, kde je
+# terén strmý, takže sa do z16 zmestia. Kým boli v jednom súbore, museli
+# sa obe uskromniť na to nižšie – a na skalách to bolo vidieť, lebo
+# práve pri priblížení sa pozerá, či obrys sedí na terén.
+# 16 je tvrdý strop Planetilera; vyššie zoomy rieši overzoom, takže sa
+# skaly zobrazujú až do maximálneho zoomu mapy tak či tak.
+RZ="$OPT_ROCK_MAXZOOM"
+case "$RZ" in ''|*[!0-9]*) RZ=16 ;; esac
+if [ "$RZ" -gt 16 ]; then RZ=16; fi
+
+# Vrstevnice, skaly a mapa idú na tú istú stránku, takže si rozpočet
+# delia. Prepočet z hotového GPKG je lacný (sekundy), na rozdiel od
+# sťahovania DEM.
 LIMIT_MB="$OPT_SIZE_LIMIT_MB"
 case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
 CBUDGET_MB=$(( LIMIT_MB * BUDGET_CONTOURS_PCT / 100 ))
+RBUDGET_MB=$(( LIMIT_MB * BUDGET_ROCKS_PCT / 100 ))
+
+# Planetiler s rozpočtom: keď je výsledok nad stropom, skúsi o zoom
+# nižšie. Použitý maxzoom ostane v `PM_Z` – návratová hodnota by sa
+# miešala s výstupom Planetilera, ktorý ide na stdout.
+pmtiles_do_rozpoctu() { # $1 schéma $2 výstup $3 maxzoom $4 strop MB $5 dno $6 popis $7 rada
+  PM_Z="$3"
+  while : ; do
+    java -Xmx5g -jar planetiler.jar generate-custom \
+      --schema="$1" \
+      --output="$2" \
+      --maxzoom="$PM_Z" --render_maxzoom="$PM_Z" \
+      --simplify_tolerance_at_max_zoom=0 \
+      --min_feature_size_at_max_zoom=0 \
+      --force
+
+    PM_MB=$(( $(stat -c%s "$2") / 1048576 ))
+    echo "$6 maxzoom $PM_Z → ${PM_MB} MB (strop ${4} MB)"
+    [ "$PM_MB" -le "$4" ] && break
+
+    if [ "$PM_Z" -le "$5" ]; then
+      echo "::warning::$6 majú ${PM_MB} MB ani pri maxzoome ${5} – $7"
+      break
+    fi
+    PM_Z=$(( PM_Z - 1 ))
+    echo "::warning::$6 sú nad stropom ${4} MB – skúšam maxzoom ${PM_Z}."
+  done
+}
 
 T_PM=$(date +%s)
-while : ; do
-  java -Xmx5g -jar planetiler.jar generate-custom \
-    --schema=workers/contours.yml \
-    --output=contours-out/contours.pmtiles \
-    --maxzoom="$CZ" --render_maxzoom="$CZ" \
-    --simplify_tolerance_at_max_zoom=0 \
-    --min_feature_size_at_max_zoom=0 \
-    --force
+pmtiles_do_rozpoctu workers/contours.yml contours-out/contours.pmtiles \
+  "$CZ" "$CBUDGET_MB" 10 "Vrstevnice" \
+  "zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
+CZ="$PM_Z"
 
-  CMB=$(( $(stat -c%s contours-out/contours.pmtiles) / 1048576 ))
-  echo "Vrstevnice maxzoom $CZ → ${CMB} MB (strop ${CBUDGET_MB} MB)"
-  [ "$CMB" -le "$CBUDGET_MB" ] && break
-
-  if [ "$CZ" -le 10 ]; then
-    echo "::warning::Vrstevnice majú ${CMB} MB ani pri maxzoome 10 – zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
-    break
-  fi
-  CZ=$(( CZ - 1 ))
-  echo "::warning::Vrstevnice sú nad stropom ${CBUDGET_MB} MB – skúšam maxzoom ${CZ}."
-done
+pmtiles_do_rozpoctu workers/rocks.yml contours-out/rocks.pmtiles \
+  "$RZ" "$RBUDGET_MB" 12 "Skaly" \
+  "zvýš rock_min_area alebo zmenši výrez."
+RZ="$PM_Z"
+echo "$RZ" > contours-out/rock-maxzoom.txt
 
 # Skutočne použitý maxzoom si odloží aj cache, nech štýl vie, po
 # ktorý zoom vrstevnice naozaj existujú. To isté platí pre zdroj
@@ -448,5 +480,5 @@ else
 fi
 ls -lh contours-out/
 printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly → PMTiles" "$(( $(date +%s) - T_PM ))" \
-  "maxzoom $CZ, $(du -h contours-out/contours.pmtiles | cut -f1)" \
+  "vrstevnice z$CZ ($(du -h contours-out/contours.pmtiles | cut -f1)), skaly z$RZ ($(du -h contours-out/rocks.pmtiles | cut -f1))" \
   >> steps-out/contours.tsv

@@ -189,8 +189,7 @@ export const THEMES = {
     contour: "#b09070",
     contourMajor: "#96764e",
     contourText: "#8a6a45",
-    cliff: "#7c7772",
-    cliffStrong: "#54514d",
+    rockArea: "#b4aea6",
     hillShadow: "#5a4a3a",
     hillHighlight: "#ffffff",
     hillAccent: "#8a7a6a",
@@ -286,8 +285,7 @@ export const THEMES = {
     contour: "#4a4436",
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
-    cliff: "#43434f",
-    cliffStrong: "#6e6e7e",
+    rockArea: "#3c3c48",
     hillShadow: "#000000",
     hillHighlight: "#4a4a60",
     hillAccent: "#2a2a3a",
@@ -382,8 +380,7 @@ export const THEMES = {
     contour: "#b3835a",
     contourMajor: "#966034",
     contourText: "#7a4f28",
-    cliff: "#8a7f74",
-    cliffStrong: "#5d554c",
+    rockArea: "#b9ab9c",
     hillShadow: "#6a5030",
     hillHighlight: "#fffaf0",
     hillAccent: "#9a8060",
@@ -477,8 +474,7 @@ export const THEMES = {
     contour: "#c8a488",
     contourMajor: "#b0846a",
     contourText: "#9a7058",
-    cliff: "#9a9088",
-    cliffStrong: "#6c635c",
+    rockArea: "#c0b5ab",
     hillShadow: "#8a6a58",
     hillHighlight: "#fffdf8",
     hillAccent: "#c0a090",
@@ -637,8 +633,7 @@ export const PALETTE_GROUPS = [
       ["contour", "Vrstevnica"],
       ["contourMajor", "Hlavná vrstevnica"],
       ["contourText", "Popisok výšky"],
-      ["cliff", "Skalná plocha"],
-      ["cliffStrong", "Skalná stena (najstrmšie)"]
+      ["rockArea", "Skalné plochy (plná výplň)"]
     ]
   },
   {
@@ -1362,6 +1357,8 @@ export function buildStyle({
   maxzoom = MAX_TILE_Z,
   contoursUrl = null,
   contoursMaxzoom = 14,
+  rocksUrl = null,
+  rocksMaxzoom = 16,
   trailsUrl = null,
   trailsMaxzoom = 14,
   demSource = DEFAULT_DEM_SOURCE,
@@ -1449,6 +1446,21 @@ export function buildStyle({
       type: "vector",
       url: contoursUrl,
       maxzoom: contoursMaxzoom,
+      attribution: (DEM_SOURCES[demSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE])
+        .attribution
+    };
+  }
+  // Skaly majú od vrstevníc ODDELENÝ .pmtiles, a to kvôli maxzoomu: každý
+  // súbor má jeden a tie dve vrstvy ho chcú úplne iný. Vrstevnice sú čiary
+  // cez celý kraj a rozpočet stránky minú okolo z14; skaly sú plochy len
+  // tam, kde je terén strmý, takže sa do z16 zmestia – a práve pri priblížení
+  // je vidieť, či obrys sedí na terén. Nad `maxzoom` sa dlaždice naťahujú
+  // overzoomom, takže sú skaly vidieť až do maximálneho zoomu mapy.
+  if (rocksUrl) {
+    style.sources.rocks = {
+      type: "vector",
+      url: rocksUrl,
+      maxzoom: rocksMaxzoom,
       attribution: (DEM_SOURCES[demSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE])
         .attribution
     };
@@ -1711,61 +1723,43 @@ export function buildStyle({
   // ================= vrstevnice a skaly =================
   // Kreslia sa nad vodou (pod hladinou nemajú čo robiť) a pod budovami
   // a cestami, aby neprekrývali dôležitejšie prvky.
-  if (contoursUrl) {
-    // Skalné plochy idú POD vrstevnice: sú to podkladové plochy, čiary
-    // vrstevníc nad nimi musia zostať čitateľné. Tam, kde by z vrstevníc
-    // aj tak bola tmavá šmuha (husté čiary = veľký sklon), teraz sedí
-    // jednoznačná sivá plocha.
-    const rockArea = (id, label, klass, paletteKey, opacity) =>
-      add(
-        {
-          id: `rock-${id}`,
-          type: "fill",
-          source: "contours",
-          "source-layer": "rock",
-          // Skaly majú byť vidieť všade, kde sú – veľká stena je čitateľná
-          // aj z prehľadu. Drobné plochy sa na nízkych zoomoch neriešia:
-          // do dlaždíc sa vôbec nedostanú (Planetiler ich zahodí pod pixel).
-          minzoom: 9,
-          filter: ["==", str("class"), klass],
-          paint: {
-            "fill-color": c[paletteKey],
-            "fill-opacity": zl(opacity),
-            "fill-antialias": true
-          }
-        },
-        ["vrstevnice", label, "area", { "fill-color": paletteKey }]
-      );
-
-    rockArea("steep", "Skalné plochy (strmý svah)", "steep", "cliff", [
-      [9, 0.25],
-      [13, 0.35],
-      [16, 0.5]
-    ]);
-    rockArea("cliff", "Skalné steny (najstrmšie)", "cliff", "cliffStrong", [
-      [9, 0.4],
-      [13, 0.5],
-      [16, 0.68]
-    ]);
-
-    // Tenký obrys – práve on „ohraničuje" strmé úseky, aby bolo vidieť, kde
-    // skala začína a končí, aj keď je výplň priehľadná.
+  // Skalné plochy idú POD vrstevnice: sú to podkladové plochy, čiary
+  // vrstevníc nad nimi musia zostať čitateľné. Tam, kde by z vrstevníc
+  // aj tak bola tmavá šmuha (husté čiary = veľký sklon), teraz sedí
+  // jednoznačná sivá plocha.
+  //
+  // JEDNA VRSTVA, JEDNA SIVÁ, BEZ PRIEHĽADNOSTI. Predtým to boli dve
+  // polopriehľadné vrstvy (`steep` a `cliff`) a tenký obrys. Priehľadnosť
+  // ale znamená, že KAŽDÝ prekryv je vidieť – dve plochy cez seba vyjdú
+  // tmavšie než jedna, a stačí na to plocha rozseknutá hranicou bloku
+  // alebo `cliff` ležiaci vo vyplnenej diere `steep`u. Plná farba to rieši
+  // na úrovni kreslenia: prekryv je neviditeľný, takže sa plochy nemusia
+  // ani zlepovať, ani strážiť proti sebe.
+  if (rocksUrl) {
     add(
       {
-        id: "rock-outline",
-        type: "line",
-        source: "contours",
+        id: "rock-area",
+        type: "fill",
+        source: "rocks",
         "source-layer": "rock",
-        minzoom: 11,
+        // Skaly majú byť vidieť všade, kde sú – veľká stena je čitateľná
+        // aj z prehľadu. Drobné plochy sa na nízkych zoomoch neriešia:
+        // do dlaždíc sa vôbec nedostanú (Planetiler ich zahodí pod pixel).
+        minzoom: 9,
         paint: {
-          "line-color": c.cliffStrong,
-          "line-width": zl([[11, 0.3], [13, 0.4], [16, 0.8], [20, 1.6]]),
-          "line-opacity": zl([[11, 0.3], [14, 0.5]])
+          "fill-color": c.rockArea,
+          "fill-opacity": 1,
+          // `fill-antialias` ostáva: hrana plochy má byť hladká. S plnou
+          // farbou to nerobí ani prekryv navyše – vyhladzuje sa okraj,
+          // nie výplň.
+          "fill-antialias": true
         }
       },
-      ["vrstevnice", "Obrys skalných plôch", "line", { "line-color": "cliffStrong" }]
+      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }]
     );
+  }
 
+  if (contoursUrl) {
     const contourLine = (id, label, level, minzoom, width, paletteKey) =>
       add(
         {

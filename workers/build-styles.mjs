@@ -61,6 +61,9 @@ const maxzoom = Number(args.maxzoom || MAX_TILE_Z);
 // Vrstevnice sú voliteľné – štýl ich zapne, len ak pipeline vyrobila .pmtiles.
 const contoursMaxzoom = Number(args["contours-maxzoom"] || 14);
 const hasContours = args.contours === "true" || args.contours === "1";
+// Skaly majú vlastný .pmtiles a vlastný maxzoom – viď workers/rocks.yml.
+const rocksMaxzoom = Number(args["rocks-maxzoom"] || 16);
+const hasRocks = args.rocks === "true" || args.rocks === "1";
 // Značené trasy – rovnako voliteľné a v samostatnom .pmtiles.
 const trailsMaxzoom = Number(args["trails-maxzoom"] || 14);
 const hasTrails = args.trails === "true" || args.trails === "1";
@@ -235,6 +238,10 @@ for (const type of MAP_TYPES) {
       sdfIcons,
       iconSet: iconSetId,
       overrides,
+      rocksUrl: hasRocks
+        ? `pmtiles://${baseUrl}/tiles/${region}-rocks.pmtiles`
+        : null,
+      rocksMaxzoom,
       contoursUrl: hasContours
         ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
         : null,
@@ -272,9 +279,10 @@ console.log(
 );
 console.log(
   `Značené trasy: ${hasTrails ? `áno (do z${trailsMaxzoom})` : "nie"}, ` +
-  `Vrstevnice a skaly: ${
+  `Vrstevnice: ${
     hasContours ? `áno (do z${contoursMaxzoom}, výšky: ${DEM_SOURCES[demSource].label})` : "nie"
   }, ` +
+  `Skaly: ${hasRocks ? `áno (do z${rocksMaxzoom})` : "nie"}, ` +
     `výškové dáta (3D terén): ${
       demTiles
         ? demTiles === DEFAULT_DEM_TILES
