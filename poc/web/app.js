@@ -60,6 +60,22 @@ mapTypeSelect.value = (() => {
   }
 })();
 
+/**
+ * Región z adresy (`#map=15/49.17/20.11&region=zilinsky`), alebo null.
+ *
+ * O polohu sa stará MapLibre (`hash: "map"`), ktorý ostatné parametre v hashi
+ * necháva na pokoji – tento je jeden z nich. Neznámy kľúč sa ignoruje, nech
+ * starý odkaz otvorí mapu a nie prázdnu stránku.
+ */
+function regionFromHash(manifest) {
+  const raw = location.hash.replace(/^#/, "");
+  for (const part of raw.split("&")) {
+    const [k, v] = part.split("=");
+    if (k === "region" && v && manifest.regions[v]) return v;
+  }
+  return null;
+}
+
 // ---------- zbalené ovládanie ----------
 function setPanel(open) {
   panelEl.hidden = !open;
@@ -209,6 +225,11 @@ function applyStyle(manifest) {
       fitBoundsOptions: { padding: 20 },
       maxZoom: MAX_DISPLAY_Z,
       maxPitch: 75,
+      // Poloha v adrese: `#map=15/49.17/20.11`. Dve veci naraz – dá sa poslať
+      // odkaz na konkrétne miesto (to robí pipeline pri testovacom výreze)
+      // a F5 nehodí mapu späť na celý región. Menovaný tvar `map=`, a nie
+      // holý `#15/49.17/20.11`, aby v hashi ostalo miesto aj na `&region=`.
+      hash: "map",
       attributionControl: { compact: true }
     });
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-right");
@@ -376,7 +397,10 @@ async function main() {
   for (const [key, r] of Object.entries(manifest.regions)) {
     regionSelect.add(new Option(r.name, key));
   }
-  regionSelect.value = manifest.default_region;
+  // Región sa dá zadať v adrese (`#map=…&region=zilinsky`). Pipeline taký
+  // odkaz vypisuje do súhrnu behu pri testovacom výreze – bez toho by odkaz
+  // otvoril správne súradnice, ale predvolený región, čiže inú mapu.
+  regionSelect.value = regionFromHash(manifest) || manifest.default_region;
 
   const syncControls = () => {
     const region = manifest.regions[regionSelect.value];

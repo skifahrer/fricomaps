@@ -13,6 +13,7 @@
 #   REGION_NAME  R_PLAN R_CONTOURS R_SHADING_ROCKS R_TRAILS R_TERRAIN
 #   R_TILES R_ASSETS  SRC_CONTOURS SRC_ROCKS SRC_SHADING
 #   USED_CONTOURS USED_ROCKS USED_SHADING  SIZE_LIMIT_MB  PAGE_URL
+#   REGION_KEY  TEST_KM2 TEST_BBOX TEST_FULL_BBOX  (testovací režim)
 # Očakáva aj `gh` a premenné GITHUB_* od runnera.
 
 set -uo pipefail
@@ -207,10 +208,33 @@ fi
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
+  echo "Ešte rýchlejšie: \`options: test_km2=2\` vyreže zo stredu výrezu"
+  echo "štvorec s 2 km² a na ňom spraví VŠETKO vrátane tieňovania."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then
   echo -e "\n[Otvoriť mapu](${PAGE_URL})" >> "$S"
+fi
+
+# ---- kde je testovací výrez ----
+# Obrázok sa nasadil spolu so stránkou, takže má verejnú adresu a súhrn ho
+# vie priamo ukázať – z artefaktu by sa musel sťahovať. Odkaz do mapy mieri
+# na stred testovaného štvorca; bez neho by sa výsledok hľadal ručne.
+if [ "${TEST_KM2:-0}" != '0' ] && [ -n "${TEST_BBOX:-}" ]; then
+  python3 workers/test-locator.py \
+    --bbox="$TEST_BBOX" --full-bbox="${TEST_FULL_BBOX:-}" \
+    --name="$REGION_NAME" \
+    --layers="vrstevnice: ${SRC_CONTOURS}, skaly: ${SRC_ROCKS}, tieňovanie: ${SRC_SHADING}" \
+    --png= --md=/tmp/kde-to-je.md \
+    --img-url="${PAGE_URL}kde-to-je.png" \
+    --pages-url="$PAGE_URL" --region="${REGION_KEY:-}" || true
+  if [ -s /tmp/kde-to-je.md ]; then
+    { echo; cat /tmp/kde-to-je.md; } >> "$S"
+  else
+    { echo; echo "### Testovací výrez"; echo;
+      echo "bbox \`${TEST_BBOX}\` (${TEST_KM2} km²) – obrázok sa nepodarilo vyrobiť.";
+    } >> "$S"
+  fi
 fi
 
 # ---- čo spadlo ----

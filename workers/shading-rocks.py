@@ -991,6 +991,46 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
             "max_m2": biggest, "holes": holes_kept, "holes_dropped": holes_drop}
 
 
+# Čísla o sťahovaní vedľa cache, nie v `_rozrobene`: sú o dlaždiciach, nie
+# o prahoch, takže sa nesmú stratiť pri zmene prahu ani pri `fresh=1`.
+STIAHNUTE = "_stiahnute.txt"
+
+
+def zapis_stiahnute(cache_dir, fetcher, n_tiles):
+    """Odloží, čo stálo sieť – fáza `spojit` už nesťahuje a nemá to odkiaľ vedieť."""
+    dl = {"tiles": n_tiles, "tiles_missing": fetcher.n_miss,
+          "tiles_failed": fetcher.n_fail,
+          "mb_downloaded": f"{fetcher.bytes / 1048576:.0f}",
+          "ua_profiles": len(fetcher.ua_seen)}
+    try:
+        with open(os.path.join(cache_dir, STIAHNUTE), "w") as f:
+            for k, v in dl.items():
+                f.write(f"{k}={v}\n")
+    except OSError as exc:
+        print(f"  čísla o sťahovaní sa neuložili ({exc}) – v štatistike "
+              f"ďalšej fázy budú nuly.", flush=True)
+    return dl
+
+
+def nacitaj_stiahnute(cache_dir, n_tiles):
+    """Čísla z fázy sťahovania. Keď chýbajú, radšej nuly než vymyslené hodnoty."""
+    dl = {"tiles": n_tiles, "tiles_missing": 0, "tiles_failed": 0,
+          "mb_downloaded": "0", "ua_profiles": 0}
+    cesta = os.path.join(cache_dir, STIAHNUTE)
+    try:
+        with open(cesta) as f:
+            for line in f:
+                k, _, v = line.strip().partition("=")
+                if k in dl:
+                    dl[k] = int(v) if k not in ("mb_downloaded",) else v
+        print(f"  čísla o sťahovaní z {cesta}: {dl['tiles']} dlaždíc, "
+              f"{dl['mb_downloaded']} MB", flush=True)
+    except OSError:
+        print(f"  {cesta} nie je – čísla o dlaždiciach v štatistike budú nuly.",
+              flush=True)
+    return dl
+
+
 def hotove(path, label):
     """True = túto fázu spravil predošlý beh a netreba ju robiť znova.
 
@@ -1244,20 +1284,34 @@ def vrt_geo(vrt):
     return g[0], g[3], g[1]     # ox, oy, veľkosť pixela (x)
 
 
-def vectorize(tifs, args, tmp, out, lat_mid):
-    """Mozaika tmavosti → hotový rock.gpkg v EPSG:4326."""
+def obrysy(tifs, args, tmp, cliff_level):
+    """Mozaika tmavosti → obrysy po blokoch v `tmp/bloky`. Vráti počet blokov.
+
+    Prvá polovica vektorizácie a vo workflowe vlastný job: toto je tá drahá
+    časť (hodiny), zlepovanie a filter za ňou sú minúty. Rozdelené preto, aby
+    hotové bloky prežili, keď sa beh nezmestí do stropu času.
+    """
     vrt = os.path.join(tmp, "score.vrt")
     run(["gdalbuildvrt", "-q", vrt] + tifs)
     ox, oy, res = vrt_geo(vrt)
+    _, n_blokov = contour_blocks(vrt, args, tmp, cliff_level, ox, oy, res)
+    return n_blokov
 
-    # Prah je 0,5, nie 1: dáta sú celé čísla, takže izolínia v polovici kroku
-    # ide presne stredom medzi „nie je tmavé" a „je tmavé" a obrys vyjde
-    # sub-pixelový. Horná úroveň 256 je nad maximom Byte – bez nej niektoré
-    # verzie GDALu najvrchnejšie pásmo nevytvoria.
-    cliff_level = 0.5 + args.cliff
-    merc = math.cos(math.radians(lat_mid)) ** 2
-    d_bloky, n_blokov = contour_blocks(vrt, args, tmp, cliff_level,
-                                       ox, oy, res)
+
+def spoj(args, tmp, out, cliff_level, merc):
+    """Obrysy blokov → hotový rock.gpkg v EPSG:4326.
+
+    Druhá polovica vektorizácie: zlepenie blokov, plochy rozseknuté hranicou
+    bloku, filter, zjednodušenie a vyhladenie. Číta `tmp/bloky` – teda to, čo
+    nechal `obrysy()`, či už v tom istom behu alebo v predošlom jobe.
+    """
+    d_bloky = os.path.join(tmp, "bloky")
+    if not os.path.isdir(d_bloky):
+        raise RuntimeError(
+            f"Chýbajú obrysy blokov ({d_bloky}). Fáza `spojit` nadväzuje na "
+            f"fázu `vektor` – buď nebežala, alebo sa medzitým stratila cache "
+            f"s rozrobeným. Pusti beh s `--phase=vsetko`.")
+    n_blokov = len([f for f in os.listdir(d_bloky) if f.endswith(".geojsonl")])
 
     # Zlepenie blokov do jedného prúdu. `-explodecollections` netreba –
     # filter nižšie si MultiPolygon rozoberie sám a jeden `ogr2ogr` nad celým
@@ -1448,10 +1502,17 @@ def main():
                     help="strana bloku v dlaždiciach pri obrysoch; menší blok "
                          "= menej pamäte a jemnejšie pokračovanie, ale viac "
                          "volaní GDALu (8 = 2048 px, 3 = 768 px)")
-    # Sťahovanie a vektorizácia sú vo workflowe dva joby: každý má vlastný
-    # strop času, takže sa výpočet nemusí zmestiť do jedného behu.
+    # Vo workflowe sú z toho TRI joby, každý s vlastným stropom času – dokopy
+    # sa to do jedného rozpočtu zmestiť nemusí a keď čas dôjde, padne aj to,
+    # čo už bolo hotové. Medzivýsledky si podávajú cez cache:
+    #
+    #   stiahnut  dlaždice do cache
+    #   vektor    raster tmavosti + obrysy po blokoch (`_rozrobene/…/bloky`)
+    #   spojit    zlepenie blokov, švy, filter, vyhladenie → rock.gpkg
+    #
+    # `vsetko` je to isté v jednom kuse – tak sa to spúšťa z ruky.
     ap.add_argument("--phase", default="vsetko",
-                    choices=("vsetko", "stiahnut", "vektor"),
+                    choices=("vsetko", "stiahnut", "vektor", "spojit"),
                     help="ktorú časť spraviť")
     ap.add_argument("--zoom-out", default="",
                     help="kam zapísať vybraný zoom (`zoom=17`) pre ďalší job")
@@ -1572,65 +1633,104 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
 
     t_all = time.time()
-    print("── Sťahovanie dlaždíc ───────────────────────────────", flush=True)
-    dl_s = fetcher.fetch_all(z, x0, y0, x1, y1)
-    if fetcher.n_ok + fetcher.n_cached == 0:
-        print("::error::Nestiahla sa ani jedna dlaždica – bez dát sa nedá "
-              "nič vektorizovať.", file=sys.stderr)
-        return 1
+    # Prah je 0,5, nie 1: dáta sú celé čísla, takže izolínia v polovici kroku
+    # ide presne stredom medzi „nie je tmavé" a „je tmavé" a obrys vyjde
+    # sub-pixelový.
+    cliff_level = 0.5 + args.cliff
+    merc = math.cos(math.radians(lat_mid)) ** 2
+    dl_s = sc_s = vec_s = 0.0
 
-    # Vybraný zoom von, nech ho druhá fáza nemusí hádať znova. Pri `auto` ho
-    # určuje sonda a rozpočet – deterministické to je, ale spoliehať sa na
-    # to, že dva behy dopadnú rovnako, je zbytočné riziko.
-    if args.zoom_out:
-        with open(args.zoom_out, "a") as f:
-            f.write(f"zoom={z}\n")
+    if args.phase == "spojit":
+        # Zlepovanie číta obrysy blokov, nie obrázky – sťahovať ich znova by
+        # bolo len zbytočné klopanie na cudzí server. Čísla o dlaždiciach idú
+        # z toho, čo si odložila fáza sťahovania.
+        print("── Dlaždice: preskočené (fáza spojenia) ─────────────", flush=True)
+        dl = nacitaj_stiahnute(args.cache_dir, n_tiles)
+    else:
+        print("── Sťahovanie dlaždíc ───────────────────────────────", flush=True)
+        dl_s = fetcher.fetch_all(z, x0, y0, x1, y1)
+        if fetcher.n_ok + fetcher.n_cached == 0:
+            print("::error::Nestiahla sa ani jedna dlaždica – bez dát sa nedá "
+                  "nič vektorizovať.", file=sys.stderr)
+            return 1
+        dl = zapis_stiahnute(args.cache_dir, fetcher, n_tiles)
 
-    if args.phase == "stiahnut":
-        print("── Hotovo (len sťahovanie) ──────────────────────────")
-        print(f"  zoom            z{z}")
-        print(f"  dlaždice        {n_tiles} ({fetcher.bytes / 1048576:.0f} MB "
-              f"stiahnutých, {fetcher.n_cached} z cache)")
-        print(f"  čas             {hms(dl_s)}")
-        print("  Vektorizácia je vlastný job – dlaždice si vezme z cache.")
-        print("─────────────────────────────────────────────────────", flush=True)
-        return 0
+        # Vybraný zoom von, nech ho ďalší job nemusí hádať znova. Pri `auto`
+        # ho určuje sonda a rozpočet – deterministické to je, ale spoliehať sa
+        # na to, že dva behy dopadnú rovnako, je zbytočné riziko.
+        if args.zoom_out:
+            with open(args.zoom_out, "a") as f:
+                f.write(f"zoom={z}\n")
 
-    print("── Raster tmavosti ──────────────────────────────────", flush=True)
-    preview_rows = [] if args.preview else None
-    tifs, sc_s = build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp,
-                                    preview_rows)
+        if args.phase == "stiahnut":
+            print("── Hotovo (len sťahovanie) ──────────────────────────")
+            print(f"  zoom            z{z}")
+            print(f"  dlaždice        {n_tiles} ({fetcher.bytes / 1048576:.0f} MB "
+                  f"stiahnutých, {fetcher.n_cached} z cache)")
+            print(f"  čas             {hms(dl_s)}")
+            print("  Vektorizácia je vlastný job – dlaždice si vezme z cache.")
+            print("─────────────────────────────────────────────────────", flush=True)
+            return 0
 
-    print("── Vektorizácia ─────────────────────────────────────", flush=True)
-    t_vec = time.time()
+    if args.phase != "spojit":
+        print("── Raster tmavosti ──────────────────────────────────", flush=True)
+        preview_rows = [] if args.preview else None
+        tifs, sc_s = build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp,
+                                        preview_rows)
+
+        print("── Obrysy po blokoch ────────────────────────────────", flush=True)
+        t_vec = time.time()
+        try:
+            n_blokov = obrysy(tifs, args, tmp, cliff_level)
+        except RuntimeError as exc:
+            # Napr. kontrola jednotiek. Hláška je zrozumiteľná, traceback nie.
+            print(f"::error::{exc}", file=sys.stderr)
+            return 2
+        except TimeoutError:
+            # Odhad bol vedľa. Povedať to s číslom a s tým, čo zmeniť, je
+            # užitočnejšie než traceback – a stiahnuté dlaždice ostávajú
+            # v cache, takže ďalší beh na nižšom zoome nesťahuje nič.
+            print(f"::error::Obrysy sa nestihli do {args.budget_min:g} min. "
+                  f"Skús nižší zoom (`zoom: {z - 1}`), menší výrez, alebo "
+                  f"zdvihni rozpočet (`options: budget_min=…`). Dlaždice sú "
+                  f"v cache, takže ďalší beh ich neťahá znova.",
+                  file=sys.stderr)
+            return 2
+        vec_s = time.time() - t_vec
+
+        # Náhľad a histogram vznikajú pri rastri tmavosti, nie z hotových
+        # polygónov – patria teda sem a nie do jobu, ktorý bloky zlepuje.
+        if args.preview:
+            save_preview(preview_rows, args.preview)
+        hist = histogram(preview_rows) if preview_rows else ""
+        if hist:
+            print("── Rozloženie odtieňov šedej ────────────────────────")
+            print(hist)
+            print("─────────────────────────────────────────────────────",
+                  flush=True)
+
+        if args.phase == "vektor":
+            print("── Hotovo (len obrysy) ──────────────────────────────")
+            print(f"  bloky           {n_blokov}")
+            print(f"  čas             tmavosť {hms(sc_s)}, obrysy {hms(vec_s)}")
+            print("  Zlepenie, filter a vyhladenie sú vlastný job – "
+                  "rozrobené si vezme z cache.")
+            print("─────────────────────────────────────────────────────",
+                  flush=True)
+            return 0
+
+    print("── Spojenie blokov a filter ─────────────────────────", flush=True)
+    t_sp = time.time()
     try:
-        st = vectorize(tifs, args, tmp, args.out, lat_mid)
+        st = spoj(args, tmp, args.out, cliff_level, merc)
     except RuntimeError as exc:
-        # Napr. kontrola jednotiek. Hláška je zrozumiteľná, traceback nie.
         print(f"::error::{exc}", file=sys.stderr)
         return 2
-    except TimeoutError:
-        # Odhad bol vedľa. Povedať to s číslom a s tým, čo zmeniť, je
-        # užitočnejšie než traceback – a stiahnuté dlaždice ostávajú v cache,
-        # takže ďalší beh na nižšom zoome nesťahuje nič.
-        print(f"::error::Obrysy sa nestihli do {args.budget_min:g} min. "
-              f"Skús nižší zoom (`zoom: {z - 1}`), menší výrez, alebo zdvihni "
-              f"rozpočet (`options: budget_min=…`). Dlaždice sú v cache, "
-              f"takže ďalší beh ich neťahá znova.", file=sys.stderr)
-        return 2
-    vec_s = time.time() - t_vec
+    sp_s = time.time() - t_sp
     if not st.get("n"):
         print("::warning::Nenašla sa ani jedna skalná plocha – prahy sú "
-              "pravdepodobne prísne. Pozri náhľad a histogram nižšie.")
+              "pravdepodobne prísne. Pozri náhľad a histogram z fázy obrysov.")
         empty_rock(args.out)
-
-    if args.preview:
-        save_preview(preview_rows, args.preview)
-    hist = histogram(preview_rows) if preview_rows else ""
-    if hist:
-        print("── Rozloženie odtieňov šedej ────────────────────────")
-        print(hist)
-        print("─────────────────────────────────────────────────────", flush=True)
 
     total_km2 = st.get("total_m2", 0.0) / 1e6
     print("── Hotovo ───────────────────────────────────────────")
@@ -1648,7 +1748,10 @@ def main():
     print(f"  výstup          {args.out} ({out_mb:.1f} MB"
           + (f", {per_km2:.1f} MB na km² skál)" if per_km2 else ")"))
     print(f"  čas             sťahovanie {hms(dl_s)}, tmavosť {hms(sc_s)}, "
-          f"vektor {hms(vec_s)}, spolu {hms(time.time() - t_all)}")
+          f"obrysy {hms(vec_s)}, spojenie {hms(sp_s)}, "
+          f"spolu {hms(time.time() - t_all)}")
+    if args.phase == "spojit":
+        print("  (čas sťahovania a obrysov je z ich vlastných jobov)")
     print("─────────────────────────────────────────────────────", flush=True)
 
     if args.stats:
@@ -1662,11 +1765,11 @@ def main():
                 ("holes", st.get("holes", 0)),
                 ("holes_dropped", st.get("holes_dropped", 0)),
                 ("dropped", st.get("n_in", 0) - st.get("n", 0)),
-                ("zoom", z), ("tiles", n_tiles),
-                ("tiles_missing", fetcher.n_miss),
-                ("tiles_failed", fetcher.n_fail),
-                ("mb_downloaded", f"{fetcher.bytes / 1048576:.0f}"),
-                ("ua", args.ua), ("ua_profiles", len(fetcher.ua_seen)),
+                ("zoom", z), ("tiles", dl["tiles"]),
+                ("tiles_missing", dl["tiles_missing"]),
+                ("tiles_failed", dl["tiles_failed"]),
+                ("mb_downloaded", dl["mb_downloaded"]),
+                ("ua", args.ua), ("ua_profiles", dl["ua_profiles"]),
                 ("cells", cells), ("px_m", f"{ground_res(z, lat_mid):.2f}"),
                 ("dark", args.dark), ("dark_always", args.dark_always),
                 ("local_m", f"{args.local:g}"), ("local_px", args.local_px),

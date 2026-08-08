@@ -41,6 +41,16 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULTS = {
     "crop_bbox": ("", "orezať región na west,south,east,north"),
     "area_bbox": ("", "vlastný výrez W,S,E,N namiesto pohoria z výberu"),
+    # TESTOVACÍ REŽIM. Vyreže z výrezu malý štvorec a na ňom spraví VŠETKO –
+    # vrstevnice, skaly aj tieňovanie. Zmysel je jediný: rýchlosť ladenia.
+    # Pohorie je desiatky minút na vrstvu, 2 km² sú sekundy až minúty, takže
+    # sa dá prah alebo interval overiť za jeden beh. Beh vypíše do súhrnu
+    # obrázok „kde to je" a odkaz, ktorý otvorí hotovú mapu presne tam.
+    # Je to voľba a nie input, lebo `workflow_dispatch` dovolí najviac desať
+    # inputov a všetkých desať je obsadených.
+    "test_km2": ("0", "testovací režim: počítať len štvorec s toľkými km² "
+                      "(0 = vypnuté, typicky 2)"),
+    "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
     "ugkk_fallback": ("true", "keď 1 m LiDAR nie je, počítať zo Sonnyho"),
