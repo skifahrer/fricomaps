@@ -85,7 +85,7 @@ on:
         default: "50"
         type: string
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
         required: false
         default: ""
         type: string
@@ -181,7 +181,10 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          sudo apt-get install -y -qq gdal-bin zstd
+          # spatialite: `ST_Union` v SQLite dialekte, ktorým sa zlepujú
+          # plochy rozseknuté hranicou bloku. Bez neho beh pokračuje, len
+          # s rovnými rezmi v skalách – viď `zlep_svy` v skripte.
+          sudo apt-get install -y -qq gdal-bin zstd libsqlite3-mod-spatialite
           python3 -m pip install --quiet numpy pillow
           # `gdalinfo --version`, nie `gdal_contour --version`: contour nemá
           # prepínač na verziu, argumenty si prečíta ako bežný beh a skončí

@@ -432,9 +432,17 @@ maskovanie, ale rozbitá hlavička.
 **Efektivita.** Dlaždice sa sťahujú paralelne (`jobs`, default 12 – je to
 dobrovoľnícka služba) s trvalým spojením, ukladajú sa do cache behu a pri
 opakovanom ladení prahov sa už neťahajú. `zoom: auto` skúsi najvyšší zoom,
-ktorý server dá a ktorý sa zmestí do stropu 60 000 dlaždíc. Vektorizuje sa
-**naraz nad celou mozaikou** (po častiach len raster tmavosti) – z rovnakého
-dôvodu ako pri skalách z DEM: diera prerezaná hranicou časti sa späť nezlepí.
+ktorý server dá a ktorý sa zmestí do stropu 60 000 dlaždíc. Vektorizuje sa **po blokoch**
+(`options: block_tiles=8`, teda 2048 px; menší blok = menej pamäte a jemnejšie
+pokračovanie). Nad celou mozaikou to totiž nedobehlo: `gdal_contour -p`
+skladá uzavreté prstence a v zrnitom JPEGu ich je toľko, že to rastie
+rýchlejšie než lineárne — 3,62 mld. pixelov bežalo 2 h 41 min a nedopočítalo
+sa, pričom pamäť ostala na 0,7 GB.
+
+Plocha cez hranicu bloku vypadne ako dva kusy; tie sa na konci zlepia cez
+`ST_Union` (spatialite), a to len tie, ktoré sa hranice naozaj dotýkajú.
+Keď spatialite chýba, beh pokračuje a povie to — v skalách budú vidieť
+rovné rezy.
 
 **Zoom vyberá `auto` a nie je to štvornásobok na zoom.** Sťahovanie áno, ale
 obrysy nie — a tie sú to drahé. Namerané na Vysokých Tatrách:
@@ -447,8 +455,21 @@ obrysy nie — a tie sú to drahé. Namerané na Vysokých Tatrách:
 Preto má `auto` okrem stropu na dlaždice aj rozpočet času (`options:
 budget_min=…`, default 100) a zíde pod neho sám — na Vysokých Tatrách teda
 zvolí z17. Nad rozpočtom sa výpočet zastaví s hláškou namiesto toho, aby
-bežal do timeoutu celého jobu. Stiahnuté dlaždice ostávajú v cache, takže
-ďalší beh o zoom nižšie neťahá ani jeden request navyše.
+bežal do timeoutu celého jobu.
+
+**Čo je hotové, sa nepočíta znova.** Rozrobené leží v cache dlaždíc, ktorá
+sa ukladá aj po páde a po timeoute:
+
+| checkpoint | čo ušetrí |
+|---|---|
+| stiahnuté dlaždice | celé sťahovanie |
+| pásy rastra tmavosti | pás po páse |
+| `bloky/b00000…` | **obrysy, blok po bloku** |
+| `bands.geojsonl`, `rock.geojsonl` | zlepenie a filter |
+
+Takže aj beh, ktorý sa nezmestí do troch hodín, sa dá dotiahnuť opakovaným
+spustením — každé ďalšie nadviaže tam, kde predošlé skončilo. Po úspechu sa
+rozrobené maže; `options: fresh=1` ho zahodí dopredu.
 
 **Ako to dostať do mapy:** stačí **Build map** s `area: vysoke_tatry`
 a `rock_source: tienovanie`. Nič sa dopredu púšťať nemusí – build si tú
