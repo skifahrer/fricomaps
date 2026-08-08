@@ -61,8 +61,12 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
+      # `auto` = najvyšší, ktorý sa zmestí do stropu na počet dlaždíc aj do
+      # rozpočtu času. z17 je strop zámerne: na z18 sú to 4× dlaždice a obrysy
+      # rastú ešte rýchlejšie, pričom mapa z toho nemá nič – plochy sa
+      # zobrazujú do maximálneho zoomu tak či tak.
       zoom:
-        description: "Zoom dlaždíc, z ktorých sa skaly počítajú. auto = najvyšší, ktorý sa zmestí do stropu na počet dlaždíc a do rozpočtu času. z17 je strop zámerne: na z18 sú to 4× dlaždice a obrysy rastú ešte rýchlejšie, pričom mapa z toho nemá nič – plochy sa zobrazujú do maximálneho zoomu tak či tak"
+        description: "Zoom dlaždíc, z ktorých sa skaly počítajú (auto = najvyšší možný)"
         required: false
         default: auto
         type: choice
@@ -71,8 +75,10 @@ on:
           - "17"
           - "16"
           - "15"
+      # Na doladenie prahov: z desiatok minút sú minúty. Beh navyše vypíše
+      # obrázok s okolím, kde presne ten štvorec leží.
       test:
-        description: "TESTOVACÍ REŽIM – počítať len malý štvorec (km²) zo stredu výrezu. Na doladenie prahov: z desiatok minút sú minúty. Beh vypíše obrázok, kde presne ten štvorec leží"
+        description: "Rýchly test: počítať len malý štvorec (km²) zo stredu výrezu"
         required: false
         default: nie
         type: choice
@@ -88,7 +94,7 @@ on:
         default: "125"
         type: string
       dark_always:
-        description: "Pod touto šedou je skala VŽDY, nech je okolo čokoľvek – bez toho sa veľká stena nájde len po obvode"
+        description: "Pod touto šedou je skala VŽDY, nech je okolo čokoľvek"
         required: false
         default: "70"
         type: string
@@ -102,13 +108,26 @@ on:
         required: false
         default: "25"
         type: string
+      # Menšie plochy sú zrno JPEGu. Nízka hodnota je zámer: tmavé miesta
+      # nie sú súvislé steny, ale jemná sieť žliabkov, a práve tá je to,
+      # čo z hillshade chceme. 7 m² je ~11 pixelov na z17.
       min_area:
-        description: "Najmenšia skalná plocha v m² – menšie sú zrno JPEGu. Nízka hodnota zámerne: tmavé miesta sú jemná sieť žliabkov, nie súvislé steny. 7 m² je ~11 pixelov na z17"
+        description: "Najmenšia skalná plocha v m²"
         required: false
         default: "7"
         type: string
+      # Napr. `local=2000 smooth=2 jobs=8`. Čo sa hodí najčastejšie:
+      #   fill=40          súvislé plochy namiesto jemnej siete
+      #   plne=0           aj trieda `cliff` ako kedysi
+      #   zapln_diery=1    zaplniť diery (zožerie detail – viď hlavičku)
+      #   zlepit=1         zlepiť plochy na hraniciach blokov
+      #   log_every=1      riadok na každú dlaždicu
+      #   budget_min=150   viac času na obrysy
+      #   fresh=1          nepokračovať v rozrobenom
+      #   block_tiles=3    menšie bloky pri obrysoch
+      # Celý zoznam je vo workers/shading-rocks.py; neznámy kľúč je chyba.
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Aj trieda `cliff` ako kedysi: `plne=0`. Súvislé plochy bez dier: `zapln_diery=1` (zožerie detail). Zlepiť plochy na hraniciach blokov: `zlepit=1`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Menšie bloky pri obrysoch: `block_tiles=3`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota (viď workers/shading-rocks.py)"
         required: false
         default: ""
         type: string
