@@ -995,9 +995,15 @@ Pokusná druhá cesta k skalám. Všetko ostatné v pipeline počíta skaly zo
 v hotovom hillshade z freemap.sk.
 
 ```
+job „Stiahnuť dlaždice" (strop 2 h)
+───────────────────────────────────────────────────────────────────────
 XYZ dlaždice   https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
    │           paralelné sťahovanie s trvalým spojením, disková cache
-   ▼
+   ├─► artefakt `dlazdice-tienovania-…`   samotné JPG
+   └─► cache + výstup `zoom` pre druhý job
+
+job „Skaly z tieňovania" (strop 3 h)
+───────────────────────────────────────────────────────────────────────
 mozaika šedej v EPSG:3857     dlaždice sú v ňom natívne → 1 px = 1 px,
    │                          žiadne prevzorkovanie
    ▼
@@ -1006,8 +1012,10 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
    │                          po pásoch dlaždicových riadkov, s presahom,
    │                          na disk ako komprimovaný GTiff
    ▼
-gdal_contour -p -fl 0,5 -fl (0,5+cliff)     NARAZ nad celou mozaikou
-   │                          → pásma ako polygóny, s dierami
+gdal_contour -p -fl 0,5 -fl (0,5+cliff)     PO BLOKOCH (block_tiles=8,
+   │                          teda 2048 px) → pásma ako polygóny, s dierami
+   ▼
+zlepenie plôch na hraniciach blokov (ST_Union, spatialite)
    ▼
 -explodecollections → filter plôch a dier → -simplify → smooth-polygons.py
    ▼
@@ -1016,6 +1024,15 @@ rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
    ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
    └─► artefakt `nahlad-…`         PNG náhľad + histogram + čísla
 ```
+
+**Prečo dva joby a nie dva kroky.** Strop času platí na job. Sťahovanie
+z dobrovoľníckeho servera je desiatky minút a obrysy ďalšiu hodinu; dokopy
+sa to do jedného rozpočtu zmestiť nemusí a keď dôjde čas, padne aj to, čo
+už bolo hotové. Rozdelené má každá časť celý svoj rozpočet, dáta si podávajú
+cache (kľúč nesie číslo behu, takže sa druhý job trafí presne na to, čo prvý
+uložil) a zvolený zoom ide medzi nimi ako výstup jobu – pri `auto` sa teda
+sonda nepúšťa dvakrát. Bonus: obrázky vypadnú ako artefakt hneď po stiahnutí,
+teda aj vtedy, keď vektorizácia neskôr padne.
 
 ### Prečo `gdal_contour`, a nie `gdal_polygonize`
 
@@ -1141,7 +1158,7 @@ podľa toho nastavená:
 | vec | hodnota | prečo |
 |---|---|---|
 | `fill` | **0 (vypnuté)** | spriemerovanie tmavosti v okolí zo siete spraví súvislú plochu; merané: `fill=40` dá 10 útvarov a 35 % pokrytie namiesto 78 útvarov a 15 % |
-| `min_area` | 50 m² | `200` zmazal práve tie drobné útvary, o ktoré ide |
+| `min_area` | 5 m² | `200` zmazal práve tie drobné útvary, o ktoré ide, a `50` v tom pokračoval o stupeň jemnejšie; 5 m² je ~8 pixelov na z17, teda hranica, pod ktorou je to už len zrno JPEGu |
 | `min_hole` | 10 m² | medzery medzi vláknami siete SÚ tá štruktúra |
 | `simplify` | 1 px | pod pixel je už len zrno JPEGu |
 | `smooth` | 1× Chaikin | druhý prechod zdvojnásobí body za obrys, ktorý nikto nerozozná |
@@ -1154,7 +1171,8 @@ Merané na výreze 1260×1933 px z Vysokých Tatier, prepočítané na z18:
 | **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
 
 Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
-polovičné dáta**.
+polovičné dáta**. Predvolené `min_area` je preto dnes ešte nižšie – 5 m²;
+tabuľka je nameraná pri 200 a 50 a nechávame ju tak, ako bola nameraná.
 
 **Počet útvarov neexploduje, body áno.** Sieť je pospájaná – 16 útvarov
 pokrylo 15 % výrezu. Cena je v bodoch obrysu, takže beh píše do súhrnu

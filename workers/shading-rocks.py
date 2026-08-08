@@ -51,7 +51,9 @@ Namerané na výreze z tej vrstvy (1260×1933 px, Vysoké Tatry):
     Jemnejšie filtre a hrubšie zjednodušenie dali SÚČASNE viac štruktúry aj
     polovičné dáta: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
     aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
-    útvary, o ktoré ide.
+    útvary, o ktoré ide. Predvolené `--min-area` sme podľa toho posunuli ešte
+    nižšie, na 5 m² (~8 pixelov na z17) – tabuľka ostáva pri tom, čo bolo
+    naozaj namerané.
 
 ── ako sa rozhoduje, čo je tmavé ────────────────────────────────────────────
 
@@ -1446,6 +1448,13 @@ def main():
                     help="strana bloku v dlaždiciach pri obrysoch; menší blok "
                          "= menej pamäte a jemnejšie pokračovanie, ale viac "
                          "volaní GDALu (8 = 2048 px, 3 = 768 px)")
+    # Sťahovanie a vektorizácia sú vo workflowe dva joby: každý má vlastný
+    # strop času, takže sa výpočet nemusí zmestiť do jedného behu.
+    ap.add_argument("--phase", default="vsetko",
+                    choices=("vsetko", "stiahnut", "vektor"),
+                    help="ktorú časť spraviť")
+    ap.add_argument("--zoom-out", default="",
+                    help="kam zapísať vybraný zoom (`zoom=17`) pre ďalší job")
     ap.add_argument("--fresh", type=int, default=0,
                     help="1 = zahodiť rozrobené z predošlého behu a počítať "
                          "všetko odznova (dlaždice ostávajú v cache)")
@@ -1470,7 +1479,10 @@ def main():
     ap.add_argument("--fill", type=float, default=0.0,
                     help="spriemerovať tmavosť v okne toľkých METROV – zo "
                          "siete žliabkov spraví súvislú plochu (0 = vypnuté)")
-    ap.add_argument("--min-area", type=float, default=50.0,
+    # 5 m² je ~8 pixelov na z17. Zámerne nízko: tmavé miesta v tieňovaní nie
+    # sú súvislé steny, ale hustá sieť žliabkov a mikrotieňov – a práve tá
+    # jemná štruktúra je to, čo z hillshade chceme (viď hlavičku súboru).
+    ap.add_argument("--min-area", type=float, default=5.0,
                     help="najmenšia skalná plocha v m²")
     ap.add_argument("--min-hole", type=float, default=10.0,
                     help="najmenšia diera, ktorá sa zachová, v m²")
@@ -1566,6 +1578,23 @@ def main():
         print("::error::Nestiahla sa ani jedna dlaždica – bez dát sa nedá "
               "nič vektorizovať.", file=sys.stderr)
         return 1
+
+    # Vybraný zoom von, nech ho druhá fáza nemusí hádať znova. Pri `auto` ho
+    # určuje sonda a rozpočet – deterministické to je, ale spoliehať sa na
+    # to, že dva behy dopadnú rovnako, je zbytočné riziko.
+    if args.zoom_out:
+        with open(args.zoom_out, "a") as f:
+            f.write(f"zoom={z}\n")
+
+    if args.phase == "stiahnut":
+        print("── Hotovo (len sťahovanie) ──────────────────────────")
+        print(f"  zoom            z{z}")
+        print(f"  dlaždice        {n_tiles} ({fetcher.bytes / 1048576:.0f} MB "
+              f"stiahnutých, {fetcher.n_cached} z cache)")
+        print(f"  čas             {hms(dl_s)}")
+        print("  Vektorizácia je vlastný job – dlaždice si vezme z cache.")
+        print("─────────────────────────────────────────────────────", flush=True)
+        return 0
 
     print("── Raster tmavosti ──────────────────────────────────", flush=True)
     preview_rows = [] if args.preview else None
