@@ -84,9 +84,14 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   kurzívou a verzálkami, aby sa nepliedli so sídlami.
   Ten istý generátor vyrába statické `styles/{region}-{typ mapy}-{tema}.json`
   pre iOS (predvolený typ aj pod starým menom `{region}-{tema}.json`).
-- **Značené trasy:** turistické chodníky, cyklotrasy, bežky a jazdecké trasy
-  z OSM relácií – ako farebné pásiky **vedľa** cesty, s názvom pozdĺž trasy.
+- **Značené trasy:** turistické chodníky, cyklotrasy, bežky, ferraty
+  a jazdecké trasy z OSM relácií – ako farebné pásiky **vedľa** cesty,
+  s názvom pozdĺž trasy.
   Viď [Značené trasy](#značené-trasy-turistika-cyklo-bežky).
+- **Krajinné prvky mimo schémy:** násypy, zárezy, múry, ploty, elektrické
+  vedenia, prieseky, pramene, jaskyne, rozhľadne, parkoviská a zjazdovky.
+  Schéma OpenMapTiles ich nemá vôbec, takže majú vlastné dlaždice.
+  Viď [Krajinné prvky](#krajinné-prvky-čo-openmaptiles-nemá).
 - **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
   podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
   farbu im meniť nejde. Pipeline z každého zdroja vyrobí vlastný **SDF sprite**
@@ -1324,12 +1329,84 @@ regionálna, inak miestna).
 
 ### Ovládanie
 
-Vo workflowe: `trails` (zap/vyp) a `trails_maxzoom` (default 14). V mape sa
+Vo workflowe: `trails` (zap/vyp) a `trails_maxzoom` (default 14). Okrem
+turistiky, cyklo, bežiek a jazdeckých trás sa berú aj **ferraty**
+(`route=via_ferrata`) – vlastný druh, lebo po ferrate sa nedá ísť bez výstroja
+a od turistickej značky sa má odlíšiť na prvý pohľad. V mape sa
 trasy vypínajú prepínačom **Značené trasy** v paneli ⚙. Job sa **necachuje** –
 celé sú to pár minút a závisí to od PBF, ktoré sa mení denne.
 
 Súhrn buildu píše, koľko trás sa v území našlo, koľko z nich má názov, po
 koľkých cestách vedú a koľko z tých ciest nesie viac trás naraz.
+
+## Krajinné prvky (čo OpenMapTiles nemá)
+
+**Schéma sa pozerá len na tridsať kľúčov.** V celom
+`openmaptiles/planetiler-openmaptiles` sa slovo `embankment` nevyskytuje ani
+raz. To isté platí pre `barrier` ako líniu (múr, plot, živý plot), `power`
+(elektrické vedenie), `man_made=cutline`, `piste:type` (zjazdovky),
+`natural=cave_entrance` aj `man_made=tower` (rozhľadňa sa do dlaždíc dostane
+jedine vtedy, keď má navyše `tourism=viewpoint`). Nedá sa to zapnúť – tie
+prvky v základných dlaždiciach jednoducho **nie sú**.
+
+Preto sa z toho istého PBF ťahajú druhýkrát, vlastnou schémou a do vlastného
+`.pmtiles` – rovnaký vzor ako značené trasy a skaly:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter --expressions=workers/features-filter.txt
+  → data/features.osm.pbf                      (Andorra: 3,4 MB → 198 kB)
+  → planetiler generate-custom --schema=workers/features.yml
+  → {región}-features.pmtiles
+```
+
+Štyri vrstvy, `class` rozlišuje čo to je:
+
+| vrstva | čo v nej je | od zoomu |
+|---|---|--:|
+| `feature_line` | **násyp**, zárez, múr, hradby, plot, živý plot, elektrické vedenie, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
+| `feature_area` | parkovisko, skládka, halda, hospodársky dvor, skleníky, opustený priemysel, kamenné pole | 11–14 |
+| `feature_point` | prameň, vodopád, jaskyňa, závrt, rozhľadňa, stožiar, vodojem, kríž pri ceste, pomník, archeologické nálezisko, štôlňa, útulňa, horský priechod, núdzový bod, geodetický bod | 11–15 |
+| `piste` | zjazdovka, bežkárska trať, skialp, sánkarská dráha – čiara aj plocha, s obťažnosťou | 11 |
+
+**Zoomy sú tu hlavné rozhodnutie, nie estetika.** Plotov je v OSM viac než
+všetkých ciest dokopy, takže idú až od z15; vedenie vysokého napätia je
+v otvorenej krajine orientačný bod na kilometre, takže od z11. Nie je to vkus,
+je to priamo veľkosť súboru.
+
+**Násyp a bralo sa kreslia zúbkami.** Kolmé čiarky MapLibre nevie, takže sa
+robia druhou čiarou: širokou, prerušovanou a odsunutou nabok (`line-offset`),
+z čoho pri hrane ostanú krátke hrubé kúsky. Kladný offset je vpravo v smere
+čiary a presne tam je podľa konvencie OSM dolná strana.
+
+**Zjazdovka je raz čiara a raz plocha.** Uzavretá cesta s `piste:type` vyjde
+ako plocha aj ako čiara, takže dostane výplň s obrysom; otvorená len čiaru
+(os zjazdovky). Farba je podľa `piste:difficulty` – modrá, červená, čierna,
+tie isté odtiene ako pri značkách trás, aby sa mapa nerozpadla na dve sady
+farieb.
+
+### Čo sem NEPATRÍ, hoci to tak vyzerá
+
+`natural=cliff`, `ridge` a `arete` v základných dlaždiciach **sú** – Planetiler
+ich dáva ako línie do vrstvy `mountain_peak` (od z13). Chýbala len kresba
+v štýle; horšie, symbolová vrstva „Vrcholy hôr" im dávala doprostred
+trojuholníček vrcholu aj s popiskom, lebo `cliff` nebol medzi vylúčenými
+triedami. Teraz sú z nich bralné hrany so zúbkami a čiarkované hrebene.
+
+Podobne sa v štýle opravilo aj to, čo v dlaždiciach bolo od začiatku a nekreslilo
+sa: cesty vo výstavbe (`*_construction`), plochy vo vrstve `transportation`
+(námestia, pešie zóny, telesá mostov, plošné móla), brody (`brunnel=ford`),
+nástupištia (`subclass=platform`), plocha priehrady (`landuse class=dam`)
+a kosodrevina odlíšená od lúky (`landcover subclass=scrub/heath/fell`).
+
+### Ovládanie
+
+Vo workflowe: `options: features=false` (vypnutie) a `features_maxzoom`
+(default 14). V mape sa prvky vypínajú prepínačom **Krajinné prvky**
+v paneli ⚙. Vrstvy sú v developer móde v skupine **Krajinné prvky (mimo
+schémy)**, farby v rovnomennej skupine palety. Job sa **necachuje** a beží
+súbežne so všetkým ostatným; podiel na rozpočte stránky je
+`BUDGET_FEATURES_PCT` (4 %).
 
 ## Typy máp – čo ktorá mapa ukazuje
 

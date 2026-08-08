@@ -33,7 +33,8 @@ inak mali pásik raz vľavo a raz vpravo.
 
 Vstup je PBF **predfiltrovaný** na `type=route` aj s členmi:
 
-    osmium tags-filter region.osm.pbf r/route=hiking,foot,bicycle,mtb,ski,horse \\
+    osmium tags-filter region.osm.pbf \\
+      r/route=hiking,foot,bicycle,mtb,ski,horse,via_ferrata \\
       -o data/trails.osm.pbf
 
 Použitie:
@@ -62,10 +63,15 @@ ROUTE_TYPES = {
     "nordic": "ski",
     "skitour": "ski",
     "horse": "horse",
+    # Ferrata je značená trasa ako každá iná – relácia `type=route` nad
+    # cudzími cestami – ale vlastný druh: vedie po skale, nie po chodníku,
+    # a v mape má byť na prvý pohľad odlíšená od turistickej značky.
+    "via_ferrata": "ferrata",
 }
 
 # Poradie druhov v pruhoch – pešie značky najbližšie k ceste, potom kolesá.
-ROUTE_ORDER = {"hiking": 0, "bicycle": 1, "mtb": 2, "ski": 3, "horse": 4}
+ROUTE_ORDER = {"hiking": 0, "ferrata": 1, "bicycle": 2, "mtb": 3, "ski": 4,
+               "horse": 5}
 
 # ------------------------------------------------------------------- siete
 # `network` hovorí, aká je trasa dôležitá: i = medzinárodná, n = národná,

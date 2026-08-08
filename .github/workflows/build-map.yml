@@ -217,6 +217,9 @@ env:
   # Značené trasy sú len línie s pár atribútmi – celé Slovensko je jednotky
   # MB. 3 % z rozpočtu je s veľkou rezervou.
   BUDGET_TRAILS_PCT: "3"
+  # Krajinné prvky (workers/features.yml) sú línie, body a pár plôch. Plotov
+  # je v OSM veľa, ale idú až od z15 a lepia sa – 4 % je s rezervou.
+  BUDGET_FEATURES_PCT: "4"
   BUDGET_ASSETS_MB: "40"
 
 jobs:
@@ -483,6 +486,7 @@ jobs:
       opt_contour_lines: ${{ steps.opts.outputs.opt_contour_lines }}
       opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
+      opt_features: ${{ steps.opts.outputs.opt_features }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
@@ -501,6 +505,7 @@ jobs:
       opt_rock_plne: ${{ steps.opts.outputs.opt_rock_plne }}
       opt_contour_smoothing: ${{ steps.opts.outputs.opt_contour_smoothing }}
       opt_trails_maxzoom: ${{ steps.opts.outputs.opt_trails_maxzoom }}
+      opt_features_maxzoom: ${{ steps.opts.outputs.opt_features_maxzoom }}
       opt_terrain_maxzoom: ${{ steps.opts.outputs.opt_terrain_maxzoom }}
       opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
       opt_rock_slope: ${{ inputs.rock_slope }}
@@ -1472,7 +1477,7 @@ jobs:
           T_F=$(date +%s)
           osmium tags-filter --overwrite -o data/trails.osm.pbf \
             data/region.osm.pbf \
-            r/route=hiking,foot,walking,bicycle,mtb,ski,nordic,skitour,horse
+            r/route=hiking,foot,walking,bicycle,mtb,ski,nordic,skitour,horse,via_ferrata
           echo "Predfilter: $(du -h data/region.osm.pbf | cut -f1) → $(du -h data/trails.osm.pbf | cut -f1)"
 
           # ---- 2. relácie → línie s pruhmi ----
@@ -1563,6 +1568,144 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # ---------- krajinné prvky, ktoré OpenMapTiles nemá ----------
+  # Násypy, zárezy, múry, ploty, vedenia, prieseky, pramene, jaskyne,
+  # rozhľadne, parkoviská a zjazdovky. Schéma OpenMapTiles sa pozerá len na
+  # tridsať kľúčov a tieto medzi nimi nie sú – v základných dlaždiciach po
+  # nich neostane stopa, takže sa z toho istého PBF ťahajú druhýkrát.
+  # Vlastný job z rovnakého dôvodu ako trasy: vlastný .pmtiles a beží súbežne.
+  features:
+    name: Krajinné prvky
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.opt_features == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      enabled: ${{ steps.features.outputs.enabled }}
+      maxzoom: ${{ steps.features.outputs.maxzoom }}
+      size_mb: ${{ steps.features.outputs.size_mb }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+      - name: Stiahni PBF z prípravy
+        uses: actions/download-artifact@v4
+        with:
+          name: pbf
+          path: data
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Planetileru (restore)
+        id: planetiler-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: planetiler.jar
+          key: planetiler-latest-${{ needs.plan.outputs.day }}
+
+      - name: Stiahni Planetiler
+        run: |
+          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
+          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
+            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
+
+      - name: Cache Planetileru (save)
+        if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: planetiler.jar
+          key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
+
+      - name: Krajinné prvky z OSM → PMTiles
+        id: features
+        run: |
+          set -euo pipefail
+          mkdir -p _site/tiles data
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq osmium-tool
+
+          # ---- 1. predfilter ----
+          # Zoznam tagov je vo workers/features-filter.txt vedľa schémy, nech
+          # sa obe menia na jednom mieste. Bez neho by Planetiler čítal celé
+          # Slovensko druhýkrát; po ňom ostane zlomok.
+          T_F=$(date +%s)
+          osmium tags-filter --overwrite -o data/features.osm.pbf \
+            data/region.osm.pbf --expressions=workers/features-filter.txt
+          BEFORE=$(stat -c%s data/region.osm.pbf)
+          AFTER=$(stat -c%s data/features.osm.pbf)
+          echo "Predfilter: $(du -h data/region.osm.pbf | cut -f1) → $(du -h data/features.osm.pbf | cut -f1)"
+          printf '%s\t%s\t%s\t%s\n' "57" "Predfilter krajinných prvkov" "$(( $(date +%s) - T_F ))" \
+            "$(( BEFORE / 1048576 )) MB → $(( AFTER / 1048576 )) MB" \
+            >> steps-out/features.tsv
+
+          # Prázdny výsledok nie je chyba – malý testovací štvorec nemusí mať
+          # ani jeden násyp. Mapa vtedy pôjde bez tejto vrstvy.
+          if [ "$AFTER" -lt 2000 ]; then
+            echo "::warning::V tomto území nie je ani jeden krajinný prvok – mapa pôjde bez nich."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # ---- 2. dlaždice ----
+          FZ='${{ needs.plan.outputs.opt_features_maxzoom }}'
+          case "$FZ" in ''|*[!0-9]*) FZ=14 ;; esac
+          if [ "$FZ" -gt 16 ]; then FZ=16; fi
+
+          T_PM=$(date +%s)
+          OUT="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
+          java -Xmx4g -jar planetiler.jar generate-custom \
+            --schema=workers/features.yml \
+            --output="$OUT" \
+            --maxzoom="$FZ" --render_maxzoom="$FZ" \
+            --simplify_tolerance_at_max_zoom=0 \
+            --min_feature_size_at_max_zoom=0 \
+            --force
+
+          MB=$(( $(stat -c%s "$OUT") / 1048576 ))
+
+          # Poistka na rozpočet stránky. `deploy` overí súčet ešte raz, ale
+          # keď je nad podielom práve táto vrstva, má sa to povedať tu.
+          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
+          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
+          FBUDGET_MB=$(( LIMIT_MB * BUDGET_FEATURES_PCT / 100 ))
+          if [ "$MB" -gt "$FBUDGET_MB" ]; then
+            echo "::warning::Krajinné prvky majú ${MB} MB, čo je nad podielom ${FBUDGET_MB} MB z rozpočtu stránky. Zníž features_maxzoom alebo zdvihni BUDGET_FEATURES_PCT."
+          fi
+
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "maxzoom=$FZ" >> "$GITHUB_OUTPUT"
+          echo "size_mb=$MB" >> "$GITHUB_OUTPUT"
+          ls -lh "$OUT"
+          printf '%s\t%s\t%s\t%s\n' "58" "Krajinné prvky → PMTiles" "$(( $(date +%s) - T_PM ))" \
+            "maxzoom $FZ, $(du -h "$OUT" | cut -f1)" \
+            >> steps-out/features.tsv
+
+      - name: Odlož časť stránky
+        if: ${{ always() && hashFiles('_site/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site-features
+          path: _site
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: steps-features
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
   # ---------- mapové dlaždice ----------
   # Beží súbežne s vrstevnicami, trasami aj tieňovaním – z nich nič
   # nepotrebuje, len PBF z prípravy.
@@ -1649,9 +1792,9 @@ jobs:
           # na konci overí, že súčet naozaj sedí.
           LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
           case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT + BUDGET_TRAILS_PCT) / 100 + BUDGET_ASSETS_MB ))
+          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT + BUDGET_TRAILS_PCT + BUDGET_FEATURES_PCT) / 100 + BUDGET_ASSETS_MB ))
           BUDGET_MB=$(( LIMIT_MB - OTHERS_MB ))
-          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − trasy ${BUDGET_TRAILS_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
+          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − trasy ${BUDGET_TRAILS_PCT} % − krajinné prvky ${BUDGET_FEATURES_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
 
           if [ "$BUDGET_MB" -lt 50 ]; then
             echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB. Zdvihni size_limit_mb alebo uber podiel vrstevniciam a terénu (BUDGET_*_PCT v env)."
@@ -1918,7 +2061,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, shading-rocks, contours, trails, terrain, tiles, assets]
+    needs: [plan, shading-rocks, contours, trails, features, terrain, tiles, assets]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -1955,7 +2098,7 @@ jobs:
       - name: Čo prišlo od ostatných jobov
         run: |
           set -uo pipefail
-          echo "Výsledky jobov: vrstevnice=${{ needs.contours.result }}, trasy=${{ needs.trails.result }}, terén=${{ needs.terrain.result }}, dlaždice=${{ needs.tiles.result }}, ikonky=${{ needs.assets.result }}"
+          echo "Výsledky jobov: vrstevnice=${{ needs.contours.result }}, trasy=${{ needs.trails.result }}, prvky=${{ needs.features.result }}, terén=${{ needs.terrain.result }}, dlaždice=${{ needs.tiles.result }}, ikonky=${{ needs.assets.result }}"
           find _site -maxdepth 2 -mindepth 1 -type d -exec du -sh {} \; 2>/dev/null || true
           du -sm _site | cut -f1 | xargs -I{} echo "_site spolu: {} MB"
 
@@ -1977,6 +2120,8 @@ jobs:
             --rocks-maxzoom='${{ needs.contours.outputs.rocks_maxzoom || '16' }}' \
             --trails='${{ needs.trails.outputs.enabled || 'false' }}' \
             --trails-maxzoom='${{ needs.trails.outputs.maxzoom || '14' }}' \
+            --features='${{ needs.features.outputs.enabled || 'false' }}' \
+            --features-maxzoom='${{ needs.features.outputs.maxzoom || '14' }}' \
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
@@ -2030,6 +2175,8 @@ jobs:
             --argjson trails '${{ needs.trails.outputs.enabled || 'false' }}' \
             --argjson tmaxzoom '${{ needs.trails.outputs.maxzoom || '14' }}' \
             --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
+            --argjson features '${{ needs.features.outputs.enabled || 'false' }}' \
+            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '14' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
             --argjson rocks '${{ needs.contours.outputs.rocks_enabled || 'false' }}' \
@@ -2089,6 +2236,12 @@ jobs:
                   trails: ("tiles/" + $region + "-trails.pmtiles"),
                   trails_maxzoom: $tmaxzoom,
                   trail_count: $tcount
+                } else {} end)
+                # Krajinné prvky, ktoré schéma OpenMapTiles nemá – vlastný
+                # .pmtiles, takže aj vlastná položka a vlastný prepínač.
+                + (if $features then {
+                  features: ("tiles/" + $region + "-features.pmtiles"),
+                  features_maxzoom: $fmaxzoom
                 } else {} end))
               }
             }' > _site/tiles/manifest.json
@@ -2159,6 +2312,12 @@ jobs:
           if jq -e '.sources.trails' "$STYLE" >/dev/null; then
             TPM="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles"
             [ -s "$TPM" ] || { echo "::error::štýl používa značené trasy, ale chýba $TPM"; fail=1; }
+          fi
+
+          # krajinné prvky, ak ich štýl používa
+          if jq -e '.sources.features' "$STYLE" >/dev/null; then
+            FPM="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
+            [ -s "$FPM" ] || { echo "::error::štýl používa krajinné prvky, ale chýba $FPM"; fail=1; }
           fi
 
           # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
@@ -2238,6 +2397,10 @@ jobs:
             check "$BASE/tiles/$REGION-trails.pmtiles" 206 "značené trasy (Range request)" "-H Range:bytes=0-1023"
           fi
 
+          if [ '${{ needs.features.outputs.enabled }}' = 'true' ]; then
+            check "$BASE/tiles/$REGION-features.pmtiles" 206 "krajinné prvky (Range request)" "-H Range:bytes=0-1023"
+          fi
+
           # Na koreni stránky má byť MAPA. Všetko vyššie kontroluje súbory,
           # ktoré README nemá – ale práve preto by prepísanú stránku
           # nechytilo, keby tam ostali z predošlého nasadenia. Toto je tá
@@ -2274,6 +2437,7 @@ jobs:
           R_CONTOURS: ${{ needs.contours.result }}
           R_SHADING_ROCKS: ${{ needs.shading-rocks.result }}
           R_TRAILS: ${{ needs.trails.result }}
+          R_FEATURES: ${{ needs.features.result }}
           R_TERRAIN: ${{ needs.terrain.result }}
           R_TILES: ${{ needs.tiles.result }}
           R_ASSETS: ${{ needs.assets.result }}
