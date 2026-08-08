@@ -17,10 +17,14 @@ name: Build map (PBF → PMTiles) & deploy Pages
 on:
   workflow_dispatch:
     inputs:
+      # Predvolený je kraj, na ktorom sa reálne pracuje, nie celé Slovensko:
+      # formulár sa po každom otvorení vracia na predvolené hodnoty, takže
+      # default je to, čo netreba prekliknúť. Prešovský kraj drží Vysoké
+      # Tatry, ktoré sú predvolený výrez o pár riadkov nižšie.
       region:
         description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
         required: true
-        default: slovensko
+        default: presovsky
         type: choice
         options:
           - slovensko
@@ -35,7 +39,7 @@ on:
       area:
         description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejší je switch test pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
         required: false
-        default: cely_region
+        default: vysoke_tatry
         type: choice
         options:
           - cely_region
@@ -118,7 +122,7 @@ on:
         default: "50"
         type: string
       rebuild:
-        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu)"
+        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu). Pri zapnutom switchi test sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto pole je vtedy jedno"
         required: false
         default: nic
         type: choice
@@ -451,7 +455,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pages: read      # kontrola, či je Pages vôbec zapnuté
+      # `write` a nie `read`: príprava Pages nielen kontroluje, ale aj zapína
+      # a prepína zdroj na Actions, aby na stránke skončila mapa a nie README.
+      # Na úrovni workflowu je `pages: write` aj tak (nasadzuje sa ním), takže
+      # to nie je nové právo v behu – len ho dostane aj tento job.
+      pages: write
     outputs:
       key: ${{ steps.region.outputs.key }}
       name: ${{ steps.region.outputs.name }}
@@ -512,33 +520,62 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # GITHUB_TOKEN nemá admin práva na vytvorenie Pages site, preto sa
-      # Pages musí zapnúť raz ručne: Settings → Pages → Source: GitHub Actions.
-      # Kontrola hneď na začiatku, aby build nezlyhal až po konverzii dlaždíc.
-      - name: Over, že GitHub Pages je zapnuté a berie z Actions
+      # Na stránke má byť MAPA, nie README – a to je vlastnosť jedného
+      # nastavenia repozitára: `build_type`.
+      #
+      # `build_type: legacy` = zdroj Pages je VETVA. Vtedy popri nás beží
+      # zabudovaný Jekyll builder („pages build and deployment"), ktorý pri
+      # KAŽDOM pushi do vetvy nasadí koreň repozitára – teda README – a mapu,
+      # ktorú nasadil tento workflow, prepíše. Navonok to vyzerá, že sa mapa
+      # „sama pokazila": beh je zelený, nasadenie prebehlo, a na stránke je
+      # README. Stalo sa to po mergoch #50, #51, #52 a znova #54 a #55, takže
+      # to už nie je nehoda, ale niečo, čo sa vracia.
+      #
+      # Preto sa to tu nielen kontroluje, ale rovno aj PREPÍNA späť. Je to
+      # jedno PUT volanie a je idempotentné – keď je nastavenie správne,
+      # neurobí sa nič. Keď na to token práva nemá, ostáva pôvodné správanie:
+      # zastaviť beh hneď na začiatku (tri sekundy) s návodom, a nie až po
+      # hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+      - name: Zapni GitHub Pages a prepni zdroj na Actions
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          RUCNE="Nastav to ručne raz: Settings → Pages → Build and deployment → Source: 'GitHub Actions'."
+
           PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
+
           if [ -z "$PAGES" ]; then
-            echo "::error::GitHub Pages nie je zapnuté. Zapni ho ručne: Settings → Pages → Build and deployment → Source: 'GitHub Actions' a spusti workflow znova."
-            exit 1
+            # Pages nie je zapnuté vôbec. Skúsime ho rovno založiť so zdrojom
+            # `workflow` – na to treba právo `pages: write`, ktoré tento job má.
+            echo "GitHub Pages nie je zapnuté – zapínam so zdrojom GitHub Actions…"
+            if gh api -X POST "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' >/dev/null 2>&1; then
+              echo "  ✓ zapnuté"
+              PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
+            else
+              echo "::error::GitHub Pages nie je zapnuté a tokenu sa ho nepodarilo zapnúť (na to treba admin práva). $RUCNE"
+              exit 1
+            fi
           fi
 
-          # `build_type: legacy` = zdroj je VETVA, nie Actions. Vtedy popri
-          # nás beží ešte zabudovaný Jekyll builder („pages build and
-          # deployment"), ktorý pri KAŽDOM pushi do vetvy nasadí koreň
-          # repozitára – teda README – a mapu, ktorú nasadil tento workflow,
-          # prepíše. Navonok to vyzerá, že sa mapa „sama pokazila": beh je
-          # zelený, nasadenie prebehlo, a na stránke je README.
-          # Presne to sa stalo po mergoch #50, #51 a #52.
           BT=$(printf '%s' "$PAGES" | jq -r '.build_type // "?"')
           if [ "$BT" != 'workflow' ]; then
-            echo "::error::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions. Zabudovaný Jekyll builder potom po každom pushi prepíše mapu obsahom repozitára (uvidíš README). Oprav to raz: Settings → Pages → Build and deployment → Source: 'GitHub Actions'."
+            echo "Pages berie zdroj z vetvy (build_type=$BT) – prepínam na GitHub Actions…"
+            if gh api -X PUT "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' >/dev/null 2>&1; then
+              # Overiť, a nie veriť: keby PUT prešlo a nastavenie ostalo staré,
+              # build by dobehol do zelena a na stránke by aj tak bolo README.
+              BT=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type // "?"' 2>/dev/null || echo '?')
+              [ "$BT" = 'workflow' ] && echo "  ✓ prepnuté (build_type=$BT)"
+            fi
+          fi
+
+          if [ "$BT" != 'workflow' ]; then
+            echo "::error::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions, a tokenu sa to nepodarilo prepnúť. Zabudovaný Jekyll builder potom po každom pushi prepíše mapu obsahom repozitára (uvidíš README). $RUCNE"
             exit 1
           fi
-          echo "Pages je zapnuté a berie z Actions ✓"
+          echo "Pages je zapnuté a berie z Actions ✓ – nasadí sa mapa z tohto behu"
 
       # PBF sa mení denne, tak je v kľúči dátum – v ten istý deň sa už
       # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
@@ -869,8 +906,13 @@ jobs:
       # Cache sa v GitHube nedá prepísať – kľúč, ktorý raz existuje, ostane so
       # starým obsahom. Pregenerovanie preto starý záznam najprv zmaže; až
       # potom má zmysel počítať nanovo a uložiť to pod ten istý kľúč.
+      # POZOR na `if:` s výstupom jobu: výstupy sú REŤAZCE a reťazec „false"
+      # je vo výraze pravdivý (nepravdivý je len prázdny). `if: ${{ x }}` teda
+      # platí vždy a `if: ${{ !x }}` nikdy – preto sa tu všade porovnáva
+      # s 'true' doslova. Bez toho sa cache reštore nikdy nespustil a každý
+      # beh počítal vrstevnice, skaly aj tieňovanie odznova.
       - name: Pregenerovanie – zmaž staré cache
-        if: ${{ needs.plan.outputs.opt_contours_rebuild || needs.plan.outputs.opt_rocks_rebuild || needs.plan.outputs.opt_terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours_rebuild == 'true' || needs.plan.outputs.opt_rocks_rebuild == 'true' || needs.plan.outputs.opt_terrain_rebuild == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -968,7 +1010,7 @@ jobs:
       # záznam už zmazal krok „Pregenerovanie", nech sa dá uložiť nový.
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
-        if: ${{ needs.plan.outputs.opt_contours == 'true' && !needs.plan.outputs.opt_contours_rebuild && !needs.plan.outputs.opt_rocks_rebuild }}
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_contours_rebuild != 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: contours-out
@@ -1205,7 +1247,7 @@ jobs:
 
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
-        if: ${{ needs.plan.outputs.opt_terrain == 'true' && !needs.plan.outputs.opt_terrain_rebuild }}
+        if: ${{ needs.plan.outputs.opt_terrain == 'true' && needs.plan.outputs.opt_terrain_rebuild != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: terrain-out
@@ -2340,6 +2382,18 @@ jobs:
             check "$BASE/tiles/$REGION-features.pmtiles" 206 "krajinné prvky (Range request)" "-H Range:bytes=0-1023"
           fi
 
+          # Na koreni stránky má byť MAPA. Všetko vyššie kontroluje súbory,
+          # ktoré README nemá – ale práve preto by prepísanú stránku
+          # nechytilo, keby tam ostali z predošlého nasadenia. Toto je tá
+          # jediná otázka, na ktorej návštevníkovi záleží: čo vidí, keď
+          # otvorí adresu. Jekyll z README vyrobí stránku bez `id="map"`.
+          if curl -sL "$BASE/" | grep -q 'id="map"'; then
+            echo "  ✓ na koreni stránky je mapa"
+          else
+            echo "::error::Na $BASE/ nie je mapa – vyzerá to na stránku vyrobenú z README zabudovaným Jekyll builderom. Skontroluj Settings → Pages → Source: 'GitHub Actions'."
+            fail=1
+          fi
+
           exit $fail
 
       # ---------- súhrn ----------
@@ -2376,4 +2430,8 @@ jobs:
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TEST_BBOX: ${{ needs.plan.outputs.bbox }}
           TEST_FULL_BBOX: ${{ needs.plan.outputs.full_bbox }}
+          # Celý formulár naraz, nie pole po poli: `toJSON(inputs)` sa nemá
+          # ako rozísť so zoznamom inputov, kdežto desať riadkov áno – a to
+          # by v súhrne ticho chýbalo práve to pole, ktoré si zmenil.
+          INPUTS_JSON: ${{ toJSON(inputs) }}
         run: bash workers/summary.sh

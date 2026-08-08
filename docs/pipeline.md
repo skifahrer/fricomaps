@@ -162,20 +162,44 @@ Sťahuje sa len zvolený región – celá planéta má ~80 GB, kraj 36–63 MB.
 Voliteľný `crop_bbox` oreže PBF ešte viac (`osmium extract --bbox`). Menšie
 územie = výrazne menší výsledok, takže sa doň zmestí vyšší zoom.
 
-### `plan` – Pages musí brať zdroj z Actions
+### `plan` – Pages si beh prepne sám na Actions
 
-Prvý krok behu overí nielen to, že sú Pages zapnuté, ale aj `build_type`.
-Keď je `legacy`, znamená to, že zdroj je **vetva**, nie Actions – a vtedy
-popri nás beží zabudovaný Jekyll builder („pages build and deployment").
-Ten pri KAŽDOM pushi do vetvy nasadí koreň repozitára, teda README, a mapu,
-ktorú nasadil tento workflow, prepíše.
+Na stránke má byť **mapa, nie README**, a rozhoduje o tom jediné nastavenie
+repozitára: `build_type`. Keď je `legacy`, zdroj Pages je **vetva**, nie
+Actions – a vtedy popri nás beží zabudovaný Jekyll builder („pages build and
+deployment"). Ten pri KAŽDOM pushi do vetvy nasadí koreň repozitára, teda
+README, a mapu, ktorú nasadil tento workflow, prepíše.
 
 Navonok to vyzerá, že sa mapa „sama pokazila": beh Build map je zelený,
 nasadenie prebehlo, a na stránke je README. V Actions je to vidieť ako beh
 `pages build and deployment` s eventom `dynamic`, ktorý sa spustí po merge –
-hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51
-a #52. Opraviť sa to dá jedine v nastaveniach:
-**Settings → Pages → Build and deployment → Source: GitHub Actions.**
+hoci Build map je len `workflow_dispatch`. Stalo sa to po mergoch #50, #51,
+#52 a znova po #54 a #55.
+
+Prvý krok behu preto nastavenie **nielen kontroluje, ale aj opravuje**:
+
+| stav na začiatku | čo krok spraví |
+|---|---|
+| `build_type: workflow` | nič (jedno GET volanie) |
+| `build_type: legacy` | `PUT /repos/{owner}/{repo}/pages` s `build_type=workflow` |
+| Pages vôbec nie sú zapnuté | `POST /repos/{owner}/{repo}/pages` s `build_type=workflow` |
+| prepnúť sa nepodarilo | `::error::` s návodom a koniec behu v tretej sekunde |
+
+Po zápise sa hodnota **prečíta znova** a až tá rozhoduje. Keby `PUT` prešlo
+a nastavenie ostalo staré, beh by dobehol do zelena a na stránke by aj tak
+bolo README – čiže presne tá chyba, ktorú to má riešiť, len tichšia.
+
+Job na to potrebuje `permissions: pages: write` (predtým mal `read`). Nie je
+to nové právo v behu – na úrovni workflowu `pages: write` je, lebo sa ním
+nasadzuje; teraz ho má aj príprava. Keby token na zmenu nastavenia nestačil
+(na to treba admin práva), správanie je pôvodné: zastaviť beh hneď, a nie po
+hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+
+Na konci behu to ešte raz overí smoke test: stiahne koreň nasadenej stránky
+a hľadá v ňom `id="map"`. Ostatné kontroly pýtajú súbory, ktoré README nemá
+(dlaždice, štýly, sprity) – tie by prepísanú stránku nechytili, keby na nej
+z predošlého nasadenia ostali. Toto je tá jediná otázka, na ktorej
+návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 
@@ -204,6 +228,13 @@ Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
 - **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test4`, takže si
   testovací beh nesadne na to, čo počítal ostrý.
+- **Pregenerúva sa vždy všetko.** `parse-options.py` pri zapnutom teste
+  prebije `rebuild` a zapne všetky tri príznaky (`contours_rebuild`,
+  `rocks_rebuild`, `terrain_rebuild`), takže sa cache pre ten kľúč najprv
+  zmaže a všetko sa spočíta nanovo. Testom sa ladí, a ladiť na výsledku
+  z cache znamená ladiť ducha; kľúč síce nesie nastavenia aj otlačok
+  skriptov, ale nie všetko. Cache ostrého behu tým netrpí – v kľúči je
+  `bboxkey` a ten je pri teste bboxom štvorca.
 - **Skaly z tieňovania.** Tie počíta vlastný workflow, ktorý si výrez rieši
   sám – v testovacom režime mu preto ide dole rovno **bbox štvorca**, nie
   meno pohoria. Jeho vlastný prienik je s bboxom Slovenska, nie s regiónom,
@@ -592,6 +623,10 @@ prepočítať **nanovo aj pri rovnakých nastaveniach**, slúžia na to inputy:
 | `teren` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
 | `vsetko` | všetko z toho naraz |
 
+**Rýchly test (switch `test`) prebíja `rebuild` a pregenerúva vždy všetko** –
+viď [rýchly test](#plan--rýchly-test-switch-test). Vo formulári teda `rebuild`
+pri zapnutom teste nič nemení.
+
 Mechanika je dôležitá, lebo nie je zrejmá: **cache sa v GitHube nedá
 prepísať.** Kľúč, ktorý raz existuje, si drží starý obsah a `cache/save` naň
 len upozorní, že už tam je. Keby sa teda `rebuild` len „prepočítal a uložil",
@@ -606,6 +641,15 @@ uloženie by nič nespravilo a ďalší build by dostal späť starú verziu. Pr
 Kľúče sa počítajú na jednom mieste (krok *Kľúče cache*) a používa ich restore,
 save aj mazanie – keby boli napísané trikrát, stačí ich raz zabudnúť opraviť
 a cache sa ticho rozsype: ukladala by sa pod iným kľúčom, než sa hľadá.
+
+> **Príznaky sú reťazce, nie booleany.** Výstup jobu je vždy text a vo výraze
+> je pravdivý každý neprázdny reťazec – teda aj `"false"`. `if: ${{ x }}`
+> preto platí vždy a `if: ${{ !x }}` nikdy. Presne to sa tu aj stalo:
+> podmienky restore boli písané ako `!needs.plan.outputs.opt_contours_rebuild`
+> a znamenali „nikdy nereštoruj", takže sa cache nikdy nepoužila a každý beh
+> počítal vrstevnice, skaly aj tieňovanie odznova. Navonok to nevyzerá ako
+> chyba – build je zelený, len trvá hodinu namiesto minút. Preto sa všade
+> porovnáva s `'true'` (resp. `!= 'true'`) doslova.
 
 Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy, sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
