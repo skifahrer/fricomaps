@@ -77,6 +77,31 @@ function regionFromHash(manifest) {
   return null;
 }
 
+/** Poloha z adresy (`#map=15/49.17/20.11`) ako `{zoom, lat, lon}`, alebo null. */
+function posFromHash() {
+  const raw = location.hash.replace(/^#/, "");
+  for (const part of raw.split("&")) {
+    const [k, v] = part.split("=");
+    if (k !== "map" || !v) continue;
+    const [zoom, lat, lon] = v.split("/").map(Number);
+    if ([zoom, lat, lon].every(Number.isFinite)) return { zoom, lat, lon };
+  }
+  return null;
+}
+
+/** Vyhodí z adresy `map=…`; ostatné parametre (`region=…`) nechá. */
+function dropPosFromHash() {
+  const rest = location.hash
+    .replace(/^#/, "")
+    .split("&")
+    .filter((p) => p && p.split("=")[0] !== "map");
+  history.replaceState(
+    null,
+    "",
+    location.pathname + location.search + (rest.length ? `#${rest.join("&")}` : "")
+  );
+}
+
 // ---------- zbalené ovládanie ----------
 function setPanel(open) {
   panelEl.hidden = !open;
@@ -207,6 +232,12 @@ function applyStyle(manifest) {
 
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
+    // Rýchly test nasadí mapu na pár km² – bez tejto vety vyzerá výsledok
+    // ako pokazený build (všade naokolo nič), nie ako testovací výrez.
+    (region.test_km2
+      ? `<b>Rýchly test:</b> ${region.test_km2} km² zo stredu výrezu – ` +
+        `mapa je len tu<br>`
+      : "") +
     `Mapa: <b>${kind.label}</b> – ${kind.note}<br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
     (region.contours
@@ -233,6 +264,17 @@ function applyStyle(manifest) {
 
   if (!map) {
     const [w, s, e, n] = region.bbox;
+    // Poloha z adresy má prednosť pred bboxom regiónu – ale len keď v tom
+    // regióne naozaj leží. Rýchly test (switch `test`) nasadí mapu na pár
+    // km²; hash z minulej návštevy alebo starý odkaz mieri inam a MapLibre
+    // by mapu otvoril nad prázdnom – vyzeralo by to, že build nič nevyrobil,
+    // pritom sú dlaždice o dvadsať kilometrov vedľa. Hash sa preto zahodí
+    // a rozhodne bbox. Musí to byť PRED vytvorením mapy: `hash: "map"` si
+    // adresu prečíta hneď pri štarte.
+    const pos = posFromHash();
+    if (pos && (pos.lon < w || pos.lon > e || pos.lat < s || pos.lat > n)) {
+      dropPosFromHash();
+    }
     map = new maplibregl.Map({
       container: "map",
       style,

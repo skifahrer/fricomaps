@@ -33,7 +33,7 @@ on:
           - presovsky
           - kosicky
       area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejšie je pole test_km2 pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
+        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejší je switch test pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
         required: false
         default: cely_region
         type: choice
@@ -54,16 +54,19 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
-      # Predvolené sú 4 km², teda RÝCHLY BEH. Ostrý build na celý výrez chce
-      # vedomé `0` – opačné poradie (predvolene ostrý) znamenalo, že sa každé
-      # ladenie prahu platilo desiatkami minút, kým si niekto spomenul dopísať
-      # voľbu do textového poľa. Kľúč testovacieho behu má príponu `_test4`,
-      # takže si nesadne do cache ani na uložené výsledky ostrého behu.
-      test_km2:
-        description: "RÝCHLY TEST – spraviť VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci s toľkými km² zo stredu výrezu: z desiatok minút sú minúty. 0 = ostrý beh na celom výreze. Iné miesto než stred cez options: test_at=lon,lat"
+      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (4 km² sedia skoro
+      # vždy), kým test sa zapína a vypína pri každom behu – a to je presne
+      # rozdiel medzi switchom a textovým poľom. Veľkosť ostala ako voľba
+      # `test_km2=2`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
+      # odškrtnúť – opačné poradie znamenalo, že sa každé ladenie prahu
+      # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
+      # Kľúč testovacieho behu má príponu `_test4`, takže si nesadne do cache
+      # ani na uložené výsledky ostrého behu.
+      test:
+        description: "RÝCHLY TEST – spraviť VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci 4 km² zo stredu výrezu: z desiatok minút sú minúty a mapa sa otvorí rovno tam. Iná veľkosť cez options: test_km2=2, iné miesto cez options: test_at=lon,lat"
         required: false
-        default: "4"
-        type: string
+        default: true
+        type: boolean
       # Tri výbery zdroja, jeden na vrstvu. Kým bol `dem_source` jeden pre
       # všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly
       # z najjemnejšieho modelu (aj keď je len na výrez) a tieňovanie
@@ -126,7 +129,7 @@ on:
           - teren
           - vsetko
       options:
-        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Mriežka na obrys skál: `rock_res=1` (default auto). Zoznam kľúčov je vo workers/parse-options.py"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Veľkosť rýchleho testu: `test_km2=2` (default 4). Mriežka na obrys skál: `rock_res=1` (default auto). Zoznam kľúčov je vo workers/parse-options.py"
         required: false
         default: ""
         type: string
@@ -547,7 +550,7 @@ jobs:
             --contour-source='${{ inputs.contour_source }}' \
             --rock-source='${{ inputs.rock_source }}' \
             --shading-source='${{ inputs.shading_source }}' \
-            --test-km2='${{ inputs.test_km2 }}' \
+            --test='${{ inputs.test }}' \
             --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
@@ -634,12 +637,13 @@ jobs:
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
           CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
 
-          # TESTOVACÍ REŽIM (input `test_km2`, predvolene 4) je to isté
+          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) je to isté
           # orezanie, len bbox nezadávaš ty – vyreže sa štvorec zo stredu
           # zvoleného výrezu. Orezaním REGIÓNU (a nie len výrezu) sa zmenší
           # úplne všetko: vrstevnice, skaly aj tieňovanie, ktoré sa inak
           # počíta na celý kraj. Presne o to ide – celý beh na pár km²
-          # namiesto vrstvy po vrstve. Ostrý build je `test_km2: 0`.
+          # namiesto vrstvy po vrstve. A keďže je orezaný región, je ten
+          # štvorec aj bboxom v manifeste – mapa sa otvorí rovno na ňom.
           TEST_KM2='${{ steps.opts.outputs.opt_test_km2 }}'
           TEST=""
           if [ "${TEST_KM2:-0}" != "0" ]; then
@@ -1970,6 +1974,7 @@ jobs:
             --argjson rocks '${{ needs.contours.outputs.rocks_enabled || 'false' }}' \
             --argjson rmaxzoom '${{ needs.contours.outputs.rocks_maxzoom || '16' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
+            --argjson testkm2 '${{ needs.plan.outputs.test_km2 || '0' }}' \
             --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
             --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \
@@ -1998,7 +2003,13 @@ jobs:
                   pmtiles: ("tiles/" + $region + ".pmtiles"),
                   maxzoom: $maxzoom,
                   size_mb: $size_mb
-                } + (if $contours then {
+                }
+                # Rýchly test (switch `test`): `bbox` vyššie JE ten testovací
+                # štvorec, lebo sa ním orezal celý región – viewer sa teda na
+                # neho nastaví sám. Číslo je tu preto, aby to aj napísal;
+                # inak vyzerá pár km² mapy ako pokazený build.
+                + (if $testkm2 > 0 then { test_km2: $testkm2 } else {} end)
+                + (if $contours then {
                   contours: ("tiles/" + $region + "-contours.pmtiles"),
                   contours_maxzoom: $cmaxzoom,
                   contour_interval: $cinterval
