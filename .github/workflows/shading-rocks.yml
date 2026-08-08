@@ -85,7 +85,7 @@ on:
         default: "50"
         type: string
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Zoznam je vo workers/shading-rocks.py"
+        description: "Zriedka menené prepínače ako kľúč=hodnota, napr. `local=2000 min_hole=5 smooth=2 jobs=8`. Súvislé plochy namiesto jemnej siete: `fill=40`. Riadok na každú dlaždicu: `log_every=1`. Viac času na obrysy: `budget_min=150`. Nepokračovať v rozrobenom: `fresh=1`. Zoznam je vo workers/shading-rocks.py"
         required: false
         default: ""
         type: string
@@ -286,7 +286,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.rocks.outputs.zoom }}
-          path: tiles-cache
+          # Bez vylúčenia by v artefakte s obrázkami skončili aj medzivýsledky
+          # (pásy rastra, obrysy) – tie v cache byť majú, v artefakte nie.
+          path: |
+            tiles-cache
+            !tiles-cache/_rozrobene
           retention-days: 14
           compression-level: 0
           if-no-files-found: ignore

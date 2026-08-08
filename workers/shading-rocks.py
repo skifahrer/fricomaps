@@ -120,6 +120,21 @@ a obrysy sa nad ním zastavia s hláškou. Dlaždice sa sťahujú do `--cache-di
 a pri opakovanom behu sa berú odtiaľ, takže ani ladenie prahov, ani krok
 o zoom nižšie nestojí jeden request navyše.
 
+── keď to spadne, netreba začínať odznova ──────────────────────────────────
+
+Rozrobené leží v `<cache-dir>/_rozrobene/<podpis prahov>/` – teda v cache
+dlaždíc, ktorá sa ukladá aj po páde a po timeoute. Ďalší beh preskočí, čo už
+je hotové:
+
+    score0000.tif …   pásy rastra tmavosti  (pás po páse)
+    bands.gpkg        obrysy z gdal_contour (tá najdrahšia fáza)
+    bands.geojsonl    pásma rozbité na jednotlivé plochy
+    rock.geojsonl     vyfiltrované polygóny
+
+Každá fáza sa píše do `.part` a premenuje sa až celá, takže nedopísaný kus
+sa za hotový nikdy nevydá. Po úspešnom behu sa `_rozrobene` maže – nemá
+zmysel, aby cache rástla o medzivýsledky. `--fresh=1` ho zahodí dopredu.
+
 Sťahuje sa z dobrovoľníckej služby freemap.sk – `--jobs` je zámerne nízke.
 
 Použitie:
@@ -292,17 +307,19 @@ class Fetcher:
     """
 
     def __init__(self, url_tmpl, cache_dir, jobs=12, retries=3, timeout=30,
-                 ua="rotate"):
+                 ua="rotate", log_every=25):
         self.tmpl = url_tmpl
         self.cache = cache_dir
         self.jobs, self.retries, self.timeout = jobs, retries, timeout
         self.ua = ua
+        self.log_every = log_every
         self.ua_seen = set()
         u = urllib.parse.urlsplit(url_tmpl)
         self.scheme, self.host = u.scheme, u.netloc
         self.local = threading.local()
         self.lock = threading.Lock()
         self.n_ok = self.n_miss = self.n_cached = self.n_fail = 0
+        self.n_done = 0
         self.bytes = 0
         # Proxy sa rieši tunelom (CONNECT), nie prepísaním URL – inak by sa
         # trvalé spojenie zahodilo.
@@ -379,12 +396,21 @@ class Fetcher:
             self.local.conn = None
 
     def get(self, z, x, y):
-        """Stiahne jednu dlaždicu do cache. True = máme dáta, False = nie."""
+        """True = dlaždicu máme (z cache alebo stiahnutú)."""
+        return self.fetch(z, x, y) in ("cache", "stiahnuté")
+
+    def fetch(self, z, x, y):
+        """Stiahne jednu dlaždicu do cache a povie, ako to dopadlo:
+        `cache` / `stiahnuté` / `chýba` (404) / `zlyhalo`.
+
+        Stav ide von preto, aby sa pri každej dlaždici dalo vypísať, čo sa
+        s ňou stalo – z holého „2 %" sa nedá poznať, či server dáva dáta,
+        alebo len rýchlo odpovedá 404."""
         dst = self.path(z, x, y)
         if os.path.exists(dst):
             with self.lock:
                 self.n_cached += 1
-            return os.path.getsize(dst) > 0
+            return "cache" if os.path.getsize(dst) > 0 else "chýba"
         url = self.tmpl.format(z=z, x=x, y=y)
         rel = urllib.parse.urlsplit(url).path
         body, status = None, 0
@@ -422,15 +448,15 @@ class Fetcher:
             with self.lock:
                 self.n_ok += 1
                 self.bytes += len(body)
-            return True
+            return "stiahnuté"
         if status == 404:
             open(dst, "wb").close()   # značka „tu nič nie je"
             with self.lock:
                 self.n_miss += 1
-            return False
+            return "chýba"
         with self.lock:
             self.n_fail += 1
-        return False
+        return "zlyhalo"
 
     def fetch_all(self, z, x0, y0, x1, y1):
         """Stiahne celý obdĺžnik dlaždíc. Vlákna si berú prácu zo spoločného
@@ -450,19 +476,25 @@ class Fetcher:
                 if i >= total:
                     return
                 x, y = jobs[i]
-                self.get(z, x, y)
+                stav = self.fetch(z, x, y)
                 now = time.time()
-                if now - last[0] >= 15:
+                # Riadok na dlaždicu (podľa `--log-every`): koľkátu práve
+                # máme, čo s ňou bolo, ktorá to je a koľko ešte zostáva.
+                # Časový strop je poistka: keď server spomalí na pár dlaždíc
+                # za minútu, log nesmie stíchnuť.
+                with self.lock:
+                    self.n_done += 1
+                    done = self.n_done
+                if (self.log_every and done % self.log_every == 0) or \
+                        now - last[0] >= 15:
                     with lock:
-                        if now - last[0] >= 15:
-                            last[0] = now
-                            done = i + 1
-                            rate = done / max(1e-6, now - t0)
-                            eta = (total - done) / max(1e-6, rate)
-                            print(f"  … dlaždice: {done}/{total} "
-                                  f"({100.0 * done / total:.0f} %), "
-                                  f"{rate:.0f}/s, ostáva {hms(eta)}, "
-                                  f"{self.bytes / 1048576:.0f} MB", flush=True)
+                        last[0] = now
+                        rate = done / max(1e-6, now - t0)
+                        eta = (total - done) / max(1e-6, rate)
+                        print(f"  [{done}/{total}] {self.tmpl.format(z=z, x=x, y=y)}"
+                              f"  {stav}, zostáva {total - done}, "
+                              f"{rate:.0f}/s, ešte {hms(eta)}, "
+                              f"{self.bytes / 1048576:.0f} MB", flush=True)
 
         threads = [threading.Thread(target=worker, daemon=True)
                    for _ in range(max(1, self.jobs))]
@@ -714,6 +746,10 @@ def write_chunk(arr, ox, oy, res, out_tif):
     ostane pár desiatok.
     """
     h, w = arr.shape
+    # Cieľ sa píše cez `.part` a premenuje sa až hotový. Pri pokračovaní po
+    # páde sa totiž existencia súboru berie ako „tento pás je spočítaný" –
+    # polovičný TIFF by tichú dieru v mozaike zamkol navždy.
+    final_tif, out_tif = out_tif, out_tif + ".part"
     raw = out_tif + ".raw"
     arr.tofile(raw)
     vrt = out_tif + ".vrt"
@@ -729,6 +765,7 @@ def write_chunk(arr, ox, oy, res, out_tif):
         for f in (raw, vrt):
             if os.path.exists(f):
                 os.remove(f)
+    os.replace(out_tif, final_tif)
 
 
 def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
@@ -755,6 +792,17 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
     for bi, ty in enumerate(range(y0, y1, rows_per_band)):
         ty1 = min(ty + rows_per_band, y1)
         py0, py1 = max(y0, ty - pad_tiles), min(y1, ty1 + pad_tiles)
+        tif = os.path.join(tmp, f"score{bi:04d}.tif")
+        # Hotový pás z predošlého (spadnutého) behu sa nepočíta znova. Súbor
+        # tam je len vtedy, keď sa dopísal celý – `write_chunk` ide cez
+        # `.part` a premenovanie, takže polovičný TIFF sa za hotový nikdy
+        # nevydá. Náhľad sa tým pádom skladá len z toho, čo sa naozaj
+        # počítalo; pri úplnom pokračovaní bude prázdny a to je v poriadku.
+        if os.path.exists(tif) and os.path.getsize(tif) > 0:
+            tifs.append(tif)
+            print(f"  … tmavosť: pás {bi + 1}/{n_bands} už je "
+                  f"({dir_mb(tif):.0f} MB) – preskakujem", flush=True)
+            continue
         gray = load_band(fetcher, z, x0, x1, py0, py1)
         score, blurred = score_band(gray, args.dark, args.dark_always,
                                     local_px, args.rel, args.blur, args.fill_px)
@@ -764,7 +812,6 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
         cut = score[top:bot]
         ox = -R + x0 * TILE * res
         oy = R - ty * TILE * res
-        tif = os.path.join(tmp, f"score{bi:04d}.tif")
         write_chunk(np.ascontiguousarray(cut), ox, oy, res, tif)
         tifs.append(tif)
         # Náhľad: zmenšený obraz sa skladá priebežne, nikdy sa nedrží celá
@@ -799,7 +846,8 @@ def ring_area(ring):
     return s / 2.0
 
 
-def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor):
+def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor,
+                  every=30):
     """Prúdový filter nad GeoJSONSeq: odrobinky preč, dierky preč, triedy von.
 
     Vstup je už rozbitý na samostatné plochy (`-explodecollections`), takže
@@ -820,7 +868,13 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor):
     total = 0.0
     n_cliff = 0
     biggest = 0.0
-    with open(src) as fi, open(dst, "w") as fo:
+    # Píše sa priebežne do `.part` a premenuje sa až hotové. Riadok = jedna
+    # skala, takže výstup rastie plynulo a je pri ňom počuť; nedopísaný
+    # súbor sa pritom nikdy nevydá za hotovú fázu (viď `hotove`).
+    part = dst + ".part"
+    t0 = time.time()
+    last = t0
+    with open(src) as fi, open(part, "w") as fo:
         for line in fi:
             line = line.strip()
             if not line:
@@ -868,11 +922,34 @@ def filter_stream(src, dst, min_area, min_hole, cliff_level, merc_factor):
                     "geometry": {"type": "Polygon", "coordinates": rings},
                 }, separators=(",", ":")) + "\n")
                 n_out += 1
+                now = time.time()
+                if every and now - last >= every:
+                    last = now
+                    fo.flush()
+                    print(f"  … filter plôch: {n_in} prečítaných, "
+                          f"{n_out} ponechaných, beží {hms(now - t0)}",
+                          flush=True)
                 total += area
                 biggest = max(biggest, area)
                 n_cliff += (cls == "cliff")
+    os.replace(part, dst)
     return {"n_in": n_in, "n": n_out, "cliff": n_cliff, "total_m2": total,
             "max_m2": biggest, "holes": holes_kept, "holes_dropped": holes_drop}
+
+
+def hotove(path, label):
+    """True = túto fázu spravil predošlý beh a netreba ju robiť znova.
+
+    Každá fáza sa píše do `.part` a premenuje sa až celá, takže existencia
+    súboru znamená „dokončené"; nedopísaný kus sa za hotový nikdy nevydá.
+    Zmysel to má vďaka tomu, že pracovný priečinok leží v cache dlaždíc –
+    prežije teda aj beh, ktorý spadol alebo ho zabil timeout.
+    """
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        print(f"  {label}: hotové z predošlého behu "
+              f"({dir_mb(path):.0f} MB) – preskakujem", flush=True)
+        return True
+    return False
 
 
 def vectorize(tifs, args, tmp, out, lat_mid):
@@ -881,20 +958,23 @@ def vectorize(tifs, args, tmp, out, lat_mid):
     run(["gdalbuildvrt", "-q", vrt] + tifs)
 
     raw_gpkg = os.path.join(tmp, "bands.gpkg")
-    if os.path.exists(raw_gpkg):
-        os.remove(raw_gpkg)
     # Prah je 0,5, nie 1: dáta sú celé čísla, takže izolínia v polovici kroku
     # ide presne stredom medzi „nie je tmavé" a „je tmavé" a obrys vyjde
     # sub-pixelový. Horná úroveň 256 je nad maximom Byte – bez nej niektoré
     # verzie GDALu najvrchnejšie pásmo nevytvoria.
     cliff_level = 0.5 + args.cliff
     levels = ["-fl", "0.5", "-fl", repr(cliff_level), "-fl", "256"]
-    # `max_s`: keby bol odhad opäť vedľa, beh sa zastaví na rozpočte a povie
-    # to – namiesto toho, aby ticho dobehol do timeoutu celého jobu.
-    run_watched(["gdal_contour", "-p", "-amin", "dmin", "-amax", "dmax",
-                 *levels, "-f", "GPKG", "-nln", "band", vrt, raw_gpkg],
-                "obrysy tmavých plôch", tmp=raw_gpkg,
-                every=args.heartbeat, max_s=args.budget_min * 60)
+    if not hotove(raw_gpkg, "obrysy tmavých plôch"):
+        part = raw_gpkg + ".part"
+        if os.path.exists(part):
+            os.remove(part)
+        # `max_s`: keby bol odhad opäť vedľa, beh sa zastaví na rozpočte a
+        # povie to – namiesto toho, aby ticho dobehol do timeoutu jobu.
+        run_watched(["gdal_contour", "-p", "-amin", "dmin", "-amax", "dmax",
+                     *levels, "-f", "GPKG", "-nln", "band", vrt, part],
+                    "obrysy tmavých plôch", tmp=part,
+                    every=args.heartbeat, max_s=args.budget_min * 60)
+        os.replace(part, raw_gpkg)
 
     seq = os.path.join(tmp, "bands.geojsonl")
     # Ovládač GeoJSON prepočítava vždy do WGS84 – `-a_srs EPSG:4326` mu
@@ -902,14 +982,19 @@ def vectorize(tifs, args, tmp, out, lat_mid):
     # smooth-polygons.py a je tam vysvetlený).
     # `-explodecollections`: pásmo je jeden útvar cez celé územie. Skala má
     # byť samostatný útvar s vlastnou plochou – rovnako to robí rock-areas.py.
-    run(["ogr2ogr", "-f", "GeoJSONSeq", seq, raw_gpkg, "band",
-         "-a_srs", "EPSG:4326", "-lco", "COORDINATE_PRECISION=2",
-         "-explodecollections", "-where", "dmin >= 0.5"])
+    if not hotove(seq, "rozbitie pásiem na plochy"):
+        part = seq + ".part"
+        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", part, raw_gpkg, "band",
+                     "-a_srs", "EPSG:4326", "-lco", "COORDINATE_PRECISION=2",
+                     "-explodecollections", "-where", "dmin >= 0.5"],
+                    "rozbitie pásiem na plochy", tmp=part,
+                    every=args.heartbeat)
+        os.replace(part, seq)
 
     filt = os.path.join(tmp, "rock.geojsonl")
     merc = math.cos(math.radians(lat_mid)) ** 2
     st = filter_stream(seq, filt, args.min_area, args.min_hole,
-                       cliff_level, merc)
+                       cliff_level, merc, every=args.heartbeat)
     print(f"  filter: {st['n_in']} → {st['n']} plôch "
           f"(pod {args.min_area:g} m² preč), diery {st['holes']} ostali, "
           f"{st['holes_dropped']} pod {args.min_hole:g} m² preč", flush=True)
@@ -1061,6 +1146,14 @@ def main():
     ap.add_argument("--zoom-min", type=int, default=12)
     ap.add_argument("--max-tiles", type=int, default=60000,
                     help="strop na počet dlaždíc – `auto` pod neho zíde sám")
+    # Číslo, nie `store_true`: voľby z jedného textového poľa chodia vždy ako
+    # `kľúč=hodnota`, takže prepínač bez hodnoty by cez ne nešiel zadať.
+    ap.add_argument("--fresh", type=int, default=0,
+                    help="1 = zahodiť rozrobené z predošlého behu a počítať "
+                         "všetko odznova (dlaždice ostávajú v cache)")
+    ap.add_argument("--log-every", type=int, default=25,
+                    help="po koľkých dlaždiciach vypísať riadok "
+                         "(1 = každá, 0 = len každých 15 s)")
     ap.add_argument("--budget-min", type=float, default=100,
                     help="koľko minút smú trvať obrysy; `auto` pod to zíde "
                          "sám a beh sa nad tým zastaví (0 = bez stropu)")
@@ -1114,7 +1207,8 @@ def main():
     lat_mid = (args.bbox[1] + args.bbox[3]) / 2.0
 
     os.makedirs(args.cache_dir, exist_ok=True)
-    fetcher = Fetcher(args.url, args.cache_dir, jobs=args.jobs, ua=args.ua)
+    fetcher = Fetcher(args.url, args.cache_dir, jobs=args.jobs, ua=args.ua,
+                      log_every=args.log_every)
 
     if str(args.zoom).strip().lower() == "auto":
         z = probe_zoom(fetcher, args.bbox, args.zoom_max, args.zoom_min,
@@ -1145,9 +1239,26 @@ def main():
         # stáli dvojnásobok dát za obrys, ktorý vyzerá rovnako.
         args.simplify = tile_res(z)
 
-    tmp = os.path.abspath(args.out) + ".work"
-    shutil.rmtree(tmp, ignore_errors=True)
+    # Pracovný priečinok leží v cache dlaždíc, nie vedľa výstupu. To je celý
+    # trik pokračovania: cache sa ukladá aj vtedy, keď job spadne alebo ho
+    # zabije timeout (`if: always()` v shading-rocks.yml), takže hotové pásy
+    # rastra, obrysy aj vyfiltrované polygóny prežijú a ďalší beh ich len
+    # prevezme. Podpis v mene: iné prahy = iný medzivýsledok, takže sa dva
+    # rôzne behy nemôžu pomiešať.
+    podpis = (f"z{z}-d{args.dark}-a{args.dark_always}-r{args.rel}"
+              f"-c{args.cliff}-l{args.local:g}-f{args.fill:g}-b{int(args.blur)}"
+              f"-m{args.min_area:g}-h{args.min_hole:g}")
+    tmp = os.path.join(args.cache_dir, "_rozrobene", podpis)
+    if args.fresh:
+        shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp, exist_ok=True)
+    if os.listdir(tmp):
+        print(f"── Rozrobené z predošlého behu ──────────────────────")
+        print(f"  {tmp}")
+        for f in sorted(os.listdir(tmp)):
+            print(f"    {f}  {dir_mb(os.path.join(tmp, f)):.0f} MB")
+        print("  hotové fázy sa preskočia; `options: fresh=true` to zahodí")
+        print("─────────────────────────────────────────────────────", flush=True)
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
 
     t_all = time.time()
@@ -1239,7 +1350,10 @@ def main():
             ]:
                 f.write(f"{k}={v}\n")
 
+    # Až TERAZ preč: rozrobené má zmysel držať len dovtedy, kým beh nedobehol.
+    # Inak by cache dlaždíc rástla o medzivýsledky každého behu.
     shutil.rmtree(tmp, ignore_errors=True)
+    print("Rozrobené zmazané – beh dobehol celý.", flush=True)
     return 0
 
 
