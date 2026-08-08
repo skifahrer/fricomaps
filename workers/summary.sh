@@ -14,6 +14,7 @@
 #   R_TILES R_ASSETS  SRC_CONTOURS SRC_ROCKS SRC_SHADING
 #   USED_CONTOURS USED_ROCKS USED_SHADING  SIZE_LIMIT_MB  PAGE_URL
 #   REGION_KEY  TEST_KM2 TEST_BBOX TEST_FULL_BBOX  (testovací režim)
+#   INPUTS_JSON  (celý formulár ako JSON – blok „Nastavenia tohto behu")
 # Očakáva aj `gh` a premenné GITHUB_* od runnera.
 
 set -uo pipefail
@@ -211,6 +212,19 @@ fi
     echo "\`dlazdice-tienovania-…\` a náhľad mozaiky v \`nahlad-…\`."
   fi
   echo
+} >> "$S"
+
+# ---- s čím bol beh spustený ----
+# Formulár `Run workflow` sa vždy otvorí s predvolenými hodnotami – GitHub
+# si nepamätá, s čím si beh pustil naposledy, a z API sa to ani nedá zistiť.
+# Keď teda chceš zopakovať beh a zmeniť jedinú vec, ostatné polia musíš
+# nastaviť znova; toto je zoznam, z ktorého sa dajú odpísať. `|| true`:
+# súhrn je užitočný aj bez tohto bloku, nemá kvôli nemu spadnúť.
+python3 workers/summary-inputs.py \
+  --inputs="${INPUTS_JSON:-}" \
+  --workflow=.github/workflows/build-map.yml >> "$S" || true
+
+{
   echo "**Ako pregenerovať:** spusti workflow znova a vo výbere"
   echo "\`rebuild\` zvoľ \`vrstevnice\`, \`skaly\` (vrátane uloženej"
   echo "verzie v release \`dem-rocks\`), \`teren\` alebo \`vsetko\`."

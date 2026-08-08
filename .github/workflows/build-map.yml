@@ -17,10 +17,14 @@ name: Build map (PBF → PMTiles) & deploy Pages
 on:
   workflow_dispatch:
     inputs:
+      # Predvolený je kraj, na ktorom sa reálne pracuje, nie celé Slovensko:
+      # formulár sa po každom otvorení vracia na predvolené hodnoty, takže
+      # default je to, čo netreba prekliknúť. Prešovský kraj drží Vysoké
+      # Tatry, ktoré sú predvolený výrez o pár riadkov nižšie.
       region:
         description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
         required: true
-        default: slovensko
+        default: presovsky
         type: choice
         options:
           - slovensko
@@ -35,7 +39,7 @@ on:
       area:
         description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejší je switch test pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
         required: false
-        default: cely_region
+        default: vysoke_tatry
         type: choice
         options:
           - cely_region
@@ -2257,4 +2261,8 @@ jobs:
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TEST_BBOX: ${{ needs.plan.outputs.bbox }}
           TEST_FULL_BBOX: ${{ needs.plan.outputs.full_bbox }}
+          # Celý formulár naraz, nie pole po poli: `toJSON(inputs)` sa nemá
+          # ako rozísť so zoznamom inputov, kdežto desať riadkov áno – a to
+          # by v súhrne ticho chýbalo práve to pole, ktoré si zmenil.
+          INPUTS_JSON: ${{ toJSON(inputs) }}
         run: bash workers/summary.sh
