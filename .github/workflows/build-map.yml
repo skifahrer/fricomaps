@@ -448,7 +448,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      pages: read      # kontrola, či je Pages vôbec zapnuté
+      # `write` a nie `read`: príprava Pages nielen kontroluje, ale aj zapína
+      # a prepína zdroj na Actions, aby na stránke skončila mapa a nie README.
+      # Na úrovni workflowu je `pages: write` aj tak (nasadzuje sa ním), takže
+      # to nie je nové právo v behu – len ho dostane aj tento job.
+      pages: write
     outputs:
       key: ${{ steps.region.outputs.key }}
       name: ${{ steps.region.outputs.name }}
@@ -507,33 +511,62 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # GITHUB_TOKEN nemá admin práva na vytvorenie Pages site, preto sa
-      # Pages musí zapnúť raz ručne: Settings → Pages → Source: GitHub Actions.
-      # Kontrola hneď na začiatku, aby build nezlyhal až po konverzii dlaždíc.
-      - name: Over, že GitHub Pages je zapnuté a berie z Actions
+      # Na stránke má byť MAPA, nie README – a to je vlastnosť jedného
+      # nastavenia repozitára: `build_type`.
+      #
+      # `build_type: legacy` = zdroj Pages je VETVA. Vtedy popri nás beží
+      # zabudovaný Jekyll builder („pages build and deployment"), ktorý pri
+      # KAŽDOM pushi do vetvy nasadí koreň repozitára – teda README – a mapu,
+      # ktorú nasadil tento workflow, prepíše. Navonok to vyzerá, že sa mapa
+      # „sama pokazila": beh je zelený, nasadenie prebehlo, a na stránke je
+      # README. Stalo sa to po mergoch #50, #51, #52 a znova #54 a #55, takže
+      # to už nie je nehoda, ale niečo, čo sa vracia.
+      #
+      # Preto sa to tu nielen kontroluje, ale rovno aj PREPÍNA späť. Je to
+      # jedno PUT volanie a je idempotentné – keď je nastavenie správne,
+      # neurobí sa nič. Keď na to token práva nemá, ostáva pôvodné správanie:
+      # zastaviť beh hneď na začiatku (tri sekundy) s návodom, a nie až po
+      # hodine výpočtu, ktorý by aj tak skončil ako README na stránke.
+      - name: Zapni GitHub Pages a prepni zdroj na Actions
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
+          RUCNE="Nastav to ručne raz: Settings → Pages → Build and deployment → Source: 'GitHub Actions'."
+
           PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
+
           if [ -z "$PAGES" ]; then
-            echo "::error::GitHub Pages nie je zapnuté. Zapni ho ručne: Settings → Pages → Build and deployment → Source: 'GitHub Actions' a spusti workflow znova."
-            exit 1
+            # Pages nie je zapnuté vôbec. Skúsime ho rovno založiť so zdrojom
+            # `workflow` – na to treba právo `pages: write`, ktoré tento job má.
+            echo "GitHub Pages nie je zapnuté – zapínam so zdrojom GitHub Actions…"
+            if gh api -X POST "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' >/dev/null 2>&1; then
+              echo "  ✓ zapnuté"
+              PAGES=$(gh api "repos/$GITHUB_REPOSITORY/pages" 2>/dev/null || true)
+            else
+              echo "::error::GitHub Pages nie je zapnuté a tokenu sa ho nepodarilo zapnúť (na to treba admin práva). $RUCNE"
+              exit 1
+            fi
           fi
 
-          # `build_type: legacy` = zdroj je VETVA, nie Actions. Vtedy popri
-          # nás beží ešte zabudovaný Jekyll builder („pages build and
-          # deployment"), ktorý pri KAŽDOM pushi do vetvy nasadí koreň
-          # repozitára – teda README – a mapu, ktorú nasadil tento workflow,
-          # prepíše. Navonok to vyzerá, že sa mapa „sama pokazila": beh je
-          # zelený, nasadenie prebehlo, a na stránke je README.
-          # Presne to sa stalo po mergoch #50, #51 a #52.
           BT=$(printf '%s' "$PAGES" | jq -r '.build_type // "?"')
           if [ "$BT" != 'workflow' ]; then
-            echo "::error::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions. Zabudovaný Jekyll builder potom po každom pushi prepíše mapu obsahom repozitára (uvidíš README). Oprav to raz: Settings → Pages → Build and deployment → Source: 'GitHub Actions'."
+            echo "Pages berie zdroj z vetvy (build_type=$BT) – prepínam na GitHub Actions…"
+            if gh api -X PUT "repos/$GITHUB_REPOSITORY/pages" \
+                 -f 'build_type=workflow' >/dev/null 2>&1; then
+              # Overiť, a nie veriť: keby PUT prešlo a nastavenie ostalo staré,
+              # build by dobehol do zelena a na stránke by aj tak bolo README.
+              BT=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq '.build_type // "?"' 2>/dev/null || echo '?')
+              [ "$BT" = 'workflow' ] && echo "  ✓ prepnuté (build_type=$BT)"
+            fi
+          fi
+
+          if [ "$BT" != 'workflow' ]; then
+            echo "::error::GitHub Pages berie zdroj z vetvy (build_type=$BT), nie z Actions, a tokenu sa to nepodarilo prepnúť. Zabudovaný Jekyll builder potom po každom pushi prepíše mapu obsahom repozitára (uvidíš README). $RUCNE"
             exit 1
           fi
-          echo "Pages je zapnuté a berie z Actions ✓"
+          echo "Pages je zapnuté a berie z Actions ✓ – nasadí sa mapa z tohto behu"
 
       # PBF sa mení denne, tak je v kľúči dátum – v ten istý deň sa už
       # nesťahuje znova (kraj má 36–63 MB, celé Slovensko ~380 MB).
@@ -2175,6 +2208,18 @@ jobs:
 
           if [ '${{ needs.trails.outputs.enabled }}' = 'true' ]; then
             check "$BASE/tiles/$REGION-trails.pmtiles" 206 "značené trasy (Range request)" "-H Range:bytes=0-1023"
+          fi
+
+          # Na koreni stránky má byť MAPA. Všetko vyššie kontroluje súbory,
+          # ktoré README nemá – ale práve preto by prepísanú stránku
+          # nechytilo, keby tam ostali z predošlého nasadenia. Toto je tá
+          # jediná otázka, na ktorej návštevníkovi záleží: čo vidí, keď
+          # otvorí adresu. Jekyll z README vyrobí stránku bez `id="map"`.
+          if curl -sL "$BASE/" | grep -q 'id="map"'; then
+            echo "  ✓ na koreni stránky je mapa"
+          else
+            echo "::error::Na $BASE/ nie je mapa – vyzerá to na stránku vyrobenú z README zabudovaným Jekyll builderom. Skontroluj Settings → Pages → Source: 'GitHub Actions'."
+            fail=1
           fi
 
           exit $fail
