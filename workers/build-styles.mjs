@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 /**
- * Vygeneruje statické MapLibre style.json súbory pre všetky témy.
- * Tie isté štýly použije web aj iOS aplikácia (MapLibre Native vie
- * načítať style.json priamo z URL GitHub Pages).
+ * Vygeneruje statické MapLibre style.json súbory pre všetky kombinácie
+ * **typ mapy × farebná téma**. Tie isté štýly použije web aj iOS aplikácia
+ * (MapLibre Native vie načítať style.json priamo z URL GitHub Pages).
+ *
+ * Súbory sú `<región>-<typ mapy>-<téma>.json`; navyše sa predvolený typ mapy
+ * zapíše aj pod starým menom `<región>-<téma>.json`, aby fungovali odkazy,
+ * ktoré typ mapy nepoznajú.
  *
  * Štýl sa naviaže na reálne dostupné assety:
  *   --sprite     … sprite index (JSON) – z neho sa vezme zoznam ikon, takže
@@ -37,7 +41,9 @@ import {
   DEFAULT_DEM_TILES,
   DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
-  DEM_SOURCES
+  DEM_SOURCES,
+  MAP_TYPES,
+  DEFAULT_MAP_TYPE
 } from "../poc/web/themes.js";
 import { ICON_SOURCES } from "../poc/web/icon-sources.js";
 
@@ -215,37 +221,55 @@ if (coverage.missing.length || coverage.extra.length) {
 
 mkdirSync(outDir, { recursive: true });
 
-for (const themeKey of Object.keys(THEMES)) {
-  const style = buildStyle({
-    theme: themeKey,
-    tilesUrl: `pmtiles://${baseUrl}/tiles/${region}.pmtiles`,
-    spriteUrl: spriteUrl,
-    glyphsUrl,
-    icons,
-    fonts,
-    maxzoom,
-    sdfIcons,
-    iconSet: iconSetId,
-    overrides,
-    contoursUrl: hasContours
-      ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
-      : null,
-    contoursMaxzoom,
-    trailsUrl: hasTrails
-      ? `pmtiles://${baseUrl}/tiles/${region}-trails.pmtiles`
-      : null,
-    trailsMaxzoom,
-    demSource,
-    demTiles,
-    demTilesSource,
-    demMaxzoom,
-    name: `FricoMaps ${regionName} – ${THEMES[themeKey].label}`
-  });
-  const file = join(outDir, `${region}-${themeKey}.json`);
-  writeFileSync(file, JSON.stringify(style, null, 2));
-  console.log(`✓ ${file} (${style.layers.length} vrstiev)`);
+for (const type of MAP_TYPES) {
+  for (const themeKey of Object.keys(THEMES)) {
+    const style = buildStyle({
+      theme: themeKey,
+      mapType: type.id,
+      tilesUrl: `pmtiles://${baseUrl}/tiles/${region}.pmtiles`,
+      spriteUrl: spriteUrl,
+      glyphsUrl,
+      icons,
+      fonts,
+      maxzoom,
+      sdfIcons,
+      iconSet: iconSetId,
+      overrides,
+      contoursUrl: hasContours
+        ? `pmtiles://${baseUrl}/tiles/${region}-contours.pmtiles`
+        : null,
+      contoursMaxzoom,
+      trailsUrl: hasTrails
+        ? `pmtiles://${baseUrl}/tiles/${region}-trails.pmtiles`
+        : null,
+      trailsMaxzoom,
+      demSource,
+      demTiles,
+      demTilesSource,
+      demMaxzoom,
+      name: `FricoMaps ${regionName} – ${type.label} (${THEMES[themeKey].label})`
+    });
+    const json = JSON.stringify(style, null, 2);
+    const drawn = style.layers.filter(
+      (l) => (l.layout || {}).visibility !== "none"
+    ).length;
+
+    writeFileSync(join(outDir, `${region}-${type.id}-${themeKey}.json`), json);
+    // Staré meno bez typu mapy ostáva – odkazuje naň iOS aplikácia aj smoke
+    // test po nasadení, a nie je dôvod ich nútiť poznať typy máp.
+    if (type.id === DEFAULT_MAP_TYPE) {
+      writeFileSync(join(outDir, `${region}-${themeKey}.json`), json);
+    }
+    console.log(
+      `✓ ${region}-${type.id}-${themeKey}.json (${drawn} z ${style.layers.length} vrstiev kreslí)`
+    );
+  }
 }
 
+console.log(
+  `Typy máp: ${MAP_TYPES.map((t) => t.label).join(", ")} ` +
+    `(predvolený ${DEFAULT_MAP_TYPE} aj pod menom bez typu)`
+);
 console.log(
   `Značené trasy: ${hasTrails ? `áno (do z${trailsMaxzoom})` : "nie"}, ` +
   `Vrstevnice a skaly: ${

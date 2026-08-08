@@ -25,7 +25,8 @@ import {
   hasOverrides,
   THEMES,
   PALETTE_LABELS,
-  DEFAULT_ICON_SOURCE
+  DEFAULT_ICON_SOURCE,
+  mapTypeDef
 } from "../poc/web/themes.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -100,6 +101,25 @@ if (overrides.poi.hidden.length) {
   summary.push(`  skryté POI triedy: ${overrides.poi.hidden.join(", ")}`);
 }
 
+// Úpravy, ktoré platia len pre jeden typ mapy. Všetko vyššie je spoločné –
+// tu je vidieť, čo si ktorá mapa robí po svojom.
+for (const [typeId, m] of Object.entries(overrides.maps)) {
+  const parts = [];
+  const own = Object.entries(m.layers || {});
+  const off = own.filter(([, o]) => o.visible === false).map(([id]) => id);
+  const on = own.filter(([, o]) => o.visible === true).map(([id]) => id);
+  const zoomed = own.filter(([, o]) => o.minzoom != null || o.maxzoom != null);
+  const styled = own.filter(([, o]) => o.paint || o.dash || o.pattern || o.outline || o.icon);
+  if (off.length) parts.push(`skryté: ${off.join(", ")}`);
+  if (on.length) parts.push(`zapnuté navyše: ${on.join(", ")}`);
+  if (zoomed.length) parts.push(`zoom: ${zoomed.length}`);
+  if (styled.length) parts.push(`štýl: ${styled.length}`);
+  if (m.poi?.hidden?.length) parts.push(`skryté POI: ${m.poi.hidden.join(", ")}`);
+  if (parts.length) {
+    summary.push(`  mapa ${mapTypeDef(typeId).label}: ${parts.join(" · ")}`);
+  }
+}
+
 console.log(
   hasOverrides(overrides)
     ? `Úpravy štýlu:\n${summary.join("\n")}`
@@ -112,13 +132,15 @@ if (args.check) {
 }
 
 const payload = {
-  version: 1,
+  version: 2,
   updated_at: new Date().toISOString(),
   icons: overrides.icons,
   hillshade: overrides.hillshade,
   palette: overrides.palette,
   layers: overrides.layers,
-  poi: overrides.poi
+  poi: overrides.poi,
+  // Úpravy pre jednotlivé typy máp (turistická, lyžiarska, cestná, …).
+  maps: overrides.maps
 };
 writeFileSync(TARGET, `${JSON.stringify(payload, null, 2)}\n`);
 console.log(`✓ zapísané do ${TARGET}`);

@@ -33,6 +33,17 @@ import {
   patternSpec,
   patternImageName
 } from "./patterns.js";
+import {
+  MAP_TYPE_IDS,
+  DEFAULT_MAP_TYPE,
+  normalizeMapType,
+  applyMapType,
+  HISTORIC_CLASSES,
+  MINING_CLASSES,
+  SKI_CLASSES,
+  ROAD_SERVICE_CLASSES,
+  WINTER_SPORT_CLASSES
+} from "./map-types.js";
 
 /** Zoom, od ktorého je mapa plne detailná (nižšie sa orezáva). */
 export const DETAIL_Z = 14;
@@ -168,6 +179,13 @@ export const THEMES = {
     aerodromeIcon: "#6a6a80",
     onewayIcon: "#8a7a6a",
     houseText: "#a09488",
+    // Tematické body – každý typ mapy má svoju „hlavnú" skupinu bodov
+    // (hrady, bane, vleky, pumpy), nech sa dá zvýrazniť zvlášť.
+    historicPoi: "#8a4a2a",
+    miningPoi: "#5a5a6a",
+    skiPoi: "#0f7ea0",
+    servicePoi: "#3a6ea5",
+    winterSports: "#e0eef6",
     contour: "#b09070",
     contourMajor: "#96764e",
     contourText: "#8a6a45",
@@ -260,6 +278,11 @@ export const THEMES = {
     aerodromeIcon: "#8a8ab0",
     onewayIcon: "#7a7a90",
     houseText: "#6a6678",
+    historicPoi: "#d08a5a",
+    miningPoi: "#9a9ab0",
+    skiPoi: "#5ad0e8",
+    servicePoi: "#7aa4ff",
+    winterSports: "#1a2430",
     contour: "#4a4436",
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
@@ -351,6 +374,11 @@ export const THEMES = {
     aerodromeIcon: "#4a5a7a",
     onewayIcon: "#6a5a45",
     houseText: "#8a7a60",
+    historicPoi: "#8a3a10",
+    miningPoi: "#5a5548",
+    skiPoi: "#0894b8",
+    servicePoi: "#2a5f9a",
+    winterSports: "#dceef6",
     contour: "#b3835a",
     contourMajor: "#966034",
     contourText: "#7a4f28",
@@ -441,6 +469,11 @@ export const THEMES = {
     aerodromeIcon: "#7a7a95",
     onewayIcon: "#a89080",
     houseText: "#b0a294",
+    historicPoi: "#a06a4a",
+    miningPoi: "#8a8078",
+    skiPoi: "#7ab8c0",
+    servicePoi: "#6a8fb8",
+    winterSports: "#e8f0f2",
     contour: "#c8a488",
     contourMajor: "#b0846a",
     contourText: "#9a7058",
@@ -521,7 +554,8 @@ export const PALETTE_GROUPS = [
       ["quarry", "Lom / skládka"],
       ["garden", "Záhrada / sad"],
       ["playground", "Ihrisko / zoo"],
-      ["pitch", "Športovisko"]
+      ["pitch", "Športovisko"],
+      ["winterSports", "Lyžiarske stredisko"]
     ]
   },
   {
@@ -629,6 +663,16 @@ export const PALETTE_GROUPS = [
       ["peakIcon", "Ikona vrcholu"],
       ["aerodromeIcon", "Ikona letiska"],
       ["onewayIcon", "Šípka jednosmerky"]
+    ]
+  },
+  {
+    id: "temy",
+    label: "Tematické body (typy máp)",
+    keys: [
+      ["historicPoi", "Pamiatka (historická mapa)"],
+      ["miningPoi", "Baňa, halda, lom (historická mapa)"],
+      ["skiPoi", "Lyžiarske stredisko (lyžiarska mapa)"],
+      ["servicePoi", "Pumpa a servis (cestná mapa)"]
     ]
   }
 ];
@@ -830,15 +874,22 @@ const isSurface = ["all", ["!=", ["get", "brunnel"], "tunnel"], ["!=", ["get", "
 
 // ===================== developer overrides =====================
 
-/** Prázdna sada úprav z developer módu. */
+/**
+ * Prázdna sada úprav z developer módu.
+ *
+ * `layers` a `poi` platia pre **všetky** typy máp, `maps[<typ>]` len pre jeden.
+ * Vďaka tomu sa dá povedať aj „táto farba všade" aj „na cestnej mape toto
+ * nechcem" bez toho, aby sa úpravy museli držať štyrikrát.
+ */
 export function emptyOverrides() {
   return {
-    version: 1,
+    version: 2,
     icons: DEFAULT_ICON_SOURCE,
     hillshade: false,
     palette: {},
     layers: {},
-    poi: { hidden: [] }
+    poi: { hidden: [] },
+    maps: {}
   };
 }
 
@@ -902,38 +953,79 @@ export function normalizeOverrides(raw) {
   }
 
   // ---- vrstvy ----
-  for (const [id, def] of Object.entries(raw.layers || {})) {
+  cleanLayers(raw.layers, out.layers, problems, "");
+
+  // ---- vrstvy pre jednotlivé typy máp ----
+  // Tu je nadstavba nad tým, čo je vyššie: to isté id vrstvy môže mať iné
+  // nastavenie na turistickej a iné na cestnej mape.
+  for (const [typeId, def] of Object.entries(raw.maps || {})) {
+    if (!MAP_TYPE_IDS.includes(typeId)) {
+      problems.push(`Neznámy typ mapy "${typeId}" – preskakujem.`);
+      continue;
+    }
     if (!def || typeof def !== "object") {
-      problems.push(`Úprava vrstvy "${id}" nie je objekt – preskakujem.`);
+      problems.push(`Úpravy mapy "${typeId}" nie sú objekt – preskakujem.`);
+      continue;
+    }
+    const layers = {};
+    cleanLayers(def.layers, layers, problems, `${typeId}: `);
+    const hidden = Array.isArray(def.poi?.hidden) ? def.poi.hidden : [];
+    const poiHidden = [
+      ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
+    ].sort();
+    if (Object.keys(layers).length || poiHidden.length) {
+      out.maps[typeId] = { layers, poi: { hidden: poiHidden } };
+    }
+  }
+
+  // ---- skryté POI triedy ----
+  const hidden = Array.isArray(raw.poi?.hidden) ? raw.poi.hidden : [];
+  out.poi.hidden = [
+    ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
+  ].sort();
+
+  return { overrides: out, problems };
+}
+
+/**
+ * Prečistí sadu úprav vrstiev (spoločnú aj tú pre jeden typ mapy) do `target`.
+ * `where` je predpona do hlásení, aby bolo vidieť, ktorej mapy sa problém týka.
+ */
+function cleanLayers(rawLayers, target, problems, where) {
+  for (const [id, def] of Object.entries(rawLayers || {})) {
+    if (!def || typeof def !== "object") {
+      problems.push(`${where}Úprava vrstvy "${id}" nie je objekt – preskakujem.`);
       continue;
     }
     const clean = {};
-    if (def.visible === false) clean.visible = false;
+    // `visible: true` nie je to isté ako „nič": vrstvu, ktorú vypol profil
+    // typu mapy alebo spoločná úprava, treba vedieť výslovne vrátiť späť.
+    if (typeof def.visible === "boolean") clean.visible = def.visible;
     const mn = def.minzoom == null ? null : clampZoom(def.minzoom);
     const mx = def.maxzoom == null ? null : clampZoom(def.maxzoom);
     if (mn != null) clean.minzoom = mn;
     if (mx != null) clean.maxzoom = mx;
     if (mn != null && mx != null && mx <= mn) {
-      problems.push(`Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
+      problems.push(`${where}Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
       delete clean.maxzoom;
     }
     const paint = {};
     for (const [prop, value] of Object.entries(def.paint || {})) {
       if (prop.endsWith("-color")) {
         if (!isColor(value)) {
-          problems.push(`Vrstva "${id}": ${prop} nie je hex farba (${value}).`);
+          problems.push(`${where}Vrstva "${id}": ${prop} nie je hex farba (${value}).`);
           continue;
         }
         paint[prop] = String(value).toLowerCase();
       } else if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
         const n = Number(value);
         if (!Number.isFinite(n) || n < 0) {
-          problems.push(`Vrstva "${id}": ${prop} musí byť nezáporné číslo.`);
+          problems.push(`${where}Vrstva "${id}": ${prop} musí byť nezáporné číslo.`);
           continue;
         }
         paint[prop] = n;
       } else {
-        problems.push(`Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
+        problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
       }
     }
     if (Object.keys(paint).length) clean.paint = paint;
@@ -944,7 +1036,7 @@ export function normalizeOverrides(raw) {
     if (def.icon != null) {
       const icon = String(def.icon).trim();
       if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(icon)) {
-        problems.push(`Vrstva "${id}": neplatné meno ikony "${def.icon}".`);
+        problems.push(`${where}Vrstva "${id}": neplatné meno ikony "${def.icon}".`);
       } else {
         clean.icon = icon;
       }
@@ -953,7 +1045,7 @@ export function normalizeOverrides(raw) {
     // ---- prerušovanie čiary ----
     if (def.dash != null) {
       if (!DASH_IDS.includes(def.dash)) {
-        problems.push(`Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
+        problems.push(`${where}Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
       } else if (def.dash !== "solid") {
         clean.dash = def.dash;
       }
@@ -962,9 +1054,9 @@ export function normalizeOverrides(raw) {
     // ---- opakujúci sa vzor ----
     if (def.pattern) {
       if (!PATTERN_IDS.includes(def.pattern.id)) {
-        problems.push(`Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
+        problems.push(`${where}Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
       } else if (!isColor(def.pattern.color)) {
-        problems.push(`Vrstva "${id}": farba vzoru nie je hex (${def.pattern.color}).`);
+        problems.push(`${where}Vrstva "${id}": farba vzoru nie je hex (${def.pattern.color}).`);
       } else {
         const spec = patternSpec(def.pattern);
         const opacity = Number(def.pattern.opacity);
@@ -979,11 +1071,11 @@ export function normalizeOverrides(raw) {
     if (def.outline) {
       const width = Number(def.outline.width);
       if (!isColor(def.outline.color)) {
-        problems.push(`Vrstva "${id}": farba okraja nie je hex (${def.outline.color}).`);
+        problems.push(`${where}Vrstva "${id}": farba okraja nie je hex (${def.outline.color}).`);
       } else if (!Number.isFinite(width) || width <= 0 || width > 40) {
-        problems.push(`Vrstva "${id}": šírka okraja musí byť medzi 0 a 40.`);
+        problems.push(`${where}Vrstva "${id}": šírka okraja musí byť medzi 0 a 40.`);
       } else if (def.outline.dash != null && !DASH_IDS.includes(def.outline.dash)) {
-        problems.push(`Vrstva "${id}": neznámy vzor okraja "${def.outline.dash}".`);
+        problems.push(`${where}Vrstva "${id}": neznámy vzor okraja "${def.outline.dash}".`);
       } else {
         const opacity = Number(def.outline.opacity);
         clean.outline = {
@@ -996,16 +1088,8 @@ export function normalizeOverrides(raw) {
       }
     }
 
-    if (Object.keys(clean).length) out.layers[id] = clean;
+    if (Object.keys(clean).length) target[id] = clean;
   }
-
-  // ---- skryté POI triedy ----
-  const hidden = Array.isArray(raw.poi?.hidden) ? raw.poi.hidden : [];
-  out.poi.hidden = [
-    ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
-  ].sort();
-
-  return { overrides: out, problems };
 }
 
 /** `true`, ak sada úprav naozaj niečo mení. */
@@ -1016,8 +1100,46 @@ export function hasOverrides(o) {
     (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
-    (o.poi?.hidden || []).length > 0
+    (o.poi?.hidden || []).length > 0 ||
+    Object.values(o.maps || {}).some(
+      (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
+    )
   );
+}
+
+/**
+ * Úpravy pre jeden typ mapy: spoločné (`layers`, `poi`) a nad nimi tie, čo
+ * platia len preň (`maps[<typ>]`). Vracia objekt v tvare, aký očakáva zvyšok
+ * generátora – teda ako keby žiadne typy máp neexistovali.
+ *
+ * Vlastnosť z konkrétnej mapy prebije spoločnú; `paint` sa mieša po
+ * jednotlivých vlastnostiach, aby sa dala prepísať len jedna farba.
+ */
+export function resolveOverrides(overrides, mapType) {
+  if (!overrides) return null;
+  const own = overrides.maps?.[normalizeMapType(mapType)];
+  if (!own) return overrides;
+
+  const layers = { ...(overrides.layers || {}) };
+  for (const [id, def] of Object.entries(own.layers || {})) {
+    const base = layers[id];
+    layers[id] = base
+      ? {
+          ...base,
+          ...def,
+          ...(base.paint || def.paint
+            ? { paint: { ...(base.paint || {}), ...(def.paint || {}) } }
+            : {})
+        }
+      : def;
+  }
+  return {
+    ...overrides,
+    layers,
+    poi: {
+      hidden: [...new Set([...(overrides.poi?.hidden || []), ...(own.poi?.hidden || [])])].sort()
+    }
+  };
 }
 
 export { ICON_SOURCES, ICON_SOURCE_IDS, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
@@ -1160,6 +1282,10 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
 
     if (o.visible === false) {
       layer.layout = { ...(layer.layout || {}), visibility: "none" };
+    } else if (o.visible === true && (layer.layout || {}).visibility === "none") {
+      // Vrstvu vypnutú profilom typu mapy sa musí dať vrátiť späť.
+      layer.layout = { ...layer.layout };
+      delete layer.layout.visibility;
     }
     if (o.minzoom != null) layer.minzoom = o.minzoom;
     if (o.maxzoom != null) layer.maxzoom = o.maxzoom;
@@ -1220,6 +1346,9 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  * @param {number} [opts.demMaxzoom]      najvyšší zoom výškových dlaždíc
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
+ * @param {string} [opts.mapType]   typ mapy (turistická / lyžiarska / cestná /
+ *                                  historická / základná) – určuje, ktoré
+ *                                  vrstvy sa vôbec kreslia a od akého zoomu
  * @param {object|null} [opts.overrides]  úpravy z developer módu
  */
 export function buildStyle({
@@ -1242,8 +1371,13 @@ export function buildStyle({
   sdfIcons = false,
   iconSet = null,
   hillshade = null,
-  overrides = null
+  mapType = DEFAULT_MAP_TYPE,
+  overrides: rawOverrides = null
 }) {
+  // Typ mapy určuje profil (čo sa kreslí) aj to, ktoré úpravy platia:
+  // spoločné plus tie, čo si používateľ nastavil práve pre túto mapu.
+  const mapTypeId = normalizeMapType(mapType);
+  const overrides = resolveOverrides(rawOverrides, mapTypeId);
   // Tieňovanie reliéfu je vypnuté, kým ho niekto výslovne nezapne.
   const showHillshade = hillshade === null ? overrides?.hillshade === true : hillshade === true;
   const c = mergedPalette(theme, overrides);
@@ -1287,9 +1421,10 @@ export function buildStyle({
     name: name || `FricoMaps – ${c.label}`,
     metadata: {
       "frico:theme": theme,
+      "frico:map-type": mapTypeId,
       "frico:icons": iconSetId,
       "frico:hillshade": showHillshade,
-      "frico:overrides": hasOverrides(overrides)
+      "frico:overrides": hasOverrides(rawOverrides)
     },
     sources: {
       omt: {
@@ -1442,6 +1577,24 @@ export function buildStyle({
       ["uzemie", label, "area", { "fill-color": paletteKey }]
     );
   }
+
+  // Lyžiarske stredisko ako plocha. V OpenMapTiles nie je vlastná trieda pre
+  // `landuse=winter_sports`, takže sa hľadá aj v `subclass` – kde dlaždice
+  // takú plochu nemajú, vrstva jednoducho nič nenakreslí.
+  add(
+    {
+      id: "landuse-winter-sports",
+      type: "fill",
+      "source-layer": "landuse",
+      filter: [
+        "any",
+        ["in", str("class"), ["literal", WINTER_SPORT_CLASSES]],
+        ["in", str("subclass"), ["literal", WINTER_SPORT_CLASSES]]
+      ],
+      paint: { "fill-color": c.winterSports, "fill-opacity": 0.75 }
+    },
+    ["uzemie", "Lyžiarske stredisko (plocha)", "area", { "fill-color": "winterSports" }]
+  );
 
   add(
     {
@@ -2454,6 +2607,56 @@ export function buildStyle({
     ["poi", "POI – všetky (z16+)", "point", poiPalette]
   );
 
+  // ---- tematické body ----
+  // Každý typ mapy má skupinu bodov, ktorá je preň tá hlavná: hrady na
+  // historickej, vleky na lyžiarskej, pumpy na cestnej. Sú to samostatné
+  // vrstvy – väčšie, farebne odlíšené a s prednosťou pri umiestňovaní
+  // popiskov (`symbol-sort-key`) – aby sa dali zapnúť skôr než ostatné POI
+  // a v developer móde ladiť zvlášť. Profil typu mapy ich zapína; na mapách,
+  // kam nepatria, sú vypnuté, inak by kreslili tie isté ikony druhýkrát.
+  const topicPoi = (id, label, classes, paletteKey, minzoom) =>
+    add(
+      {
+        id,
+        type: "symbol",
+        "source-layer": "poi",
+        minzoom,
+        filter: poiFilter([
+          "any",
+          ["in", str("subclass"), ["literal", classes]],
+          ["in", str("class"), ["literal", classes]]
+        ]),
+        layout: {
+          ...poiLayout,
+          "icon-size": scaled([[10, 0.9], [14, 1.1], [18, 1.3], [20, 1.5]]),
+          "text-size": zl([[10, 10], [14, 11.5], [18, 13], [20, 15]]),
+          // Nižší kľúč = umiestňuje sa skôr, takže tematický bod prežije aj
+          // tam, kde sa bežné POI už nezmestia.
+          "symbol-sort-key": ["-", num("rank", 100), 100]
+        },
+        paint: {
+          ...poiPaint,
+          "text-color": c[paletteKey],
+          ...(sdfIcons ? { "icon-color": c[paletteKey] } : {})
+        }
+      },
+      [
+        "poi",
+        label,
+        "point",
+        {
+          "text-color": paletteKey,
+          "text-halo-color": "textHalo",
+          ...(sdfIcons ? { "icon-color": paletteKey, "icon-halo-color": "poiIconHalo" } : {})
+        }
+      ]
+    );
+
+  topicPoi("poi-historic", "Pamiatky (historická mapa)", HISTORIC_CLASSES, "historicPoi", 10);
+  topicPoi("poi-mining", "Bane, štôlne a haldy (historická mapa)", MINING_CLASSES, "miningPoi", 10);
+  topicPoi("poi-ski", "Lyžiarske stredisko a vleky (lyžiarska mapa)", SKI_CLASSES, "skiPoi", 11);
+  topicPoi("poi-road", "Pumpy, odpočívadlá a servis (cestná mapa)", ROAD_SERVICE_CLASSES, "servicePoi", 10);
+
   // ---- vrcholy hôr (dôležité pre outdoor mapu) ----
   add(
     {
@@ -2638,13 +2841,29 @@ export function buildStyle({
     );
   }
 
+  // Najprv profil typu mapy (čo táto mapa vôbec ukazuje), až potom úpravy
+  // z developer módu – tie musia vedieť profil prebiť.
+  applyMapType(style, mapTypeId);
   return applyLayerOverrides(style, overrides?.layers, hasIcon);
 }
+
+export {
+  MAP_TYPES,
+  MAP_TYPE_IDS,
+  DEFAULT_MAP_TYPE,
+  mapTypeDef,
+  normalizeMapType,
+  mapTypeHidden
+} from "./map-types.js";
 
 /** Vrstvy, na ktoré sa dá kliknúť (popup s detailom). */
 export const CLICKABLE_LAYERS = [
   "poi-major",
   "poi-all",
+  "poi-historic",
+  "poi-mining",
+  "poi-ski",
+  "poi-road",
   "mountain-peak",
   "aerodrome-label",
   // Značené trasy – po ceste ich vedie viac, popup povie, ktorá je ktorá.

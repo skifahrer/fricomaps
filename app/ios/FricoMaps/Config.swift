@@ -14,8 +14,10 @@ enum Config {
     /// Musí sedieť s MAX_DISPLAY_Z v poc/web/themes.js.
     static let maxDisplayZoom: Double = 20
 
-    static func styleURL(region: String, theme: MapTheme) -> URL {
-        pagesBaseURL.appendingPathComponent("styles/\(region)-\(theme.rawValue).json")
+    /// Pipeline generuje štýl pre každú kombináciu typ mapy × téma.
+    static func styleURL(region: String, kind: MapKind, theme: MapTheme) -> URL {
+        pagesBaseURL.appendingPathComponent(
+            "styles/\(region)-\(kind.rawValue)-\(theme.rawValue).json")
     }
 }
 
@@ -31,6 +33,24 @@ enum MapTheme: String, CaseIterable, Identifiable {
         case .tmava: return "Tmavá"
         case .outdoor: return "Outdoor"
         case .retro: return "Retro"
+        }
+    }
+}
+
+/// Typ mapy – **čo** mapa ukazuje (téma rieši, ako to vyzerá).
+/// Musí sedieť s id v poc/web/map-types.js.
+enum MapKind: String, CaseIterable, Identifiable {
+    case turisticka, lyziarska, cestna, historicka, zakladna
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .turisticka: return "Turistická"
+        case .lyziarska: return "Lyžiarska"
+        case .cestna: return "Cestná"
+        case .historicka: return "Historická"
+        case .zakladna: return "Všetko"
         }
     }
 }

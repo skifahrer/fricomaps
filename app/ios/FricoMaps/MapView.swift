@@ -6,10 +6,13 @@ import SwiftUI
 /// prepnutie témy alebo regiónu je len zmena styleURL.
 struct MapView: UIViewRepresentable {
     let region: String
+    let kind: MapKind
     let theme: MapTheme
 
     func makeUIView(context: Context) -> MLNMapView {
-        let mapView = MLNMapView(frame: .zero, styleURL: Config.styleURL(region: region, theme: theme))
+        let mapView = MLNMapView(
+            frame: .zero,
+            styleURL: Config.styleURL(region: region, kind: kind, theme: theme))
         mapView.setCenter(
             CLLocationCoordinate2D(latitude: 48.7, longitude: 19.5),
             zoomLevel: 7,
@@ -24,7 +27,7 @@ struct MapView: UIViewRepresentable {
     }
 
     func updateUIView(_ mapView: MLNMapView, context: Context) {
-        let url = Config.styleURL(region: region, theme: theme)
+        let url = Config.styleURL(region: region, kind: kind, theme: theme)
         if mapView.styleURL != url {
             mapView.styleURL = url
         }

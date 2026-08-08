@@ -16,8 +16,12 @@ multiplatformné alternatívy: [docs/ios-multiplatform.md](../../docs/ios-multip
 ## Ako to funguje
 
 - Appka načítava **hotové style.json z GitHub Pages**
-  (`styles/{region}-{tema}.json`), ktoré generuje pipeline – rovnaké témy
-  a dlaždice ako web, žiadna duplicitná logika štýlovania.
+  (`styles/{region}-{typ mapy}-{tema}.json`), ktoré generuje pipeline –
+  rovnaké mapy, témy a dlaždice ako web, žiadna duplicitná logika štýlovania.
+- **Typ mapy** (turistická / lyžiarska / cestná / historická / všetko) hovorí,
+  čo mapa ukazuje; **téma** len to, ako to vyzerá. Oboje je len iná styleURL,
+  takže prepnutie nič nesťahuje navyše. Zoznam typov drží `MapKind`
+  v `Config.swift` a musí sedieť s `poc/web/map-types.js`.
 - Dlaždice sa čítajú cez `pmtiles://` priamo z Pages (HTTP range requesty);
   MapLibre Native podporuje PMTiles natívne.
 - Zoznam regiónov vie appka ťahať z NestJS backendu (`/api/regions`) alebo

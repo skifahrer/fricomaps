@@ -663,14 +663,22 @@ vykreslila úplne bez nápisov – to sa nechce.
 
 [`workers/build-styles.mjs`](../workers/build-styles.mjs) zavolá ten istý
 generátor ([`poc/web/themes.js`](../poc/web/themes.js)), aký používa web, a
-vyrobí statické štýly pre všetky témy. Naviaže ich na **reálne dostupné
-assety**: zoznam ikon berie zo sprite indexu a fontstacky z adresára s
-glyfmi, takže štýl nikdy neodkazuje na niečo, čo na Pages nie je.
+vyrobí statické štýly pre každú kombináciu **typ mapy × téma**. Naviaže ich na
+**reálne dostupné assety**: zoznam ikon berie zo sprite indexu a fontstacky
+z adresára s glyfmi, takže štýl nikdy neodkazuje na niečo, čo na Pages nie je.
+
+Súbory sú `styles/{región}-{typ mapy}-{téma}.json` – pri piatich typoch máp
+([`poc/web/map-types.js`](../poc/web/map-types.js): turistická, lyžiarska,
+cestná, historická, základná) a štyroch témach je to 20 štýlov, dokopy
+niekoľko MB. Predvolený typ (turistická) sa zapíše aj pod pôvodným menom
+`{región}-{téma}.json`, aby fungovali odkazy, ktoré typy máp nepoznajú –
+napríklad smoke test a staršie verzie iOS aplikácie.
 
 Sem sa zároveň zapečú [úpravy z developer
 módu](../README.md#cesta-úprav-do-zdrojáku) (`poc/web/style-overrides.json`)
-– farby, viditeľnosť vrstiev, rozsahy zoomu, vzory, okraje, sada ikoniek a
-tieňovanie reliéfu.
+– farby, viditeľnosť vrstiev, rozsahy zoomu, druhy čiar, vzory, okraje, sada
+ikoniek a tieňovanie reliéfu, a to aj tie, ktoré platia len pre jeden typ
+mapy (`maps.<typ>`).
 
 ### `deploy` – vzory do spritu
 

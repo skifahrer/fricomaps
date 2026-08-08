@@ -170,12 +170,16 @@
       border: 1px solid rgba(0, 0, 0, .2);
     }
     .dev-row.inactive .dev-name > span:first-child { opacity: .45; }
+    /* Štítok s rozsahom zoomu je zároveň prepínač „na tomto zoome áno / nie". */
     .dev-zrange {
       font-size: 10px; color: #7a8a6a; background: #eef2e8;
-      border-radius: 4px; padding: 1px 5px; white-space: nowrap;
-      font-variant-numeric: tabular-nums;
+      border: 1px solid transparent; border-radius: 4px;
+      padding: 1px 5px; white-space: nowrap; cursor: pointer;
+      font-family: inherit; font-variant-numeric: tabular-nums;
     }
+    .dev-zrange:hover { border-color: #b0c0a0; }
     .dev-zrange.off { color: #999; background: #f0f0f2; }
+    .dev-zrange.off:hover { border-color: #bbb; }
 
     .dev-zoombar {
       background: #eef1f6; border-radius: 7px; padding: 7px 9px; margin-bottom: 8px;
@@ -183,9 +187,52 @@
     .dev-zoomrow { display: flex; align-items: center; gap: 8px; }
     .dev-zoomlabel { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .dev-slider { flex: 1; min-width: 60px; accent-color: #3a6ea5; }
+    .dev-zoombar .dev-chips { margin: 6px 0 0; }
     .dev-zoominfo {
       display: flex; align-items: center; justify-content: space-between;
       gap: 8px; margin-top: 5px; font-size: 11px; color: #666;
+    }
+    .dev-zoombar .dev-note { display: block; white-space: normal; margin-top: 5px; line-height: 1.4; }
+
+    /* Rozsah úprav: pre ktorý typ mapy sa práve ladí. */
+    .dev-scope {
+      background: #f0f1f4; border-radius: 7px; padding: 7px 9px; margin-bottom: 8px;
+      border-left: 3px solid #3a6ea5;
+    }
+    .dev-scoperow { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .dev-scope .dev-note {
+      display: block; white-space: normal; margin-top: 4px; line-height: 1.4;
+    }
+
+    /* Pásik zoomov z0–z20 – jedna bunka je jeden zoom. */
+    .dev-stripwrap { margin: 4px 0 2px; }
+    .dev-strip { display: flex; gap: 1px; }
+    .dev-cell {
+      flex: 1; height: 15px; min-width: 0; padding: 0; cursor: pointer;
+      border: 1px solid #d5d5db; border-radius: 2px; background: #fff;
+    }
+    .dev-cell.on { background: #3a6ea5; border-color: #33608f; }
+    .dev-cell.now { outline: 2px solid #e08030; outline-offset: -2px; }
+    .dev-cell:hover { border-color: #888; }
+    .dev-striplabels {
+      display: flex; justify-content: space-between;
+      font-size: 9px; color: #999; margin-top: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Náhľad prerušovania vedľa výberu druhu čiary. */
+    .dev-dashrow { display: flex; align-items: center; gap: 5px; }
+    .dev-dash { color: #444; display: inline-flex; align-items: center; }
+    .dev-h5 {
+      display: flex; align-items: baseline; gap: 6px;
+      margin: 9px 0 2px; font-size: 11px; font-weight: 600; color: #444;
+      border-bottom: 1px solid #eceef2; padding-bottom: 2px;
+    }
+    .dev-h5 small { font-weight: 400; color: #999; font-size: 10px; }
+    .dev-field.changed .dev-num { background: #fff6e8; border-color: #d09030; }
+    /* Vrstva upravená práve v tom rozsahu, do ktorého sa zapisuje. */
+    .dev-row.scoped > .dev-name > span:first-child::after {
+      content: " •"; color: #3a6ea5;
     }
 
     .dev-details { padding: 2px 0 4px 24px; }
@@ -268,6 +315,15 @@
     body.dark .dev-iconset.on { border-color: #3a6ea5; background: #1e2636; }
     body.dark .dev-zoombar { background: #24243a; }
     body.dark .dev-zoominfo { color: #999; }
+    body.dark .dev-scope { background: #24243a; border-left-color: #3a6ea5; }
+    body.dark .dev-cell { background: #1e1e2c; border-color: #3a3a52; }
+    body.dark .dev-cell.on { background: #3a6ea5; border-color: #4a7eb5; }
+    body.dark .dev-striplabels { color: #777; }
+    body.dark .dev-dash { color: #ccc; }
+    body.dark .dev-h5 { color: #ccc; border-color: #2a2a3c; }
+    body.dark .dev-h5 small { color: #888; }
+    body.dark .dev-field.changed .dev-num { background: #342c1c; border-color: #7a5a2a; }
+    body.dark .dev-row.scoped > .dev-name > span:first-child::after { color: #7aa4ff; }
     body.dark .dev-prophead { border-color: #2a2a3c; }
     body.dark .dev-h4 { color: #ddd; border-color: #2a2a3c; }
     body.dark .dev-kv b { color: #888; }
@@ -298,6 +354,8 @@
           aria-controls="panel">⚙</button>
 
   <div id="panel" hidden>
+    <label for="maptype">Typ mapy</label>
+    <select id="maptype"></select>
     <label for="theme">Farebná téma</label>
     <select id="theme"></select>
     <label for="region">Región</label>

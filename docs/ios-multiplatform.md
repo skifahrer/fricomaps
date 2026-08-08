@@ -18,7 +18,7 @@ osm.fr exporty   ──►  build: stiahne iba {región}.osm.pbf
                       ▼
                  {region}.pmtiles  ─────────►  GitHub Pages ──►  Web (MapLibre GL JS)
                       +                        (HTTP range   ──►  iOS (MapLibre Native)
-                 styles/{region}-{tema}.json    requests)    ──►  Android (MapLibre Native)
+                 styles/{region}-{typ}-{tema}.json  requests)    ──►  Android (MapLibre Native)
                       + sprity (ikonky) + glyfy (fonty)
 ```
 
@@ -51,20 +51,23 @@ import MapLibre
 import SwiftUI
 
 struct MapView: UIViewRepresentable {
+    let kind: String    // "turisticka" | "lyziarska" | "cestna" | "historicka"
     let theme: String   // "svetla" | "tmava" | "outdoor" | "retro"
     let region: String  // "slovensko" | "zilinsky" | …
 
+    private var styleURL: URL {
+        URL(string:
+            "https://<user>.github.io/fricomaps/styles/\(region)-\(kind)-\(theme).json")!
+    }
+
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = URL(string:
-            "https://<user>.github.io/fricomaps/styles/\(region)-\(theme).json")!
         let map = MLNMapView(frame: .zero, styleURL: styleURL)
         map.setCenter(CLLocationCoordinate2D(latitude: 48.7, longitude: 19.5),
                       zoomLevel: 7, animated: false)
         return map
     }
     func updateUIView(_ uiView: MLNMapView, context: Context) {
-        uiView.styleURL = URL(string:
-            "https://<user>.github.io/fricomaps/styles/\(region)-\(theme).json")!
+        uiView.styleURL = styleURL
     }
 }
 ```
@@ -113,7 +116,7 @@ a v lokálnej kópii style.json prepísať `sprite`/`glyphs` na `file://` cesty
 
 ## 4. Kontrolný zoznam pre iOS MVP
 
-1. ✅ Pipeline generuje `{region}.pmtiles` + `styles/{region}-{tema}.json` (hotové v tomto repe)
+1. ✅ Pipeline generuje `{region}.pmtiles` + `styles/{region}-{typ mapy}-{tema}.json` (hotové v tomto repe)
 2. ✅ Overenie v prehliadači na GitHub Pages (hotové – `web/`)
 3. ☐ Xcode projekt + SPM závislosť MapLibre Native
 4. ☐ `MapView` (kód vyššie) + picker témy/regiónu

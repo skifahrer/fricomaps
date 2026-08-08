@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "updated_at": "2026-08-03T19:21:32.932Z",
   "icons": "osm-liberty",
   "hillshade": false,
@@ -7,5 +7,6 @@
   "layers": {},
   "poi": {
     "hidden": []
-  }
+  },
+  "maps": {}
 }
