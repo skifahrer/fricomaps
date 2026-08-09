@@ -1,0 +1,242 @@
+name: DMR 5.0 z Drive (ETRS89)
+
+# Výškový model z DMR 5.0 v ETRS89, ktorý leží na Google Drive ako dva holé
+# BigTIFFy. Výstup je ten istý ako z „Pripraviť DMR 5.0", takže Build map sa
+# nemusí učiť nič nové:
+#
+#   area: <pohorie>       →  ugkk-<pohorie>.tif  →  release `dem-ugkk`
+#                            Build map: rock_source: dmr5 + rovnaké `rock_area`
+#   area: cele_slovensko  →  dlaždice N49E019.tif →  release `dem-dmr5`
+#                            Build map: rock_source: dmr5 bez výrezu
+#
+# V Build map je to jedna voľba `dmr5` a podobu si vyberá podľa rozsahu:
+# s výrezom plné 1 m, bez neho dlaždice na 5 m. Dva výbery to boli dovtedy,
+# kým sa dalo zadať 1 m na celý kraj – a to je 16 miliárd buniek.
+#
+# PREČO POPRI `dmr5.yml`, A NIE MIESTO NEHO: sú to dva rôzne zdroje s opačnými
+# pravidlami. Archív ÚGKK je ZIP, v ktorom je raster jedným deflate prúdom –
+# v tom sa nedá skočiť dopredu, takže tam platí „čítaj raz a sekvenčne" a
+# výrez na juhu Slovenska stojí prechod celým súborom. Tu sú súbory holé,
+# každá dlaždica má vlastnú kompresiu a Range funguje na ľubovoľnom offsete,
+# takže sa číta len to, čo výrez pretína. Zliať tie dva job grafy do jedného
+# by znamenalo, že polovica pravidiel v ňom vždy platí a druhá nie.
+#
+# ZDROJ (namerané, nie odhad):
+#   dmr5_etrs89.tif      145,39 GiB  423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
+#   dmr5_etrs89.tif.ovr   43,35 GiB  pyramídy 2 … 256 m, deflate
+#   CRS EPSG:3046 (ETRS89 / TM zone N34), origin X 191 148, Y 5 497 220
+#
+# VÝŠKY SÚ ELIPSOIDICKÉ. Maximum v súbore je 2 697,03 m, kým Gerlach má
+# 2 654,4 m n. m. Bpv – tých +42,6 m je geoid. Predvolene sa odčíta EGM2008
+# (kontrola na Gerlachu: 2 653,92 m po prevode, čiže rozdiel 0,5 m na 1 m
+# mriežke). Na skaly by to bolo jedno, na vrstevnice nie.
+
+on:
+  workflow_dispatch:
+    inputs:
+      area:
+        description: "Územie. Pohorie ide do dem-ugkk, celé Slovensko do dem-dmr5"
+        required: true
+        default: vysoke_tatry
+        type: choice
+        options:
+          - cele_slovensko
+          - tatry
+          - vysoke_tatry
+          - belianske_tatry
+          - zapadne_tatry
+          - nizke_tatry
+          - slovensky_raj
+          - pieniny
+          - mala_fatra
+          - velka_fatra
+          - sulovske_skaly
+          - slovensky_kras
+          - muranska_planina
+          - vihorlat
+          - strazovske_vrchy
+          - male_karpaty
+      grid_m:
+        description: "Mriežka výsledku"
+        required: false
+        default: "auto (1 m na pohorie, 5 m na celé Slovensko)"
+        type: choice
+        options:
+          - "auto (1 m na pohorie, 5 m na celé Slovensko)"
+          - "1 m – plné rozlíšenie, len na pohorie"
+          - "2 m – z pyramíd, štvrtinový objem"
+          - "5 m – celé Slovensko"
+          - "10 m"
+          - "20 m – rýchly test"
+      geoid:
+        description: "Výšky vo výstupe"
+        required: false
+        default: "EGM2008 (≈ Bpv) – ako ostatné zdroje"
+        type: choice
+        options:
+          - "EGM2008 (≈ Bpv) – ako ostatné zdroje"
+          - "elipsoidické ETRS89 – tak, ako sú v súbore"
+      mode:
+        description: "Čo spraviť"
+        required: false
+        default: "model do releasu"
+        type: choice
+        options:
+          - "model do releasu"
+          - "len sonda – čo je v zdroji, nič sa nereže"
+      jobs:
+        description: "Koľko blokov čítať naraz. Drive je latenčný, nie úzky"
+        required: false
+        default: "12"
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  # Dva behy naraz by z Drive ťahali dvojnásobok a prepisovali ten istý asset.
+  group: dmr5-drive-${{ inputs.area }}
+  cancel-in-progress: false
+
+jobs:
+  model:
+    name: Výškový model z Drive
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Nainštaluj GDAL
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin jq
+
+      - name: Uvoľni miesto na disku
+        run: |
+          set -uo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      # Jediné miesto, kde sa z formulára stanú konkrétne čísla a mená.
+      - name: Nastavenia
+        id: cfg
+        run: |
+          set -euo pipefail
+          AREA='${{ inputs.area }}'
+          # V Build map je to JEDNA voľba `dmr5` – podobu si vyberá podľa
+          # toho, či je vyplnený `rock_area`. Tu sa líši len release, do
+          # ktorého to ide.
+          if [ "$AREA" = cele_slovensko ]; then
+            WHOLE=true;  REL=dem-dmr5
+          else
+            WHOLE=false; REL=dem-ugkk
+          fi
+          SRC=dmr5
+
+          GRID=$(printf '%s' '${{ inputs.grid_m }}' | grep -oE '^[0-9]+' || true)
+          if [ -z "$GRID" ]; then
+            GRID=$([ "$WHOLE" = true ] && echo 5 || echo 1)
+          fi
+
+          # Strážca, ktorý ušetrí hodiny počítania: 1°×1° dlaždica pri 1 m má
+          # vyše 5 GB a strop assetu v release je 2 GB.
+          if [ "$WHOLE" = true ] && [ "$GRID" -lt 3 ]; then
+            echo "::error::Celé Slovensko pri mriežke ${GRID} m sa do releasu nezmestí (strop assetu je 2 GB). Zvoľ 5 m, alebo si vyber pohorie."
+            exit 1
+          fi
+
+          case '${{ inputs.geoid }}' in
+            elipsoid*) GEOID=elipsoid ;;
+            *) GEOID=egm2008 ;;
+          esac
+
+          {
+            echo "grid=$GRID"
+            echo "release=$REL"
+            echo "dem_source=$SRC"
+            echo "whole_country=$WHOLE"
+            echo "geoid=$GEOID"
+          } >> "$GITHUB_OUTPUT"
+          echo "── $AREA, mriežka ${GRID} m, výšky $GEOID → release $REL"
+
+      - name: Sonda
+        if: ${{ startsWith(inputs.mode, 'len sonda') }}
+        run: python3 workers/dmr5-drive.py --probe-only
+
+      - name: Vyrež model
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        run: |
+          set -euo pipefail
+          python3 workers/dmr5-drive.py \
+            --area='${{ inputs.area }}' \
+            --grid-m='${{ steps.cfg.outputs.grid }}' \
+            --geoid='${{ steps.cfg.outputs.geoid }}' \
+            --jobs='${{ inputs.jobs }}' \
+            --out=out --work=drive-work \
+            --summary=model-summary.md
+
+      - name: Nahraj do releasu
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.cfg.outputs.release }}'
+          shopt -s nullglob
+          FILES=(out/*.tif)
+          [ ${#FILES[@]} -gt 0 ] || { echo "::error::Nevznikol ani jeden súbor."; exit 1; }
+
+          BIG=0
+          for f in "${FILES[@]}"; do
+            SZ=$(stat -c%s "$f")
+            if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
+              echo "::error::$f má $(( SZ / 1048576 )) MB, strop assetu je 2 GB. Zvoľ hrubšiu mriežku alebo menšie územie."
+              BIG=1
+            fi
+          done
+          [ "$BIG" -eq 0 ] || exit 1
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
+              --notes "Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
+
+          jq -n \
+            --arg src "ÚGKK SR – DMR 5.0 (LLS), ETRS89" \
+            --arg area '${{ inputs.area }}' \
+            --arg grid '${{ steps.cfg.outputs.grid }}' \
+            --arg geoid '${{ steps.cfg.outputs.geoid }}' \
+            --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --argjson files "$(printf '%s\n' "${FILES[@]}" | xargs -n1 basename | jq -R . | jq -s .)" \
+            '{source:$src, crs:"EPSG:3046", area:$area, cell_m:($grid|tonumber), heights:$geoid, built_at:$built, files:$files}' \
+            > out/meta-dmr5-drive.json
+          cat out/meta-dmr5-drive.json
+
+          gh release upload "$TAG" "${FILES[@]}" out/meta-dmr5-drive.json \
+            --repo "$GITHUB_REPOSITORY" --clobber
+          echo "V releasi $TAG: ${#FILES[@]} súborov ✓"
+
+      # Výstup tohto workflowu je vstup pre Build map – nech je z behu jasné,
+      # čo tam nastaviť, aby z toho boli skaly.
+      - name: Súhrn
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          [ -s model-summary.md ] && cat model-summary.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo
+            echo "## Ako z toho spraviť skaly"
+            echo
+            echo "Spusti **Build map** s:"
+            echo
+            echo "| input | hodnota |"
+            echo "|---|---|"
+            echo "| \`rock_source\` | \`${{ steps.cfg.outputs.dem_source }}\` |"
+            if [ '${{ steps.cfg.outputs.whole_country }}' != 'true' ]; then
+              echo "| \`rock_area\` | \`${{ inputs.area }}\` |"
+            fi
+            echo "| \`layers\` | \`contours\` (vrstevnice + skaly) |"
+          } >> "$GITHUB_STEP_SUMMARY"

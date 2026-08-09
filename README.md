@@ -43,10 +43,18 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
 (vedome, trvá dlho)          priamo cez /vsizip//vsicurl/ – nič sa nesťahuje:
                                plan   centrálny adresár ─► inventár archívu
                                model  jeden prechod ─► hotový model do releasu
-                             celé Slovensko (5 m) ─► `dem-dmr5`  ─► zdroj: dmr5
-                             pohorie (1 m)        ─► `dem-ugkk`  ─► zdroj: ugkk
+                             celé Slovensko (5 m) ─► `dem-dmr5`  ┐ jeden zdroj
+                             pohorie (1 m)        ─► `dem-ugkk`  ┘ `dmr5`
                              ▲ výstup je vstup pre Build map: vrstevnice,
                                skaly aj tieňovanie sa počítajú z neho
+
+DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
+(toto je cesta k 1 m)        čítané cez HTTP Range – berie sa len to, čo
+                             výrez pretína:
+                               pohorie (1 m)        ─► `dem-ugkk` ┐ jeden zdroj
+                               celé Slovensko (5 m) ─► `dem-dmr5` ┘ `dmr5`
+                             ▲ výšky sú elipsoidické, prevádzajú sa cez EGM2008
+                             ▲ toto je zdroj pre skaly v plnom rozlíšení
 
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
 (pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
@@ -345,7 +353,7 @@ rozpočtu času (`ROCK_BUDGET_MIN`) a nie je jemnejšia než desatina bunky
 zdrojového DEM. Pri Sonnym (20 m) z toho vždy vyjde **2 m** – jemnejšia
 mriežka by len interpolovala medzi tými istými výškami, stála 4× viac času a
 nepridala ani jeden nový tvar terénu. Skutočný skok v detaile prinesie až
-`rock_source: ugkk` (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
+`rock_source: dmr5` s výrezom (1 m LiDAR), kde auto ide na 0,5 m. Zadať sa dá aj číslo
 natvrdo (`options: rock_res=1`).
 
 > **Mriežka nie je to isté ako detail.** Mriežka 2 m hovorí, ako jemne je
@@ -649,23 +657,32 @@ Tri výbery vo formulári – `contour_source` (vrstevnice), `rock_source`
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
 | **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
-| **`dmr5`** | ÚGKK DMR 5.0 (LLS, otvorené dáta) | **5 m** | celý región | naplniť *Pripraviť DMR 5.0* |
-| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *Pripraviť DMR 5.0* |
+| **`dmr5`** | ÚGKK DMR 5.0 (LiDAR) | **1 m** s výrezom, **5 m** na celý región | oboje | naplniť *DMR 5.0 z Drive* ✓ |
 | `ziadne` | – | – | – | vrstva sa negeneruje |
 
 Navyše: `rock_source: tienovanie` neberie výšky vôbec – vezme hotové polygóny
-z workflowu *Skaly z tieňovaných dlaždíc*. A `shading_source` nemá `ugkk`:
-1 m LiDAR máme len na výrez, kým tieňovanie sa robí na celý región.
+z workflowu *Skaly z tieňovaných dlaždíc*.
 
 Vrstvy môžu mať **rôzny model naraz** – napríklad vrstevnice zo `sonny`
 a skaly z `dmr5`. Build vtedy stiahne oba (každý do `dem/<zdroj>/`) a v mape
 je pri každej vrstve atribúcia toho modelu, z ktorého naozaj je.
 
-`dmr5` a `ugkk` sú **ten istý zdroj**, len inak nakrájaný: `dmr5` je celá
-krajina na hrubšej mriežke v dlaždiciach `N49E019.tif`, `ugkk` je jedno
-pohorie v plnom metrovom rozlíšení ako `ugkk-<vyrez>.tif`. Oba release plní
-workflow [*Pripraviť DMR 5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) a ani
-jeden sa **nedopĺňa sám** – 198 GB archív nie je vedľajší účinok buildu mapy.
+**`dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber.** S vyplneným
+výrezom (`area`) si vezme `ugkk-<vyrez>.tif` z releasu `dem-ugkk` v **plnom
+metrovom rozlíšení**; bez neho dlaždice `N49E019.tif` z `dem-dmr5` na **5 m**.
+Je to ten istý LiDAR – pri 1 m má jedna 1°×1° dlaždica ~48 GB a strop assetu
+je 2 GB, takže celý región v metri sa nemá kam uložiť. To je fyzika, nie
+voľba, tak sa na ňu formulár nepýta.
+
+> Boli to dva zdroje, `dmr5` a `ugkk`. Praktický rozdiel bol len ten, že sa
+> dalo zadať `ugkk` bez výrezu a beh spadol na strážcovi – alebo `dmr5` na
+> pohorie a build ticho vzal 5 m tam, kde bol k dispozícii meter.
+
+Oba release plnia dva workflowy – [*DMR 5.0 z
+Drive*](#dmr-50-z-drive-145-gb-cez-http-range) (ETRS89 verzia, odporúčaná)
+a [*Pripraviť DMR 5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) (archív
+ÚGKK) – a ani jeden sa **nedopĺňa sám**: sto gigabajtov nie je vedľajší
+účinok buildu mapy.
 
 **`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
 v pipeline.** Overené behom
@@ -689,14 +706,76 @@ sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
 
 Platí pre **vrstevnice, skaly aj tieňovanie** – všetko sa počíta z toho istého
 modelu, nech obrys skaly, priebeh vrstevnice a tieň pod nimi sedia na tom istom
-teréne. (Výnimka je `ugkk`: 1 m LiDAR máme len na výrez, ale tieňovanie
-potrebuje celý región, takže tam ostáva Sonny.)
+teréne. (Pri `dmr5` s vyplneným výrezom to platí tiež, len tieňovanie sa robí
+na celý región, takže tam vyjde jeho 5 m podoba.)
 
 > **Dlaždice sú vo WGS84, nie v S-JTSK.** Zdrojový ZIP je v *S-JTSK / Krovak
 > East North* — to hlási súhrn ako „CRS zdroja“ — ale `fetch-dem-open.py` ho
 > pri krájaní prepočíta (`gdalwarp -t_srs EPSG:4326`). Overené na hotovej
 > dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
 > 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
+
+### DMR 5.0 z Drive: 145 GB cez HTTP Range
+
+Tá istá dátová sada, ale **ETRS89 verzia a bez ZIPu** — dva holé BigTIFFy na
+Google Drive:
+
+```
+dmr5_etrs89.tif      156 108 150 990 B = 145,39 GiB   423 518 × 207 589 px, 1 m
+dmr5_etrs89.tif.ovr   46 550 149 948 B =  43,35 GiB   pyramídy 2 … 256 m
+```
+
+**To, že nie sú v ZIPe, mení všetko.** V archíve ÚGKK je raster jedným
+deflate prúdom a v deflate sa nedá skočiť dopredu — dá sa doň len rozbaliť od
+začiatku, takže výrez na juhu Slovenska stojí prechod celým súborom. Tu má
+každá dlaždica (128×128) vlastnú kompresiu a HTTP Range funguje na
+ľubovoľnom offsete (overené na 20 GB aj 145 GB). **Číta sa len to, čo výrez
+pretína** — Vysoké Tatry stoja rovnako ako Slovenský kras.
+
+Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
+
+| | |
+|---|---|
+| CRS | **EPSG:3046** — ETRS89 / TM zone N34 (cm 21° E, k₀ 0,9996, FE 500 000) |
+| origin | X **191 148,0**, Y **5 497 220,0** (ľavý horný roh) |
+| bunka | 1,0 × 1,0 m, Float32, nodata 3,4e38, LZW |
+
+**Dve veci, ktoré to komplikujú, a ako sú vyriešené:**
+
+1. **Drive klame o veľkosti.** Na `HEAD` vracia `content-length: 0`, takže
+   GDAL súbor odmietne (`GetFileSize()=0` → „not recognized as a supported
+   file format"). Na `Range` GET pritom odpovedá správne. Rieši to
+   [`workers/drive-serve.py`](workers/drive-serve.py) — malý HTTP server na
+   localhoste, ktorý tú jednu hlavičku opraví a Range requesty prepája ďalej.
+   Podáva **oba** súbory pod jedným menom, takže si GDAL nájde `.ovr` ako
+   sidecar sám: `gdalinfo` potom vypíše všetkých 8 úrovní, otvorenie 145 GiB
+   trvá **8 s** a stojí 9 požiadaviek / 0,3 MB.
+
+2. **Limituje latencia, nie šírka pásma.** Jeden Range request trvá rádovo
+   0,1–1 s bez ohľadu na veľkosť. Zmerané na 48 náhodných výrezoch po 400 kB:
+   1 vlákno 1 143 ms/req, 8 vlákien 147 ms/req, 24 vlákien 68 ms/req. Preto
+   sa okno **krája na bloky prichytené na cieľovú mriežku** a číta sa
+   súbežne (`jobs`, default 12). Výrez 5,2 × 5,6 km pri 1 m: **1,2 min,
+   0,11 GB, 697 požiadaviek.**
+
+**Výšky sú elipsoidické, nie Bpv.** Maximum v súbore je 2 697,03 m, kým
+Gerlachovský štít má 2 654,4 m n. m. — tých **+42,6 m je geoidová undulácia**.
+Workflow ich preto predvolene prevádza cez EGM2008; kontrola na Gerlachu dá
+po prevode 2 653,92 m, čiže rozdiel 0,5 m na 1 m mriežke. Na skaly a
+tieňovanie by to bolo jedno (sklon sa geoidom nemení), na vrstevnice nie.
+
+To je workflow **DMR 5.0 z Drive**
+([`dmr5-drive.yml`](.github/workflows/dmr5-drive.yml)), jeden job:
+
+```
+area: <pohorie>       ─► out/ugkk-<pohorie>.tif  ─► release dem-ugkk
+                          ▲ Build map: rock_source: dmr5 + rovnaké rock_area
+area: cele_slovensko  ─► out/N49E019.tif …       ─► release dem-dmr5
+                          ▲ Build map: rock_source: dmr5 bez výrezu
+```
+
+Výstup je **presne ten istý formát**, aký `workers/fetch-dem.sh` čaká už
+dávno, takže Build map sa nemení ani o riadok.
 
 ### Pripraviť DMR 5.0: 198 GB cez HTTP Range
 
@@ -859,7 +938,7 @@ v plnom metrovom rozlíšení áno, a workflow to napíše ako varovanie.
 | `area` | mriežka | výsledok | release | zdroj v Build map |
 |---|--:|---|---|---|
 | `cele` | 5 m | dlaždice `N49E019.tif` | `dem-dmr5` | `dmr5` |
-| `vysoke_tatry`, … | **1 m** | jeden COG `ugkk-<vyrez>.tif` | `dem-ugkk` | `ugkk` |
+| `vysoke_tatry`, … | **1 m** | jeden COG `ugkk-<vyrez>.tif` | `dem-ugkk` | `dmr5` + rovnaké `area` |
 
 Workflow to ustráži sám: celé Slovensko pod 3 m odmietne **v prvej minúte**,
 v nastaveniach, nie po ôsmich hodinách sťahovania. Aj tak je 5 m štyrikrát
@@ -874,7 +953,7 @@ počítať **vrstevnice, skaly aj tieňovanie**:
 | `area` | mriežka | výsledok | release | v Build map |
 |---|--:|---|---|---|
 | `cele_slovensko` | 5 m | dlaždice `N49E019.tif` | `dem-dmr5` | `dmr5` vo výbere vrstevníc/skál/tieňovania |
-| pohorie | **1 m** | `ugkk-<pohorie>.tif` | `dem-ugkk` | `ugkk` vo výbere vrstevníc/skál + rovnaké `area` |
+| pohorie | **1 m** | `ugkk-<pohorie>.tif` | `dem-ugkk` | `dmr5` vo výbere vrstevníc/skál + rovnaké `area` |
 
 Pomenúvacia schéma aj formát sú tie isté ako u Sonnyho a DMR 3.5, takže
 [`workers/fetch-dem.sh`](workers/fetch-dem.sh) sa pri čítaní vôbec nevetví —
@@ -989,17 +1068,20 @@ Mercator)“, vlastník `UGKK_SR`. Nepomohlo to — na mŕtvy hostiteľ sa nedos
 ani so správnym menom — ale keby sa cesta niekedy otvorila, toto je meno,
 ktorým začať.
 
-**Prakticky:** `ugkk` (vo výbere vrstevníc aj skál) funguje len vtedy, keď
-je výrez už v releasi `dem-ugkk`. Dostane sa tam **workflowom [*Pripraviť DMR
-5.0*](#pripraviť-dmr-50-198-gb-cez-http-range)** (`area: <pohorie>`), alebo
-jednorazovým exportom zo ZBGIS Mapového klienta (Terén → Export údajov →
-DMR 5.0, do 400 km²) a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť
-na Sonnyho a napíše to.
+**Prakticky:** `dmr5` **s výrezom** (teda plné metrové rozlíšenie) funguje len
+vtedy, keď je ten výrez už v releasi `dem-ugkk`. Dostane sa tam **workflowom
+[*DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range)** (`area:
+<pohorie>`), prípadne starším [*Pripraviť DMR
+5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) alebo jednorazovým exportom zo
+ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²)
+a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho a napíše
+to.
 
-> **Dodatok (august 2026): tá cesta sa našla, len vedie inde.** Všetko nižšie
+> **Dodatok (august 2026): tá cesta sa našla, dokonca dvakrát.** Všetko nižšie
 > o mŕtvom `zbgis.skgeodesy.sk` platí – ale to isté DMR 5.0 leží aj na
-> `opendata.skgeodesy.sk` ako jeden 198 GB ZIP a odtiaľ sa vziať dá. Viď
-> [Pripraviť DMR 5.0](#pripraviť-dmr-50-198-gb-cez-http-range).
+> `opendata.skgeodesy.sk` ako jeden 198 GB ZIP, a jeho ETRS89 verzia na Google
+> Drive ako dva holé BigTIFFy. Odtiaľ sa vziať dá. Viď [DMR 5.0 z
+> Drive](#dmr-50-z-drive-145-gb-cez-http-range).
 
 Build to preto **neskúša naslepo**: `fetch-dem-ugkk.py` sa najprv spýta na
 dostupnosť hostiteľa a keď neodpovedá, ImageServer ani WCS už nerozbieha —
@@ -1008,8 +1090,8 @@ plus curl.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.
-Build to preto odmietne **v prvej minúte**, v prípravnom jobe, nie po hodine
-sťahovania. Preto ide `ugkk` ruka v ruke s inputom `area`:
+Preto si `dmr5` podobu vyberá podľa rozsahu: s vyplneným `area` ide plné 1 m,
+bez neho dlaždice na 5 m. Nie je to teda čo zakázať, ale čo dopočítať:
 
 | výrez | plocha | 1 m raster (Float32) |
 |---|--:|--:|
@@ -1752,7 +1834,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
    | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 2 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
-   | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
+   | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
@@ -1784,8 +1866,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    (jediná vrstva bez výberu zdroja, ide z toho istého PBF ako mapa) sa
    vypínajú cez `options: trails=false`.
 
-   `ugkk` v tieňovaní zámerne nie je: 1 m LiDAR máme len na výrez, kým
-   tieňovanie sa robí vždy na celý región. Zoznamy vo formulári stráži
+   `dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber: s vyplneným
+   `area` plné 1 m, bez neho dlaždice na 5 m. Zoznamy vo formulári stráži
    `Lint workflows` proti [workers/dem-sources.json](workers/dem-sources.json)
    – zdroj sa nedá pridať do jedného a zabudnúť v druhom.
 

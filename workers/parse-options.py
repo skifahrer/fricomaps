@@ -53,7 +53,7 @@ DEFAULTS = {
     "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
-    "ugkk_fallback": ("true", "keď 1 m LiDAR nie je, počítať zo Sonnyho"),
+    "ugkk_fallback": ("true", "keď DMR 5.0 pre výrez nie je, počítať zo Sonnyho"),
     "ugkk_urls": ("", "priame URL na ÚGKK dáta (posledná záchrana)"),
     "contour_maxzoom": ("14", "max zoom dlaždíc s vrstevnicami"),
     # Skaly majú od vrstevníc oddelený .pmtiles, takže aj vlastný maxzoom.

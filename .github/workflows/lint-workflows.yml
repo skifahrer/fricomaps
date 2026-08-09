@@ -233,27 +233,34 @@ jobs:
           print(f"výber pohorí sedí ({len(opts)} položiek)")
           PY
 
-      # A to isté pre výber pohoria v „Pripraviť DMR 5.0". Ten workflow robí
-      # výškový model práve pre tie územia, na ktoré potom Build map počíta
-      # skaly – keby sa zoznamy rozišli, dá sa vyrobiť model pre pohorie,
-      # ktoré si build nevie vypýtať (alebo naopak).
-      - name: Výber pohorí v dmr5.yml sedí s areas.json
+      # A to isté pre oba workflowy, ktoré robia výškový model z DMR 5.0.
+      # Robia ho práve pre tie územia, na ktoré potom Build map počíta skaly –
+      # keby sa zoznamy rozišli, dá sa vyrobiť model pre pohorie, ktoré si
+      # build nevie vypýtať (alebo naopak). Sú dva, lebo sú to dva zdroje
+      # (archív ÚGKK cez ZIP a ETRS89 verzia na Drive), ale výber pohorí majú
+      # ten istý a rozísť sa nesmie ani jeden.
+      - name: Výber pohorí v DMR 5.0 workflowoch sedí s areas.json
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json, sys, yaml
-          d = yaml.safe_load(open(".github/workflows/dmr5.yml"))
-          on = d[[k for k in d if k is True or k == "on"][0]]
-          opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
           areas = [k for k in json.load(open("workers/areas.json"))
                    if not k.startswith("_")]
           want = ["cele_slovensko"] + areas
-          if opts != want:
-              print("::error::Výber `area` v dmr5.yml nesedí s workers/areas.json")
-              print(f"  vo workflowe: {opts}")
-              print(f"  malo by byť:  {want}")
-              sys.exit(1)
-          print(f"výber pohorí v dmr5.yml sedí ({len(opts)} položiek)")
+          bad = 0
+          for path in (".github/workflows/dmr5.yml",
+                       ".github/workflows/dmr5-drive.yml"):
+              d = yaml.safe_load(open(path))
+              on = d[[k for k in d if k is True or k == "on"][0]]
+              opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
+              if opts != want:
+                  print(f"::error file={path}::Výber `area` nesedí s workers/areas.json")
+                  print(f"  vo workflowe: {opts}")
+                  print(f"  malo by byť:  {want}")
+                  bad += 1
+              else:
+                  print(f"{path}: výber pohorí sedí ({len(opts)} položiek)")
+          sys.exit(1 if bad else 0)
           PY
 
       # A to isté pre „Skaly z tieňovaných dlaždíc". Ten hľadá skaly na tom

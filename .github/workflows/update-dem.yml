@@ -194,19 +194,22 @@ jobs:
         run: |
           set -uo pipefail
           {
-            echo "## ÚGKK DMR 5.0 (LLS) sa sem nesťahuje"
+            echo "## ÚGKK DMR 5.0 sa sem nesťahuje"
             echo
-            echo "Archív má ~198 GB a runner má voľných ~60 GB, takže ho tento"
-            echo "workflow stiahnuť nemôže. Rozoberá ho pipeline **Pripraviť DMR 5.0**"
-            echo "(\`dmr5.yml\`) – číta archív po úsekoch cez HTTP Range"
-            echo "a beží v desiatkach paralelných jobov."
+            echo "Model má 145 GB a runner má voľných ~60 GB, takže ho tento"
+            echo "workflow stiahnuť nemôže. Číta ho po dlaždiciach cez HTTP Range"
+            echo "pipeline **DMR 5.0 z Drive** (\`dmr5-drive.yml\`) – berie len to,"
+            echo "čo výrez naozaj pretína."
             echo
             echo "| chcem | spusti |"
             echo "|---|---|"
-            echo "| celé Slovensko, mriežka 5 m | \`Pripraviť DMR 5.0\` s \`area: cele\` → release \`dem-dmr5\` |"
-            echo "| pohorie, mriežka 1 m | \`Pripraviť DMR 5.0\` s \`area: vysoke_tatry\` → release \`dem-ugkk\` |"
+            echo "| pohorie, plné 1 m rozlíšenie | \`DMR 5.0 z Drive\` s \`area: vysoke_tatry\` → release \`dem-ugkk\` |"
+            echo "| celé Slovensko, mriežka 5 m | \`DMR 5.0 z Drive\` s \`area: cele_slovensko\` → release \`dem-dmr5\` |"
+            echo
+            echo "V Build map je to jedna voľba \`dmr5\`: s vyplneným \`area\` si vezme"
+            echo "výrez v 1 m, bez neho dlaždice na 5 m."
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::DMR 5.0 (LLS) sa dopĺňa workflowom „Pripraviť DMR 5.0“ – tento beh nič nesťahuje."
+          echo "::warning::DMR 5.0 sa dopĺňa workflowom „DMR 5.0 z Drive“ – tento beh nič nesťahuje."
 
       - name: Stiahni dlaždice
         id: fetch

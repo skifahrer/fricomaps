@@ -67,21 +67,27 @@ fetch_dem() { # $1 = zdroj → DEM_VRT, DEM_GOT (čo sa NAOZAJ použilo)
     echo "DEM $src: mozaika už je ✓"
     return 0
   fi
-  if [ "$src" = 'ugkk' ]; then fbbox="$AREA_BBOX"; else fbbox="$BBOX"; fi
+  # DMR 5.0 na výrez je jeden COG presne pre ten výrez, takže sa pýta jeho
+  # bboxom; všetko ostatné sú dlaždice pre celý región.
+  if [ "$src" = 'dmr5' ] && [ "$AREA_KEY_IN" != 'cely' ]; then
+    fbbox="$AREA_BBOX"
+  else
+    fbbox="$BBOX"
+  fi
   set +e
   workers/fetch-dem.sh "$fbbox" "dem/$src" steps-out/contours.tsv \
     "$src" "$AREA_KEY_IN"
   rc=$?
   set -e
   if [ "$rc" -eq 3 ]; then
-    # ÚGKK nemáme. Buď to zhodíme, alebo dopočítame zo Sonnyho –
-    # ale nikdy ticho: `dem-source.txt` nesie, čo sa NAOZAJ použilo,
-    # takže atribúcia v mape nebude tvrdiť ÚGKK tam, kde je Sonny.
+    # DMR 5.0 pre tento výrez nemáme. Buď to zhodíme, alebo dopočítame
+    # zo Sonnyho – ale nikdy ticho: `dem-source.txt` nesie, čo sa NAOZAJ
+    # použilo, takže atribúcia v mape nebude tvrdiť DMR 5.0 tam, kde je Sonny.
     if [ "$OPT_UGKK_FALLBACK" != 'true' ]; then
-      echo "::error::1 m LiDAR od ÚGKK nie je k dispozícii a ugkk_fallback je vypnutý. Zapni ho, alebo vyber sonny / dmr35 / dmr5."
+      echo "::error::DMR 5.0 pre tento výrez nie je k dispozícii a ugkk_fallback je vypnutý. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s rovnakým `area`, zapni fallback, alebo vyber sonny / dmr35."
       exit 1
     fi
-    echo "::warning::1 m LiDAR od ÚGKK nie je k dispozícii – počíta sa zo Sonnyho (20 m). Mapa bude, len s hrubším modelom. Ako ÚGKK doplniť, hovorí log jobu 'Doplniť výškový model (ugkk)'."
+    echo "::warning::DMR 5.0 pre tento výrez nie je k dispozícii – počíta sa zo Sonnyho (20 m). Mapa bude, len s hrubším modelom. Doplní ho workflow 'DMR 5.0 z Drive (ETRS89)' s rovnakým \`area\`."
     fetch_dem sonny
     return 0
   elif [ "$rc" -ne 0 ]; then
