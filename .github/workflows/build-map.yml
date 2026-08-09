@@ -97,14 +97,11 @@ on:
           - dmr5
           - ugkk
           - ziadne
-      # Skaly sú VŽDY polygón sklonu. Výber hovorí, z čoho sa sklon počíta
-      # (sonny / dmr35 / dmr5 / ugkk), prípadne `tienovanie` = ten istý
-      # polygón sklonu (zo Sonnyho) OREZANÝ tmavými plochami z workflowu
-      # „Skaly z tieňovaných dlaždíc“ – ten si build v prípade potreby
-      # zavolá sám. Samotné tmavé plochy skala nie sú: hillshade je
-      # osvetlený z jednej strany, takže tmavý je každý odvrátený svah.
+      # Buď zo sklonu výškového modelu (sonny / dmr35 / dmr5 / ugkk), alebo
+      # `tienovanie` = hotové polygóny z workflowu „Skaly z tieňovaných
+      # dlaždíc“ – ten si build v prípade potreby zavolá sám.
       rock_source:
-        description: "Skaly – zo sklonu modelu, prípadne orezané tieňovaním (ziadne = negenerovať)"
+        description: "Skaly – zo sklonu modelu, alebo z tieňovania (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -255,10 +252,10 @@ jobs:
     name: Kontrola výškového modelu
     needs: plan
     runs-on: ubuntu-latest
-    # Tri vrstvy, tri zdroje – stačí, že aspoň jedna chce DEM. Pozeráme sa na
-    # `opt_rock_dem` (prázdny len pri `rock_source: ziadne`) a nie na
-    # `opt_rocks`: pri `tienovanie` je v ňom Sonny, lebo tmavé plochy sú len
-    # maska nad sklonom a ten sa musí z niečoho spočítať.
+    # Tri vrstvy, tri zdroje – stačí, že aspoň jedna chce DEM. Skaly
+    # z tieňovania sú výnimka: tie výškový model nečítajú vôbec, preto sa
+    # pozeráme na `opt_rock_dem` (prázdny pri `tienovanie` aj `ziadne`)
+    # a nie na `opt_rocks`.
     if: ${{ needs.plan.outputs.opt_contour_lines == 'true' || needs.plan.outputs.opt_rock_dem != '' || needs.plan.outputs.opt_terrain == 'true' }}
     outputs:
       # Ktorý model treba doplniť pre ktorú vrstvu; prázdne = netreba nič.
@@ -376,8 +373,8 @@ jobs:
             src="${pair#*:}"
             DEMKEY=""
             NEED_SRC=""
-            # Prázdny zdroj = vrstva je vypnutá a žiadny výškový model sa pre
-            # ňu nečíta.
+            # Prázdny zdroj = vrstva je vypnutá (alebo skaly idú z tieňovania)
+            # a žiadny výškový model sa pre ňu nečíta.
             if [ -n "$src" ] && [ "$src" != 'ziadne' ]; then
               check_source "$layer" "$src"
             fi
@@ -519,9 +516,8 @@ jobs:
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_features: ${{ steps.opts.outputs.opt_features }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
-      # `opt_rock_dem` je model, z ktorého sa počíta sklon skál. Pri
-      # `ziadne` je prázdny; pri `tienovanie` je v ňom Sonny, lebo tmavé
-      # plochy z hillshade sú len maska nad polygónom sklonu.
+      # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
+      # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
       opt_contour_source: ${{ steps.opts.outputs.opt_contour_source }}
       opt_rock_source: ${{ steps.opts.outputs.opt_rock_source }}
       opt_rock_dem: ${{ steps.opts.outputs.opt_rock_dem }}

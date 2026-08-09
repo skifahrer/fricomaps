@@ -135,10 +135,8 @@ MOVED = {
 # v rozbaľovacom zozname má byť vidieť, že „nič" je vedomá voľba.
 NONE = "ziadne"
 
-# Skaly majú okrem výškových modelov ešte jednu voľbu: tmavé plochy
-# z workflowu „Skaly z tieňovaných dlaždíc". Nie je to náhrada sklonu, ale
-# MASKA nad ním – skala je až to, čo je zároveň tmavé a zároveň strmé –
-# takže aj táto voľba výškový model potrebuje (viď `rock_dem` nižšie).
+# Skaly majú okrem výškových modelov ešte jeden zdroj, ktorý DEM vôbec
+# nečíta: hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc".
 ROCK_FROM_SHADING = "tienovanie"
 
 # `rebuild` je jeden výber namiesto troch zaškrtávatiek – tri booleany boli
@@ -264,19 +262,8 @@ def main():
     values["rock_source"] = rock_src
     values["shading_source"] = shading_src
     # Zdroj skál, ktorý je výškový model – teda ten, z ktorého sa má počítať
-    # sklon. Pri `ziadne` je prázdny a nikto nesmie sťahovať DEM.
-    #
-    # `tienovanie` DEM POTREBUJE. Tmavé plochy z hillshade samy o sebe skala
-    # nie sú – hillshade je osvetlený z jednej strany, takže tmavý je každý
-    # odvrátený svah, aj úplne mierny (namerané: 34 % testovacieho výrezu
-    # a v mape z toho sivá deka). Berú sa preto len ako maska nad tým istým
-    # polygónom sklonu ako pri ostatných zdrojoch, a na sklon treba model.
-    # Sonny stačí: tvar obrysu robí maska z 1 m LiDARu, model len rozhoduje,
-    # čo je dosť strmé.
-    if rock_src == ROCK_FROM_SHADING:
-        values["rock_dem"] = "sonny"
-    else:
-        values["rock_dem"] = rock_src if rock_src in srcs else ""
+    # sklon. Pri `tienovanie` a `ziadne` je prázdny a nikto nesmie sťahovať DEM.
+    values["rock_dem"] = rock_src if rock_src in srcs else ""
 
     values["contour_lines"] = "true" if contour_src != NONE else "false"
     values["rocks"] = "true" if rock_src != NONE else "false"

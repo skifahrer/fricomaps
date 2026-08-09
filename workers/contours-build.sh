@@ -121,9 +121,8 @@ PY
   echo "─────────────────────────────────────────────────────"
 }
 
-# Zdroje z formulára. `opt_rock_dem` je prázdny, len keď sú skaly
-# vypnuté – vtedy sa na DEM kvôli nim nesiaha. Pri `tienovanie` je
-# v ňom Sonny: tmavé plochy sú maska, sklon pod ňou treba spočítať.
+# Zdroje z formulára. `opt_rock_dem` je prázdny, keď skaly idú
+# z tieňovania alebo sú vypnuté – vtedy sa na DEM kvôli nim nesiaha.
 CONTOUR_SRC="$OPT_CONTOUR_SOURCE"
 ROCK_DEM="$OPT_ROCK_DEM"
 CONTOUR_VRT=""; CONTOUR_DEM=""
@@ -227,24 +226,13 @@ make_empty_rock() { make_empty_gpkg data/rock.gpkg rock POLYGON; }
 if [ "$OPT_ROCKS" = 'true' ]; then
   ROCK_READY=""
   ROCK_SRC="výpočet"
-  ROCK_CLIP=""
-  IMG_ASSET=""
 
-  # ---------- tmavé plochy z tieňovania ako MASKA (rock_source: tienovanie) ----
-  # Tie sa v TOMTO jobe nehľadajú – spravil to job `shading-rocks`
+  # ---------- skaly z tieňovaných dlaždíc (rock_source: tienovanie) ----------
+  # Tie sa v TOMTO jobe nepočítajú – spravil to job `shading-rocks`
   # o kus vyššie v tom istom behu (stiahol tieňované dlaždice
   # z freemap.sk, odložil ich ako artefakt a hotové polygóny nahral
   # do releasu). Tu sa už len stiahne výsledok. Keď je vyplnený
   # `rock_img_asset`, ten job nebežal a berie sa presne ten asset.
-  #
-  # TMAVÉ PLOCHY SAMY O SEBE SKALA NIE SÚ. Hillshade je osvetlený
-  # z jednej strany, takže tmavý je KAŽDÝ odvrátený svah – aj úplne
-  # mierny. Kým sa tie polygóny brali ako hotové skaly, vyšlo na
-  # testovacom výreze v Tatrách 0,68 km² „skál" na 2 km² územia
-  # (34 %) a v mape z toho bola jedna sivá deka bez detailu.
-  # Odteraz sú len MASKOU: skala je to, čo je zároveň tmavé
-  # a ZÁROVEŇ má sklon nad prahom – teda ten istý polygón sklonu
-  # ako pri ostatných zdrojoch, len orezaný.
   if [ "$OPT_ROCK_SOURCE" = 'tienovanie' ]; then
     IMG_ASSET="$OPT_ROCK_IMG_ASSET"
     echo "::group::Skaly z tieňovania – $AREA_NAME, release $ROCK_IMG_RELEASE"
@@ -274,24 +262,13 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       exit 1
     fi
     echo "  beriem: $IMG_ASSET ($(du -h "/tmp/rockimg/$IMG_ASSET" | cut -f1))"
-    unzstd -q -f -o data/rock-img.gpkg "/tmp/rockimg/$IMG_ASSET"
-    ROCK_CLIP=data/rock-img.gpkg
-    ROCK_SRC="sklon orezaný tieňovaním ($IMG_ASSET)"
+    unzstd -q -f -o data/rock.gpkg "/tmp/rockimg/$IMG_ASSET"
+    ROCK_READY=1
+    ROCK_SRC="release $ROCK_IMG_RELEASE ($IMG_ASSET)"
     # Výrez sa tu NEOREZÁVA na bbox regiónu zámerne: asset vznikol
     # presne pre tento výrez a orezanie by len prerezalo polygóny
     # na hranici. Keby výrez presahoval región, dlaždice mimo neho
     # aj tak nikto nevykreslí.
-    #
-    # DEM na sklon je už stiahnutý: `parse-options.py` dáva pri
-    # `tienovanie` do `rock_dem` Sonnyho práve preto, aby maska mala
-    # čo maskovať. Keby tu `$ROCK_VRT` nebol, nie je to preklep
-    # v tomto skripte, ale rozpadnutá dohoda medzi ním a plánom –
-    # preto to skončí, a nie potichu vydá masku za skaly.
-    if [ -z "$ROCK_VRT" ]; then
-      echo "::endgroup::"
-      echo "::error::Skaly z tieňovania potrebujú výškový model na sklon, ale žiadny sa nestiahol (rock_dem je prázdny). Bez neho by z tmavých plôch bola sivá plocha cez celý výrez. Vyber rock_source: sonny / dmr35 / dmr5 / ugkk, alebo nahlás chybu – `parse-options.py` má pri `tienovanie` nastaviť `rock_dem=sonny`."
-      exit 1
-    fi
     echo "::endgroup::"
   fi
 
@@ -300,14 +277,11 @@ if [ "$OPT_ROCKS" = 'true' ]; then
   # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
   # asset zahodí a počíta odznova.
   # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
-  # vydávať za skaly celého kraja. A keď je sklon orezaný maskou
-  # z tieňovania, je v mene aj tá – inak by sa neorezané skaly
-  # z releasu vydávali za orezané a naopak.
-  CLIP_TAG=""
-  [ -n "$ROCK_CLIP" ] && CLIP_TAG="-c$(printf '%s' "$IMG_ASSET" \
-    | md5sum | cut -c1-8)"
-  ROCK_ASSET="rock-${REGION_KEY}-${AREA_KEY}-${ROCK_DEM_USED:-none}-s${ROCK_SLOPE}-g${RR}${CLIP_TAG}-${ROCK_ALGO}.gpkg.zst"
-  if [ "$OPT_ROCKS_REBUILD" = 'true' ]; then
+  # vydávať za skaly celého kraja.
+  ROCK_ASSET="rock-${REGION_KEY}-${AREA_KEY}-${ROCK_DEM_USED:-none}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+  if [ -n "$ROCK_READY" ]; then
+    : # skaly už sú (z tieňovania) – DEM sa na ne vôbec nečíta
+  elif [ "$OPT_ROCKS_REBUILD" = 'true' ]; then
     echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
     gh release delete-asset "$ROCK_RELEASE" "$ROCK_ASSET" \
       --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 \
@@ -320,7 +294,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
   fi
 
   if [ -z "$ROCK_READY" ]; then
-    echo "::group::Skaly z modelu $ROCK_DEM_USED – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR}, zaoblenie ${ROCK_SMOOTH}×${ROCK_CLIP:+, orezané maskou z tieňovania}"
+    echo "::group::Skaly z modelu $ROCK_DEM_USED – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR}, zaoblenie ${ROCK_SMOOTH}×"
     # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
     # v rovine nič nenašiel), nemá to zhodiť hodinový build.
     # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
@@ -334,7 +308,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
       --plne="${OPT_ROCK_PLNE:-1}" \
       --zapln-diery="${OPT_ROCK_ZAPLN_DIERY:-0}" \
-      --smooth="$ROCK_SMOOTH" ${ROCK_CLIP:+--clip="$ROCK_CLIP"} \
+      --smooth="$ROCK_SMOOTH" \
       --stats=contours-out/rock-stats.txt \
       --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
       --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
@@ -369,9 +343,13 @@ if [ "$OPT_ROCKS" = 'true' ]; then
   # cache hite sa tento krok vôbec nespustí, ale súhrn čísla má.
   ROCK_N=$(ogrinfo -so data/rock.gpkg rock 2>/dev/null \
     | awk -F': ' '/^Feature Count/ {print $2}')
-  ROCK_HOW="$ROCK_DEM_USED, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m"
-  # Aj pri tieňovaní je to sklon – tmavé plochy sú len maska navyše.
-  [ -n "$ROCK_CLIP" ] && ROCK_HOW="$ROCK_HOW, orezané tmavými plochami"
+  # Skaly z tieňovania nemajú ani sklon, ani mriežku – písať ich do
+  # merania by bolo číslo, ktoré nikde nevzniklo.
+  if [ "$OPT_ROCK_SOURCE" = 'tienovanie' ]; then
+    ROCK_HOW="tmavé plochy v tieňovaní"
+  else
+    ROCK_HOW="$ROCK_DEM_USED, sklon ≥ ${ROCK_SLOPE}°, mriežka ${RR} m"
+  fi
   printf '%s\t%s\t%s\t%s\n' "40" "Skalné plochy" "$(( $(date +%s) - T_ROCK ))" \
     "${ROCK_N:-0} plôch, $AREA_NAME, ${ROCK_HOW} ($ROCK_SRC)" \
     >> steps-out/contours.tsv
@@ -382,13 +360,20 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     # z vybranej mriežky a ten práve nebežal. Súhrn si s chýbajúcou
     # hodnotou poradí (`${min_area_m2:-?}`) – dosadiť sem premennú,
     # ktorá nikde nevzniká, by pri `set -u` zhodilo celý build.
-    { echo "source=dem"; echo "count=${ROCK_N:-0}"; echo "grid_m=$RR"
-      echo "slope_deg=$ROCK_SLOPE"; echo "cliff_deg=$ROCK_CLIFF"
-      if [ -n "$ROCK_CLIP" ]; then printf "clip='%s'\n" "$IMG_ASSET"; fi
-    } > contours-out/rock-stats.txt
+    if [ "$OPT_ROCK_SOURCE" = 'tienovanie' ]; then
+      # Skaly z tieňovania sú z iného sveta – ani sklon, ani mriežka
+      # pre ne neexistujú. Súhrn podľa `source` vypíše inú tabuľku.
+      { echo "source=tienovanie"; echo "count=${ROCK_N:-0}"
+        printf "asset='%s'\n" "$ROCK_SRC"
+      } > contours-out/rock-stats.txt
+    else
+      { echo "source=dem"; echo "count=${ROCK_N:-0}"; echo "grid_m=$RR"
+        echo "slope_deg=$ROCK_SLOPE"; echo "cliff_deg=$ROCK_CLIFF"
+      } > contours-out/rock-stats.txt
+    fi
   fi
-  # Z ktorého modelu je sklon – do súhrnu. Platí aj pri `tienovanie`:
-  # tam je to Sonny a tmavé plochy sú maska nad ním.
+  # Z ktorého modelu sú skaly – do súhrnu. Pri `tienovanie` je
+  # prázdny, lebo tam žiadny výškový model nefiguruje.
   printf "rock_dem='%s'\n" "$ROCK_DEM_USED" >> contours-out/rock-stats.txt
   # Výrez do štatistiky, nech je v súhrne vidieť, že skaly nie sú
   # všade – aj keď sa tento krok nabudúce vezme z cache.

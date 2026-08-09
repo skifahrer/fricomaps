@@ -1,22 +1,14 @@
 name: Skaly z tieňovaných dlaždíc
 
-# TMAVÉ PLOCHY v hotovom hillshade z freemap.sk – MASKA pre skaly, nie skaly.
-# Výstup je vrstva `rock` v GeoPackage (EPSG:4326) a „Build map" ňou OREŽE
-# svoje pásmo sklonu: skala je až to, čo je zároveň tmavé a zároveň strmé.
+# POKUSNÁ druhá cesta k skalám: nepočíta sa sklon z DEM, ale hľadajú sa TMAVÉ
+# PLOCHY v hotovom hillshade z freemap.sk. Výstup je ten istý formát ako
+# u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326 – takže si ho
+# „Build map" vie vypýtať namiesto vlastného výpočtu:
 #
 #   Skaly z tieňovaných dlaždíc  ─►  release `dem-rocks-img`
 #                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
 #                                        ▼
-#   Build map  s  výberom  rock_source: tienovanie
-#     = rock-areas.py (sklon zo Sonnyho) --clip=<ten asset>
-#                                        ▼
-#                                    vrstva `rock` v mape
-#
-# PREČO MASKA A NIE ROVNO SKALY: hillshade je osvetlený z jednej strany, takže
-# tmavý je každý odvrátený svah – aj úplne mierny. Kým sa tieto polygóny brali
-# ako hotové skaly, pokryli na testovacom výreze v Tatrách 0,68 km² z 2 km²
-# (34 %) a v mape z toho bola jedna sivá deka bez detailu. Sklon rozhoduje,
-# KDE skala je; tieňovanie (1 m LiDAR) dáva jej TVAR.
+#   Build map  s  výberom  rock_source: tienovanie    ─►  vrstva `rock` v mape
 #
 # Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
 # rozhoduje, čo je tmavé, a prečo sa vektorizuje po blokoch.
@@ -600,10 +592,10 @@ jobs:
               echo "| mozaika | ${cells} pixelov |"
               echo "| prah | nikdy nad ${dark}, vždy pod ${dark_always}, medzi tým ${rel} pod pozadím (okno ${local_m} m) |"
               echo "| štruktúra | ${fill_m} m vyplnenie (0 = jemná sieť žliabkov) |"
-              echo "| **tmavých plôch** | **${count}** (z toho ${cliff} \`cliff\`), ${dropped} pod ${min_area_m2} m² zahodených |"
+              echo "| **skalných plôch** | **${count}** (z toho ${cliff} \`cliff\`), ${dropped} pod ${min_area_m2} m² zahodených |"
               echo "| **plocha spolu** | **${total_km2} km²**, najväčšia $((max_m2 / 10000)) ha |"
               echo "| diery | ${holes} zachovaných, ${holes_dropped} pod ${min_hole_m2} m² zahodených |"
-              echo "| veľkosť dát | ${out_mb} MB = **${mb_per_km2} MB na km² masky** |"
+              echo "| veľkosť dát | ${out_mb} MB = **${mb_per_km2} MB na km² skál** |"
               echo "| trvanie | ${seconds} s |"
               echo
               echo "Asset v release \`$ROCK_IMG_RELEASE\`: \`${{ steps.rocks.outputs.asset }}\`"
@@ -612,7 +604,7 @@ jobs:
               echo
               echo "1. Stiahni artefakt \`nahlad-…\` (odložil ho job *Obrysy po blokoch*) a pozri \`preview.png\` – vľavo mozaika tieňovania, vpravo to isté s červenou maskou. Podľa toho doladiť \`dark\` / \`dark_always\` / \`rel\`."
               echo "2. Ladenie zrýchli výber \`test\` – na 2 km² sú to minúty a beh rovno ukáže, kde ten štvorec leží."
-              echo "3. Keď to sedí, spusti **Build map** s výberom \`rock_source: tienovanie\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez a ORE\u017dE ním pásmo sklonu (skala = tmavé A strmé). Plocha spolu vyššie je teda strop, nie výsledok: v mape jej bude podstatne menej."
+              echo "3. Keď to sedí, spusti **Build map** s výberom \`rock_source: tienovanie\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez namiesto počítania skál z DEM."
             } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Beh sa nedostal po štatistiku – pozri log kroku *Skaly z tmavých plôch*." >> "$GITHUB_STEP_SUMMARY"

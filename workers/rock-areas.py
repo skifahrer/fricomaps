@@ -43,16 +43,6 @@ Aby sklon na okraji časti nebol zrezaný, každá sa počíta s presahom
 niekoľkých pixelov a zapíše sa až orezaná presne na svoju hranicu. Hranice
 častí sú prichytené na mriežku, takže dlaždice mozaiky na seba sadnú presne.
 
-OREZANIE (`--clip`): sklon sa dá obmedziť na plochy z inej vrstvy – von ide
-prienik. Používa to `rock_source: tienovanie`: tmavé plochy z hillshade samy
-o sebe skala NIE SÚ (hillshade je osvetlený z jednej strany, takže tmavý je
-každý odvrátený svah, nech je akokoľvek mierny – na testovacom výreze
-v Tatrách z toho vyšlo 0,68 km² „skál" na 2 km² územia, teda 34 %, a v mape
-z toho bola jedna sivá deka). Skala je až to, čo je zároveň TMAVÉ aj STRMÉ.
-Orezáva sa v rastri (`gdal_rasterize -i -burn 0`), nie prienikom hotových
-polygónov: prienik je n×m a nad desiatkami tisíc plôch z tieňovania by trval
-dlhšie než celý zvyšok výpočtu.
-
 AKÝ JE TO DETAIL: obrys sleduje mriežku sklonu (`--res`), ale skutočný detail
 nemôže byť lepší než zdrojový DEM – Sonny má pre Slovensko mriežku 20 m.
 Jemnejšia mriežka teda robí obrys hladším a presnejšie umiestneným (sklon sa
@@ -62,8 +52,6 @@ na konci vypíše aj s rozmerom buniek DEM.
 Použitie:
     python3 workers/rock-areas.py --dem=dem/all.vrt --bbox=W,S,E,N \\
         --res=2 --slope=50 --cliff=65 --min-area=4 --out=data/rock.gpkg
-    python3 workers/rock-areas.py --dem=dem/all.vrt --bbox=W,S,E,N \\
-        --clip=data/rock-img.gpkg --out=data/rock.gpkg   # strmé A tmavé
 """
 import argparse
 import json
@@ -339,43 +327,12 @@ def print_plan(cells, res, n_chunks, n_all, geom, budget_min):
     return True
 
 
-def prepare_clip(clip_gpkg, tmp):
-    """Orezávacia vrstva do metrov → cesta ku GPKG s vrstvou `clip`.
-
-    Vracia `(cesta, počet_plôch)`. Prepočet do `METRIC` sa robí raz tu, nie
-    v každej dlaždici: `gdal_rasterize` sám nič neprepočítava a vrstva
-    v stupňoch by sa vypálila niekam do Atlantiku.
-    """
-    out = os.path.join(tmp, "clip.gpkg")
-    layer = None
-    try:
-        info = run(["ogrinfo", "-so", clip_gpkg]).stdout
-        for line in info.splitlines():
-            m = re.match(r"^\d+:\s+(\S+)", line)
-            if m:
-                layer = m.group(1)
-                break
-    except subprocess.CalledProcessError:
-        pass
-    run(["ogr2ogr", "-f", "GPKG", out, clip_gpkg]
-        + ([layer] if layer else [])
-        + ["-nln", "clip", "-t_srs", METRIC, "-nlt", "MULTIPOLYGON"])
-    return out, ogr_count(out, "clip")
-
-
-def slope_tiles(dem, chunks, res, tmp, heartbeat_every, clip=""):
+def slope_tiles(dem, chunks, res, tmp, heartbeat_every):
     """Raster sklonu po častiach na disk (Byte, krok 0,5°) → zoznam dlaždíc.
 
     Toto je jediná časť, ktorá sa musí krájať: bbox kraja má pri 2 m miliardy
     buniek, čo je vo Float32 desiatky GB na jeden raster. Vektorizuje sa až
     mozaika, naraz – inak by sa diery prerezané hranicou časti stratili.
-
-    `clip` (vrstva `clip` v metroch) OREZÁVA sklon: mimo tých plôch sa do
-    rastra vypáli nula, takže tam žiadne pásmo nad prahom nevznikne. Robí sa
-    to v rastri, a nie prienikom hotových polygónov, lebo prienik je n×m
-    a nad desiatkami tisíc plôch z tieňovania by bežal dlhšie než celý
-    zvyšok výpočtu. Takto je to jeden `gdal_rasterize` na dlaždicu a všetko
-    za tým (diery, `min-area`, zjednodušenie, zaoblenie) ostáva bez zmeny.
     """
     margin = 8 * res  # presah, aby sklon na okraji časti nebol zrezaný
     tiles = []
@@ -406,12 +363,6 @@ def slope_tiles(dem, chunks, res, tmp, heartbeat_every, clip=""):
                  "-projwin", repr(cx0), repr(cy1), repr(cx1), repr(cy0),
                  "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "TILED=YES",
                  slope_tif, out])
-            # Von z orezávacích plôch je sklon nula, teda určite nie skala.
-            # `-i` vypaľuje MIMO geometrií; keď do dlaždice nezasahuje ani
-            # jedna, vynuluje sa celá – a to je správne.
-            if clip:
-                run(["gdal_rasterize", "-q", "-i", "-burn", "0",
-                     "-l", "clip", clip, out])
             tiles.append(out)
 
             done, total = len(tiles), len(chunks)
@@ -446,11 +397,6 @@ def main():
                          "vnútri inej), 0 = pásma steep/cliff ako predtým")
     ap.add_argument("--zapln-diery", type=int, default=0,
                     help="1 = zaplniť diery (súvislé plochy namiesto tvaru)")
-    ap.add_argument("--clip", default="",
-                    help="GeoPackage s plochami (v akomkoľvek SRS), na ktoré "
-                         "sa má sklon orezať – von ide prienik. Takto sa dajú "
-                         "skaly z tieňovania (`rock_source: tienovanie`) "
-                         "obmedziť na terén, ktorý je naozaj strmý.")
     ap.add_argument("--min-area", type=float, default=-1.0,
                     help="najmenšia plocha v m²; -1 = jedna bunka mriežky "
                          "(menší útvar už nie je tvar terénu, ale jedna bunka)")
@@ -510,31 +456,8 @@ def main():
     t_start = time.time()
     tmp = tempfile.mkdtemp(prefix="rock-", dir=os.path.dirname(args.out) or ".")
     try:
-        # ---------- 0. orezávacia vrstva ----------
-        # SKALA JE STRMÝ TERÉN, NIE TMAVÉ MIESTO. Skaly z tieňovania hľadajú
-        # tmavé plochy v hillshade, lenže hillshade je osvetlený z jednej
-        # strany: každý odvrátený svah je tmavý, nech je akokoľvek mierny.
-        # Na testovacom výreze v Tatrách z toho vyšlo 0,68 km² „skál" na
-        # 2 km² územia (34 %) – jedna sivá sieť cez celú mapu. Preto sa tá
-        # vrstva berie len ako maska: čo v nej je a ZÁROVEŇ má sklon nad
-        # prahom, to je skala; zvyšok nie.
-        clip_metric, n_clip = "", 0
-        if args.clip:
-            if not os.path.exists(args.clip):
-                print(f"::error::Orezávacia vrstva {args.clip} neexistuje.")
-                return 2
-            clip_metric, n_clip = prepare_clip(args.clip, tmp)
-            if not n_clip:
-                print(f"::error::Orezávacia vrstva {args.clip} nemá ani jednu "
-                      f"plochu – po orezaní by nezostalo nič. Skontroluj, či "
-                      f"job so skalami z tieňovania naozaj niečo našiel.")
-                return 2
-            print(f"Sklon sa orezáva na {n_clip} plôch z {args.clip} – "
-                  f"skala je to, čo je zároveň strmé aj tmavé.", flush=True)
-
         # ---------- 1. sklon po častiach na disk ----------
-        tiles = slope_tiles(args.dem, chunks, res, tmp, args.heartbeat,
-                            clip=clip_metric)
+        tiles = slope_tiles(args.dem, chunks, res, tmp, args.heartbeat)
         if not tiles:
             print("::warning::Nepodarilo sa spočítať sklon ani pre jednu časť.")
             return 1
@@ -672,29 +595,11 @@ def main():
                       f"{int(st['with_holes'])} plôch ich má, "
                       f"vykrojených {st['holes_km2']:.2f} km²")
 
-        # POISTKA PROTI SIVEJ DEKE. Keď skaly pokryjú väčšinu územia, nie je
-        # to mapa skál, ale plocha cez celý výrez – a keďže sa kreslia jednou
-        # sivou bez priehľadnosti, v mape z toho nie je vidieť vôbec nič.
-        # Skutočné čísla: Vysoké Tatry pri 50° majú 884 ha z 541 km², teda
-        # 1,6 %; ani 40° nedá viac než jednotky percent. 40 % teda nie je
-        # prísna hranica, je to podpis chyby (zlý prah, prehodená maska).
-        # Počíta sa z toho, čo sa naozaj počítalo (časti v území), nie
-        # z opísaného obdĺžnika – ten je v EPSG:3035 o tretinu väčší.
-        uzemie_m2 = sum((c[4] - c[2]) * (c[5] - c[3]) for c in chunks)
-        if st and uzemie_m2 and st["total"] > 0.4 * uzemie_m2:
-            print(f"::warning::Skaly pokrývajú {st['total']/1e6:.2f} km² "
-                  f"z {uzemie_m2/1e6:.2f} km² počítaného územia "
-                  f"({100 * st['total'] / uzemie_m2:.0f} %). Toľko skál nikde "
-                  f"nie je – Vysoké Tatry majú pri 50° okolo 1,6 %. V mape "
-                  f"z toho bude súvislá sivá plocha bez detailu. Zdvihni "
-                  f"`rock_slope`, alebo skontroluj orezávaciu vrstvu.")
-
         if args.stats:
             with open(args.stats, "w") as f:
-                # Odkiaľ skaly sú. Vždy `dem`, aj keď je sklon orezaný
-                # maskou z tieňovania – tá je nad ním, nie namiesto neho,
-                # takže sklon aj mriežka pre výsledok existujú. Že sa
-                # orezávalo, hovorí `clip` nižšie.
+                # Odkiaľ skaly sú. Súhrn buildu podľa toho vyberá tabuľku –
+                # skaly z tieňovaných dlaždíc (workers/shading-rocks.py)
+                # nemajú ani sklon, ani mriežku.
                 f.write("source=dem\n")
                 f.write(f"count={n}\n")
                 f.write(f"grid_m={res:g}\n")
@@ -705,11 +610,6 @@ def main():
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
                 f.write(f"simplify_m={args.simplify:g}\n")
                 f.write(f"smooth_passes={args.smooth}\n")
-                if args.clip:
-                    # Súhrn podľa toho vypíše, že skaly nie sú len zo sklonu,
-                    # ale zo sklonu OREZANÉHO tmavými plochami.
-                    f.write(f"clip='{os.path.basename(args.clip)}'\n")
-                    f.write(f"clip_features={n_clip}\n")
                 f.write(f"cells_g={cells/1e9:.2f}\n")
                 f.write(f"took={hms(took)}\n")
                 if dem_dx:
