@@ -386,8 +386,8 @@ jobs:
   # DVA JOBY NAD JEDNÝM WORKFLOWOM – nie dve pipeline. `dmr5` má dva tvary
   # a chýbať môžu naraz: vrstevnice a skaly čítajú výrez v plnom rozlíšení
   # z `dem-ugkk`, tieňovanie 1° dlaždice na 5 m z `dem-dmr5`. Ktoré z toho
-  # treba, rozhodol `check-dem`. (`dmr5.yml` – „DMR 5.0 z archívu ÚGKK" – je
-  # ZÁLOŽNÝ ručný zdroj na ten istý model; build ho nevolá nikdy.)
+  # treba, rozhodol `check-dem`. Je to jediná cesta k DMR 5.0 – záložný
+  # zdroj z archívu ÚGKK sme zrušili, keď Drive začal spoľahlivo púšťať.
   mirror-dmr5-area:
     name: Doplniť DMR 5.0 (výrez, plné rozlíšenie)
     needs: [plan, check-dem]

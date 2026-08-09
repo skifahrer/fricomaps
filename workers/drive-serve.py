@@ -75,9 +75,10 @@ FETCH_WORKERS = 12
 # ktorá nikdy neprišla, a job visel 2 h 16 min a minul dva runnery.
 QUOTA_HINT = (
     "prekročený limit sťahovania z Google Drive (súbor si dnes vypýtalo "
-    "priveľa klientov). Počkaj pár hodín, alebo nahraj kópiu modelu na iný "
-    "účet a prepíš TIF_ID/OVR_ID vo workers/dmr5-drive.py. Do tej doby sa dá "
-    "DMR 5.0 doplniť workflowom „DMR 5.0 z archívu ÚGKK (záloha, ručne)“.")
+    "priveľa klientov). Drive je na DMR 5.0 JEDINÁ cesta, tak sa to nedá "
+    "obísť iným zdrojom: počkaj pár hodín, alebo nahraj kópiu modelu na iný "
+    "účet a prepíš TIF_ID/OVR_ID vo workers/dmr5-drive.py. Beh medzitým "
+    "prejde na hrubší model (sonny), keď je zapnutý ugkk_fallback.")
 
 
 def drive_refusal(body):

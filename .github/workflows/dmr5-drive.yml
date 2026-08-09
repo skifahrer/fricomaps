@@ -1,8 +1,7 @@
 name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 
 # Výškový model z DMR 5.0 v ETRS89, ktorý leží na Google Drive ako dva holé
-# BigTIFFy. Výstup je ten istý ako zo zálohy „DMR 5.0 z archívu ÚGKK", takže
-# Build map sa nemusí učiť nič nové:
+# BigTIFFy. Toto je JEDINÁ cesta k DMR 5.0:
 #
 #   area: <pohorie>       →  ugkk-<pohorie>.tif  →  release `dem-ugkk`
 #                            Build map: rock_source: dmr5 + rovnaké `rock_area`
@@ -18,14 +17,19 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # `mirror-dmr5-tiles` = 1° dlaždice do `dem-dmr5`). Sú to dva joby nad JEDNÝM
 # workflowom, nie dve pipeline.
 #
-# PREČO POPRI `dmr5.yml`, A NIE MIESTO NEHO: `dmr5.yml` je ZÁLOŽNÝ, RUČNÝ zdroj
-# na ten istý model – build ho nevolá nikdy. Sú to dva rôzne zdroje s opačnými
-# pravidlami. Archív ÚGKK je ZIP, v ktorom je raster jedným deflate prúdom –
-# v tom sa nedá skočiť dopredu, takže tam platí „čítaj raz a sekvenčne" a
-# výrez na juhu Slovenska stojí prechod celým súborom. Tu sú súbory holé,
-# každá dlaždica má vlastnú kompresiu a Range funguje na ľubovoľnom offsete,
-# takže sa číta len to, čo výrez pretína. Zliať tie dva job grafy do jedného
-# by znamenalo, že polovica pravidiel v ňom vždy platí a druhá nie.
+# PREČO UŽ NIE JE ZÁLOHA. Ten istý model sa dal brať aj z archívu ÚGKK
+# (`dmr5.yml`) – 198 GB ZIP, v ktorom je raster jedným deflate prúdom, takže
+# sa v ňom nedá skočiť dopredu: platilo tam „čítaj raz a sekvenčne" a výrez na
+# juhu Slovenska stál prechod celým súborom. Tu sú súbory holé, každá dlaždica
+# má vlastnú kompresiu a Range funguje na ľubovoľnom offsete, takže sa číta len
+# to, čo výrez pretína – rádovo minúty namiesto hodín. Odkedy Drive púšťa
+# spoľahlivo, tá druhá cesta sa neoplácala udržiavať a bola zrušená.
+#
+# ČO TO ZNAMENÁ, KEĎ DRIVE NEPUSTÍ: DMR 5.0 sa v tom behu nedoplní vôbec.
+# Nie je to tichý stav – `drive-serve.py` vráti 502 s vysvetlením a beh spadne
+# v sekundách; so zapnutým `ugkk_fallback` prejde na hrubší model (sonny)
+# a atribúcia to povie. Náhradou je nahrať kópiu modelu na iný účet a prepísať
+# `TIF_ID`/`OVR_ID` vo `workers/dmr5-drive.py`.
 #
 # ZDROJ (namerané, nie odhad):
 #   dmr5_etrs89.tif      145,39 GiB  423 518 × 207 589 px, 1 m, LZW, dlaždice 128²

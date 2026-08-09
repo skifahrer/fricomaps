@@ -107,8 +107,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 
 > Tie dva `mirror-dmr5-*` joby sú **dve volania jedného workflowu**
 > (`dmr5-drive.yml`), nie dve pipeline – DMR 5.0 má dve podoby a chýbať môžu
-> naraz. Ten druhý súbor s „DMR 5" v mene, `dmr5.yml`, je **záložný ručný
-> zdroj** na ten istý model a build ho nevolá nikdy.
+> naraz. Iná cesta k tomuto modelu nie je; záloha z archívu ÚGKK bola zrušená.
 
 ### Čo z buildu je v `workers/` a prečo
 
@@ -358,7 +357,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
-| **ÚGKK DMR 5.0** | `dmr5` | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive) | naplniť |
+| **ÚGKK DMR 5.0** | `dmr5` | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#štvrtý-workflow-dmr-50-z-drive-etrs89) | naplniť |
 
 **Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
@@ -1197,166 +1196,22 @@ repozitára. Neznáma farba, neplatný hex, neprepísateľná vlastnosť či
 prehodený rozsah zoomu skončia varovaním a vyhodia sa, takže do zdrojáku sa
 nedostane nič, čo by štýl rozbilo.
 
-## Štvrtý workflow: „DMR 5.0 z archívu ÚGKK (záloha, ručne)"
+## Štvrtý workflow: „DMR 5.0 z Drive (ETRS89)"
 
-> **Dva workflowy s „DMR 5" v mene – ktorý je ktorý.** Build map volá **len**
-> `dmr5-drive.yml` („DMR 5.0 z Drive"), a to dvoma jobmi naraz, lebo model má
-> dve podoby. Tento (`dmr5.yml`) je **záloha na ručné spustenie**: ten istý
-> model z druhého zdroja, pre prípad, že Drive prestane odpovedať alebo treba
-> overiť výšky proti pôvodine. Do releasov `dem-ugkk` a `dem-dmr5` zapisujú
-> rovnaké assety, takže build medzi nimi nevidí rozdiel. Prečo nie jeden
-> workflow, hovorí [ďalšia kapitola](#ten-istý-model-druhá-cesta-dmr-50-z-drive):
-> archív a Drive majú **opačné pravidlá čítania**.
+> **Toto si volá Build map sám**, a to dvoma jobmi naraz, lebo model má dve
+> podoby. Je to **jediná cesta k DMR 5.0**: záloha z archívu ÚGKK (`dmr5.yml`,
+> 198 GB ZIP so sekvenčným čítaním) bola zrušená, keď sa ukázalo, že Drive
+> púšťa spoľahlivo a Range na ľubovoľnom offsete je rádovo lacnejší.
 
-Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
-**197,7 GB** (197 707 257 567 B, zmerané behom 31182614668), S-JTSK [JTSK03],
-výšky Bpv.
-
-Čo je vnútri, prečítal beh 31184095104 (`mode: len plán`):
-
-```
-dmr5_0/dmr5_jtsk03.tif        151,43 GB   celé Slovensko, 1 m, JEDEN raster
-dmr5_0/dmr5_jtsk03.tif.ovr     46,28 GB   prehľadové úrovne (pyramídy)
-dmr5_0/dmr5_jtsk03.tfw                    world file
-dmr5_0/dmr5_jtsk03.tif.aux.xml, .xml      metadáta
-INFO_slk.txt, INFO_eng.txt, 4× PDF        licencie a popis
-prehlad_lokalit_lls_1_cyklus/*.shp …      prehľad lokalít zberu
-```
-
-**Nie sú to výškové body po blokoch, je to jeden súvislý GeoTIFF.** Po
-položkách archívu sa teda deliť nedá – ale deliť netreba.
-
-Toto je jediný workflow v repozitári, ktorý **nesmie stiahnuť svoj vstup**.
-Runner má voľných ~60 GB, artefakt aj asset releasu majú strop 2 GB na súbor.
-Nič z toho sa nedá obísť väčšou trpezlivosťou.
-
-Nemusí sa. GDAL vie otvoriť raster priamo vo vzdialenom ZIPe:
-
-```
-/vsizip//vsicurl/https://opendata.skgeodesy.sk/…/DMR5_0_sjtsk03_bpv.zip/dmr5_0/dmr5_jtsk03.tif
-```
-
-ZIP sa číta cez HTTP Range (centrálny adresár dá offset položky), GeoTIFF je
-dlaždicovaný 512×512 s DEFLATE, takže si GDAL vypýta len tie dlaždice, ktoré
-potrebuje. Na disku nepristane nič.
-
-```
-plan     posledných 128 kB → koniec centrálneho adresára
-         (ZIP64: pri 198 GB sú offsety nad 4 GB, skutočné čísla sú v ZIP64
-          zázname, nie v obyčajnej hlavičke)
-         centrálny adresár → inventár VŠETKÝCH položiek do súhrnu behu
-         → nájde hlavný raster (položka s aspoň polovicou bajtov)
-
-model    16 bajtov hlavičky → kde leží adresár dlaždíc
-         gdalinfo cez /vsizip//vsicurl/ → rozmery, mriežka, CRS, pyramídy
-         celá krajina: JEDEN gdal_translate -tr <grid> -r average
-                       → dem-tiles.py → N49E019.tif → release `dem-dmr5`
-         pohorie:      gdal_translate -projwin (sekvenčne) → gdalwarp
-                       → ugkk-<pohorie>.tif → release `dem-ugkk`
-         → do súhrnu napíše, s čím spustiť Build map
-```
-
-**Formulár má tri polia:** `area` (dropdown – celé Slovensko alebo pohorie
-z `areas.json`), `grid_m` (dropdown) a `mode`. URL archívu je v `env`, release
-a to, ako sa výsledok volá vo výberoch Build map, sa odvodia z územia.
-
-Do augusta 2026 tu bola aj cesta cez rozdelenie archívu na časti (matrix joby,
-`workers/dmr5-chunk.py`, `workers/sjtsk.py`) a k nej šesť ďalších inputov.
-Stála na predpoklade, že archív sú výškové body po blokoch – nie sú, je to
-jeden súvislý raster, takže nebolo čo deliť. Zmazané.
-
-- **Cena čítania je daná pozíciou v súbore.** Položka v ZIPe je zabalená
-  deflate-om a v deflate prúde sa nedá skočiť dopredu – dá sa doň len rozbaliť
-  od začiatku. Zmerané na napodobenine (44 MB ZIP, dlaždicovaný DEFLATE
-  GeoTIFF, vlastný HTTP server s Range): výrez na začiatku rastra 0,5 MB (1 %),
-  výrez na konci 44,1 MB (100 %), celý raster 1 m → 5 m 37,8 MB s `.ovr`
-  a 46,1 MB bez neho. Pri výreze je preto sever lacný a juh drahý.
-- **Jeden prechod, nie viac.** Celá krajina sa prevzorkúva jedným
-  `gdal_translate -tr` a na 1° dlaždice sa krája až hotový malý raster.
-  Krájať dlaždice priamo zo zdroja by stálo N× cestu od začiatku súboru.
-- **Čítať sa musí dopredu.** Výrez ide v dvoch krokoch: `gdal_translate
-  -projwin` sekvenčne na disk, potom `gdalwarp` z disku do WGS84. Warp
-  priamo nad vzdialeným zdrojom si dlaždice pýta v poradí cieľovej mriežky
-  a každý skok späť v deflate prúde znamená rozbaľovanie od začiatku člena.
-  Okno sa pritom oreže na skutočný rozsah rastra – `-projwin` by presah
-  doplnil NULAMI a nula je platná výška, takže by z toho v mape bol pás
-  mora, nie diera.
-- **Pyramídy miesto rastra, keď to ide.** Pri cieli aspoň 2× hrubšom než
-  zdroj sa číta z `.ovr` (46 GB) a nie z hlavného rastra (151 GB). `.ovr` je
-  obyčajný TIFF bez georeferencie – tá sa mu dolepí z rodiča cez VRT.
-  Vyberá sa výslovne, nie s dôverou, že si ho GDAL nájde sám: keby ho
-  neuvidel, prečítal by celý raster a nikto by sa to nedozvedel.
-- **Sidecary sa nesmú schovať.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR`
-  šetrí požiadavky, ale skryje `.ovr` aj `.tfw`. Preto sa tá premenná
-  v `dmr5-raster.py` zámerne NEnastavuje.
-- **Heartbeat každých 30 s.** Prenesené bajty zo sieťovky, rýchlosť, odhad
-  zvyšku a veľkosť výstupu. GDAL kreslí percentá cez `\r`, čo sa v logu
-  GitHub Actions neobjaví, takže hodinový krok je inak úplne ticho a nedá sa
-  odlíšiť od zaseknutého behu.
-- **Najprv 16 bajtov, potom GDAL.** Hlavička TIFFu nesie offset adresára
-  dlaždíc (IFD). Keď je na začiatku, súbor sa otvorí za sekundu; keď je na
-  konci – a zapisovatelia ho tam bežne dávajú – GDAL sa k nemu prehryzie len
-  rozbalením celého člena, teda 151 GB ešte pred prvým pixelom. Nad obyčajným
-  súborom je to jedno, `fseek` na koniec je zadarmo; v deflate člene ZIPu nie.
-  Behy 31191478190 a 31197330753 sa zasekli presne tu; ten druhý po 87
-  minútach ticha skončil s `Terminate orphan process: pid (2977) (gdalinfo)`,
-  teda `gdalinfo` stále bežal a nedostal sa ani k prvému pixelu. Teraz sa
-  offset IFD hlavného rastra aj `.ovr` prečíta a vypíše ako prvé, `gdalinfo`
-  má strop (`--probe-timeout`, predvolene 15 min) a beží pod ním heartbeat.
-- **Keď sa hlavný raster neotvorí, ide sa cez pyramídy.** `.ovr` má 46 GB
-  namiesto 151 GB. Georeferencia sa poskladá z `.tfw` (veľkosť pixela ×
-  pomer zmenšenia, ten istý ľavý horný roh) – z rodiča prísť nemôže, ten sa
-  neotvára. Overené, že to dá rovnaký `geoTransform` aj rovnaké výšky ako
-  cesta cez rodiča. Cena je rozlíšenie: z pyramíd je najjemnejšie 2 m.
-  Pri hľadaní sidecarov sa skúšajú obe konvencie – `.tif.ovr` (prípona sa
-  pridá) aj `.tfw` (prípona sa nahradí); world file je vždy ten druhý prípad.
-- **Sonda ide bez sidecarov.** `GDAL_DISABLE_READDIR_ON_OPEN=EMPTY_DIR` len
-  pri sonde: keby bol drahý niektorý zo sidecarov (`.ovr` má 46 GB), vyzeralo
-  by to ako problém hlavného súboru. Keď sa ukáže, že raster nemá
-  georeferenciu v sebe, sonda sa zopakuje aj so sidecarmi (`.tfw`,
-  `.aux.xml`).
-- **Rozlíšenie stropuje release, nie zdroj.** Pri 1 m má jedna 1°×1° dlaždica
-  ~48 GB, takže celé Slovensko ide na 5 m (`dem-dmr5`) a plné metrové
-  rozlíšenie sa robí na výrez (`dem-ugkk`, jeden COG). Celé Slovensko pod 3 m
-  workflow odmietne v prvej minúte, nie po ôsmich hodinách.
-- **Inventár je hlavný výstup prvého behu.** `mode: len plán` vypíše do súhrnu
-  všetky mená, veľkosti a spôsob kompresie (uložené vs deflate) a zoznam
-  priečinkov. Nič sa nefiltruje podľa prípon – ten filter v prvej verzii ticho
-  zahodil 16 z 19 súborov a v logu nebolo ani jedno meno, takže sa nedalo
-  zistiť, že archív je v skutočnosti jeden raster.
-- **Územie vyberá dropdown, nie písanie.** `area` je `choice` s tými istými
-  pohoriami ako `workers/areas.json`; lint to stráži, aby sa zoznamy
-  nerozišli. Z výberu sa odvodí mriežka, release aj kľúč zdroja pre Build
-  map – nemá zmysel, aby ich vypĺňal človek, keď z územia jednoznačne
-  vyplývajú.
-
-Kód: [`workers/zip-remote.py`](../workers/zip-remote.py) (čítanie vzdialeného
-ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (inventár archívu)
-a [`workers/dmr5-raster.py`](../workers/dmr5-raster.py) (samotný model).
-
-**Tento workflow sa nespúšťa sám a Build map ho nevolá.** Model si build
-dopĺňa z Drive (kapitola nižšie); táto cesta je záloha, ktorú pustíš vedome –
-198 GB a hodiny sekvenčného čítania nemajú byť vedľajší účinok buildu mapy.
-
-### Ten istý model, druhá cesta: „DMR 5.0 z Drive"
-
-DMR 5.0 existuje aj v **ETRS89 verzii a mimo ZIPu** – dva holé BigTIFFy na
-Google Drive. Plní tie isté dva release (`dem-ugkk`, `dem-dmr5`) a rovnakým
-formátom, takže `fetch-dem.sh` ani `Build map` o ňom nemusia vedieť.
+DMR 5.0 leží na Google Drive ako **dva holé BigTIFFy**. Plní dva release
+(`dem-ugkk`, `dem-dmr5`), takže `fetch-dem.sh` ani `Build map` nemusia vedieť,
+odkiaľ dáta prišli.
 
 ```
 dmr5_etrs89.tif      145,39 GiB   423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
 dmr5_etrs89.tif.ovr   43,35 GiB   pyramídy 2, 4, 8, 16, 32, 64, 128, 256 m
 CRS EPSG:3046 (ETRS89 / TM zone N34), origin X 191 148, Y 5 497 220
 ```
-
-**Prečo je to iný workflow a nie ďalší input.** Celý `dmr5-raster.py` stojí
-na pravidle „čítaj raz a sekvenčne", lebo v ZIPe je raster jedným deflate
-prúdom a skok späť znamená rozbaľovanie od začiatku. Tu to pravidlo neplatí:
-každá dlaždica má vlastnú kompresiu a Range funguje na ľubovoľnom offsete,
-takže výrez stojí podľa počtu dlaždíc, ktoré pretína, a nie podľa toho, ako
-ďaleko v súbore leží. Zliať dva job grafy s opačnými pravidlami do jedného by
-znamenalo, že polovica komentárov v ňom vždy klame.
 
 Tri veci, ktoré ten workflow rieši, a všetky sú zmerané:
 

@@ -91,20 +91,27 @@ nesmie ticho nechať elipsoidické výšky (`ERROR_ON_MISSING_VERT_SHIFT=YES`).
 Keď sa použije náhradný model, `dem-source.txt` musí niesť, čo sa NAOZAJ
 použilo.
 
-## DMR 5.0: dva workflowy, ktoré nie sú duplikát
+## DMR 5.0: jeden workflow, dva joby
 
-Toto mätie najčastejšie, tak nech je to na jednom mieste:
+Model je na Google Drive ako dva holé BigTIFFy a berie sa **len odtiaľ**:
 
 | súbor | meno v Actions | volá to Build map? |
 |---|---|---|
 | `dmr5-drive.yml` | DMR 5.0 z Drive (ETRS89) | **áno**, a to **dvoma jobmi** |
-| `dmr5.yml` | DMR 5.0 z archívu ÚGKK (záloha, ručne) | **nie, nikdy** |
 
-Je to **ten istý model z dvoch zdrojov s opačnými pravidlami čítania**: archív
-ÚGKK je ZIP, v ktorom je raster jedným deflate prúdom (nedá sa skočiť dopredu →
-„čítaj raz a sekvenčne"), kým na Drive sú holé BigTIFFy s Range na ľubovoľnom
-offsete (číta sa len to, čo výrez pretína). Zliať ich do jedného job grafu by
-znamenalo, že polovica pravidiel v ňom vždy klame.
+Kedysi k tomu bola záloha z archívu ÚGKK (`dmr5.yml`): ten istý model, ale
+198 GB ZIP, v ktorom je raster jedným deflate prúdom – nedá sa v ňom skočiť
+dopredu, takže platilo „čítaj raz a sekvenčne" a výrez na juhu Slovenska stál
+prechod celým súborom. Na Drive sú súbory holé, Range funguje na ľubovoľnom
+offsete a číta sa len to, čo výrez pretína. **Tá záloha je zrušená** – odkedy
+Drive púšťa spoľahlivo, neoplácalo sa udržiavať druhú cestu s opačnými
+pravidlami.
+
+**Keď Drive nepustí, DMR 5.0 sa v tom behu nedoplní** – a nesmie to byť tiché:
+`drive-serve.py` vráti 502 s vysvetlením, beh spadne v sekundách a so zapnutým
+`ugkk_fallback` prejde na hrubší model, čo `dem-source.txt` aj atribúcia
+povedia. Náhrada je nahrať kópiu na iný účet a prepísať `TIF_ID`/`OVR_ID`
+vo `workers/dmr5-drive.py`.
 
 Tie **dva joby** sú `mirror-dmr5-area` a `mirror-dmr5-tiles` – dve volania
 jedného workflowu, lebo DMR 5.0 má dve podoby a chýbať môžu naraz:
