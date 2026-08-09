@@ -784,10 +784,13 @@ Klient je typu *Desktop app* z Google Cloud Console, rozsah práv iba
 byť „In production"** — v „Testing" platí refresh token 7 dní a pipeline by
 raz do týždňa spadla; pri type *Internal* (Workspace) to neplatí.
 
-**Bez počítača** sa token vyrobí z telefónu cez Google OAuth Playground
-(nesmie sa vyrábať v behu Actions — logy public repozitára vidí ktokoľvek).
-Secret vtedy prijme namiesto JSONu aj tri riadky `client_id=…`,
-`client_secret=…`, `refresh_token=…`, aby sa na mobile neskladali zátvorky.
+**Bez počítača** to spraví workflow *Prihlásenie na Drive (jednorazové)*
+([`drive-login.yml`](.github/workflows/drive-login.yml)): prehliadač je
+telefón, shell je runner. Token sa v ňom **nikde nevypíše** — log public
+repozitára vidí ktokoľvek — ide zo súboru rovno do secretu `DRIVE_REFRESH`.
+Prihlásenie sa dá podať aj po troch secretoch (`DRIVE_CLIENT`, `DRIVE_SECRET`,
+`DRIVE_REFRESH`), lebo `client_secret` Google druhýkrát neukáže; nekompletná
+trojica je chyba a `Lint workflows` ju zachytí.
 
 Bez secretu sa nemení nič, len sa v každom behu výslovne vypíše, že platí
 verejný limit. Podrobne (aj kam všade sa ten secret musí dostať, aj postup

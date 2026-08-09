@@ -40,35 +40,16 @@ omylu, na ktorý sa potom pol dňa čaká.
      vyzdvihne z prostredia.
 
 BEZ POČÍTAČA (z telefónu). `--login` potrebuje prehliadač a loopback server na
-tom istom stroji, takže na telefóne nepobeží. Token sa NESMIE vyrobiť ani
-v behu Actions: v public repozitári vidí logy behov ktokoľvek, takže by bol
-verejný. Cesta, pri ktorej token nikdy neopustí prehliadač telefónu, vedie cez
-Googlom hostovaný OAuth Playground:
+tom istom stroji, takže na telefóne nepobeží. Na to je workflow
+`.github/workflows/drive-login.yml`, ktorý tú rolu rozdelí: **prehliadač je
+telefón, shell je runner**. Token sa v ňom nikde nevypíše – v public
+repozitári vidí log behu ktokoľvek – ide z `--exchange` do súboru s právami
+600 a z neho rovno do secretu. Celý postup je v hlavičke toho workflowu.
+Secrety sa tam volajú `DRIVE_CLIENT` / `DRIVE_SECRET` / `DRIVE_REFRESH`, čiže
+druhá trojica z `TRIOS` nižšie.
 
-  1. V Console vyrob DRUHÉHO klienta, typ **Web application**, a do
-     „Authorized redirect URIs" daj presne
-     `https://developers.google.com/oauthplayground`. (Ten prvý, „Desktop
-     app", to nedovolí – smie mať len loopback.)
-  2. Na telefóne otvor `https://developers.google.com/oauthplayground`,
-     v ozubenom kolese zapni **Use your own OAuth credentials** a vlož
-     `client_id` a `client_secret` toho web klienta. *Access type:* **Offline**
-     a *Force prompt:* **Consent** – bez toho refresh token nepríde.
-  3. Do „Input your own scopes" vlož
-     `https://www.googleapis.com/auth/drive.readonly` → *Authorize APIs* →
-     prihlás sa účtom, ktorý DMR 5.0 **vlastní** → povoľ.
-  4. *Exchange authorization code for tokens* → na obrazovke je **Refresh
-     token**.
-  5. Do secretu **GDRIVE_CREDENTIALS** vlož tri riadky (JSON sa na mobile
-     skladať nemusí, `parse_creds` berie oboje):
-
-         client_id=…apps.googleusercontent.com
-         client_secret=GOCSPX-…
-         refresh_token=1//…
-
-Do secretu patria údaje TOHO klienta, ktorým si token vyrobil: refresh token
-platí len pre pár, ktorý ho vydal. Čiže keď si ho vyrobil v Playgrounde web
-klientom, do secretu idú `client_id`/`client_secret` toho **web** klienta, nie
-toho desktopového.
+Do secretov patria údaje TOHO klienta, ktorým bol token vyrobený: refresh
+token platí len pre pár, ktorý ho vydal.
 
 ROZSAH PRÁV je `drive.readonly`: pipeline z Drive iba číta. Zapisovať tam
 nemá čo a token, ktorý nemôže nič zmazať, sa dá aj oveľa pokojnejšie nechať
@@ -129,6 +110,15 @@ SCOPE = "https://www.googleapis.com/auth/drive.readonly"
 RENEW_BEFORE_S = 300
 
 KEYS = ("client_id", "client_secret", "refresh_token")
+
+# Tá istá trojica, dve pomenovania. Prvé hovorí samo za seba; druhé je to,
+# ktoré už leží v secrets tohto repozitára – prepisovať ho z telefónu by bola
+# zbytočná robota a `client_secret` Google druhýkrát neukáže, takže by sa
+# nemusel mať odkiaľ vziať.
+TRIOS = (
+    ("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET", "GDRIVE_REFRESH_TOKEN"),
+    ("DRIVE_CLIENT", "DRIVE_SECRET", "DRIVE_REFRESH"),
+)
 
 
 class AuthError(RuntimeError):
@@ -347,6 +337,10 @@ def from_env(env=None):
     raw = (env.get("GDRIVE_CREDENTIALS") or "").strip()
     path = (env.get("GDRIVE_CREDENTIALS_FILE") or "").strip()
     data, source = None, None
+    # Čo chýba, sa má pomenovať tak, ako to treba doplniť v Settings → Secrets
+    # – nie vnútorným kľúčom. „Chýba refresh_token" pošle človeka hľadať, „chýba
+    # DRIVE_REFRESH" povie, čo pridať.
+    as_named = None
     if raw:
         source = "secret GDRIVE_CREDENTIALS"
         data = parse_creds(raw, source)
@@ -357,24 +351,120 @@ def from_env(env=None):
         with open(path) as f:
             data = _flatten(json.load(f), source)
     else:
-        trio = {k: (env.get("GDRIVE_" + k.upper()) or "").strip() for k in KEYS}
-        if any(trio.values()):
-            source = "premenné GDRIVE_CLIENT_ID / GDRIVE_CLIENT_SECRET / " \
-                     "GDRIVE_REFRESH_TOKEN"
-            data = trio
+        # Hľadá sa ÚPLNÁ trojica; nekompletná sa zapamätá len na to, aby sa
+        # dalo povedať, čo v nej chýba. Inak by nastavená polovica jedného
+        # pomenovania zatienila celé druhé.
+        partial = None
+        for names in TRIOS:
+            vals = {k: (env.get(n) or "").strip() for k, n in zip(KEYS, names)}
+            named = dict(zip(KEYS, names))
+            label = "secrets " + " / ".join(names)
+            if all(vals.values()):
+                source, data, as_named = label, vals, named
+                break
+            if any(vals.values()) and partial is None:
+                partial = (label, vals, named)
+        else:
+            if partial:
+                source, data, as_named = partial
     if data is None:
         return None
-    missing = [k for k in KEYS if not data.get(k)]
+    missing = [(as_named or {}).get(k, k) for k in KEYS if not data.get(k)]
     if missing:
+        extra = ""
+        if missing == ["DRIVE_REFRESH"] or missing == ["refresh_token"]:
+            # Toto je ten najčastejší stav: `client_id`/`client_secret` sú
+            # identita APLIKÁCIE, nie povolenie k dátam. Refresh token vzniká
+            # jedine tým, že sa vlastník v prehliadači prihlási a povolí to –
+            # v pipeline sa vyrobiť nedá ani teoreticky.
+            extra = (" Refresh token je to, čo z klienta robí prihlásenie: "
+                     "client_id a client_secret sú len identita aplikácie. "
+                     "Vyrobí sa `python3 workers/drive-auth.py --login`, "
+                     "alebo z telefónu cez Google OAuth Playground (postup "
+                     "v hlavičke workers/drive-auth.py).")
         raise AuthError(
             f"{source} nemá {', '.join(missing)}. Prihlásenie s polovicou "
             "údajov nefunguje a verejný odkaz použiť nemôžem – to by bol tichý "
-            "návrat k dennému limitu. Doplň ich, alebo secret zmaž celý.")
+            f"návrat k dennému limitu.{extra}")
     return Credentials(data["client_id"], data["client_secret"],
                        data["refresh_token"], source)
 
 
 # ---------- kto som a čo vidím ----------
+
+def client_from_env(env=None):
+    """Len `client_id` a `client_secret` – to, čo je známe PRED tokenom.
+
+    `from_env()` sa na to použiť nedá: ten (správne) žiada úplnú trojicu, kým
+    tu sa refresh token práve vyrába a ešte neexistuje.
+    """
+    env = os.environ if env is None else env
+    raw = (env.get("GDRIVE_CREDENTIALS") or "").strip()
+    pair, source = ("", ""), "prostredie"
+    if raw:
+        data = parse_creds(raw, "secret GDRIVE_CREDENTIALS")
+        pair = (data.get("client_id", ""), data.get("client_secret", ""))
+        source = "secret GDRIVE_CREDENTIALS"
+    else:
+        for names in TRIOS:
+            got = ((env.get(names[0]) or "").strip(),
+                   (env.get(names[1]) or "").strip())
+            if any(got):
+                pair, source = got, f"secrets {names[0]} / {names[1]}"
+            if all(got):
+                break
+    if not all(pair):
+        raise AuthError(
+            f"Chýba client_id alebo client_secret ({source}). Vlož ich do "
+            f"secrets ako {TRIOS[1][0]} a {TRIOS[1][1]} – vyrobia sa v Google "
+            "Cloud Console → Credentials → OAuth client ID.")
+    return pair[0], pair[1], source
+
+
+def code_from(text):
+    """Kód z toho, čo sa dá skopírovať z prehliadača.
+
+    Berie aj celú adresu, na ktorej prehliadač skončil – po potvrdení totiž
+    Google presmeruje na `http://127.0.0.1:…/?code=…`, čo sa nemá kde otvoriť
+    a v telefóne z toho ostane len adresný riadok. Prilepený `#` alebo
+    medzery z kopírovania sú bežné, tak sa odstrihnú.
+    """
+    text = (text or "").strip().strip("<>\"'")
+    if "code=" in text:
+        q = urllib.parse.parse_qs(urllib.parse.urlsplit(text).query
+                                  or text.split("?", 1)[-1])
+        got = (q.get("code") or [""])[0]
+        if got:
+            return got
+        raise AuthError(f"V tom, čo si vložil, je `code=`, ale prázdne. "
+                        f"Skopíruj celú adresu, na ktorej prehliadač skončil.")
+    if text.startswith("http"):
+        raise AuthError(
+            "V tej adrese nie je `code=`. Keď je v nej `error=access_denied`, "
+            "prihlásenie si zamietol; keď `error=admin_policy_enforced`, účet "
+            "nie je v tej istej organizácii ako OAuth appka.")
+    if not text or " " in text:
+        raise AuthError("Nedostal som kód. Vlož celú adresu, na ktorej "
+                        "prehliadač po potvrdení skončil (je v nej `?code=…`).")
+    return text
+
+
+def exchange_to_file(code, redirect_uri, out, env=None):
+    """Kód → refresh token do SÚBORU, nie na výstup.
+
+    Do súboru zámerne: v public repozitári vidí log behu ktokoľvek, takže
+    token sa nesmie ocitnúť ani v `echo`. Volajúci ho z toho súboru pošle
+    rovno do secretu a súbor zmaže.
+    """
+    client_id, client_secret, source = client_from_env(env)
+    data = exchange(client_id, client_secret, code_from(code), redirect_uri)
+    creds = Credentials(client_id, client_secret, data["refresh_token"], source)
+    user = whoami(creds)
+    with open(out, "w") as f:
+        f.write(data["refresh_token"])
+    os.chmod(out, 0o600)
+    return creds, user
+
 
 def whoami(creds):
     """Účet, ktorým sme prihlásení. Vyplní aj `creds.email`."""
@@ -589,6 +679,17 @@ def main():
     ap.add_argument("--client-secret", default="")
     ap.add_argument("--port", type=int, default=0,
                     help="port loopbacku pri --login (predvolene 8731)")
+    ap.add_argument("--auth-url", action="store_true",
+                    help="vypíš odkaz na prihlásenie (client_id z prostredia)")
+    ap.add_argument("--exchange", action="store_true",
+                    help="kód z prehliadača → refresh token do --out")
+    ap.add_argument("--code", default="",
+                    help="pri --exchange: kód, alebo celá adresa s `?code=…`")
+    ap.add_argument("--redirect-uri", default="",
+                    help="musí byť rovnaké ako pri --auth-url "
+                         "(predvolene http://127.0.0.1:8731)")
+    ap.add_argument("--out", default="",
+                    help="pri --exchange: súbor pre refresh token")
     ap.add_argument("--check", action="store_true",
                     help="povedz, ktorým účtom sa číta (a či naň vidí)")
     ap.add_argument("--file", action="append", metavar="ID",
@@ -597,7 +698,23 @@ def main():
                     help="vypíš access token (len lokálne, do curlu)")
     args = ap.parse_args()
 
+    redirect_uri = args.redirect_uri or f"http://127.0.0.1:{args.port or 8731}"
     try:
+        if args.auth_url:
+            client_id, _secret, source = client_from_env()
+            print(f"client_id z {source}", file=sys.stderr)
+            print(auth_url(client_id, redirect_uri))
+            return 0
+        if args.exchange:
+            if not args.out:
+                print("::error::--exchange potrebuje --out: token sa nevypisuje "
+                      "na výstup, aby neskončil v logu behu.")
+                return 2
+            creds, user = exchange_to_file(args.code, redirect_uri, args.out)
+            print(f"Prihlásené ako {user.get('emailAddress')} "
+                  f"({user.get('displayName')}).")
+            print(f"Refresh token je v {args.out} – nikde inde a nevypisuje sa.")
+            return 0
         if args.login:
             return do_login(args)
         if args.print_token:

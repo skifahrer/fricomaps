@@ -1,0 +1,165 @@
+name: Prihlásenie na Drive (jednorazové)
+
+# Vyrobí refresh token vlastníka dát na Google Drive a ULOŽÍ HO PRIAMO DO
+# SECRETU. Spúšťa sa raz – potom už len keby účet prístup odvolal.
+#
+# PREČO EXISTUJE: `workers/drive-auth.py --login` potrebuje prehliadač
+# a loopback server na tom istom stroji, čiže z telefónu sa spustiť nedá.
+# Tento workflow tú rolu rozdelí: prehliadač je telefón, shell je runner.
+#
+# PREČO SA TOKEN NIKDE NEVYPISUJE. Tento repozitár je PUBLIC, takže log behu,
+# súhrn aj artefakty vidí ktokoľvek na internete – a refresh token je čítací
+# prístup na CELÝ Drive vlastníka. Preto sa token z `drive-auth.py` nikdy
+# nedostane na výstup: zapíše sa do súboru s právami 600 a z neho rovno do
+# secretu cez `gh secret set`. V logu ostane len e-mail účtu a či na oba
+# súbory vidí. Ani ty ho neuvidíš – netreba ho vidieť.
+#
+# TO POSLEDNÉ SI ŽIADA JEDNO PRÁVO, ČO `GITHUB_TOKEN` NEMÁ: zapísať secret.
+# `secrets: write` nie je v jeho rozsahu (a ani sa doň pridať nedá), takže
+# treba dočasný fine-grained PAT v secrete `DRIVE_PAT`:
+#
+#   GitHub → Settings → Developer settings → Personal access tokens
+#     → Fine-grained tokens → Generate new token
+#     Repository access:      Only select repositories → fricomaps
+#     Repository permissions: Secrets → Read and write   (nič iné netreba)
+#     Expiration:             7 dní stačí
+#   → hodnotu vlož ako repository secret DRIVE_PAT
+#
+# Po úspešnom behu DRIVE_PAT zmaž – workflow to na konci aj pripomenie.
+#
+# ČO TREBA MAŤ PRIPRAVENÉ (jedno aj druhé sa dá spraviť z telefónu):
+#   DRIVE_CLIENT   client_id  OAuth klienta typu „Desktop app"
+#   DRIVE_SECRET   client_secret toho istého klienta
+#   DRIVE_PAT      ten PAT vyššie
+#
+# AKO TO IDE (dva behy tohto workflowu):
+#   1. spusti bez vyplneného `code` → v súhrne behu je odkaz na prihlásenie
+#   2. odkaz otvor v telefóne, prihlás sa účtom, ktorý DMR 5.0 VLASTNÍ, povoľ
+#   3. prehliadač skončí na `http://127.0.0.1:8731/?code=…` a nemá to kde
+#      otvoriť („Safari nemôže otvoriť stránku") – to je v poriadku, tá adresa
+#      je celý zmysel kroku. Skopíruj ju z adresného riadku celú.
+#   4. spusti tento workflow znova a tú adresu vlož do `code`
+#
+# Kód z Google platí pár minút a je JEDNORAZOVÝ: keď druhý beh spadne na
+# `invalid_grant`, nie je to chyba nastavenia – len začni znova od kroku 1.
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: "Adresa s ?code=… z prehliadača (prázdne = daj mi odkaz na prihlásenie)"
+        required: false
+        default: ""
+        type: string
+      secret_name:
+        description: "Do ktorého secretu token zapísať"
+        required: false
+        default: DRIVE_REFRESH
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # Dva behy naraz by si vymieňali kód, ktorý je jednorazový.
+  group: drive-login
+  cancel-in-progress: false
+
+jobs:
+  login:
+    name: Refresh token vlastníka Drive
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # PRVÝ BEH SKONČÍ TU. Odkaz sa skladá z `client_id` v secrete, aby sa
+      # nič neprepisovalo ručne – a je v súhrne, nie v logu, lebo v súhrne sa
+      # dá na telefóne kliknúť.
+      - name: Odkaz na prihlásenie
+        if: ${{ inputs.code == '' }}
+        run: |
+          set -euo pipefail
+          URL=$(python3 workers/drive-auth.py --auth-url)
+          {
+            echo "## Prihlás sa na Drive"
+            echo
+            echo "1. Otvor **[tento odkaz]($URL)** a prihlás sa účtom, ktorý DMR 5.0 na Drive **vlastní**."
+            echo "2. Neoverenú appku preklikaj cez „Advanced → Go to … (unsafe)“."
+            echo "3. Prehliadač skončí na adrese \`http://127.0.0.1:8731/?code=…\`,"
+            echo "   ktorú nemá kde otvoriť – **to je správne**. Skopíruj ju z adresného riadku celú."
+            echo "4. Spusti tento workflow znova a tú adresu vlož do políčka \`code\`."
+            echo
+            echo "Kód v tej adrese platí pár minút a dá sa použiť raz."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Odkaz je v súhrne behu (Summary)."
+
+      # Bez práva zapísať secret by beh token vyrobil a nemal ho kam dať –
+      # a vypísať ho v public repozitári nesmie. Nech to padne TU, pred
+      # výmenou kódu, kým je kód ešte použiteľný na ďalší pokus.
+      - name: Skontroluj právo zapísať secret
+        if: ${{ inputs.code != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.DRIVE_PAT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::Chýba secret DRIVE_PAT. Bez práva zapísať secret by som token vyrobil a nemal ho kam dať – a vypísať ho nesmiem, lebo log tohto public repozitára vidí ktokoľvek. Rozpis, aký PAT treba, je v hlavičke .github/workflows/drive-login.yml."
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/actions/secrets/public-key" >/dev/null
+          echo "PAT vie so secrets tohto repozitára pracovať ✓"
+
+      - name: Vymeň kód za refresh token
+        if: ${{ inputs.code != '' }}
+        env:
+          # Cez `env`, nie rozvinuté do príkazu: v tom, čo sa vloží do
+          # formulára, môže byť čokoľvek a v `run:` by to bol kus shellu.
+          CODE: ${{ inputs.code }}
+        run: |
+          set -euo pipefail
+          python3 workers/drive-auth.py --exchange \
+            --code="$CODE" --out=refresh-token.txt
+
+      - name: Zapíš ho do secretu
+        if: ${{ inputs.code != '' }}
+        env:
+          GH_TOKEN: ${{ secrets.DRIVE_PAT }}
+          NAME: ${{ inputs.secret_name }}
+        run: |
+          set -euo pipefail
+          # Hodnota ide do `gh` po stdine zo súboru – nie cez argument ani
+          # `echo`, aby sa neocitla ani v `set -x`, ani v zozname procesov.
+          gh secret set "$NAME" --repo "$GITHUB_REPOSITORY" < refresh-token.txt
+          echo "Secret $NAME je nastavený ✓"
+
+      # Overenie tým istým kódom, ktorým sa potom prihlasuje celá pipeline –
+      # nie druhou implementáciou toho istého. Token sa podáva z toho súboru
+      # a nie zo secretu: ten sa v už bežiacom behu ešte neprejaví.
+      - name: Over, že tým účtom sa dá čítať
+        if: ${{ inputs.code != '' }}
+        env:
+          DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
+        run: |
+          set -euo pipefail
+          DRIVE_REFRESH="$(cat refresh-token.txt)" \
+            python3 workers/dmr5-drive.py --auth-check
+
+      - name: Ukliď a povedz, čo ešte
+        if: ${{ always() && inputs.code != '' }}
+        run: |
+          set -uo pipefail
+          shred -u refresh-token.txt 2>/dev/null || rm -f refresh-token.txt
+          {
+            echo "## Čo ešte spraviť"
+            echo
+            echo "1. **Zmaž secret \`DRIVE_PAT\`** – už netreba a je to právo zapisovať secrets."
+            echo "2. Skús \`DMR 5.0 z Drive (ETRS89)\` v režime *len sonda*: krok"
+            echo "   *Prihlásenie na Drive* má vypísať tvoj účet a pri oboch súboroch \`✓\`."
+            echo
+            echo "Token je len v secrete \`${{ inputs.secret_name }}\`; v tomto behu nikde neostal."
+          } >> "$GITHUB_STEP_SUMMARY"

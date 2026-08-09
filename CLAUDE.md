@@ -109,9 +109,11 @@ pravidlami.
 
 **Číta sa prihlásený ako vlastník dát.** Verejný odkaz má denný limit
 sťahovania na súbor a ten zdieľajú všetci, kto naň siahnu; token vlastníka
-v secrete `GDRIVE_CREDENTIALS` ho posúva rádovo vyššie. Drží ho
-`workers/drive-auth.py` (`--login` vyrobí, `dmr5-drive.py --auth-check`
-overí), musí sa dostať do `dmr5-drive.yml` aj do jobov `contours`/`rocks`
+v secrete `GDRIVE_CREDENTIALS` (alebo po troch: `DRIVE_CLIENT`/`DRIVE_SECRET`/
+`DRIVE_REFRESH`) ho posúva rádovo vyššie. Drží ho `workers/drive-auth.py`
+(`--login` z počítača, `drive-login.yml` z telefónu – tam sa token nikde
+nevypíše, lebo log public repozitára vidí ktokoľvek; `dmr5-drive.py
+--auth-check` overí), musí sa dostať do `dmr5-drive.yml` aj do jobov `contours`/`rocks`
 v `build-map.yml` – skaly z `dmr5` čítajú sklon rovno z Drive – a `Lint
 workflows` to stráži. Bez secretu sa nemení nič, len sa výslovne vypíše, že
 platí verejný limit.
