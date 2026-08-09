@@ -286,6 +286,114 @@ jobs:
           print(f"výber pohorí v shading-rocks.yml sedí ({len(opts)} položiek)")
           PY
 
+      # KTORÁ VRSTVA PODÁVA KĽÚČ VÝREZU. Na tomto sa build už raz rozbil
+      # (beh 31307163093) a je to tichý druh chyby, lebo obe strany vyzerajú
+      # správne samy o sebe.
+      #
+      # `dmr5` má dve podoby a prepína medzi nimi kľúč výrezu, ktorý vrstva
+      # podá do `fetch-dem.sh`: s kľúčom výrez z `dem-ugkk`, bez neho dlaždice
+      # z `dem-dmr5`. Kontrola v `workers/check-dem.sh` musí o každej vrstve
+      # predpokladať presne to, čo tá vrstva naozaj robí – inak build kontroluje
+      # jeden release a sťahuje z druhého.
+      #
+      # Tabuľka `layer_area_key` v check-dem.sh hovorí, ktorá vrstva kľúč podáva.
+      # Tu sa porovná s tým, koľko argumentov naozaj dáva každé volanie
+      # `fetch-dem.sh`: 5 = s kľúčom výrezu, 4 = bez neho.
+      - name: Vrstvy podávajú kľúč výrezu tak, ako to čaká kontrola
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, sys
+          # Kde je volanie a ktorej vrstve patrí. Keď pribudne ďalšie, pridaj
+          # ho sem aj do `layer_area_key` v workers/check-dem.sh.
+          CALLS = {
+              "workers/contours-build.sh": ("contours", "rocks"),
+              ".github/workflows/build-map.yml": ("terrain",),
+          }
+          # Vrstvy, o ktorých check-dem.sh tvrdí, že kľúč NEpodávajú.
+          src = open("workers/check-dem.sh").read()
+          m = re.search(r"layer_area_key\(\)\s*\{(.*?)\n\}", src, re.S)
+          if not m:
+              print("::error file=workers/check-dem.sh::`layer_area_key` sa nenašla")
+              sys.exit(1)
+          bez_kluca = set(re.findall(r"^\s*([a-z|]+]?)\)\s*echo cely\s*;;",
+                                     m.group(1), re.M))
+          bez_kluca = {v for entry in bez_kluca for v in entry.strip(")").split("|")}
+
+          bad = 0
+          for path, layers in CALLS.items():
+              # Komentáre preč – tento súbor sám o `fetch-dem.sh` píše a bez
+              # toho by sa veta z komentára počítala ako argumenty.
+              txt = re.sub(r"^[ \t]*#.*$", "", open(path).read(), flags=re.M)
+              # Riadok s volaním aj s prípadným pokračovaním cez `\`.
+              calls = re.findall(r"workers/fetch-dem\.sh((?:[^\n\\]|\\\n)*)", txt)
+              calls = [c for c in calls if c.strip()]
+              if not calls:
+                  print(f"::error file={path}::volanie fetch-dem.sh sa nenašlo")
+                  bad += 1
+                  continue
+              for call in calls:
+                  nargs = len(call.replace("\\\n", " ").split())
+                  poda = nargs >= 5   # bbox, adresár, tsv, zdroj, kľúč výrezu
+                  for layer in layers:
+                      caka = layer not in bez_kluca
+                      if poda != caka:
+                          print(f"::error file={path}::vrstva `{layer}` volá "
+                                f"fetch-dem.sh s {nargs} argumentmi (kľúč výrezu "
+                                f"{'podáva' if poda else 'nepodáva'}), ale "
+                                f"workers/check-dem.sh o nej predpokladá, že ho "
+                                f"{'podáva' if caka else 'nepodáva'}. Zosúlaď to – "
+                                f"inak build kontroluje jeden release a sťahuje "
+                                f"z druhého (beh 31307163093).")
+                          bad += 1
+          print(f"vrstiev bez kľúča výrezu podľa check-dem.sh: "
+                f"{sorted(bez_kluca)}; nesúladov: {bad}")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # DMR 5.0 sa nedá doplniť cez `update-dem.yml` – ten sťahuje archív na
+      # runner a model má 145 GB. Kým sa tam `dmr5` posielal, doplnenie bolo
+      # tiché nič: job zazelenal, nestiahol nič a build spadol až v jobe, ktorý
+      # si model vypýtal. Tu sa stráži, že tá cesta ostane zavretá z oboch strán.
+      - name: DMR 5.0 sa dopĺňa vlastnou pipeline
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, sys, yaml
+          bad = 0
+
+          # 1. update-dem.yml musí na `dmr5` skončiť chybou, nie úspechom.
+          txt = open(".github/workflows/update-dem.yml").read()
+          m = re.search(r"^\s*dmr5\)(.*?);;", txt, re.S | re.M)
+          if not m or "::error::" not in m.group(1) or "exit 1" not in m.group(1):
+              print("::error file=.github/workflows/update-dem.yml::vetva `dmr5` "
+                    "musí skončiť chybou – doplnenie, ktoré nedopĺňa, nesmie "
+                    "zazelenať (beh 31307163093).")
+              bad += 1
+
+          # 2. dmr5-drive.yml musí byť volateľný a brať to, čo mu Build map dáva.
+          d = yaml.safe_load(open(".github/workflows/dmr5-drive.yml"))
+          on = d[[k for k in d if k is True or k == "on"][0]]
+          call = (on.get("workflow_call") or {}).get("inputs") or {}
+          bm = yaml.safe_load(open(".github/workflows/build-map.yml"))
+          for name, job in (bm.get("jobs") or {}).items():
+              if job.get("uses") != "./.github/workflows/dmr5-drive.yml":
+                  continue
+              for key in (job.get("with") or {}):
+                  if key not in call:
+                      print(f"::error file=.github/workflows/build-map.yml::job "
+                            f"'{name}' podáva `{key}`, ktoré dmr5-drive.yml "
+                            f"v `workflow_call` nemá")
+                      bad += 1
+          if not any(j.get("uses") == "./.github/workflows/dmr5-drive.yml"
+                     for j in (bm.get("jobs") or {}).values()):
+              print("::error file=.github/workflows/build-map.yml::DMR 5.0 nemá "
+                    "kto doplniť – žiadny job nevolá dmr5-drive.yml")
+              bad += 1
+          print(f"cesta k DMR 5.0: {bad} chýb")
+          sys.exit(1 if bad else 0)
+          PY
+
       # To isté pre tri výbery výškového zdroja (`contour_source`,
       # `rock_source`, `shading_source`): musia sedieť s kľúčmi
       # v workers/dem-sources.json a s tým, pre ktoré vrstvy sa zdroj ponúka

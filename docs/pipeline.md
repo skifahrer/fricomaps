@@ -94,6 +94,8 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **plan** | overí Pages, vyrieši región/bbox, stiahne (a nacacheuje) PBF | 30 min | — |
 | **check-dem** | sú v release zvoleného zdroja dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
 | **mirror-dem** | keď chýbajú, spustí *Stiahnuť výškové dáta* so zvoleným `source` | — | tiles, assets |
+| **mirror-dmr5-area** | chýbajúci výrez DMR 5.0 v plnom rozlíšení → *DMR 5.0 z Drive* | — | tiles, assets |
+| **mirror-dmr5-tiles** | chýbajúce 1° dlaždice DMR 5.0 (5 m) → *DMR 5.0 z Drive* | — | tiles, assets |
 | **keys** | poskladá kľúče cache, pri `*_rebuild` zmaže staré záznamy | 10 min | tiles, assets |
 | **contours** | DEM → vrstevnice + skaly → `{región}-contours.pmtiles` | 180 min | terrain, tiles, assets |
 | **terrain** | DEM → terrarium PNG dlaždice | 120 min | contours, tiles, assets |
@@ -1259,6 +1261,71 @@ požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
 
 Kód: [`workers/drive-serve.py`](../workers/drive-serve.py) (shim nad Drive)
 a [`workers/dmr5-drive.py`](../workers/dmr5-drive.py) (okno, bloky, výstup).
+
+### Build map si to dopĺňa sám
+
+Táto pipeline sa **nespúšťa ručne**. Je volateľná (`workflow_call`) a `Build
+map` si ju zavolá, keď mu v release chýba to, čo si vypýtal:
+
+```
+check-dem  ──►  mirror-dmr5-area   area: <pohorie>          ──► dem-ugkk
+           ──►  mirror-dmr5-tiles  area: <bbox stupňov>     ──► dem-dmr5
+                                   tiles: true, grid_m: 5
+```
+
+**Dva joby, lebo `dmr5` má dve podoby a chýbať môžu naraz.** Vrstevnice a skaly
+čítajú výrez v plnom rozlíšení (`ugkk-<pohorie>.tif` z `dem-ugkk`), tieňovanie
+1° dlaždice na 5 m (`N49E020.tif` z `dem-dmr5`) – to sa robí na celý región,
+kde 1 m verzia neexistuje. Jeden výber vo formulári, dva rôzne assety.
+
+**Dlaždice sa dopĺňajú po celých stupňoch, nie po bboxe.** Meno `N49E020.tif`
+je sľub o celom stupni a build si dlaždicu podľa mena hľadá – keby v release
+ležal pod tým menom len prienik s bboxom, ďalší beh by kontrolou prešiel
+(„dlaždica tam je") a tieňovanie by ticho skončilo v polovici mapy. Preto
+`--tiles` okno pred čítaním rozšíri na celé stupne. Cena: rádovo pol hodiny
+a ~2 GB z Drive **na stupeň** – ale raz, a potom to v release ostane.
+
+> **Prečo to nejde cez `update-dem.yml`.** Tá pipeline archív stiahne na runner
+> a rozreže ho; DMR 5.0 má 145 GB a runner má voľných ~60 GB. Bol tam
+> rozcestník, ktorý na `dmr5` vypísal, kam ísť ručne, a **skončil úspechom** –
+> takže `check-dem` poslal „treba doplniť" do jobu, ktorý nedoplnil nič, job
+> zazelenal a build spadol o desať jobov neskôr na tom, že v release nie je ani
+> jedna dlaždica ([beh 31307163093](https://github.com/skifahrer/fricomaps/actions/runs/31307163093)).
+> Dnes je `what: dmr5` v `update-dem.yml` chyba.
+
+### Jedna odpoveď na „ktorý release a ktoré assety"
+
+Tú istú otázku si kladú dve miesta: `workers/check-dem.sh` (čo hľadať a či to
+treba doplniť) a `workers/fetch-dem.sh` (čo naozaj stiahnuť). Kým bola napísaná
+dvakrát, rozišla sa – kontrola hľadala výrez v `dem-ugkk`, kým tieňovanie
+sťahovalo dlaždice z `dem-dmr5`. Odpoveď preto dáva jediný
+[`workers/dem-target.py`](../workers/dem-target.py):
+
+```console
+$ python3 workers/dem-target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.16,20.12,49.18
+form=area
+release=dem-ugkk
+assets=ugkk-vysoke_tatry.tif
+mirror=dmr5:area:vysoke_tatry
+
+$ python3 workers/dem-target.py --source=dmr5 --area-key=cely --bbox=20.1,49.16,20.12,49.18
+form=tiles
+release=dem-dmr5
+assets=N49E020.tif
+mirror=dmr5:tiles:20,49,21,50
+degrees=20,49,21,50
+```
+
+**Rozhoduje kľúč výrezu, nič iné.** Vrstva sa nepýta – pýta sa len ten, kto
+volá: vrstevnice a skaly kľúč podávajú (`contours-build.sh`), tieňovanie nie
+(krok „Tieňovanie reliéfu" v `build-map.yml`). Že to tak naozaj je, stráži
+`Lint workflows` krokom *„Vrstvy podávajú kľúč výrezu tak, ako to čaká
+kontrola"* – porovnáva tabuľku `layer_area_key` v `check-dem.sh` s počtom
+argumentov v každom volaní `fetch-dem.sh`.
+
+Z toho aj plynie, že sa **dedupuje podľa podoby, nie podľa zdroja**: pri
+jedinom `dmr5` vo formulári môžu chýbať oba tvary a „ten model už dopĺňa iná
+vrstva" by druhý ticho zahodilo.
 
 ## Piaty workflow: „Skaly z tieňovaných dlaždíc"
 

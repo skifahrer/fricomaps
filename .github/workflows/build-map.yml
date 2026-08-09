@@ -266,6 +266,13 @@ jobs:
       mirror_contours: ${{ steps.check.outputs.mirror_contours }}
       mirror_rocks: ${{ steps.check.outputs.mirror_rocks }}
       mirror_terrain: ${{ steps.check.outputs.mirror_terrain }}
+      # DMR 5.0 sa nedopĺňa cez update-dem.yml (ten ho stiahnuť nevie), ale
+      # cez `DMR 5.0 z Drive`. A dopĺňa sa PODĽA PODOBY, nie podľa vrstvy:
+      # výrez v plnom rozlíšení a 1° dlaždice sú dva rôzne assety v dvoch
+      # rôznych releasoch, takže si aj pri jedinom `dmr5` vo formulári môžu
+      # chýbať oba naraz (vrstevnice chcú výrez, tieňovanie dlaždice).
+      mirror_dmr5_area: ${{ steps.check.outputs.mirror_dmr5_area }}
+      mirror_dmr5_tiles: ${{ steps.check.outputs.mirror_dmr5_tiles }}
       # Otlačok releasu na vrstvu. Ide do kľúča cache – keď sa release
       # doplní, nesmie sa z nej vrátiť starý výsledok. Na vrstvu preto, aby
       # doplnenie DMR 5.0 nezahodilo vrstevnice zo Sonnyho.
@@ -276,127 +283,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Rozhodovanie je vo `workers/check-dem.sh`: build-map.yml je blízko
+      # k stropu, nad ktorým ho GitHub neprijme, a hlavne – to isté
+      # rozhodovanie („ktorý release, ktoré assety") si robí aj
+      # `workers/fetch-dem.sh`, tak ho oba berú z `workers/dem-target.py`.
+      # Kým to bolo napísané dvakrát, rozišlo sa to a beh 31307163093 spadol.
       - name: Sú v release dlaždice pre bbox?
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Bbox už raz vyriešila príprava (vrátane orezu a custom regiónu),
-          # takže sa tu nepočíta druhý raz – dva výpočty toho istého sa vždy
-          # raz rozídu.
-          BBOX='${{ needs.plan.outputs.bbox }}'
-          AREA_KEY='${{ needs.plan.outputs.area_key }}'
-
-          # Zoznam dlaždíc pre bbox je pre všetky zdroje rovnaký (schéma mien
-          # `N49E019.tif` je spoločná), tak sa spočíta raz.
-          TILES=""
-          if [ -n "$BBOX" ]; then
-            IFS=, read -r W S E N <<< "$BBOX"
-            TILES=$(python3 - "$W" "$S" "$E" "$N" <<'PY'
-          import math, sys
-          w, s, e, n = map(float, sys.argv[1:5])
-          for lat in range(math.floor(s), math.floor(n) + 1):
-              for lon in range(math.floor(w), math.floor(e) + 1):
-                  ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-                  print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
-          PY
-          )
-          fi
-
-          MIRROR=""   # už zaradené na doplnenie, nech sa nesťahuje dvakrát
-          NEED_SRC=""  # čo má doplniť práve kontrolovaná vrstva
-
-          # Pozrie sa na jeden zdroj: či pre naše územie v jeho release niečo
-          # je, a aký je otlačok obsahu. Výsledok ide do DEMKEY, prípadné
-          # doplnenie do NEED_SRC.
-          check_source() { # $1 = vrstva (na výpis), $2 = zdroj
-            local what="$1" src="$2" rel assets names need=false
-            # DMR 5.0 má dve podoby a rozhoduje rozsah, nie druhý výber:
-            # s výrezom je to jeden COG v plnom rozlíšení (release dem-ugkk),
-            # bez výrezu dlaždice na 5 m (dem-dmr5). Tá istá vetva je aj vo
-            # `workers/fetch-dem.sh` a musia hovoriť to isté – inak tu build
-            # kontroluje jeden release a sťahuje z druhého.
-            local dmr5_area=false
-            if [ "$src" = 'dmr5' ] && [ "$AREA_KEY" != 'cely' ]; then
-              dmr5_area=true
-            fi
-            case "$src" in
-              dmr35) rel="$DMR35_RELEASE" ;;
-              dmr5)  if [ "$dmr5_area" = true ]; then
-                       rel="${UGKK_RELEASE:-dem-ugkk}"
-                     else
-                       rel="$DMR5_RELEASE"
-                     fi ;;
-              *)     rel="$DEM_RELEASE" ;;
-            esac
-            # Meno aj veľkosť naraz: z mien sa hľadá, z celého riadku počíta
-            # otlačok. Dva `gh` dopyty na to isté by sa len rozišli.
-            # `|| true` vnútri zátvoriek: keď release ešte neexistuje, gh
-            # skončí nenulovo a `pipefail` by zhodil celý krok.
-            assets=$({ gh release view "$rel" --repo "$GITHUB_REPOSITORY" --json assets \
-              -q '.assets[] | .name + ":" + (.size|tostring)' 2>/dev/null || true; } | sort)
-            names=$(printf '%s\n' "$assets" | cut -d: -f1)
-
-            if [ "$dmr5_area" = true ]; then
-              # Plné rozlíšenie sa zrkadlí po výrezoch (pri 1 m má jedna
-              # 1° dlaždica ~48 GB), takže sa hľadá jeden asset podľa kľúča
-              # výrezu.
-              local uasset="ugkk-${AREA_KEY}.tif"
-              if printf '%s\n' "$names" | grep -qx "$uasset"; then
-                echo "$what ($src): $uasset je v release $rel ✓"
-              else
-                echo "$what ($src): $uasset v release $rel nie je → doplní sa"
-                need=true
-              fi
-            elif [ -z "$TILES" ]; then
-              # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak
-              # sa pozeráme len na to, či v release vôbec niečo je.
-              [ -z "$assets" ] && need=true || true
-              echo "$what ($src): bbox nie je známy; release $rel má $(printf '%s' "$assets" | grep -c . || true) assetov → doplniť: $need"
-            else
-              local have=0 total t
-              for t in $TILES; do
-                printf '%s\n' "$names" | grep -qx "$t.tif" && have=$(( have + 1 )) || true
-              done
-              total=$(printf '%s\n' "$TILES" | grep -c .)
-              # Doplňujeme, len keď nie je ani jedna použiteľná dlaždica. Bbox
-              # je obdĺžnik, ale produkt pokrýva krajinu – rohové bunky
-              # (u Slovenska napr. N47E016 v Maďarsku) v ňom nikdy nebudú,
-              # takže „chýba jedna, tak sťahuj znova" by mirrorovalo pri
-              # každom builde.
-              [ "$have" -eq 0 ] && need=true || true
-              echo "$what ($src): dlaždíc pre bbox $total, v release $rel $have → doplniť: $need"
-            fi
-
-            if [ "$need" = true ]; then
-              # Ten istý model už dopĺňa iná vrstva – druhýkrát netreba.
-              case " $MIRROR " in
-                *" $src "*) echo "  ($src už dopĺňa iná vrstva)" ;;
-                *) NEED_SRC="$src"; MIRROR="$MIRROR $src" ;;
-              esac
-            fi
-            DEMKEY=$(printf '%s' "$assets" | sha256sum | cut -c1-12)
-          }
-
-          for pair in \
-            "contours:${{ needs.plan.outputs.opt_contour_source }}" \
-            "rocks:${{ needs.plan.outputs.opt_rock_dem }}" \
-            "terrain:${{ needs.plan.outputs.opt_shading_source }}"; do
-            layer="${pair%%:*}"
-            src="${pair#*:}"
-            DEMKEY=""
-            NEED_SRC=""
-            # Prázdny zdroj = vrstva je vypnutá (alebo skaly idú z tieňovania)
-            # a žiadny výškový model sa pre ňu nečíta.
-            if [ -n "$src" ] && [ "$src" != 'ziadne' ]; then
-              check_source "$layer" "$src"
-            fi
-            echo "demkey_$layer=$DEMKEY" >> "$GITHUB_OUTPUT"
-            echo "mirror_$layer=$NEED_SRC" >> "$GITHUB_OUTPUT"
-          done
-
-          echo "Doplniť treba:${MIRROR:- nič}"
+          # Bbox aj výrez už raz vyriešila príprava (vrátane orezu a custom
+          # regiónu), takže sa tu nepočítajú druhý raz – dva výpočty toho
+          # istého sa vždy raz rozídu.
+          BBOX: ${{ needs.plan.outputs.bbox }}
+          AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          SRC_CONTOURS: ${{ needs.plan.outputs.opt_contour_source }}
+          SRC_ROCKS: ${{ needs.plan.outputs.opt_rock_dem }}
+          SRC_TERRAIN: ${{ needs.plan.outputs.opt_shading_source }}
+        run: workers/check-dem.sh
 
   # ---------- doplnenie výškových dát ----------
   # Jeden job pre všetky zdroje. Sťahovaciu pipeline máme jedinú a rozdiel
@@ -452,6 +356,45 @@ jobs:
       what: ${{ needs.check-dem.outputs.mirror_terrain }}
       area: ${{ inputs.area }}
       custom_url: ${{ needs.plan.outputs.opt_ugkk_urls }}
+
+  # ---------- doplnenie DMR 5.0 ----------
+  # DMR 5.0 nechodí cez `update-dem.yml`. Ten sťahuje archív na runner a rozreže
+  # ho; DMR 5.0 má 145 GB a runner má voľných ~60 GB, takže sa to spraviť nedá.
+  # Číta sa cez HTTP Range priamo z Drive – berie sa len to, čo územie pretína –
+  # a robí to `DMR 5.0 z Drive` (dmr5-drive.yml).
+  #
+  # KÝM SEM VIEDLA CESTA CEZ `update-dem.yml`, DOPĹŇANIE BOLO TICHÉ NIČ: `dmr5`
+  # tam bol len rozcestník, ktorý vypísal, kam ísť ručne, a skončil úspechom.
+  # Build teda pokojne pokračoval do jobu, ktorý si model vypýtal, a spadol tam
+  # (beh 31307163093). Odteraz sa DMR 5.0 dopĺňa naozaj.
+  #
+  # Dva joby, lebo `dmr5` má dva tvary a chýbať môžu naraz: vrstevnice a skaly
+  # čítajú výrez v plnom rozlíšení z `dem-ugkk`, tieňovanie 1° dlaždice na 5 m
+  # z `dem-dmr5`. Ktoré z toho treba, rozhodol `check-dem`.
+  mirror-dmr5-area:
+    name: Doplniť DMR 5.0 (výrez, plné rozlíšenie)
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror_dmr5_area != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dmr5-drive.yml
+    with:
+      area: ${{ needs.check-dem.outputs.mirror_dmr5_area }}
+      tiles: false
+
+  mirror-dmr5-tiles:
+    name: Doplniť DMR 5.0 (dlaždice)
+    needs: [plan, check-dem]
+    if: ${{ !cancelled() && needs.check-dem.outputs.mirror_dmr5_tiles != '' }}
+    permissions:
+      contents: write
+    uses: ./.github/workflows/dmr5-drive.yml
+    with:
+      # Bbox rozšírený na celé stupne – dlaždica `N49E020.tif` je sľub o celom
+      # stupni, takže sa musí prečítať celá. Rozšírenie počíta dem-target.py.
+      area: ${{ needs.check-dem.outputs.mirror_dmr5_tiles }}
+      tiles: true
+      grid_m: "5"
 
   # ---------- skaly z tieňovaných dlaždíc ----------
   # Keď je `rock_source: tienovanie`, obrázky sa stiahnu tu a rovno v tomto
@@ -906,7 +849,8 @@ jobs:
   # a cache sa ticho rozsype (ukladá sa pod iný kľúč, než sa hľadá).
   keys:
     name: Kľúče cache
-    needs: [plan, check-dem, mirror-contours, mirror-rocks, mirror-terrain]
+    needs: [plan, check-dem, mirror-contours, mirror-rocks, mirror-terrain,
+            mirror-dmr5-area, mirror-dmr5-tiles]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

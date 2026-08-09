@@ -14,12 +14,19 @@ name: Stiahnuť výškové dáta
 # | sonny   | Sonny's LiDAR DTM (Drive)   | dem-sonny    | 20 m    |
 # | dmr35   | ÚGKK DMR 3.5 (opendata ZIP) | dem-dmr35    | ~10 m   |
 # | ugkk    | ÚGKK DMR 5.0 (1 m LiDAR)    | dem-ugkk     | 1 m     |
-# | dmr5    | ÚGKK DMR 5.0 (LLS, 198 GB)  | dem-dmr5     | 5 m     |
 #
-# `dmr5` sem NEPATRÍ a je tu len ako rozcestník: 198 GB archív sa nedá stiahnuť
-# jedným jobom (runner má voľných ~60 GB) a rozoberá ho vlastná pipeline
-# `Pripraviť DMR 5.0` (dmr5.yml) jedným jobom, ktorý číta archív
-# priamo cez /vsizip//vsicurl/. Keď sem príde `what: dmr5`, tento workflow len povie kam ísť.
+# `dmr5` V TEJ TABUĽKE NIE JE a `what: dmr5` je odteraz CHYBA. Tento workflow
+# archív stiahne na runner a rozreže ho; DMR 5.0 má 145 GB (na Drive) resp.
+# 198 GB (ZIP z opendata) a runner má voľných ~60 GB – „stiahni a rozbaľ" tu
+# neexistuje. Číta sa cez HTTP Range pipeline `DMR 5.0 z Drive`
+# (dmr5-drive.yml), ktorá berie len to, čo územie pretína, a `Build map` si ju
+# volá sama (joby `Doplniť DMR 5.0 …`).
+#
+# Bol tu rozcestník, ktorý na `dmr5` vypísal, kam ísť ručne, a skončil
+# ÚSPECHOM. To bola tichá diera: `check-dem` sem poslal „dmr5 treba doplniť",
+# nič sa nedoplnilo, job zazelenal a build spadol o desať jobov neskôr na tom,
+# že v release nie je ani jedna dlaždica (beh 31307163093). Doplnenie, ktoré
+# nedopĺňa, musí byť červené hneď.
 #
 # `ugkk` sa z GitHub runnera stiahnuť NEDÁ – `zbgis.skgeodesy.sk` aj
 # `zbgisws.skgeodesy.sk` timeoutujú aj pri 30 s (zmerané v behoch
@@ -87,7 +94,8 @@ on:
         type: boolean
   # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho územie.
   # `workflow_call` nepozná `type: choice`, tak sem chodí holý kľúč zdroja
-  # (sonny/dmr35/ugkk/dmr5) – krok „Priprav zdroj" berie oboje.
+  # (sonny/dmr35/ugkk) – krok „Priprav zdroj" berie oboje. `dmr5` sem Build map
+  # neposiela: ten si volá `dmr5-drive.yml` priamo.
   workflow_call:
     inputs:
       what:
@@ -153,13 +161,19 @@ jobs:
             ugkk)
               URL="$CUSTOM"; REL=dem-ugkk; LABEL="ÚGKK DMR 5.0 (1 m LiDAR)" ;;
             dmr5)
-              # Sem sa dá dostať len tak, že si `Build map` vypýtal dem_source:
-              # dmr5 a release je prázdny. Tento workflow to nedoplní – DMR 5.0
-              # je 198 GB archív a pripravuje sa vlastnou pipeline
-              # (workflow „Pripraviť DMR 5.0"). Púšťať to ako vedľajší účinok
-              # buildu mapy by bolo prekvapenie na osem hodín.
-              URL="https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip"
-              REL=dem-dmr5; LABEL="ÚGKK DMR 5.0 (LLS) – dopĺňa sa inde" ;;
+              # DMR 5.0 sem NEPATRÍ a nie je to rozcestník, ale chyba. Tento
+              # workflow sťahuje archív na runner a rozreže ho; DMR 5.0 má na
+              # Drive 145 GB a runner má voľných ~60 GB, takže sa to spraviť
+              # nedá ani teoreticky. Robí to `DMR 5.0 z Drive` (dmr5-drive.yml)
+              # cez HTTP Range – a `Build map` si ju volá sám.
+              #
+              # KÝM TO TU BOL ROZCESTNÍK, KTORÝ SKONČIL ÚSPECHOM, bola to tichá
+              # diera: `check-dem` poslal „dmr5 treba doplniť" sem, tento job
+              # vypísal, kam ísť ručne, zelene skončil – a build pokračoval do
+              # jobu, ktorý si model vypýtal, a spadol tam (beh 31307163093).
+              # Doplnenie, ktoré nedopĺňa, musí byť červené hneď.
+              echo "::error::DMR 5.0 sa cez „Stiahnuť výškové dáta“ doplniť nedá (145 GB, runner má ~60 GB). Použi workflow „DMR 5.0 z Drive (ETRS89)“: area: <pohorie> → dem-ugkk, alebo area: <bbox stupňov> s tiles: true → dem-dmr5. Build map si ju volá sám (joby „Doplniť DMR 5.0 …“)."
+              exit 1 ;;
             vlastné|vlastne|custom)
               URL="$CUSTOM"; REL=dem-dmr35; LABEL="vlastné URL" ;;
             *)
@@ -184,32 +198,6 @@ jobs:
           echo "── $LABEL"
           echo "   URL:     ${URL:-(Google Drive)}"
           echo "   release: $REL"
-
-      # Rozcestník, nie sťahovanie. Krok NESMIE spadnúť: volá ho `Build map`
-      # cez `workflow_call` a spadnutý job by z toho urobil červený beh aj
-      # vtedy, keď je všetko ostatné v poriadku. Build sa aj tak zastaví
-      # o kus ďalej, vo `fetch-dem.sh`, a s tou istou radou.
-      - name: DMR 5.0 sa dopĺňa inde
-        if: ${{ steps.src.outputs.key == 'dmr5' }}
-        run: |
-          set -uo pipefail
-          {
-            echo "## ÚGKK DMR 5.0 sa sem nesťahuje"
-            echo
-            echo "Model má 145 GB a runner má voľných ~60 GB, takže ho tento"
-            echo "workflow stiahnuť nemôže. Číta ho po dlaždiciach cez HTTP Range"
-            echo "pipeline **DMR 5.0 z Drive** (\`dmr5-drive.yml\`) – berie len to,"
-            echo "čo výrez naozaj pretína."
-            echo
-            echo "| chcem | spusti |"
-            echo "|---|---|"
-            echo "| pohorie, plné 1 m rozlíšenie | \`DMR 5.0 z Drive\` s \`area: vysoke_tatry\` → release \`dem-ugkk\` |"
-            echo "| celé Slovensko, mriežka 5 m | \`DMR 5.0 z Drive\` s \`area: cele_slovensko\` → release \`dem-dmr5\` |"
-            echo
-            echo "V Build map je to jedna voľba \`dmr5\`: s vyplneným \`area\` si vezme"
-            echo "výrez v 1 m, bez neho dlaždice na 5 m."
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning::DMR 5.0 sa dopĺňa workflowom „DMR 5.0 z Drive“ – tento beh nič nesťahuje."
 
       - name: Stiahni dlaždice
         id: fetch
@@ -383,7 +371,7 @@ jobs:
       # meno releasu.
       - name: Sú dlaždice DMR 3.5 už v release?
         id: have35
-        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.src.outputs.key != 'dmr5' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -405,7 +393,7 @@ jobs:
       # zistí z prázdneho releasu a spadne späť na Sonnyho.
       - name: Stiahni a rozrež DMR 3.5
         id: fetch35
-        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.src.outputs.key != 'dmr5' && steps.have35.outputs.skip != 'true' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.have35.outputs.skip != 'true' }}
         continue-on-error: true
         run: |
           set -euo pipefail
@@ -415,7 +403,7 @@ jobs:
             --out=tiles --stats=open-stats.txt
 
       - name: Nahraj DMR 3.5 do releasu
-        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.src.outputs.key != 'dmr5' && steps.fetch35.outcome == 'success' }}
+        if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.fetch35.outcome == 'success' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
