@@ -1352,6 +1352,26 @@ Tri veci, ktoré ten workflow rieši, a všetky sú zmerané:
    omyl). Po prevode vyjde na Gerlachu 2 653,92 m. Na skaly by na tom
    nezáležalo – sklon sa geoidom nemení – na vrstevnice áno.
 
+4. **Odmietnutie príde ako HTTP 200.** Keď Drive dáta dať nechce – typicky
+   prekročený denný limit sťahovania súboru – nevráti chybový kód, ale
+   **stránku v HTML so stavom 200**. Na `Range` request sa to pozná podľa
+   dvoch vecí naraz: odpoveď je `200` (nie `206`, čiže rozsah ignoroval)
+   a je kratšia, než sa pýtalo. V behu
+   [31315890474](https://github.com/skifahrer/fricomaps/actions/runs/31315890474)
+   to bolo 2 009 B namiesto 32 768.
+
+   Kým to shim bral ako úspech, `_send_single` spadol v `_fetch` **ešte pred
+   hlavičkami** a chybu len vypísal do logu – takže GDAL čakal na odpoveď,
+   ktorá nikdy neprišla. Job visel **2 h 16 min** na `gdalinfo`, minul dva
+   runnery a nevyrobil nič; v logu bol jeden riadok a potom ticho. Odteraz
+   shim **odpovie vždy**: 502 s vysvetlením, GDAL to vráti ako chybu a job
+   spadne v sekundách. Prvé takéto odmietnutie navyše zastaví celý `Pool` –
+   limit sa opakovaním nepohne, tak sa naň nečaká šesťkrát pri každom bloku.
+
+   Z toho istého testu vypadla druhá diera: rozsah, z ktorého po orezaní na
+   súbor nič neostalo, sa bral ako „pošli celý súbor" – teda 145 GB namiesto
+   32 kB. Teraz je z toho `416`, ako káže RFC 9110.
+
 Namerané: výrez 5,2 × 5,6 km pri 1 m trvá 1,2 min, stiahne 0,11 GB v 697
 požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
 4 514 plôch a 5,08 km² na 29 km² územia.

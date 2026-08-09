@@ -67,6 +67,28 @@ HOST = "drive.usercontent.google.com"
 # než tá súbežnosť získa.
 FETCH_WORKERS = 12
 
+# ČO ROBÍ DRIVE, KEĎ NECHCE DAŤ DÁTA. Nevráti chybový kód – vráti **HTTP 200
+# a HTML stránku**. Na `Range` request to spozná podľa dvoch vecí naraz:
+# odpoveď je 200 (nie 206, čiže rozsah ignoroval) a je kratšia, než sa pýtalo.
+# V behu 31315890474 to bolo 2 009 B namiesto 32 768 – prekročený denný limit
+# sťahovania súboru. Kým sa to bralo ako úspech, `gdalinfo` čakal na odpoveď,
+# ktorá nikdy neprišla, a job visel 2 h 16 min a minul dva runnery.
+QUOTA_HINT = (
+    "prekročený limit sťahovania z Google Drive (súbor si dnes vypýtalo "
+    "priveľa klientov). Počkaj pár hodín, alebo nahraj kópiu modelu na iný "
+    "účet a prepíš TIF_ID/OVR_ID vo workers/dmr5-drive.py. Do tej doby sa dá "
+    "DMR 5.0 doplniť workflowom „DMR 5.0 z archívu ÚGKK (záloha, ručne)“.")
+
+
+def drive_refusal(body):
+    """Vráti popis odmietnutia, keď je telo HTML stránka namiesto dát."""
+    head = body[:2048].lower()
+    if b"<html" not in head and b"<!doctype" not in head:
+        return None
+    if b"quota" in head or b"too many" in head or b"limit" in head:
+        return QUOTA_HINT
+    return f"Drive vrátil HTML stránku ({len(body)} B), nie dáta"
+
 
 def drive_path(file_id):
     """Cesta, ktorá už obišla stránku „Google Drive can't scan this file"."""
@@ -85,6 +107,8 @@ class Pool:
         self.host = host
         self.free = queue.LifoQueue()
         self.size = size
+        # Neprázdne = Drive dáta odmietol dať a nemá zmysel sa pýtať ďalej.
+        self.refused = None
         proxy = os.environ.get("https_proxy") or os.environ.get("HTTPS_PROXY")
         self.proxy = urllib.parse.urlsplit(proxy) if proxy else None
         self.ctx = ssl.create_default_context()
@@ -102,8 +126,16 @@ class Pool:
                                                context=self.ctx)
         return conn
 
-    def get(self, path, rng, tries=6):
-        """GET s hlavičkou Range; vráti (status, headers, telo ako bajty)."""
+    def get(self, path, rng, tries=6, want=None):
+        """GET s hlavičkou Range; vráti (status, headers, telo ako bajty).
+
+        `want` je koľko bajtov sa pýtalo. Bez neho sa dá overiť len stavový
+        kód – a ten pri odmietnutí klame (viď `drive_refusal`).
+        """
+        # Limit sťahovania nepustí ani o dvadsať sekúnd neskôr, tak sa naň
+        # nečaká šesťkrát pri každom bloku: prvý taký nález celý Pool zastaví.
+        if self.refused:
+            raise RuntimeError(self.refused)
         last = None
         for attempt in range(tries):
             try:
@@ -115,20 +147,35 @@ class Pool:
                     "Range": rng, "User-Agent": UA, "Accept-Encoding": "identity"})
                 resp = conn.getresponse()
                 body = resp.read()
-                if resp.status in (200, 206):
+                # 206 = rozsah dostal. 200 na Range znamená, že ho Drive
+                # IGNOROVAL – buď je súbor kratší, než sa pýtalo, alebo je to
+                # odmietnutie. Rozhodne dĺžka, nie kód.
+                if resp.status == 206 or (
+                        resp.status == 200 and (want is None or len(body) == want)):
                     if self.free.qsize() < self.size:
                         self.free.put(conn)
                     else:
                         conn.close()
                     return resp.status, resp.headers, body
-                last = f"HTTP {resp.status}"
                 conn.close()
+                if resp.status == 200:
+                    why = drive_refusal(body)
+                    if why:
+                        # Toto sa opakovaním nespraví – zapamätaj a padni hneď
+                        # (kontrola je pod `except`, nech ju nezhltne).
+                        self.refused = why
+                    last = (f"HTTP 200 a {len(body)} B namiesto {want} – "
+                            "Drive rozsah ignoroval")
+                else:
+                    last = f"HTTP {resp.status}"
             except Exception as exc:            # noqa: BLE001
                 last = exc
                 try:
                     conn.close()
                 except Exception:               # noqa: BLE001
                     pass
+            if self.refused:
+                raise RuntimeError(self.refused)
             # Drive občas vráti 403 „rate limit"; exponenciálne čakanie ho
             # spoľahlivo prejde.
             time.sleep(min(1.5 ** attempt, 20))
@@ -190,8 +237,8 @@ def make_handler(pool, files, stats):
             self.end_headers()
 
         def _fetch(self, path, start, end):
-            status, _, body = pool.get(path, f"bytes={start}-{end}")
             want = end - start + 1
+            status, _, body = pool.get(path, f"bytes={start}-{end}", want=want)
             if len(body) != want:
                 raise RuntimeError(
                     f"Drive vrátil {len(body)} B namiesto {want} (HTTP {status})")
@@ -200,7 +247,12 @@ def make_handler(pool, files, stats):
                 stats["bytes"] += len(body)
             return body
 
+        def send_response(self, *a, **kw):
+            self.responded = True
+            super().send_response(*a, **kw)
+
         def do_GET(self):
+            self.responded = False
             entry = self._entry()
             if not entry:
                 self.send_response(404)
@@ -209,7 +261,17 @@ def make_handler(pool, files, stats):
                 return
             path, size = entry
             hdr = self.headers.get("Range")
-            ranges = parse_ranges(hdr, size) if hdr and hdr.startswith("bytes=") else []
+            asked = bool(hdr and hdr.startswith("bytes="))
+            ranges = parse_ranges(hdr, size) if asked else []
+            # Rozsah, z ktorého po orezaní na súbor nič neostalo, NIE JE
+            # „pošli celý súbor" – to je 145 GB namiesto 32 kB a presne to,
+            # čo pravidlo 7 zakazuje. Podľa RFC 9110 je to 416.
+            if asked and not ranges:
+                self.send_response(416)
+                self.send_header("Content-Range", f"bytes */{size}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             whole = not ranges
             if whole:
                 ranges = [(0, size - 1)]
@@ -226,6 +288,27 @@ def make_handler(pool, files, stats):
             except Exception as exc:            # noqa: BLE001
                 print(f"  drive-serve: {self.path} {hdr} zlyhalo: {exc}",
                       file=sys.stderr, flush=True)
+                # ODPOVEDAJ AJ NA CHYBU. Kým sa sem chodilo len vypísať,
+                # `_send_single` spadol v `_fetch` EŠTE PRED hlavičkami, takže
+                # GDAL čakal na odpoveď, ktorá nikdy neprišla – beh
+                # 31315890474 visel 2 h 16 min na `gdalinfo`, minul dva
+                # runnery a nevyrobil nič. Tiché nič je horšie než pád: 502
+                # GDAL vráti ako chybu a job spadne v sekundách.
+                if not self.responded:
+                    try:
+                        msg = str(exc).encode("utf-8")
+                        self.send_response(502)
+                        self.send_header("Content-Length", str(len(msg)))
+                        self.send_header("Content-Type",
+                                         "text/plain; charset=utf-8")
+                        self.end_headers()
+                        self.wfile.write(msg)
+                    except Exception:           # noqa: BLE001
+                        pass
+                else:
+                    # Hlavičky sú vonku, stav sa už zmeniť nedá – aspoň nenechaj
+                    # klienta čakať na zvyšok tela.
+                    self.close_connection = True
 
         def _send_stream(self, path, size, rng):
             """Celý súbor po kúskoch – GDAL to nerobí, ale `curl` áno."""
