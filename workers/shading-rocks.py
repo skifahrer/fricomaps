@@ -8,7 +8,8 @@ z DEM a vektorizuje izolíniu sklonu. Táto berie hotový hillshade – dlaždic
 TMAVÉ PLOCHY. Nič sa nepočíta z výšok, čítajú sa obrázky:
 
     XYZ dlaždice (JPG) → mozaika odtieňov šedej v EPSG:3857 →
-    raster „tmavosti" → gdal_contour -p (izolínia tmavosti ako PLOCHY) →
+    raster „tmavosti" → otvorenie (preč, čo je užšie než stena) →
+    gdal_contour -p (izolínia tmavosti ako PLOCHY) →
     filter plôch → zjemnenie + zaoblenie obrysu → rock.gpkg
 
 JEDNA TRIEDA (predvolene, `--plne`): jedno pásmo, teda žiadna plocha vnútri
@@ -51,10 +52,19 @@ Namerané na výreze z tej vrstvy (1260×1933 px, Vysoké Tatry):
   * Rozloženie jasu: medián 176, 20. percentil 135, 10. percentil 107.
     Prah `--dark 125` z toho odkrojí ~16 % plochy a sedí na skalnatý terén.
   * TMAVÉ NIE JE PLOCHA, ALE SIEŤ. Tmavé miesta nie sú súvislé steny, ale
-    hustá sieť žliabkov, ryhiek a mikrotieňov v rozčlenenom teréne. Práve
-    táto jemná štruktúra je to, čo chceme – nie vyplnená klaksa. Preto je
-    `--fill` (spriemerovanie tmavosti v okolí, ktoré zo siete spraví súvislú
-    plochu) štandardne VYPNUTÉ.
+    hustá sieť žliabkov, ryhiek a mikrotieňov v rozčlenenom teréne. Tvar tej
+    siete je to, čo chceme – nie vyplnená klaksa. Preto je `--fill`
+    (spriemerovanie tmavosti v okolí, ktoré zo siete spraví súvislú plochu)
+    štandardne VYPNUTÉ.
+  * ALE NAJTENŠIE VLÁKNA SIETE SKALA NIE SÚ a v mape sú to práve ony, čo
+    škodí. Sú to vlásočnicové ryhy a mikrotiene cez celý svah; vektorizáciou
+    sa z nich stane jeden prepojený polygón cez celý výrez a pri z14
+    a nižšie z neho nie je sieť, ale rovnomerná SIVÁ DEKA. Namerané na
+    výreze pri Gerlachu (2 km², z17, dark=125): 21,6 % plochy, najväčší
+    útvar 30,6 ha, pri z14 zaliatych 20,7 % pixelov. `--open` ich zmaže
+    podľa ŠÍRKY (3 m → 9,5 % plochy a pri z14 čitateľné samostatné telesá).
+    Podľa plochy to nejde: celá sieť je jeden veľký útvar, takže `min_area`
+    na ňu vôbec nesiaha.
   * Sieť je pospájaná: 16 útvarov pokrylo 15 % výrezu, takže počet útvarov
     neexploduje. Explodujú BODY – pri z18 to vyšlo na ~2 MB GeoPackage na km²
     skalnatého terénu.
@@ -176,7 +186,7 @@ Sťahuje sa z dobrovoľníckej služby freemap.sk – `--jobs` je zámerne nízk
 
 Použitie:
     python3 workers/shading-rocks.py --bbox=19.9,49.09,20.32,49.25 \\
-        --zoom=auto --dark=110 --local=512 --rel=18 --cliff=25 \\
+        --zoom=auto --dark=110 --local=512 --rel=18 --cliff=25 --open=3 \\
         --out=data/rock.gpkg --stats=out/rock-img-stats.txt \\
         --preview=out/preview.png
 """
@@ -728,11 +738,72 @@ def bright_background(small, r):
     return np.where(c > 0.05, s / np.maximum(c, 1e-6), m1).astype(np.float32)
 
 
-def score_band(gray, dark, always, local_px, rel, blur, fill_px=0, every=0):
+def _rank_box(a, r, ufunc):
+    """Bežiace min/max v okne (2r+1)² – separovateľne, po osiach.
+
+    Dva prechody po (2r+1) posunoch namiesto (2r+1)² ako v `box_blur_u8`:
+    pri r=4 je to 18 operácií na pixel a nie 81. Namerané 140 mil. px/s,
+    čiže na z17 nad Vysokými Tatrami (0,91 mld. px) okolo 7 sekúnd.
+    """
+    if r <= 0:
+        return a
+    for axis in (0, 1):
+        pad = [(0, 0), (0, 0)]
+        pad[axis] = (r, r)
+        ap = np.pad(a, pad, mode="edge")
+        acc = None
+        for d in range(2 * r + 1):
+            sl = [slice(None), slice(None)]
+            sl[axis] = slice(d, d + a.shape[axis])
+            v = ap[tuple(sl)]
+            acc = v if acc is None else ufunc(acc, v)
+        a = acc
+    return a
+
+
+def open_mask(score, r):
+    """Morfologické OTVORENIE masky tmavosti: erózia, potom dilatácia.
+
+    ČO TO RIEŠI. Prah nad hillshade nenájde len steny – nájde aj hustú sieť
+    vlásočnicových rýh a mikrotieňov cez celý svah. Pri pohľade na pixely to
+    vyzerá správne (červená maska naozaj leží na rozčlenenom teréne), lenže
+    z tých vlákien sa vektorizáciou stane JEDEN prepojený polygón cez celý
+    výrez a v mape z neho pri z14 a nižšie nie je sieť, ale rovnomerná sivá
+    deka. Namerané na výreze pri Gerlachu (2 km², z17, dark=125):
+
+        bez otvorenia   21,6 % plochy, najväčší útvar 30,6 ha, pri z14 je
+                        20,7 % pixelov z väčšiny zaliatych → súvislý záves
+        r = 2 (1,6 m)   15,4 %
+        r = 4 (3,1 m)    9,5 %, pri z14 už čitateľné samostatné telesá
+
+    Erózia zmaže všetko užšie než 2r+1 pixelov, dilatácia vráti prežitým
+    jadrám ich pôvodný rozsah. Stena teda ostane stenou, vlásočnica zmizne –
+    a nie podľa plochy (na tú je celá sieť jeden veľký útvar), ale podľa
+    ŠÍRKY, čo je presne to, čím sa stena od ryhy líši.
+
+    Polomer je v METROCH na zemi (`--open`), takže to isté nastavenie platí
+    na každom zoome rovnako.
+    """
+    if r <= 0:
+        return score
+    keep = (score > 0).astype(np.uint8)
+    keep = _rank_box(keep, r, np.minimum)   # erózia
+    keep = _rank_box(keep, r, np.maximum)   # dilatácia
+    score = score.copy()
+    score[keep == 0] = 0
+    return score
+
+
+def score_band(gray, dark, always, local_px, rel, blur, fill_px=0, every=0,
+               open_px=0):
     """Šedá → „tmavosť" (Byte): o koľko je pixel pod referenciou.
 
     ref   = clip(pozadie − rel, always, dark)   (bez pozadia rovno `dark`)
     score = clip(ref − šedá, 0, 255)
+
+    `open_px` (input `open`) potom vyhodí všetko užšie než 2×open_px – to sú
+    vlásočnicové ryhy a mikrotiene, z ktorých je v mape sivá deka. Viď
+    `open_mask`; stena to nechá stenou.
 
     `fill_px` (input `fill`, default vypnuté) navyše spriemeruje tmavosť
     v okolí, takže sa z jemnej siete žliabkov stane súvislá plocha. Viď
@@ -781,6 +852,13 @@ def score_band(gray, dark, always, local_px, rel, blur, fill_px=0, every=0):
         out = upsample(box_mean(block_mean(out, BG_DOWN),
                                 max(1, int(round(fill_px / BG_DOWN / 2)))),
                        h, w).astype(np.uint8)
+
+    if open_px > 0:
+        # Až tu, na hotovej maske: pred prahom by sa mazalo z plynulej
+        # tmavosti a `dark_always` by sa nemal ako uplatniť, po vektorizácii
+        # už je celá sieť jeden polygón a šírka sa z neho nedá vytiahnuť.
+        faza(f"otvorenie {open_px} px", t_f)
+        out = open_mask(out, open_px)
     return out, gray
 
 
@@ -839,7 +917,8 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
     res = tile_res(z)
     w_px = (x1 - x0) * TILE
     local_px = args.local_px
-    pad_tiles = (int(math.ceil(max(local_px, args.fill_px) / 2.0 / TILE))
+    pad_tiles = (int(math.ceil(max(local_px, args.fill_px, 2 * args.open_px)
+                               / 2.0 / TILE))
                  + (1 if args.blur else 0))
     rows_per_band = max(1, int(args.band_cells // max(1, w_px * TILE)))
     tifs = []
@@ -874,7 +953,8 @@ def build_score_raster(fetcher, z, x0, y0, x1, y1, args, tmp, preview_rows):
                              every=args.heartbeat)
             score, blurred = score_band(gray, args.dark, args.dark_always,
                                         local_px, args.rel, args.blur,
-                                        args.fill_px, every=args.heartbeat)
+                                        args.fill_px, every=args.heartbeat,
+                                        open_px=args.open_px)
         finally:
             hb.stop()
         del gray
@@ -1414,15 +1494,21 @@ def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     # zase sivá deka cez celú mapu.
     # Súčet, nie najväčšia plocha: pozadie je jeden polygón NA BLOK, takže
     # pri mnohých blokoch nie je ani jeden z nich veľký voči celku – ale
-    # dokopy pokryjú takmer všetko. Na skutočných dátach je pokrytie skalami
-    # jednotky až nižšie desiatky percent; 60 % nedosiahne ani Vysoké Tatry.
+    # dokopy pokryjú takmer všetko.
+    #
+    # Strop bol 60 % a bol privysoký: výrez pri Gerlachu vyšiel na 34 %,
+    # poistka mlčala a v mape bola pritom sivá deka. Kde treba naozaj byť,
+    # ukazuje ten istý výrez po otvorení – 9,5 %. 30 % teda nie je prísna
+    # hranica, je to hodnota, ktorú v skalnatom velehorskom kotle nedosiahne
+    # ani správny výsledok.
     spolu_km2 = st.get("total_m2", 0) / 1e6
-    if uzemie_km2 > 0 and spolu_km2 > 0.6 * uzemie_km2:
+    if uzemie_km2 > 0 and spolu_km2 > 0.3 * uzemie_km2:
         print(f"::warning::Skaly pokrývajú {spolu_km2:.2f} km² z "
               f"{uzemie_km2:.2f} km² územia ({100 * spolu_km2 / uzemie_km2:.0f} %). "
-              f"Toľko skál nikde nie je – vyzerá to, že do výsledku prešlo "
-              f"pásmo POD prahom (pozadie). V mape z toho bude súvislá plocha "
-              f"bez detailu a bez obrysov.", flush=True)
+              f"Toľko skál nikde nie je – aj kotol pod Gerlachom vyjde na "
+              f"~10 %. V mape z toho bude pri nižších zoomoch súvislá sivá "
+              f"plocha bez detailu. Zdvihni `options: open=…` (zahadzuje "
+              f"najtenšie vlákna siete) alebo zníž `dark`.", flush=True)
 
     if not st["n"]:
         if st["n_in"] > 1000:
@@ -1526,6 +1612,11 @@ def print_plan(z, x0, y0, x1, y1, args):
              f"(okno {args.local:g} m = {args.local_px} px)"
              if args.local_px else ", bez miestneho pozadia"))
     print(f"  triedy          steep, cliff od {args.cliff} stupňov navyše")
+    print("  užšie než       " + (f"{2 * args.open:g} m preč "
+                                  f"(otvorenie {args.open_px} px) – "
+                                  f"vlásočnice nie sú stena"
+                                  if args.open_px else
+                                  "nič (otvorenie vypnuté)"))
     print("  štruktúra       " + (f"vyplnená, okno {args.fill:g} m "
                                   f"({args.fill_px} px)" if args.fill_px
                                   else "jemná sieť žliabkov (fill vypnuté)"))
@@ -1631,6 +1722,14 @@ def main():
     ap.add_argument("--fill", type=float, default=0.0,
                     help="spriemerovať tmavosť v okne toľkých METROV – zo "
                          "siete žliabkov spraví súvislú plochu (0 = vypnuté)")
+    # Vlásočnicové ryhy a mikrotiene sú tmavé, ale nie sú to steny – a práve
+    # z nich je v mape pri nižších zoomoch rovnomerná sivá deka cez celý
+    # výrez. Otvorenie ich zmaže podľa ŠÍRKY (nie podľa plochy – celá sieť je
+    # jeden veľký útvar, takže `min_area` na ňu nesiaha). Namerané pri
+    # Gerlachu: 21,6 % plochy bez neho, 9,5 % pri 3 m. Viď `open_mask`.
+    ap.add_argument("--open", type=float, default=3.0,
+                    help="zmazať útvary užšie než 2× toľko METROV "
+                         "(0 = vypnuté, necháva aj vlásočnice)")
     # 7 m² je ~11 pixelov na z17. Zámerne nízko: tmavé miesta v tieňovaní nie
     # sú súvislé steny, ale hustá sieť žliabkov a mikrotieňov – a práve tá
     # jemná štruktúra je to, čo z hillshade chceme (viď hlavičku súboru).
@@ -1700,6 +1799,8 @@ def main():
                      if args.local > 0 else 0)
     args.fill_px = (int(round(args.fill / ground_res(z, lat_mid)))
                     if args.fill > 0 else 0)
+    args.open_px = (max(1, int(round(args.open / ground_res(z, lat_mid))))
+                    if args.open > 0 else 0)
     x0, y0, x1, y1 = tile_range(args.bbox, z)
     n_tiles, cells = print_plan(z, x0, y0, x1, y1, args)
     if n_tiles > args.max_tiles:
@@ -1723,6 +1824,10 @@ def main():
     # rôzne behy nemôžu pomiešať.
     podpis = (f"z{z}-d{args.dark}-a{args.dark_always}-r{args.rel}"
               f"-c{args.cliff}-l{args.local:g}-f{args.fill:g}-b{int(args.blur)}"
+              # Otvorenie mení RASTER tmavosti, teda aj obrysy v blokoch –
+              # bez neho v podpise by ďalší beh nadviazal na bloky spočítané
+              # s iným (alebo žiadnym) otvorením.
+              f"-o{args.open:g}"
               f"-m{args.min_area:g}-h{args.min_hole:g}"
               # Plné plochy menia PÁSMA, teda aj obsah blokov – bez toho
               # by po prepnutí nadviazal na obrysy z iného nastavenia.
@@ -1895,6 +2000,7 @@ def main():
                 ("rel", args.rel),
                 ("cliff_delta", args.cliff), ("blur", args.blur),
                 ("fill_m", f"{args.fill:g}"),
+                ("open_m", f"{args.open:g}"), ("open_px", args.open_px),
                 ("out_mb", f"{out_mb:.1f}"), ("mb_per_km2", f"{per_km2:.1f}"),
                 ("min_area_m2", f"{args.min_area:g}"),
                 ("plne", int(bool(args.plne))),
