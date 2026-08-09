@@ -110,6 +110,35 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 > naraz. Ten druhý súbor s „DMR 5" v mene, `dmr5.yml`, je **záložný ručný
 > zdroj** na ten istý model a build ho nevolá nikdy.
 
+### Čo z buildu je v `workers/` a prečo
+
+`build-map.yml` má strop **128 KiB** a po zlúčení dvoch PR ho prekročil
+o 444 B – GitHub taký súbor neprijme a nepovie to. Preto sa najväčšie `run:`
+bloky sťahujú do `workers/`, kde sa dajú aj spustiť ručne:
+
+| skript | čo robí | bolo |
+|---|---|---|
+| [`terrain-build.sh`](../workers/terrain-build.sh) | tieňovanie: cache → release → prepočet | 5,2 kB v YAMLe |
+| [`check-site.sh`](../workers/check-site.sh) | štýl neodkazuje na nič, čo v `_site` nie je | 3,6 kB |
+| [`smoke-test.sh`](../workers/smoke-test.sh) | nasadená mapa naozaj odpovedá (a PMTiles cez `206`) | 3,2 kB |
+| [`fetch-planetiler.sh`](../workers/fetch-planetiler.sh) | Planetiler do `planetiler.jar` | **4× tá istá kópia** |
+
+Ten posledný je duplicita, nie veľkosť: Planetiler si sťahujú štyri joby
+(`tiles`, `contours`, `trails`, `features`), každý má vlastný runner a vlastnú
+cache, takže sa to spraviť raz a podať ďalej nedá. Kým to boli štyri kópie
+jedného bloku, bola to štvornásobná príležitosť, aby sa rozišli – verzia sa
+zmení na jednom mieste a tri joby ticho stavajú z inej.
+
+Popri tom sa zliali dva rady takmer rovnakých vetiev: kontrola „má štýl zdroj
+`contours`/`rocks`/`trails`/`features`, a je k nemu súbor?" a to isté v smoke
+teste boli 4 + 4 skoro identické bloky, teraz sú z toho dva cykly nad tabuľkou.
+
+**Keď presunieš `run:` blok do `workers/`, over, či ho nesledovala nejaká
+kontrola.** `Lint workflows` hľadá volania `fetch-dem.sh`, aby vrstvy podávali
+kľúč výrezu tak, ako to čaká `check-dem.sh` – a presun tieňovania do skriptu jej
+ten súbor vzal spod rúk. Preto sa každá vrstva hľadá vo **viacerých kandidátoch**
+a stačí, že ju nájde jeden; inak by presun kontrolu ticho umlčal.
+
 Čo tým vzniklo a čo to stálo:
 
 - **Kratší beh.** Skaly (~40 min), tieňovanie (~10) a mapa (~20) bežali za
@@ -1351,6 +1380,26 @@ Tri veci, ktoré ten workflow rieši, a všetky sú zmerané:
    s `ERROR_ON_MISSING_VERT_SHIFT=YES`, aby chýbajúca mriežka nebola tichý
    omyl). Po prevode vyjde na Gerlachu 2 653,92 m. Na skaly by na tom
    nezáležalo – sklon sa geoidom nemení – na vrstevnice áno.
+
+4. **Odmietnutie príde ako HTTP 200.** Keď Drive dáta dať nechce – typicky
+   prekročený denný limit sťahovania súboru – nevráti chybový kód, ale
+   **stránku v HTML so stavom 200**. Na `Range` request sa to pozná podľa
+   dvoch vecí naraz: odpoveď je `200` (nie `206`, čiže rozsah ignoroval)
+   a je kratšia, než sa pýtalo. V behu
+   [31315890474](https://github.com/skifahrer/fricomaps/actions/runs/31315890474)
+   to bolo 2 009 B namiesto 32 768.
+
+   Kým to shim bral ako úspech, `_send_single` spadol v `_fetch` **ešte pred
+   hlavičkami** a chybu len vypísal do logu – takže GDAL čakal na odpoveď,
+   ktorá nikdy neprišla. Job visel **2 h 16 min** na `gdalinfo`, minul dva
+   runnery a nevyrobil nič; v logu bol jeden riadok a potom ticho. Odteraz
+   shim **odpovie vždy**: 502 s vysvetlením, GDAL to vráti ako chybu a job
+   spadne v sekundách. Prvé takéto odmietnutie navyše zastaví celý `Pool` –
+   limit sa opakovaním nepohne, tak sa naň nečaká šesťkrát pri každom bloku.
+
+   Z toho istého testu vypadla druhá diera: rozsah, z ktorého po orezaní na
+   súbor nič neostalo, sa bral ako „pošli celý súbor" – teda 145 GB namiesto
+   32 kB. Teraz je z toho `416`, ako káže RFC 9110.
 
 Namerané: výrez 5,2 × 5,6 km pri 1 m trvá 1,2 min, stiahne 0,11 GB v 697
 požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
