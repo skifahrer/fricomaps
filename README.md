@@ -387,6 +387,13 @@ teda systematicky nájde severozápadné steny a systematicky prehliadne
 juhovýchodné. Preto je to jedna z možností vo výbere `rock_source`
 (`tienovanie`) a nie náhrada skál počítaných zo sklonu.
 
+**Najtenšie vlákna siete skala nie sú.** Prah nájde aj vlásočnicové ryhy
+a mikrotiene cez celý svah. Vektorizáciou sa z nich stane jeden prepojený
+polygón cez celý výrez a v mape z neho pri z14 a nižšie nie je sieť, ale
+**rovnomerná sivá deka**. Zahadzuje ich `open` (default 3 m) – podľa ŠÍRKY,
+nie podľa plochy, lebo celá sieť je jeden veľký útvar a `min_area` na ňu
+nesiaha. Namerané pri Gerlachu: 21,6 % plochy bez neho, **9,5 %** s ním.
+
 **Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
 skala; stena v presvetlenej doline býva svetlejšia než tráva vedľa. Prah sa
 preto skladá z troch:
@@ -557,6 +564,8 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 | skaly z tieňovania, nech to trvá koľko chce | `rock_source: tienovanie` |
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
+| aj najtenšie ryhy ako skalu (sivá deka pri z14) | `options: rock_img_options="open=0"` |
+| len výrazné steny | `options: rock_img_options="open=6"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
 | len rýchlo overiť, či to vôbec niečo nájde | switch `test` (predvolene zapnutý, viď nižšie) |
 

@@ -1227,6 +1227,10 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
    │                          ref   = clip(pozadie − rel, dark_always, dark)
    │                          po pásoch dlaždicových riadkov, s presahom,
    │                          na disk ako komprimovaný GTiff
+   ▼
+otvorenie (`open`, 3 m)       preč všetko užšie než stena – vlásočnicové
+   │                          ryhy a mikrotiene, z ktorých je pri z14
+   │                          sivá deka (erózia + dilatácia)
    ├─► artefakt `nahlad-…`     PNG mozaika vedľa masky + histogram
    ▼
 gdal_contour -p -fl 0,5 -fl 256             PO BLOKOCH (block_tiles=8,
@@ -1438,6 +1442,40 @@ Kód: [`workers/shading-rocks.py`](../workers/shading-rocks.py). Formát
 výstupu je zhodný so skalami z DEM (vrstva `rock`, EPSG:4326, `class`
 = `steep`/`cliff`, `area` v m²); jediný rozdiel je, že skaly z DEM majú
 atribút `slope` a skaly z obrázka `dark`.
+
+### Najtenšie vlákna siete skala nie sú
+
+Prah nad hillshade nenájde len steny. Nájde aj **vlásočnicové ryhy
+a mikrotiene** cez celý rozčlenený svah – a tie sú v mape to, čo škodí.
+Vektorizáciou sa z nich stane **jeden prepojený polygón** cez celý výrez
+a pri z14 a nižšie z neho nie je sieť, ale **rovnomerná sivá deka**.
+
+Namerané na výreze pri Gerlachu (2 km², z17, `dark 125`):
+
+| `open` | pokrytie | pri z14 zaliatych pixelov | ako to vyzerá |
+|---|--:|--:|---|
+| `0` (dovtedy) | 21,6 % | 20,7 % | súvislý sivý záves cez celý výrez |
+| `2` (1,6 m) | 15,4 % | 15,2 % | – |
+| **`3` (default)** | **9,5 %** | **9,2 %** | **čitateľné samostatné telesá** |
+| `6` | 5,5 % | 5,3 % | len výrazné steny |
+
+Zahadzuje sa podľa **ŠÍRKY**, nie podľa plochy: celá sieť je jeden veľký
+útvar, takže `min_area` na ňu vôbec nesiaha. Robí to morfologické
+**otvorenie** – erózia zmaže všetko užšie než `2 × open`, dilatácia vráti
+prežitým jadrám ich pôvodný rozsah. Stena teda ostane stenou, vlásočnica
+zmizne. Presne tým sa stena od ryhy líši.
+
+Počíta sa to na hotovej maske tmavosti, ešte pred vektorizáciou: pred prahom
+by sa mazalo z plynulej tmavosti a `dark_always` by sa nemal ako uplatniť,
+po vektorizácii je už celá sieť jeden polygón a šírka sa z neho nedá
+vytiahnuť. Polomer je v **metroch na zemi**, takže to isté nastavenie platí
+na každom zoome rovnako.
+
+Implementácia je separovateľné bežiace min/max (dva prechody po `2r+1`
+posunoch namiesto `(2r+1)²`) – namerané 140 mil. px/s, čiže na z17 nad
+Vysokými Tatrami okolo 7 sekúnd. Obrysy sa tým naopak **zrýchlia**: menej
+vlákien = rádovo menej segmentov na poskladanie, a to je najdrahšia fáza
+celého behu.
 
 ### Tmavé nie je plocha, ale sieť
 

@@ -22,6 +22,12 @@ name: Skaly z tieňovaných dlaždíc
 # – tie druhé teda táto cesta systematicky prehliadne. Zato má rozlíšenie,
 # na aké si sami sklon nespočítame (z17 ≈ 0,8 m na pixel).
 #
+# NAJTENŠIE VLÁKNA SIETE SA ZAHADZUJÚ (`options: open=…`, default 3 m). Prah
+# nad hillshade nájde aj vlásočnicové ryhy a mikrotiene cez celý svah; z tých
+# je po vektorizácii jeden prepojený polygón cez celý výrez a v mape pri z14
+# a nižšie rovnomerná sivá deka. Otvorenie ich maže podľa ŠÍRKY – stena
+# ostane stenou. Namerané pri Gerlachu: 21,6 % plochy bez neho, 9,5 % s ním.
+#
 # JEDNA TRIEDA: výstupom je jedno pásmo, teda žiadna plocha vnútri inej.
 # V mape sa kreslí jednou sivou bez priehľadnosti, takže sa prekryv nikde
 # neprejaví a plochy sa nemusia ani zlepovať. `options: plne=0` vráti pôvodné
@@ -117,6 +123,8 @@ on:
         default: "7"
         type: string
       # Napr. `local=2000 smooth=2 jobs=8`. Čo sa hodí najčastejšie:
+      #   open=0           nechať aj najtenšie vlákna (sivá deka pri z14)
+      #   open=6           len výrazné steny, drobné bralá preč
       #   fill=40          súvislé plochy namiesto jemnej siete
       #   plne=0           aj trieda `cliff` ako kedysi
       #   zapln_diery=1    zaplniť diery (zožerie detail – viď hlavičku)
