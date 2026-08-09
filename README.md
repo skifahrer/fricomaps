@@ -764,6 +764,28 @@ Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
    súbežne (`jobs`, default 12). Výrez 5,2 × 5,6 km pri 1 m: **1,2 min,
    0,11 GB, 697 požiadaviek.**
 
+**Číta sa prihlásený ako vlastník dát.** Verejný odkaz („ktokoľvek s odkazom")
+má **denný limit sťahovania na súbor** a ten limit zdieľajú všetci, kto naň
+siahnu — nielen naše behy. Keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní
+vôbec, lebo je to jediná cesta k nemu. Token vlastníka v repository secrete
+**`GDRIVE_CREDENTIALS`** ten strop posúva rádovo vyššie: číta sa potom cez
+Drive API s `Authorization: Bearer` namiesto verejného odkazu.
+
+Vyrobí sa raz, na vlastnom počítači:
+
+```bash
+python3 workers/drive-auth.py --login --client-id=… --client-secret=…
+# vypísaný JSON → Settings → Secrets and variables → Actions → GDRIVE_CREDENTIALS
+python3 workers/dmr5-drive.py --auth-check      # ktorým účtom sa číta a či naň vidí
+```
+
+Klient je typu *Desktop app* z Google Cloud Console, rozsah práv iba
+`drive.readonly` (pipeline z Drive len číta). **Publishing status appky musí
+byť „In production"** — v „Testing" platí refresh token 7 dní a pipeline by
+raz do týždňa spadla. Bez secretu sa nemení nič, len sa v každom behu
+výslovne vypíše, že platí verejný limit. Podrobne (aj kam všade sa ten secret
+musí dostať) v [`docs/pipeline.md`](docs/pipeline.md#prihlásenie-ako-vlastník-dát-secret-gdrive_credentials).
+
 **Výšky sú elipsoidické, nie Bpv.** Maximum v súbore je 2 697,03 m, kým
 Gerlachovský štít má 2 654,4 m n. m. — tých **+42,6 m je geoidová undulácia**.
 Workflow ich preto predvolene prevádza cez EGM2008; kontrola na Gerlachu dá

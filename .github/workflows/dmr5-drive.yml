@@ -25,10 +25,18 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # to, čo výrez pretína – rádovo minúty namiesto hodín. Odkedy Drive púšťa
 # spoľahlivo, tá druhá cesta sa neoplácala udržiavať a bola zrušená.
 #
+# ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK DÁT, keď je čím. Verejný odkaz („ktokoľvek
+# s odkazom") má denný limit sťahovania na súbor a ten zdieľajú všetci, kto naň
+# siahnu – nielen naše behy. Token vlastníka zo secretu `GDRIVE_CREDENTIALS`
+# ten strop posúva rádovo vyššie; vyrobí ho `workers/drive-auth.py --login`
+# a krok „Prihlásenie na Drive" v každom behu vypíše, ktorým účtom sa čítalo.
+# Bez secretu sa nič nemení, len sa výslovne povie, že platí verejný limit.
+#
 # ČO TO ZNAMENÁ, KEĎ DRIVE NEPUSTÍ: DMR 5.0 sa v tom behu nedoplní vôbec.
 # Nie je to tichý stav – `drive-serve.py` vráti 502 s vysvetlením a beh spadne
 # v sekundách; so zapnutým `ugkk_fallback` prejde na hrubší model (sonny)
-# a atribúcia to povie. Náhradou je nahrať kópiu modelu na iný účet a prepísať
+# a atribúcia to povie. Prvá vec, čo s tým: prihlásiť sa ako vlastník
+# (`GDRIVE_CREDENTIALS`). Až potom nahrať kópiu modelu na iný účet a prepísať
 # `TIF_ID`/`OVR_ID` vo `workers/dmr5-drive.py`.
 #
 # ZDROJ (namerané, nie odhad):
@@ -174,6 +182,12 @@ on:
         required: false
         default: "model do releasu"
         type: string
+    secrets:
+      # Token vlastníka dát na Drive. `required: false` preto, že bez neho sa
+      # číta verejným odkazom ako predtým – len s denným limitom, ktorý
+      # zdieľajú všetci klienti. Volajúci ho podávajú cez `secrets: inherit`.
+      GDRIVE_CREDENTIALS:
+        required: false
 
 permissions:
   contents: write
@@ -200,18 +214,24 @@ jobs:
     #
     #   1. príprava       runner, GDAL, miesto na disku
     #   2. Nastavenia     z formulára konkrétne čísla a mená (jediné miesto)
-    #   3. Sonda          otvor zdroj – 8 s, 9 požiadaviek, 0,3 MB
-    #   4. Plán čítania   okno, počet blokov, odhad času a objemu
-    #   5. Čítanie        bloky z Drive, postup `[i/N]` po každom bloku
-    #   6. Zloženie       mozaika → COG alebo 1° dlaždice (už len nad diskom)
-    #   7. Kontrola       veľkosť assetov proti stropu 2 GB
-    #   8. Metadáta       meta-*.json vedľa modelu
-    #   9. Nahranie       do releasu
-    #  10. Súhrn          tabuľka do prehľadu behu
+    #   3. Prihlásenie    ktorým účtom sa z Drive číta (vlastník vs. verejne)
+    #   4. Sonda          otvor zdroj – 8 s, 9 požiadaviek, 0,3 MB
+    #   5. Plán čítania   okno, počet blokov, odhad času a objemu
+    #   6. Čítanie        bloky z Drive, postup `[i/N]` po každom bloku
+    #   7. Zloženie       mozaika → COG alebo 1° dlaždice (už len nad diskom)
+    #   8. Kontrola       veľkosť assetov proti stropu 2 GB
+    #   9. Metadáta       meta-*.json vedľa modelu
+    #  10. Nahranie       do releasu
+    #  11. Súhrn          tabuľka do prehľadu behu
     #
-    # Kroky 4–6 sú fázy jedného scriptu (`--stage`), ktoré si stav podávajú
+    # Kroky 5–7 sú fázy jedného scriptu (`--stage`), ktoré si stav podávajú
     # cez `drive-work/`. Vedľajší zisk: prečítané bloky sa v ňom zachovajú,
     # takže opakovaný krok `Čítanie` dopočíta len zvyšok.
+    env:
+      # Prihlásenie na Drive ako vlastník dát – dvíha limit sťahovania.
+      # Podávané celému jobu, lebo naň siaha aj sonda, aj plán, aj čítanie.
+      # Bez secretu sa číta verejným odkazom (denný limit). Viď workers/drive-auth.py.
+      GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -322,6 +342,16 @@ jobs:
             echo "| výšky | $GEOID |"
           } >> "$GITHUB_STEP_SUMMARY"
           echo "── $AREA, mriežka ${GRID} m, výšky $GEOID, podoba $([ "$TILES" = true ] && echo dlaždice || echo "výrez $ASSET") → release $REL"
+
+      # Lacná otázka s drahou odpoveďou: čítame ako VLASTNÍK dát, alebo
+      # verejným odkazom? Verejný má denný limit sťahovania, ktorý zdieľajú
+      # všetci klienti, a keď sa vyčerpá, DMR 5.0 sa v behu nedoplní vôbec
+      # (beh 31315890474 na tom visel 2 h 16 min). Stojí to token a dve
+      # metadátové požiadavky – a povie sa to TU, nie po hodine čítania.
+      # Vlastný krok preto, že padnutý krok s týmto menom je sám o sebe
+      # diagnóza: nesedí secret, nie dáta ani sieť.
+      - name: Prihlásenie na Drive (vlastník dát)
+        run: python3 workers/dmr5-drive.py --auth-check
 
       # Otvorenie zdroja stojí 8 s, 9 požiadaviek a 0,3 MB, tak sa robí VŽDY
       # a nie len v režime sondy: keď Drive zmení odkaz alebo shim prestane

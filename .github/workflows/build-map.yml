@@ -395,6 +395,9 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/dmr5-drive.yml
+    # Kvôli GDRIVE_CREDENTIALS: bez tokenu vlastníka by doplnenie čítalo
+    # verejným odkazom, na ktorý platí denný limit sťahovania.
+    secrets: inherit
     with:
       # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v release
       # hľadal a nenašiel. Kľúč pohoria sem NEchodí: `dmr5-drive.yml` by si
@@ -411,6 +414,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/dmr5-drive.yml
+    secrets: inherit                      # GDRIVE_CREDENTIALS, ako vyššie
     with:
       # Bbox rozšírený na celé stupne – dlaždica `N49E020.tif` je sľub o celom
       # stupni, takže sa musí prečítať celá. Rozšírenie počíta dem-target.py.
@@ -1139,6 +1143,10 @@ jobs:
           # Drive je latenčný, nie úzky – šesť častí naraz je meraný
           # kompromis (nad ~16 vláknami začne odpovedať 403).
           SLOPE_JOBS: "6"
+          # Skaly z `dmr5` čítajú sklon rovno z Drive (`slope-chunks.py
+          # --drive`), takže token vlastníka potrebujú aj tu – inak by tá
+          # vetva jediná ostala na verejnom dennom limite.
+          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
         run: bash workers/contours-build.sh
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
@@ -1390,6 +1398,10 @@ jobs:
           OPT_TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           SLOPE_STORE: slope-chunks
           SLOPE_JOBS: "6"
+          # Toto je TEN krok, čo z Drive číta najviac: sklon pre skaly z `dmr5`
+          # ide po častiach rovno zo 145 GB rastra. Bez tokenu vlastníka by
+          # bežal na verejnom dennom limite.
+          GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
         run: bash workers/contours-build.sh
 
       - name: Cache vrstevníc a skál (save)

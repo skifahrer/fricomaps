@@ -1260,8 +1260,85 @@ Namerané: výrez 5,2 × 5,6 km pri 1 m trvá 1,2 min, stiahne 0,11 GB v 697
 požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
 4 514 plôch a 5,08 km² na 29 km² územia.
 
-Kód: [`workers/drive-serve.py`](../workers/drive-serve.py) (shim nad Drive)
-a [`workers/dmr5-drive.py`](../workers/dmr5-drive.py) (okno, bloky, výstup).
+Kód: [`workers/drive-serve.py`](../workers/drive-serve.py) (shim nad Drive),
+[`workers/drive-auth.py`](../workers/drive-auth.py) (prihlásenie) a
+[`workers/dmr5-drive.py`](../workers/dmr5-drive.py) (okno, bloky, výstup).
+
+### Prihlásenie ako vlastník dát (secret `GDRIVE_CREDENTIALS`)
+
+Bod 4 vyššie – „odmietnutie príde ako HTTP 200" – nie je náhoda ani porucha.
+Verejný odkaz („ktokoľvek s odkazom") má **denný limit sťahovania na súbor**
+a ten limit **nezdieľajú len naše behy**: zdieľa ho každý, kto na ten odkaz
+siahne. Keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní **vôbec**, lebo je to
+jediná cesta k nemu. Nedá sa to vyriešiť opakovaním ani iným zdrojom.
+
+Prihlásený **vlastník** má na svoje vlastné súbory strop rádovo vyšší a nedelí
+sa o neho s cudzími klientmi. Preto sú tie isté dáta dostupné dvoma cestami
+a rozhoduje o nich prítomnosť tokenu:
+
+| | cesta | limit |
+|---|---|---|
+| prihlásený | `www.googleapis.com/drive/v3/files/<id>?alt=media` + `Authorization: Bearer` | vlastníkov, vysoký |
+| verejný | `drive.usercontent.google.com/download?id=<id>&confirm=t` | denný na súbor, zdieľaný |
+
+Bez secretu sa **nemení nič** – číta sa ako predtým, len sa výslovne vypíše,
+že platí verejný limit. To „výslovne" je tu to podstatné: tichý návrat
+k verejnému limitu (zmazaný secret, preklep v mene) by sa inak zistil až tým,
+že Drive po pol dni prestane púšťať dáta. Preto to hlási krok **Prihlásenie na
+Drive** na začiatku behu, riadok `prístup:` v logu čítania aj riadok
+`prístup` v súhrne – rovnaká logika ako `dem-source.txt`: nesie sa, čo sa
+NAOZAJ použilo.
+
+**Čo treba raz nastaviť** (potom sa na to nesiaha, kým sa token neodvolá):
+
+1. Google Cloud Console → projekt → povoľ **Google Drive API**.
+2. *OAuth consent screen*: typ **External**, publishing status
+   **In production**. Status „Testing" je tá pasca – refresh token v ňom platí
+   **7 dní** a pipeline by potom raz do týždňa spadla na `invalid_grant`.
+   Overenie appky Google nežiada, kým je jej jediným používateľom vlastník
+   dát; pri prihlásení sa preklikáva „Advanced → Go to … (unsafe)".
+3. *Credentials* → **OAuth client ID**, typ **Desktop app**.
+4. Na vlastnom počítači (treba prehliadač, na runneri to nemá čo robiť):
+   `python3 workers/drive-auth.py --login --client-id=… --client-secret=…`
+   Beží pri tom loopback server na `127.0.0.1`, lebo Google zrušil
+   „out of band" tok; bez prehliadača na tom stroji je `--manual`.
+5. Vypísaný JSON vlož ako repository secret **`GDRIVE_CREDENTIALS`**.
+
+Rozsah práv je `drive.readonly` – pipeline z Drive iba číta, takže token
+v secrets nemôže na Drive nič zmeniť ani zmazať.
+
+**Kam všade sa ten secret musí dostať**, je na prekvapenie viac miest než
+jedno, a práve preto to stráži `Lint workflows`:
+
+```
+dmr5-drive.yml    env na jobe `model`        → sonda, plán, čítanie blokov
+build-map.yml     mirror-dmr5-area/-tiles    → secrets: inherit
+build-map.yml     job `rocks` (a `contours`) → GDRIVE_CREDENTIALS v env kroku
+```
+
+Ten tretí riadok je ten, čo sa dá prehliadnuť: skaly z `dmr5` si DEM
+nedopĺňajú vôbec (`slope-chunks.py --drive` číta sklon po častiach **rovno
+z Drive**), takže najväčší čitateľ zo 145 GB rastra sedí v úplne inom jobe než
+ten, ktorý model dopĺňa. Kontrola *„Token vlastníka Drive sa dostane všade,
+kde sa z Drive číta"* preto hľadá v každom workflowe kroky, ktoré volajú
+`dmr5-drive.py`, `slope-chunks.py` alebo `contours-build.sh`, a žiada pri
+každom ten secret; a pri volaniach `dmr5-drive.yml` žiada `secrets: inherit`.
+
+**Overenie bez čítania dát:** `python3 workers/dmr5-drive.py --auth-check`
+vypíše účet a pri oboch súboroch to, či ich ten účet **vlastní**.
+Vlastníctvo je tu podstatné: na cudzí súbor, ktorý je len nasdieľaný odkazom,
+platí ten istý denný strop ako na verejný prístup, takže prihlásenie by
+nezískalo nič – a nemá sa tváriť, že áno (hlási to ako `::warning::`).
+
+Čo sa mení v shime: `Pool` drží spojenia **po hostoch** (prihlásená cesta vie
+odpovedať presmerovaním na podpísanú adresu, tá sa zapamätá a pri prvom
+zlyhaní zahodí), `Authorization` chodí len na kanonický API host – rovnako
+ako to robí `curl -L`, ktorý hlavičku pri zmene hosta zahodí – a access token
+sa sám obnovuje 5 minút pred vypršaním, lebo platí hodinu a čítanie blokov
+trvá aj dve. Chyby z API sú konečne rozdelené na tie, ktoré má zmysel
+opakovať (`rateLimitExceeded`, 5xx), a tie, kde je čakanie stratený čas
+(`downloadQuotaExceeded`, `notFound`, odmietnutý token aj po obnove) – tie
+zastavia celý `Pool` hneď, ako ich uvidí prvý blok.
 
 **Job je rozdelený na čo najviac krokov a každý hovorí, čo robí a ako ďaleko
 je.** Kým to boli tri kroky, bola z hodinového behu v Actions jedna nemá
