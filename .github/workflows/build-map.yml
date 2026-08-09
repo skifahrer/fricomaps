@@ -1043,11 +1043,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: |
-          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
-          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
-            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-
+        run: workers/fetch-planetiler.sh
       # ---------- kľúče cache ----------
   # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
@@ -1370,116 +1366,14 @@ jobs:
         id: terrain
         if: ${{ needs.plan.outputs.opt_terrain == 'true' }}
         env:
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          DEM_BBOX: ${{ needs.plan.outputs.dem_bbox }}
+          SHADING_SOURCE: ${{ needs.plan.outputs.opt_shading_source }}
+          TERRAIN_MAXZOOM: ${{ needs.plan.outputs.opt_terrain_maxzoom }}
+          TERRAIN_REBUILD: ${{ needs.plan.outputs.opt_terrain_rebuild }}
           GH_TOKEN: ${{ github.token }}
           OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
-        run: |
-          set -euo pipefail
-          T_TER=$(date +%s)
-          TSRC="výpočet"
-          FELL_BACK=false
-          TZ='${{ needs.plan.outputs.opt_terrain_maxzoom }}'
-          case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
-          # Tieňovanie je vrstva z DEM, takže ide na `dem_bbox` – pri rýchlom
-          # teste na testovací štvorec, nie na celý región.
-          BBOX='${{ needs.plan.outputs.dem_bbox }}'
-          TDEM='${{ needs.plan.outputs.opt_shading_source }}'
-          # Zdroj je v mene assetu: tieňovanie zo Sonnyho a z DMR 3.5 nie je
-          # to isté a nesmie sa jedno vydávať za druhé.
-          ASSET="terrain-${{ needs.plan.outputs.key }}-${TDEM}-z${TZ}.tar.zst"
-          REBUILD='${{ needs.plan.outputs.opt_terrain_rebuild }}'
-
-          have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
-
-          if [ "$REBUILD" = 'true' ]; then
-            echo "terrain_rebuild=áno – dlaždice sa počítajú nanovo."
-            rm -rf terrain-out
-          elif have_tiles; then
-            echo "Výškové dlaždice sú v cache behu ✓"
-            TSRC="cache"
-          else
-            # Skús release – uložené dlaždice sú lacnejšie než ich prepočítať.
-            if gh release download "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
-                 --pattern "$ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
-              mkdir -p terrain-out
-              tar --use-compress-program=unzstd -xf "/tmp/$ASSET" -C terrain-out
-              echo "Výškové dlaždice stiahnuté z releasu $TERRAIN_RELEASE ✓"
-              TSRC="release $TERRAIN_RELEASE"
-            fi
-          fi
-
-          if ! have_tiles; then
-            # Vlastný job = vlastný DEM. Vrstevnice si ho sťahujú tiež, ale
-            # bežia súbežne, takže sa oň nedá oprieť; skript je spoločný.
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq gdal-bin zstd
-            python3 -m pip install --quiet numpy
-            # Model z výberu `shading_source`. Do podpriečinka podľa zdroja –
-            # rovnako ako v jobe s vrstevnicami, nech sa dve rôzne mozaiky
-            # nikdy neprebijú v jednom `all.vrt`. Kľúč výrezu sa nepodáva, tak
-            # `dmr5` vyjde na dlaždicovú 5 m verziu – tieňovanie sa robí vždy
-            # na celý región.
-            #
-            # KÓD 3 = „ten model pre toto územie nemáme". Vrstevnice to vedeli
-            # ustáť odjakživa, tieňovanie nie – a beh 31307163093 preto
-            # sčervenel na poslednom jobe, hoci mapa sa nasadila. Rovnaký
-            # fallback ako pri vrstevniciach, riadený tým istým prepínačom.
-            set +e
-            workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
-            TRC=$?
-            set -e
-            if [ "$TRC" -eq 3 ]; then
-              if [ "${OPT_UGKK_FALLBACK:-true}" != 'true' ]; then
-                echo "::error::Model $TDEM pre tieňovanie nie je k dispozícii a ugkk_fallback je vypnutý. Naplň ho, zapni fallback, alebo vyber iný shading_source."
-                exit 1
-              fi
-              echo "::warning::Model $TDEM pre tieňovanie nie je k dispozícii – tieňovanie sa počíta zo Sonnyho (20 m). Mapa bude, len s hrubším reliéfom, a atribúcia bude hovoriť Sonny."
-              TDEM=sonny
-              FELL_BACK=true
-              # Meno assetu nesie zdroj, tak sa musí prepočítať – inak by sa
-              # Sonnyho dlaždice uložili do releasu pod menom toho druhého
-              # modelu a nabudúce by sa vydávali za neho.
-              ASSET="terrain-${{ needs.plan.outputs.key }}-${TDEM}-z${TZ}.tar.zst"
-              workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
-            elif [ "$TRC" -ne 0 ]; then
-              exit "$TRC"
-            fi
-            echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM"
-            python3 workers/build-terrain.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \
-              --minzoom=5 --maxzoom="$TZ" --out=terrain-out
-            echo "$TZ" > terrain-out/maxzoom.txt
-            echo "::endgroup::"
-
-            # Ulož do releasu, nech ich nabudúce netreba počítať znova.
-            tar --use-compress-program='zstd -19 -T0' -cf "/tmp/$ASSET" -C terrain-out .
-            gh release view "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-              gh release create "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
-                --title "Výškové dlaždice (tieňovanie a 3D terén)" \
-                --notes "Terrarium PNG dlaždice z výškového modelu. Jeden .tar.zst na región, model a maxzoom; vyrába ich workflow Build map." || true
-            gh release upload "$TERRAIN_RELEASE" "/tmp/$ASSET" \
-              --repo "$GITHUB_REPOSITORY" --clobber \
-              && echo "Uložené do releasu $TERRAIN_RELEASE ako $ASSET" \
-              || echo "::warning::Výškové dlaždice sa nepodarilo uložiť do releasu."
-          fi
-
-          TZ=$(cat terrain-out/maxzoom.txt 2>/dev/null || echo "$TZ")
-          mkdir -p _site/terrain
-          find terrain-out -mindepth 1 -maxdepth 1 -type d -exec cp -r {} _site/terrain/ \;
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
-          # Model ide do atribúcie výškových dlaždíc v štýle. Odkedy má
-          # tieňovanie vlastný výber, nemusí to byť ten istý model ako
-          # pri vrstevniciach – a mapa nesmie tvrdiť cudzí zdroj.
-          echo "dem_source=$TDEM" >> "$GITHUB_OUTPUT"
-          # Keď sa spadlo na Sonnyho, dlaždice sa NESMÚ uložiť pod kľúč cache
-          # toho pôvodného modelu – kľúč nesie jeho meno a nabudúce by sa
-          # z neho vrátili ako keby boli jeho. Do releasu ísť môžu, tam ich
-          # meno assetu už hovorí pravdu.
-          echo "fell_back=$FELL_BACK" >> "$GITHUB_OUTPUT"
-          echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ z modelu $TDEM, $(du -sm _site/terrain | cut -f1) MB"
-          printf '%s\t%s\t%s\t%s\n' "60" "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
-            "$(find _site/terrain -name '*.png' | wc -l) PNG dlaždíc do z$TZ z $TDEM, $(du -sm _site/terrain | cut -f1) MB ($TSRC)" \
-            >> steps-out/terrain.tsv
-
+        run: workers/terrain-build.sh
       - name: Cache výškových dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain.outputs.fell_back != 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
         continue-on-error: true
@@ -1571,11 +1465,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: |
-          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
-          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
-            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-
+        run: workers/fetch-planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -1738,11 +1628,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: |
-          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
-          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
-            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-
+        run: workers/fetch-planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -1889,11 +1775,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: |
-          [ -s planetiler.jar ] && { echo "Planetiler z cache ✓"; exit 0; }
-          curl -fL --retry 4 --retry-delay 5 -o planetiler.jar \
-            https://github.com/onthegomap/planetiler/releases/latest/download/planetiler.jar
-
+        run: workers/fetch-planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -2389,91 +2271,11 @@ jobs:
           cat _site/tiles/manifest.json
 
       - name: Skontroluj, že štýl odkazuje len na existujúce súbory
-        run: |
-          set -euo pipefail
-          fail=0
-          shopt -s nullglob
-          styles=(_site/styles/*.json)
-          if [ ${#styles[@]} -eq 0 ]; then
-            echo "::error::v _site/styles nie sú žiadne štýly"
-            exit 1
-          fi
-          STYLE="${styles[0]}"
-          echo "Kontrolujem $STYLE"
-
-          # sprite (ten, na ktorý štýl naozaj odkazuje)
-          SPRITE='${{ needs.assets.outputs.name }}'
-          for ext in .json .png; do
-            [ -s "_site/sprites/$SPRITE$ext" ] || { echo "::error::chýba sprites/$SPRITE$ext"; fail=1; }
-          done
-
-          # glyfy – iba ak si ich hostíme sami.
-          # Názvy fontstackov obsahujú medzery ("Noto Sans Regular"), preto read -r.
-          if jq -e '.glyphs | contains("openmaptiles.org") | not' "$STYLE" >/dev/null; then
-            while IFS= read -r stack; do
-              if [ ! -s "_site/fonts/$stack/0-255.pbf" ]; then
-                echo "::error::štýl používa fontstack '$stack', ale _site/fonts/$stack/0-255.pbf neexistuje"
-                fail=1
-              fi
-            done < <(jq -r '[.layers[].layout["text-font"] // empty] | flatten | unique | .[]' "$STYLE")
-          fi
-
-          # ikonky – pevne zadané mená ikon musia byť v sprite (mená skladané
-          # výrazom sa generujú priamo zo sprite indexu, tie kontrolovať netreba)
-          while IFS= read -r icon; do
-            [ -n "$icon" ] || continue
-            jq -e --arg i "$icon" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
-              || { echo "::error::štýl odkazuje na ikonu '$icon', ktorá v sprite nie je"; fail=1; }
-          done < <(jq -r '[.layers[].layout["icon-image"]? | strings] | unique | .[]' "$STYLE")
-
-          # vzory plôch a čiar musia byť v sprite (inak sa plocha nevykreslí)
-          while IFS= read -r img; do
-            [ -n "$img" ] || continue
-            jq -e --arg i "$img" 'has($i)' "_site/sprites/$SPRITE.json" >/dev/null \
-              || { echo "::error::štýl používa vzor '$img', ktorý v sprite nie je"; fail=1; }
-          done < <(jq -r '[.layers[].paint["fill-pattern"]?, .layers[].paint["line-pattern"]? | strings] | unique | .[]' "$STYLE")
-
-          # dlaždice
-          PM="_site/tiles/${{ needs.plan.outputs.key }}.pmtiles"
-          [ -s "$PM" ] || { echo "::error::chýba $PM"; fail=1; }
-
-          # vrstevnice, ak ich štýl používa
-          if jq -e '.sources.contours' "$STYLE" >/dev/null; then
-            CPM="_site/tiles/${{ needs.plan.outputs.key }}-contours.pmtiles"
-            [ -s "$CPM" ] || { echo "::error::štýl používa vrstevnice, ale chýba $CPM"; fail=1; }
-          fi
-
-          # skaly, ak ich štýl používa (vlastný .pmtiles kvôli maxzoomu)
-          if jq -e '.sources.rocks' "$STYLE" >/dev/null; then
-            RPM="_site/tiles/${{ needs.plan.outputs.key }}-rocks.pmtiles"
-            [ -s "$RPM" ] || { echo "::error::štýl používa skaly, ale chýba $RPM"; fail=1; }
-          fi
-
-          # značené trasy, ak ich štýl používa
-          if jq -e '.sources.trails' "$STYLE" >/dev/null; then
-            TPM="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles"
-            [ -s "$TPM" ] || { echo "::error::štýl používa značené trasy, ale chýba $TPM"; fail=1; }
-          fi
-
-          # krajinné prvky, ak ich štýl používa
-          if jq -e '.sources.features' "$STYLE" >/dev/null; then
-            FPM="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
-            [ -s "$FPM" ] || { echo "::error::štýl používa krajinné prvky, ale chýba $FPM"; fail=1; }
-          fi
-
-          # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
-          # overí, že súčet naozaj sedí (Pages zvládne ~1 GB na celú stránku).
-          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          TOTAL_MB=$(du -sm _site | cut -f1)
-          echo "Veľkosť _site: ${TOTAL_MB} MB (rozpočet ${LIMIT_MB} MB)"
-          du -sm _site/tiles _site/fonts _site/sprites 2>/dev/null || true
-          if [ "$TOTAL_MB" -gt "$LIMIT_MB" ]; then
-            echo "::error::_site má ${TOTAL_MB} MB, rozpočet je ${LIMIT_MB} MB (GitHub Pages zvládne ~1 GB). Zníž maxzoom, vypni contours, zväčš contour_interval alebo použi menší región / crop_bbox."
-            fail=1
-          fi
-          exit $fail
-
+        env:
+          SPRITE: ${{ needs.assets.outputs.name }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
+        run: workers/check-site.sh
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -2484,82 +2286,16 @@ jobs:
         uses: actions/deploy-pages@v4
 
       - name: Smoke test nasadenej mapy
-        run: |
-          set -uo pipefail
-          BASE='${{ steps.deployment.outputs.page_url }}'
-          BASE="${BASE%/}"
-          REGION='${{ needs.plan.outputs.key }}'
-          fail=0
-
-          check() { # $1 = URL, $2 = očakávaný kód, $3 = popis, $4 = extra curl args
-            for attempt in 1 2 3 4 5; do
-              # shellcheck disable=SC2086  # $4 sú zámerne rozdelené argumenty curlu
-              code=$(curl -s -o /dev/null -w '%{http_code}' ${4:-} "$1" || echo 000)
-              [ "$code" = "$2" ] && break
-              sleep $(( attempt * 5 ))
-            done
-            if [ "$code" = "$2" ]; then
-              echo "  ✓ $3 ($code)"
-            else
-              echo "::error::$3 vrátilo HTTP $code (očakávané $2) – $1"
-              fail=1
-            fi
-          }
-
-          echo "Kontrolujem $BASE"
-          check "$BASE/tiles/manifest.json" 200 "manifest.json"
-          SPRITE='${{ needs.assets.outputs.name }}'
-          check "$BASE/sprites/$SPRITE.json" 200 "sprite index"
-          check "$BASE/sprites/$SPRITE.png" 200 "sprite bitmapa"
-          check "$BASE/styles/$REGION-svetla.json" 200 "style.json"
-          # Typy máp: každý má vlastný štýl pre každú tému; overíme jeden iný
-          # než predvolený, nech sa nestane, že sa nasadí len ten starý názov.
-          check "$BASE/styles/$REGION-cestna-svetla.json" 200 "style.json (cestná mapa)"
-          check "$BASE/style-overrides.json" 200 "úpravy štýlu z developer módu"
-
-          GLYPHS=$(curl -s "$BASE/tiles/manifest.json" | jq -r '.glyphs')
-          case "$GLYPHS" in
-            "$BASE"*) check "$BASE/fonts/Noto%20Sans%20Regular/0-255.pbf" 200 "glyfy" ;;
-            *) echo "  ℹ glyfy sú externé: $GLYPHS" ;;
-          esac
-
-          # PMTiles sa číta HTTP Range requestmi – bez 206 sa mapa nenačíta.
-          check "$BASE/tiles/$REGION.pmtiles" 206 "pmtiles (Range request)" "-H Range:bytes=0-1023"
-
-          if [ '${{ needs.contours.outputs.enabled }}' = 'true' ]; then
-            check "$BASE/tiles/$REGION-contours.pmtiles" 206 "vrstevnice (Range request)" "-H Range:bytes=0-1023"
-          fi
-
-          if [ '${{ needs.contours.outputs.rocks_enabled }}' = 'true' ]; then
-            check "$BASE/tiles/$REGION-rocks.pmtiles" 206 "skaly (Range request)" "-H Range:bytes=0-1023"
-          fi
-
-          if [ '${{ needs.trails.outputs.enabled }}' = 'true' ]; then
-            check "$BASE/tiles/$REGION-trails.pmtiles" 206 "značené trasy (Range request)" "-H Range:bytes=0-1023"
-          fi
-
-          if [ '${{ needs.features.outputs.enabled }}' = 'true' ]; then
-            check "$BASE/tiles/$REGION-features.pmtiles" 206 "krajinné prvky (Range request)" "-H Range:bytes=0-1023"
-          fi
-
-          # Na koreni stránky má byť MAPA. Všetko vyššie kontroluje súbory,
-          # ktoré README nemá – ale práve preto by prepísanú stránku
-          # nechytilo, keby tam ostali z predošlého nasadenia. Toto je tá
-          # jediná otázka, na ktorej návštevníkovi záleží: čo vidí, keď
-          # otvorí adresu. Jekyll z README vyrobí stránku bez `id="map"`.
-          if curl -sL "$BASE/" | grep -q 'id="map"'; then
-            echo "  ✓ na koreni stránky je mapa"
-          elif [ '${{ needs.plan.outputs.pages_build_type }}' != 'workflow' ]; then
-            # Príčinu poznáme z prvého kroku a opraviť sa dá len v nastaveniach
-            # repozitára – červený beh by k tomu nič nepridal.
-            echo "::warning::Na $BASE/ nie je mapa, ale README: zdroj Pages je vetva (build_type=${{ needs.plan.outputs.pages_build_type }}), takže obsah prepísal zabudovaný Jekyll builder. Settings → Pages → Source: 'GitHub Actions'."
-          else
-            echo "::error::Na $BASE/ nie je mapa, hoci zdroj Pages je Actions – niečo je inak, než čakáme. Pozri, čo sa nasadilo."
-            fail=1
-          fi
-
-          exit $fail
-
+        env:
+          BASE: ${{ steps.deployment.outputs.page_url }}
+          REGION: ${{ needs.plan.outputs.key }}
+          SPRITE: ${{ needs.assets.outputs.name }}
+          CONTOURS: ${{ needs.contours.outputs.enabled }}
+          ROCKS: ${{ needs.contours.outputs.rocks_enabled }}
+          TRAILS: ${{ needs.trails.outputs.enabled }}
+          FEATURES: ${{ needs.features.outputs.enabled }}
+          PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
+        run: workers/smoke-test.sh
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
       # mieste v záložke Summary. Riadky si každý job odložil do svojho

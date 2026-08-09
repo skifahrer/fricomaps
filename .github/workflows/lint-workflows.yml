@@ -303,12 +303,17 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import re, sys
+          import os, re, sys
           # Kde je volanie a ktorej vrstve patrí. Keď pribudne ďalšie, pridaj
           # ho sem aj do `layer_area_key` v workers/check-dem.sh.
+          # Cesta sa mení, keď sa `run:` blok presunie do workers/ (a to sa
+          # deje – build-map.yml má strop 128 KiB). Preto sa každá vrstva
+          # hľadá vo VIACERÝCH kandidátoch a stačí, že ju nájde jeden;
+          # keby sa hľadalo len na jednom mieste, presun by kontrolu umlčal.
           CALLS = {
-              "workers/contours-build.sh": ("contours", "rocks"),
-              ".github/workflows/build-map.yml": ("terrain",),
+              ("workers/contours-build.sh",): ("contours", "rocks"),
+              ("workers/terrain-build.sh",
+               ".github/workflows/build-map.yml"): ("terrain",),
           }
           # Vrstvy, o ktorých check-dem.sh tvrdí, že kľúč NEpodávajú.
           src = open("workers/check-dem.sh").read()
@@ -321,15 +326,25 @@ jobs:
           bez_kluca = {v for entry in bez_kluca for v in entry.strip(")").split("|")}
 
           bad = 0
-          for path, layers in CALLS.items():
-              # Komentáre preč – tento súbor sám o `fetch-dem.sh` píše a bez
-              # toho by sa veta z komentára počítala ako argumenty.
-              txt = re.sub(r"^[ \t]*#.*$", "", open(path).read(), flags=re.M)
-              # Riadok s volaním aj s prípadným pokračovaním cez `\`.
-              calls = re.findall(r"workers/fetch-dem\.sh((?:[^\n\\]|\\\n)*)", txt)
-              calls = [c for c in calls if c.strip()]
+          for paths, layers in CALLS.items():
+              calls, path = [], paths[0]
+              for cand in paths:
+                  if not os.path.exists(cand):
+                      continue
+                  # Komentáre preč – tieto súbory samy o `fetch-dem.sh` píšu
+                  # a bez toho by sa veta z komentára počítala ako argumenty.
+                  txt = re.sub(r"^[ \t]*#.*$", "", open(cand).read(), flags=re.M)
+                  # Riadok s volaním aj s prípadným pokračovaním cez `\`.
+                  found = [c for c in re.findall(
+                      r"workers/fetch-dem\.sh((?:[^\n\\]|\\\n)*)", txt) if c.strip()]
+                  if found:
+                      calls, path = found, cand
+                      break
               if not calls:
-                  print(f"::error file={path}::volanie fetch-dem.sh sa nenašlo")
+                  print(f"::error file={paths[0]}::volanie fetch-dem.sh sa "
+                        f"nenašlo ani v jednom z {list(paths)} – vrstva "
+                        f"{layers} si DEM nesťahuje, alebo sa presunula inam "
+                        f"a treba ju dopísať do CALLS.")
                   bad += 1
                   continue
               for call in calls:
