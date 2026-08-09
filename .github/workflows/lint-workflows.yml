@@ -233,13 +233,11 @@ jobs:
           print(f"výber pohorí sedí ({len(opts)} položiek)")
           PY
 
-      # A to isté pre oba workflowy, ktoré robia výškový model z DMR 5.0.
-      # Robia ho práve pre tie územia, na ktoré potom Build map počíta skaly –
-      # keby sa zoznamy rozišli, dá sa vyrobiť model pre pohorie, ktoré si
-      # build nevie vypýtať (alebo naopak). Sú dva, lebo sú to dva zdroje
-      # (archív ÚGKK cez ZIP a ETRS89 verzia na Drive), ale výber pohorí majú
-      # ten istý a rozísť sa nesmie ani jeden.
-      - name: Výber pohorí v DMR 5.0 workflowoch sedí s areas.json
+      # A to isté pre workflow, ktorý robí výškový model z DMR 5.0. Robí ho
+      # práve pre tie územia, na ktoré potom Build map počíta skaly – keby sa
+      # zoznamy rozišli, dá sa vyrobiť model pre pohorie, ktoré si build nevie
+      # vypýtať (alebo naopak).
+      - name: Výber pohorí v DMR 5.0 z Drive sedí s areas.json
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -248,8 +246,7 @@ jobs:
                    if not k.startswith("_")]
           want = ["cele_slovensko"] + areas
           bad = 0
-          for path in (".github/workflows/dmr5.yml",
-                       ".github/workflows/dmr5-drive.yml"):
+          for path in (".github/workflows/dmr5-drive.yml",):
               d = yaml.safe_load(open(path))
               on = d[[k for k in d if k is True or k == "on"][0]]
               opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
