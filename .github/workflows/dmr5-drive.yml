@@ -183,10 +183,19 @@ on:
         default: "model do releasu"
         type: string
     secrets:
-      # Token vlastníka dát na Drive. `required: false` preto, že bez neho sa
-      # číta verejným odkazom ako predtým – len s denným limitom, ktorý
-      # zdieľajú všetci klienti. Volajúci ho podávajú cez `secrets: inherit`.
+      # Prihlásenie vlastníka dát na Drive, dvomi možnými tvarmi: buď všetko
+      # v jednom (GDRIVE_CREDENTIALS), alebo po troch – to druhé preto, že
+      # `client_secret` Google druhýkrát neukáže, takže keď už raz v secrets
+      # leží, nemá sa prepisovať. Všetko `required: false`: bez prihlásenia sa
+      # číta verejným odkazom ako predtým, len s denným limitom, ktorý zdieľajú
+      # všetci klienti. Volajúci to podávajú cez `secrets: inherit`.
       GDRIVE_CREDENTIALS:
+        required: false
+      DRIVE_CLIENT:
+        required: false
+      DRIVE_SECRET:
+        required: false
+      DRIVE_REFRESH:
         required: false
 
 permissions:
@@ -230,8 +239,13 @@ jobs:
     env:
       # Prihlásenie na Drive ako vlastník dát – dvíha limit sťahovania.
       # Podávané celému jobu, lebo naň siaha aj sonda, aj plán, aj čítanie.
-      # Bez secretu sa číta verejným odkazom (denný limit). Viď workers/drive-auth.py.
+      # Dva tvary: všetko v jednom, alebo po troch (`client_secret` Google
+      # druhýkrát neukáže, tak sa raz uložené nemá prepisovať). Bez oboch sa
+      # číta verejným odkazom. Viď workers/drive-auth.py.
       GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+      DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

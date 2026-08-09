@@ -1307,6 +1307,63 @@ NAOZAJ použilo.
 Rozsah práv je `drive.readonly` – pipeline z Drive iba číta, takže token
 v secrets nemôže na Drive nič zmeniť ani zmazať.
 
+Prihlásenie sa dá podať aj **po troch secretoch** namiesto jedného –
+`GDRIVE_CLIENT_ID`/`GDRIVE_CLIENT_SECRET`/`GDRIVE_REFRESH_TOKEN`, alebo
+kratšie `DRIVE_CLIENT`/`DRIVE_SECRET`/`DRIVE_REFRESH`. Nie je to rozmar:
+`client_secret` Google po zatvorení dialógu **druhýkrát neukáže**, takže keď
+už raz v secrets leží, nemá sa prepisovať len preto, aby sa zlepil do jedného
+JSONu. Nekompletná trojica je **chyba** (nie „tak teda verejne") a `Lint
+workflows` ju zachytí staticky.
+
+### Bez počítača: workflow „Prihlásenie na Drive (jednorazové)"
+
+`--login` potrebuje prehliadač a loopback server na tom istom stroji, takže
+z telefónu nepobeží. Na to je
+[`drive-login.yml`](../.github/workflows/drive-login.yml), ktorý tú rolu
+rozdelí: **prehliadač je telefón, shell je runner.**
+
+```
+beh 1 (bez `code`)  →  súhrn behu: klikateľný odkaz na prihlásenie
+   telefón          →  prihlásiš sa, povolíš; prehliadač skončí na
+                        http://127.0.0.1:8731/?code=… a nemá to kde otvoriť
+beh 2 (`code` = tá adresa)
+   → --exchange     →  refresh token do súboru (0600), NIE na výstup
+   → gh secret set  →  priamo do secretu DRIVE_REFRESH
+   → --auth-check   →  e-mail účtu a `✓` pri oboch súboroch
+```
+
+**Token nevidí ani jeho vlastník** a to je zámer: tento repozitár je public,
+takže log behu, súhrn aj artefakty vidí ktokoľvek na internete – a refresh
+token je čítací prístup na celý Drive. Preto sa z `--exchange` nedostane na
+stdout vôbec (`--out` je povinné) a do `gh secret set` ide po stdine zo
+súboru, nie argumentom ani cez `echo`.
+
+Cena za to je **jedno právo, ktoré `GITHUB_TOKEN` nemá**: zapísať secret.
+Treba naň dočasný fine-grained PAT v secrete `DRIVE_PAT` (jediné oprávnenie
+*Secrets: Read and write*, jediný repozitár, expirácia týždeň), ktorý sa po
+behu zmaže. Workflow to kontroluje **pred** výmenou kódu – kód z Google platí
+pár minút a je jednorazový, tak nech nepadne až po ňom.
+
+Alternatíva bez PATu je Googlom hostovaný **OAuth Playground** (vlastné
+credentials, scope `drive.readonly`, *Access type: Offline*, *Force prompt:
+Consent*) – token vidíš na obrazovke telefónu a prepíšeš ho do secretu. Chce
+si to druhého klienta typu *Web application* s redirect URI
+`https://developers.google.com/oauthplayground`, lebo desktopový smie mať len
+loopback.
+
+Nech token vznikne akokoľvek, `GDRIVE_CREDENTIALS` prijme okrem JSONu aj **tri
+riadky**, aby sa na mobilnej klávesnici neskladali zátvorky:
+
+```
+client_id=…apps.googleusercontent.com
+client_secret=GOCSPX-…
+refresh_token=1//…
+```
+
+Oddeľovač smie byť `=` alebo `:` a delí sa na **prvom** výskyte – v tokene
+`1//0gAb=cD` sa `=` bežne vyskytuje a delenie na poslednom by z neho odrezalo
+kus.
+
 **Kam všade sa ten secret musí dostať**, je na prekvapenie viac miest než
 jedno, a práve preto to stráži `Lint workflows`:
 

@@ -457,7 +457,29 @@ jobs:
           python3 - <<'PY'
           import glob, re, sys, yaml
 
-          SECRET = "GDRIVE_CREDENTIALS"
+          # Prihlásenie sa dá podať dvoma tvarmi: všetko v jednom secrete,
+          # alebo po troch. Nekompletná trojica sa NESMIE brať ako „veď tam
+          # niečo je" – `drive-auth.py` na polovicu údajov spadne, a keby to
+          # kontrola prepustila, spadol by až ten trojhodinový beh.
+          BLOB = "GDRIVE_CREDENTIALS"
+          TRIOS = (("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET",
+                    "GDRIVE_REFRESH_TOKEN"),
+                   ("DRIVE_CLIENT", "DRIVE_SECRET", "DRIVE_REFRESH"))
+
+          def authed(names):
+              """Dá sa z týchto premenných prihlásiť?"""
+              return (BLOB in names
+                      or any(all(k in names for k in t) for t in TRIOS))
+
+          def why_not(names):
+              for t in TRIOS:
+                  have = [k for k in t if k in names]
+                  if have:
+                      return (f"z {'/'.join(t)} tam je len "
+                              f"{', '.join(have)} – prihlásenie s polovicou "
+                              f"údajov `drive-auth.py` odmieta")
+              return f"chýba {BLOB} alebo trojica {'/'.join(TRIOS[1])}"
+
           # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
           # v texte – inak by kontrola našla samu seba a ostatné kontroly,
           # ktoré tie isté mená spomínajú ako dáta.
@@ -477,7 +499,7 @@ jobs:
                   if job.get("uses") == CALLED:
                       sec = job.get("secrets")
                       if not (sec == "inherit"
-                              or (isinstance(sec, dict) and SECRET in sec)):
+                              or (isinstance(sec, dict) and authed(sec))):
                           print(f"::error file={path}::job '{name}' volá "
                                 f"dmr5-drive.yml bez `secrets: inherit`, takže "
                                 f"doplnenie DMR 5.0 by čítalo verejným odkazom "
@@ -489,22 +511,24 @@ jobs:
                       step = step or {}
                       if not CMD.search(str(step.get("run") or "")):
                           continue
-                      if any(SECRET in (e or {})
-                             for e in (top, jenv, step.get("env"))):
+                      names = set(top) | set(jenv) | set(step.get("env") or {})
+                      if authed(names):
                           continue
                       print(f"::error file={path}::krok "
                             f"'{step.get('name', '?')}' v jobe '{name}' číta "
-                            f"z Drive, ale nemá v `env` {SECRET} – bežal by na "
-                            f"verejnom dennom limite. Doplň ho k tomu kroku "
-                            f"alebo celému jobu.")
+                            f"z Drive, ale prihlásiť sa z toho nedá: "
+                            f"{why_not(names)}. Bežal by na verejnom dennom "
+                            f"limite – doplň to k tomu kroku alebo celému jobu.")
                       bad += 1
 
-          # A druhá strana toho istého: volaný workflow ten secret musí prijať.
+          # A druhá strana toho istého: volaný workflow to musí prijať.
           d = yaml.safe_load(open(CALLED[2:]))
           on = d[[k for k in d if k is True or k == "on"][0]]
-          if SECRET not in ((on.get("workflow_call") or {}).get("secrets") or {}):
+          decl = (on.get("workflow_call") or {}).get("secrets") or {}
+          if not authed(decl):
               print(f"::error file={CALLED[2:]}::`workflow_call` nedeklaruje "
-                    f"secret {SECRET}, takže mu ho volajúci nemá ako podať.")
+                    f"prihlásenie na Drive ({why_not(decl)}), takže mu ho "
+                    f"volajúci nemá ako podať.")
               bad += 1
           print(f"prihlásenie na Drive: {bad} chýb")
           sys.exit(1 if bad else 0)
