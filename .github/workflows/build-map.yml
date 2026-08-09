@@ -664,140 +664,23 @@ jobs:
           # neorezáva nič, ale staré záznamy by ešte deň strašili.
           key: pbf-v2-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
 
+      # Stotridsať riadkov bashu je vo `workers/fetch-pbf.sh` – tento súbor
+      # má strop 128 kB a nad ním ho GitHub ticho neprijme (stráži Lint
+      # workflows). Sem chodia len hodnoty z formulára a z volieb.
       - name: Stiahni PBF iba daného regiónu
         id: region
-        run: |
-          T0=$(date +%s)
-          mkdir -p data
-          CUSTOM_URL='${{ steps.opts.outputs.opt_custom_pbf_url }}'
+        env:
+          AREA_IN: ${{ inputs.area }}
+          OPT_AREA_BBOX: ${{ steps.opts.outputs.opt_area_bbox }}
+          OPT_CROP_BBOX: ${{ steps.opts.outputs.opt_crop_bbox }}
+          OPT_CUSTOM_BBOX: ${{ steps.opts.outputs.opt_custom_bbox }}
+          OPT_CUSTOM_NAME: ${{ steps.opts.outputs.opt_custom_name }}
+          OPT_CUSTOM_PBF_URL: ${{ steps.opts.outputs.opt_custom_pbf_url }}
+          OPT_TEST_AT: ${{ steps.opts.outputs.opt_test_at }}
+          OPT_TEST_KM2: ${{ steps.opts.outputs.opt_test_km2 }}
+          REGION: ${{ inputs.region }}
+        run: workers/fetch-pbf.sh
 
-          # Cache: keď PBF (už aj orezané) leží z predošlého behu, sťahovať ani
-          # rezať netreba – kľúč nesie región, orez aj dátum.
-          CACHED=""
-          if [ -s data/region.osm.pbf ]; then
-            CACHED=1
-            echo "PBF z cache ✓ ($(du -h data/region.osm.pbf | cut -f1))"
-          fi
-
-          download() { # $1 = URL
-            [ -n "$CACHED" ] && return 0
-            echo "Skúšam: $1"
-            curl -fL --retry 3 --retry-delay 5 -o data/region.osm.pbf "$1"
-          }
-
-          if [ -n "$CUSTOM_URL" ]; then
-            # ----- vlastný región (Európa / svet) -----
-            NAME='${{ steps.opts.outputs.opt_custom_name }}'
-            [ -n "$NAME" ] || NAME=$(basename "$CUSTOM_URL" .osm.pbf)
-            KEY=$(echo "$NAME" | LC_ALL=C.UTF-8 iconv -f utf8 -t ascii//TRANSLIT | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '_' | sed 's/^_//;s/_*$//')
-            download "$CUSTOM_URL" || { echo "::error::Nepodarilo sa stiahnuť $CUSTOM_URL"; exit 1; }
-
-            BBOX='${{ steps.opts.outputs.opt_custom_bbox }}'
-            if [ -z "$BBOX" ]; then
-              sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
-              BBOX=$(osmium fileinfo -g header.boxes data/region.osm.pbf | head -1 | tr -d '() ')
-            fi
-            if [ -z "$BBOX" ]; then
-              echo "::error::PBF nemá bbox v hlavičke – vyplň input custom_bbox (west,south,east,north)."
-              exit 1
-            fi
-          else
-            # ----- prednastavený región z workers/regions.json -----
-            KEY='${{ inputs.region }}'
-            NAME=$(jq -r --arg r "$KEY" '.[$r].name' workers/regions.json)
-            BBOX=$(jq -r --arg r "$KEY" '.[$r].bbox | join(",")' workers/regions.json)
-            DIR=$(jq -r --arg r "$KEY" '.[$r].osmfr.dir' workers/regions.json)
-            if [ "$NAME" = "null" ]; then echo "::error::Neznámy región: $KEY"; exit 1; fi
-
-            OK=""
-            # osm.fr regionálne exporty (skúšaj kandidátske názvy súborov)
-            for SLUG in $(jq -r --arg r "$KEY" '.[$r].osmfr.slugs[]' workers/regions.json); do
-              if download "$OSMFR_BASE/$DIR/$SLUG.osm.pbf"; then OK=1; break; fi
-            done
-            if [ -z "$OK" ]; then
-              echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/regions.json):"
-              curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
-              echo "…alebo vyplň custom_pbf_url s priamou URL na .osm.pbf."
-              exit 1
-            fi
-          fi
-
-          # ----- voliteľné orezanie na menšie územie -----
-          # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
-          # Toto orezáva PBF, čiže samotnú mapu – na rozdiel od rýchleho testu
-          # o kus nižšie, ktorý mapu necháva celú.
-          CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
-          if [ -n "$CROP" ]; then
-            if [ -z "$CACHED" ]; then
-              command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
-              echo "Orezávam na bbox $CROP …"
-              if ! osmium extract --overwrite -b "$CROP" -s smart \
-                   -o data/region-crop.osm.pbf data/region.osm.pbf; then
-                echo "::error::Orezanie na bbox '$CROP' zlyhalo – očakávaný formát je west,south,east,north (napr. 18.98,49.18,19.20,49.28)."
-                exit 1
-              fi
-              mv data/region-crop.osm.pbf data/region.osm.pbf
-            fi
-            BBOX="$CROP"
-            KEY="${KEY}_crop"
-            NAME="$NAME (výrez)"
-          fi
-
-          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) zmenšuje to,
-          # čo je naozaj drahé: vrstevnice, skaly a tieňovanie z výškového
-          # modelu – na kraji desiatky minút, na 2 km² sekundy.
-          #
-          # REGIÓN SA PRITOM NEOREZÁVA: mapa (cesty, vodstvo, trasy, prvky)
-          # vyjde celá podľa nastavení, prešovský kraj ostane prešovským
-          # krajom. Planetiler z PBF kraja je pár minút, takže sa tým nič
-          # neladí pomalšie – zato sa štvorec so skalami pozerá v mape, do
-          # ktorej patrí, a nie nad prázdnom.
-          TEST_KM2='${{ steps.opts.outputs.opt_test_km2 }}'
-          DEM_BBOX="$BBOX"
-          if [ "${TEST_KM2:-0}" != "0" ]; then
-            AREA='${{ inputs.area }}'
-            AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
-            [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
-            RES=$(python3 workers/resolve-area.py \
-              --region-bbox="$BBOX" --area="$AREA" \
-              --test-km2="$TEST_KM2" \
-              --test-at='${{ steps.opts.outputs.opt_test_at }}')
-            DEM_BBOX=$(printf '%s\n' "$RES" | sed -n 's/^bbox=//p')
-            [ -n "$DEM_BBOX" ] || { echo "::error::Testovací štvorec sa nepodarilo spočítať."; exit 1; }
-            # Okolie pre obrázok „kde to je" je CELÝ výrez pred zmenšením
-            # (napr. Vysoké Tatry), nie celý región – z mapy Slovenska by
-            # bol štvorec s 2 km² neviditeľný bod.
-            printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
-            echo "test_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
-            # A ODLOŽ CELÚ ODPOVEĎ pre krok „Vyrieš testovací výrez": je v nej
-            # už všetko, čo ten krok potrebuje – vrátane kľúča s príponou
-            # `_test2`, ktorý mu druhým výpočtom vyjsť nemôže (prečo, hovorí
-            # komentár v tom kroku). Rátať sa to má RAZ.
-            printf '%s\n' "$RES" > /tmp/vyrez.txt
-            # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa
-            # nesmie tváriť ako ostrý a prepísať mu vrstevnice na celý kraj.
-            KEY="${KEY}_test${TEST_KM2}"
-            NAME="$NAME – test ${TEST_KM2} km²"
-            echo "Testovací režim: $TEST_KM2 km² → $DEM_BBOX (mapa ostáva celý región $BBOX)"
-          fi
-
-          echo "key=$KEY"   >> "$GITHUB_OUTPUT"
-          echo "name=$NAME" >> "$GITHUB_OUTPUT"
-          echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
-          echo "dem_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
-          # bezpečná podoba bboxu do kľúča cache. Je z `dem_bbox`, lebo ho
-          # používajú len cache vrstevníc, skál a tieňovania – a tie sa pri
-          # teste počítajú na štvorci, takže si nesmú sadnúť na ostré.
-          echo "dem_bboxkey=$(echo "$DEM_BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
-          echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
-          ls -lh data/region.osm.pbf
-          printf '%s\t%s\t%s\t%s\n' "10" "PBF regiónu" "$(( $(date +%s) - T0 ))" \
-            "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')" \
-            >> steps-out/plan.tsv
-
-      # Výrez (input `area`) potrebuje vedieť aj kontrola DEM, aj zrkadlo
-      # ÚGKK, aj samotný výpočet – preto sa rieši raz, tu, a ide ďalej ako
-      # výstup jobu.
       - name: Vyrieš testovací výrez
         id: area
         run: |
@@ -930,61 +813,33 @@ jobs:
       # Kľúč potrebuje restore, save aj mazanie pri pregenerovaní. Keby bol
       # napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho
       # rozsype (uloží sa pod iným kľúčom, než sa hľadá).
+      # Skladanie kľúčov je vo `workers/cache-keys.sh` (strop súboru 128 kB).
+      # `hashFiles` je funkcia GitHubu, tak sa jej výsledok podá ako env.
       - name: Kľúče cache
         id: keys
-        run: |
-          set -euo pipefail
-          # Územie, na ktorom sa počíta z DEM – pri rýchlom teste testovací
-          # štvorec, inak celý región. Všetky kľúče nižšie sú o vrstvách z DEM.
-          B='${{ needs.plan.outputs.dem_bboxkey }}'
-          # Otlačok releasu na vrstvu – každá si vyberá zdroj sama, takže
-          # jeden spoločný by po doplnení ktoréhokoľvek releasu zahodil cache
-          # všetkých troch.
-          DC='${{ needs.check-dem.outputs.demkey_contours }}'
-          DR='${{ needs.check-dem.outputs.demkey_rocks }}'
-          DT='${{ needs.check-dem.outputs.demkey_terrain }}'
-          CS='${{ needs.plan.outputs.opt_contour_source }}'
-          RS='${{ needs.plan.outputs.opt_rock_source }}'
-          TS='${{ needs.plan.outputs.opt_shading_source }}'
-          {
-            # Výrez skál je v kľúči tiež – inak by sa skaly len z Tatier
-            # vrátili z cache ako keby to boli skaly celého kraja.
-            RA=$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_')
-            # v8: vrstevnice a skaly majú vlastný zdroj, takže sú v kľúči oba
-            # (a oba otlačky). Zdroj skál je v ňom aj preto, že `sonny`
-            # a `tienovanie` dávajú úplne iné plochy – jedny sa nesmú vrátiť
-            # z cache namiesto druhých.
-            echo "contours=contours-v9-c$CS$DC-r$RS$DR-$B-i${{ inputs.contour_interval }}-z${{ needs.plan.outputs.opt_contour_maxzoom }}-rz${{ needs.plan.outputs.opt_rock_maxzoom }}p${{ needs.plan.outputs.opt_rock_plne }}d${{ needs.plan.outputs.opt_rock_zapln_diery }}-s${{ needs.plan.outputs.opt_contour_smoothing }}-${{ inputs.rock_slope }}g${{ needs.plan.outputs.opt_rock_res }}a$RA-${{ needs.plan.outputs.opt_rock_img_asset }}-${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}"
-            # Stiahnuté DEM dlaždice. Sú v podpriečinku podľa zdroja, takže
-            # jeden job môže mať naraz dva modely (vrstevnice z jedného,
-            # skaly z druhého) – kľúč preto nesie obe mená.
-            echo "demtiles_contours=demtiles-v2-c$CS$DC-r$RS$DR-$B"
-            echo "demtiles_terrain=demtiles-v2-t$TS$DT-$B"
-            echo "terrain=terrain-v2-$TS-$DT-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
-            # Sklad častí sklonu. V kľúči je VÝREZ, MODEL a MRIEŽKA – teda
-            # presne to, čo mení obsah častí. Prah sklonu v ňom zámerne NIE
-            # JE: uplatňuje sa až pri vektorizácii, takže po jeho zmene sa
-            # sklad použije a preráta sa len tá lacná časť (minúty namiesto
-            # hodiny čítania z Drive). Prefix musí sedieť s `restore-keys`
-            # v jobe s vrstevnicami.
-            # Končí pomlčkou zámerne: je to PREFIX. Cache v GitHube sa nedá
-            # prepísať, takže keby bol kľúč pevný, prvý beh by ho zabral a
-            # časti dopočítané v ďalších behoch by sa už nikdy neuložili –
-            # sklad by navždy ostal taký, aký bol po prvom behu. Ukladá sa
-            # preto pod prefix + číslo behu a obnovuje sa cez `restore-keys`,
-            # čiže vždy z najnovšieho záznamu, ktorý na prefix sedí.
-            echo "slope=slope-v1-${{ needs.plan.outputs.area_key }}-$RS-g${{ needs.plan.outputs.opt_rock_res }}-"
-          } >> "$GITHUB_OUTPUT"
-          cat "$GITHUB_OUTPUT"
+        env:
+          AREA_IN: ${{ inputs.area }}
+          AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          DEMKEY_CONTOURS: ${{ needs.check-dem.outputs.demkey_contours }}
+          DEMKEY_ROCKS: ${{ needs.check-dem.outputs.demkey_rocks }}
+          DEMKEY_TERRAIN: ${{ needs.check-dem.outputs.demkey_terrain }}
+          DEM_BBOXKEY: ${{ needs.plan.outputs.dem_bboxkey }}
+          OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
+          OPT_CONTOUR_SMOOTHING: ${{ needs.plan.outputs.opt_contour_smoothing }}
+          OPT_CONTOUR_SOURCE: ${{ needs.plan.outputs.opt_contour_source }}
+          OPT_ROCK_IMG_ASSET: ${{ needs.plan.outputs.opt_rock_img_asset }}
+          OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
+          OPT_ROCK_PLNE: ${{ needs.plan.outputs.opt_rock_plne }}
+          OPT_ROCK_RES: ${{ needs.plan.outputs.opt_rock_res }}
+          OPT_ROCK_SOURCE: ${{ needs.plan.outputs.opt_rock_source }}
+          OPT_ROCK_ZAPLN_DIERY: ${{ needs.plan.outputs.opt_rock_zapln_diery }}
+          OPT_SHADING_SOURCE: ${{ needs.plan.outputs.opt_shading_source }}
+          OPT_TERRAIN_MAXZOOM: ${{ needs.plan.outputs.opt_terrain_maxzoom }}
+          ROCK_SLOPE: ${{ inputs.rock_slope }}
+          SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}
+        run: workers/cache-keys.sh
 
-      # Cache sa v GitHube nedá prepísať – kľúč, ktorý raz existuje, ostane so
-      # starým obsahom. Pregenerovanie preto starý záznam najprv zmaže; až
-      # potom má zmysel počítať nanovo a uložiť to pod ten istý kľúč.
-      # POZOR na `if:` s výstupom jobu: výstupy sú REŤAZCE a reťazec „false"
-      # je vo výraze pravdivý (nepravdivý je len prázdny). `if: ${{ x }}` teda
-      # platí vždy a `if: ${{ !x }}` nikdy – preto sa tu všade porovnáva
-      # s 'true' doslova. Bez toho sa cache reštore nikdy nespustil a každý
-      # beh počítal vrstevnice, skaly aj tieňovanie odznova.
       - name: Pregenerovanie – zmaž staré cache
         if: ${{ needs.plan.outputs.opt_contours_rebuild == 'true' || needs.plan.outputs.opt_rocks_rebuild == 'true' || needs.plan.outputs.opt_terrain_rebuild == 'true' }}
         env:
@@ -1185,84 +1040,21 @@ jobs:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}
 
+      # Vo `workers/contours-site.sh` – ten istý krok majú DVA joby
+      # (`contours` a `rocks`), takže tu stál dvakrát a dve kópie sa vždy
+      # raz rozídu. Odteraz je jeden súbor.
       - name: Zaraď vrstevnice do webu
         id: contours
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
-        run: |
-          set -euo pipefail
-          mkdir -p _site/tiles
-          KEY='${{ needs.plan.outputs.key }}'
+        env:
+          CACHE_HIT: ${{ steps.contours-cache.outputs.cache-hit }}
+          OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
+          OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
+          OPT_ROCKS: ${{ needs.plan.outputs.opt_rocks }}
+          OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+        run: workers/contours-site.sh
 
-          # ---- skaly: vlastný .pmtiles, vlastný maxzoom ----
-          # Idú prvé, lebo sa dajú nasadiť aj vtedy, keď vrstevnice nie sú
-          # (a naopak). Kým boli v jednom súbore, vypnuté vrstevnice znamenali
-          # aj žiadne skaly.
-          RPM=contours-out/rocks.pmtiles
-          RZ=$(cat contours-out/rock-maxzoom.txt 2>/dev/null || echo '')
-          case "$RZ" in ''|*[!0-9]*) RZ='${{ needs.plan.outputs.opt_rock_maxzoom }}' ;; esac
-          case "$RZ" in ''|*[!0-9]*) RZ=16 ;; esac
-          if [ "$RZ" -gt 16 ]; then RZ=16; fi
-          if [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ] && [ -s "$RPM" ]; then
-            cp "$RPM" "_site/tiles/$KEY-rocks.pmtiles"
-            echo "rocks_enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Skaly do z$RZ, $(du -h "$RPM" | cut -f1)"
-          else
-            echo "rocks_enabled=false" >> "$GITHUB_OUTPUT"
-            [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ] \
-              && echo "::warning::Skaly sa nevygenerovali – mapa pôjde bez nich."
-          fi
-          echo "rocks_maxzoom=$RZ" >> "$GITHUB_OUTPUT"
-
-          # ---- vrstevnice ----
-          SRC=contours-out/contours.pmtiles
-          if [ ! -s "$SRC" ]; then
-            echo "::warning::Vrstevnice sa nevygenerovali – mapa pôjde bez nich."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          cp "$SRC" "_site/tiles/$KEY-contours.pmtiles"
-          # Maxzoom berieme z toho, čo sa naozaj vygenerovalo (mohol sa znížiť
-          # kvôli veľkosti); ak súbor chýba, padáme späť na vstup.
-          CZ=$(cat contours-out/maxzoom.txt 2>/dev/null || echo '')
-          case "$CZ" in ''|*[!0-9]*) CZ='${{ needs.plan.outputs.opt_contour_maxzoom }}' ;; esac
-          case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
-          if [ "$CZ" -gt 16 ]; then CZ=16; fi
-          # Zdroj výšok a prah sklonu skál si nesie cache spolu s dlaždicami –
-          # pri cache hite sa krok s DEM vôbec nespustí.
-          DEM_USED=$(cat contours-out/dem-source.txt 2>/dev/null || echo '')
-          # Kľúče musia sedieť s workers/dem-sources.json – čo tu neprejde,
-          # spadne na Sonnyho a mapa by potom v atribúcii tvrdila iný model,
-          # než z ktorého naozaj je. (`dmr35` a `dmr5` tu kedysi chýbali.)
-          case "$DEM_USED" in sonny|dmr35|dmr5) ;; *) DEM_USED=sonny ;; esac
-          RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
-          RSRC=$(cat contours-out/rock-source.txt 2>/dev/null || echo off)
-          case "$RSRC" in sonny|dmr35|dmr5|tienovanie) ;; *) RSRC=off ;; esac
-          # `enabled` je odteraz o VRSTEVNICIACH, nie o súbore: pri
-          # `contour_source: ziadne` je .pmtiles síce na disku, ale prázdny,
-          # a štýl doň nemá čo odkazovať.
-          if [ '${{ needs.plan.outputs.opt_contour_lines }}' = 'true' ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
-          echo "dem_source=$DEM_USED" >> "$GITHUB_OUTPUT"
-          echo "rock_slope=$RSLOPE" >> "$GITHUB_OUTPUT"
-          echo "rock_source=$RSRC" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
-          echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
-          ls -lh _site/tiles/
-          # Keď cache trafila, celý výpočet vyššie sa preskočil – v súhrne to
-          # má byť vidieť ako riadok, nie ako chýbajúce kroky.
-          if [ '${{ steps.contours-cache.outputs.cache-hit }}' = 'true' ]; then
-            printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly" "0" \
-              "z cache (nič sa nepočítalo), maxzoom $CZ, $(du -h "$SRC" | cut -f1)" \
-              >> steps-out/contours.tsv
-          fi
-
-      # Hotové skaly a vrstevnice ako artefakt – na stiahnutie a prezretie
-      # v QGISe, bez čakania na ďalší build. 90 dní je maximum, ktoré GitHub
-      # pre artefakty dovolí.
       - name: Odlož skaly a vrstevnice ako artefakt
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
         uses: actions/upload-artifact@v4
@@ -1439,63 +1231,20 @@ jobs:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}-rocks
 
+      # Vo `workers/contours-site.sh` – ten istý krok majú DVA joby
+      # (`contours` a `rocks`), takže tu stál dvakrát a dve kópie sa vždy
+      # raz rozídu. Odteraz je jeden súbor.
       - name: Zaraď vrstevnice do webu
         id: contours
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
-        run: |
-          set -euo pipefail
-          mkdir -p _site/tiles
-          KEY='${{ needs.plan.outputs.key }}'
-
-          RPM=contours-out/rocks.pmtiles
-          RZ=$(cat contours-out/rock-maxzoom.txt 2>/dev/null || echo '')
-          case "$RZ" in ''|*[!0-9]*) RZ='${{ needs.plan.outputs.opt_rock_maxzoom }}' ;; esac
-          case "$RZ" in ''|*[!0-9]*) RZ=16 ;; esac
-          if [ "$RZ" -gt 16 ]; then RZ=16; fi
-          if [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ] && [ -s "$RPM" ]; then
-            cp "$RPM" "_site/tiles/$KEY-rocks.pmtiles"
-            echo "rocks_enabled=true" >> "$GITHUB_OUTPUT"
-            echo "Skaly do z$RZ, $(du -h "$RPM" | cut -f1)"
-          else
-            echo "rocks_enabled=false" >> "$GITHUB_OUTPUT"
-            [ '${{ needs.plan.outputs.opt_rocks }}' = 'true' ] \
-              && echo "::warning::Skaly sa nevygenerovali – mapa pôjde bez nich."
-          fi
-          echo "rocks_maxzoom=$RZ" >> "$GITHUB_OUTPUT"
-
-          SRC=contours-out/contours.pmtiles
-          if [ ! -s "$SRC" ]; then
-            echo "::warning::Vrstevnice sa nevygenerovali – mapa pôjde bez nich."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          cp "$SRC" "_site/tiles/$KEY-contours.pmtiles"
-          CZ=$(cat contours-out/maxzoom.txt 2>/dev/null || echo '')
-          case "$CZ" in ''|*[!0-9]*) CZ='${{ needs.plan.outputs.opt_contour_maxzoom }}' ;; esac
-          case "$CZ" in ''|*[!0-9]*) CZ=14 ;; esac
-          if [ "$CZ" -gt 16 ]; then CZ=16; fi
-          DEM_USED=$(cat contours-out/dem-source.txt 2>/dev/null || echo '')
-          case "$DEM_USED" in sonny|dmr35|dmr5) ;; *) DEM_USED=sonny ;; esac
-          RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
-          RSRC=$(cat contours-out/rock-source.txt 2>/dev/null || echo off)
-          case "$RSRC" in sonny|dmr35|dmr5|tienovanie) ;; *) RSRC=off ;; esac
-          if [ '${{ needs.plan.outputs.opt_contour_lines }}' = 'true' ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
-          echo "maxzoom=$CZ" >> "$GITHUB_OUTPUT"
-          echo "dem_source=$DEM_USED" >> "$GITHUB_OUTPUT"
-          echo "rock_slope=$RSLOPE" >> "$GITHUB_OUTPUT"
-          echo "rock_source=$RSRC" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$(( $(stat -c%s "$SRC") / 1048576 ))" >> "$GITHUB_OUTPUT"
-          echo "Vrstevnice do z$CZ, výšky: $DEM_USED, skaly: $RSLOPE"
-          ls -lh _site/tiles/
-          if [ '${{ steps.contours-cache.outputs.cache-hit }}' = 'true' ]; then
-            printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly" "0" \
-              "z cache (nič sa nepočítalo), maxzoom $CZ, $(du -h "$SRC" | cut -f1)" \
-              >> steps-out/contours.tsv
-          fi
+        env:
+          CACHE_HIT: ${{ steps.contours-cache.outputs.cache-hit }}
+          OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
+          OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
+          OPT_ROCKS: ${{ needs.plan.outputs.opt_rocks }}
+          OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+        run: workers/contours-site.sh
 
       - name: Odlož skaly a vrstevnice ako artefakt
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
@@ -1696,84 +1445,15 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
+      # Sedemdesiat riadkov bashu je vo `workers/trails-build.sh`.
       - name: Trasy z OSM relácií → PMTiles
         id: trails
-        run: |
-          set -euo pipefail
-          mkdir -p _site/tiles data
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq osmium-tool
-          # pyosmium je v Ubuntu ako balík; keď tam nie je (iný obraz
-          # runnera), doinštaluje sa z PyPI. Verzia 3 aj 4 majú `SimpleHandler`,
-          # ktorý workers/trail-routes.py používa.
-          python3 -c 'import osmium' 2>/dev/null \
-            || sudo apt-get install -y -qq python3-pyosmium \
-            || python3 -m pip install --quiet --break-system-packages 'osmium>=3.6,<5'
+        env:
+          OPT_TRAILS_MAXZOOM: ${{ needs.plan.outputs.opt_trails_maxzoom }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
+        run: workers/trails-build.sh
 
-          # ---- 1. predfilter ----
-          # Celé Slovensko je ~380 MB a index polôh uzlov nad ním by zobral
-          # niekoľko GB pamäte. `tags-filter` nechá len relácie trás a ich
-          # členov (cesty aj s uzlami), čo je zlomok veľkosti.
-          T_F=$(date +%s)
-          osmium tags-filter --overwrite -o data/trails.osm.pbf \
-            data/region.osm.pbf \
-            r/route=hiking,foot,walking,bicycle,mtb,ski,nordic,skitour,horse,via_ferrata
-          echo "Predfilter: $(du -h data/region.osm.pbf | cut -f1) → $(du -h data/trails.osm.pbf | cut -f1)"
-
-          # ---- 2. relácie → línie s pruhmi ----
-          python3 workers/trail-routes.py \
-            --pbf=data/trails.osm.pbf \
-            --out=data/trails.geojson \
-            --stats=steps-out/trail-stats.txt
-          # shellcheck disable=SC1091
-          . steps-out/trail-stats.txt
-          printf '%s\t%s\t%s\t%s\n' "55" "Značené trasy z OSM" "$(( $(date +%s) - T_F ))" \
-            "${routes:-0} trás, ${features:-0} úsekov, ${multi:-0} ciest s viac trasami" \
-            >> steps-out/trails.tsv
-
-          if [ "${features:-0}" -eq 0 ]; then
-            echo "::warning::V tomto území nie je ani jedna značená trasa – mapa pôjde bez nich."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # ---- 3. dlaždice ----
-          TZ_='${{ needs.plan.outputs.opt_trails_maxzoom }}'
-          case "$TZ_" in ''|*[!0-9]*) TZ_=14 ;; esac
-          if [ "$TZ_" -gt 16 ]; then TZ_=16; fi
-
-          T_PM=$(date +%s)
-          java -Xmx4g -jar planetiler.jar generate-custom \
-            --schema=workers/trails.yml \
-            --output="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles" \
-            --maxzoom="$TZ_" --render_maxzoom="$TZ_" \
-            --simplify_tolerance_at_max_zoom=0 \
-            --min_feature_size_at_max_zoom=0 \
-            --force
-
-          OUT="_site/tiles/${{ needs.plan.outputs.key }}-trails.pmtiles"
-          MB=$(( $(stat -c%s "$OUT") / 1048576 ))
-
-          # Poistka na rozpočet stránky. Trasy sú malé (jednotky MB), ale keby
-          # niekedy neboli, nech sa to ozve tu a nie až v `deploy`.
-          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          TBUDGET_MB=$(( LIMIT_MB * BUDGET_TRAILS_PCT / 100 ))
-          if [ "$MB" -gt "$TBUDGET_MB" ]; then
-            echo "::warning::Trasy majú ${MB} MB, čo je nad podielom ${TBUDGET_MB} MB z rozpočtu stránky. Zníž trails_maxzoom alebo zdvihni BUDGET_TRAILS_PCT."
-          fi
-
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "maxzoom=$TZ_" >> "$GITHUB_OUTPUT"
-          echo "count=${routes:-0}" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$MB" >> "$GITHUB_OUTPUT"
-          ls -lh "$OUT"
-          printf '%s\t%s\t%s\t%s\n' "56" "Značené trasy → PMTiles" "$(( $(date +%s) - T_PM ))" \
-            "maxzoom $TZ_, $(du -h "$OUT" | cut -f1)" \
-            >> steps-out/trails.tsv
-
-      # Hotové trasy ako artefakt behu – dajú sa otvoriť v QGISe a pozrieť,
-      # čo v nich naozaj je, bez ďalšieho buildu.
       - name: Odlož trasy ako artefakt
         if: ${{ always() && hashFiles('data/trails.geojson') != '' }}
         uses: actions/upload-artifact@v4
@@ -1859,77 +1539,14 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
+      # Sedemdesiat riadkov bashu je vo `workers/features-build.sh`.
       - name: Krajinné prvky z OSM → PMTiles
         id: features
-        run: |
-          set -euo pipefail
-          mkdir -p _site/tiles data
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq osmium-tool
-
-          # ---- 1. predfilter ----
-          # Zoznam tagov je vo workers/features-filter.txt vedľa schémy, nech
-          # sa obe menia na jednom mieste. Bez neho by Planetiler čítal celé
-          # Slovensko druhýkrát; po ňom ostane zlomok.
-          T_F=$(date +%s)
-          osmium tags-filter --overwrite -o data/features.osm.pbf \
-            data/region.osm.pbf --expressions=workers/features-filter.txt
-          BEFORE=$(stat -c%s data/region.osm.pbf)
-          AFTER=$(stat -c%s data/features.osm.pbf)
-          echo "Predfilter: $(du -h data/region.osm.pbf | cut -f1) → $(du -h data/features.osm.pbf | cut -f1)"
-          printf '%s\t%s\t%s\t%s\n' "57" "Predfilter krajinných prvkov" "$(( $(date +%s) - T_F ))" \
-            "$(( BEFORE / 1048576 )) MB → $(( AFTER / 1048576 )) MB" \
-            >> steps-out/features.tsv
-
-          # Prázdny výsledok nie je chyba – malý testovací štvorec nemusí mať
-          # ani jeden násyp. Mapa vtedy pôjde bez tejto vrstvy.
-          if [ "$AFTER" -lt 2000 ]; then
-            echo "::warning::V tomto území nie je ani jeden krajinný prvok – mapa pôjde bez nich."
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # ---- 2. dlaždice ----
-          FZ='${{ needs.plan.outputs.opt_features_maxzoom }}'
-          case "$FZ" in ''|*[!0-9]*) FZ=15 ;; esac
-          if [ "$FZ" -gt 16 ]; then FZ=16; fi
-
-          # Poistka proti tichej strate: čo má v schéme `min_zoom` nad
-          # maxzoomom, Planetiler zahodí bez slova. Viď workers/features.yml.
-          TOPZ=$(grep -oE 'min_zoom: [0-9]+' workers/features.yml \
-                 | grep -oE '[0-9]+' | sort -n | tail -1)
-          if [ "${TOPZ:-0}" -gt "$FZ" ]; then
-            echo "::warning::workers/features.yml má triedy s min_zoom až ${TOPZ}, ale dlaždice idú po z${FZ} – tie sa do nich vôbec nedostanú. Zdvihni features_maxzoom na ${TOPZ}, alebo tým triedam zníž min_zoom."
-          fi
-
-          T_PM=$(date +%s)
-          OUT="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
-          java -Xmx4g -jar planetiler.jar generate-custom \
-            --schema=workers/features.yml \
-            --output="$OUT" \
-            --maxzoom="$FZ" --render_maxzoom="$FZ" \
-            --simplify_tolerance_at_max_zoom=0 \
-            --min_feature_size_at_max_zoom=0 \
-            --force
-
-          MB=$(( $(stat -c%s "$OUT") / 1048576 ))
-
-          # Poistka na rozpočet stránky. `deploy` overí súčet ešte raz, ale
-          # keď je nad podielom práve táto vrstva, má sa to povedať tu.
-          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          FBUDGET_MB=$(( LIMIT_MB * BUDGET_FEATURES_PCT / 100 ))
-          if [ "$MB" -gt "$FBUDGET_MB" ]; then
-            echo "::warning::Krajinné prvky majú ${MB} MB, čo je nad podielom ${FBUDGET_MB} MB z rozpočtu stránky. Zníž features_maxzoom alebo zdvihni BUDGET_FEATURES_PCT."
-          fi
-
-          echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "maxzoom=$FZ" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$MB" >> "$GITHUB_OUTPUT"
-          ls -lh "$OUT"
-          printf '%s\t%s\t%s\t%s\n' "58" "Krajinné prvky → PMTiles" "$(( $(date +%s) - T_PM ))" \
-            "maxzoom $FZ, $(du -h "$OUT" | cut -f1)" \
-            >> steps-out/features.tsv
+        env:
+          OPT_FEATURES_MAXZOOM: ${{ needs.plan.outputs.opt_features_maxzoom }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
+        run: workers/features-build.sh
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
@@ -2006,97 +1623,17 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
+      # Osemdesiat riadkov bashu je vo `workers/tiles-build.sh`; rozpočtové
+      # podiely (`BUDGET_*`) si berie z env workflowu.
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
-        run: |
-          set -euo pipefail
-          T_TILES=$(date +%s)
-          mkdir -p _site/tiles
-          OUT="_site/tiles/${{ needs.plan.outputs.key }}.pmtiles"
+        env:
+          OPT_AUTO_SHRINK: ${{ needs.plan.outputs.opt_auto_shrink }}
+          OPT_MAXZOOM: ${{ needs.plan.outputs.opt_maxzoom }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
+        run: workers/tiles-build.sh
 
-          # Planetiler: PlanetilerConfig.MAX_MAXZOOM = 16 → vyššie hodnoty
-          # zhodia build s "Max zoom must be <= 16". Radšej orežeme s hláškou.
-          MAXZOOM='${{ needs.plan.outputs.opt_maxzoom }}'
-          case "$MAXZOOM" in ''|*[!0-9]*) MAXZOOM=16 ;; esac
-          if [ "$MAXZOOM" -gt 16 ]; then
-            echo "::warning::Planetiler vie vygenerovať dlaždice najviac po zoom 16 (zadané: $MAXZOOM). Používam 16 – priblíženie až na z20 zabezpečí overzoom v MapLibre."
-            MAXZOOM=16
-          fi
-          if [ "$MAXZOOM" -lt 8 ]; then MAXZOOM=8; fi
-
-          # Rozpočet je na CELÚ stránku, nielen na tieto dlaždice: Pages
-          # zvládne ~1 GB a do toho sa musia zmestiť aj vrstevnice, terén,
-          # fonty a sprity. Tie sa ale počítajú v INÝCH JOBOCH a súbežne
-          # s týmto, takže tu ešte nikto nevie, aké budú veľké. Namiesto
-          # „čo zvýšilo" preto dostanú dlaždice pevný podiel a job `deploy`
-          # na konci overí, že súčet naozaj sedí.
-          LIMIT_MB='${{ needs.plan.outputs.opt_size_limit_mb }}'
-          case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
-          OTHERS_MB=$(( LIMIT_MB * (BUDGET_CONTOURS_PCT + BUDGET_TERRAIN_PCT + BUDGET_TRAILS_PCT + BUDGET_FEATURES_PCT) / 100 + BUDGET_ASSETS_MB ))
-          BUDGET_MB=$(( LIMIT_MB - OTHERS_MB ))
-          echo "Rozpočet stránky ${LIMIT_MB} MB − vrstevnice ${BUDGET_CONTOURS_PCT} % − terén ${BUDGET_TERRAIN_PCT} % − trasy ${BUDGET_TRAILS_PCT} % − krajinné prvky ${BUDGET_FEATURES_PCT} % − ikonky a fonty ${BUDGET_ASSETS_MB} MB = ${BUDGET_MB} MB na dlaždice"
-
-          if [ "$BUDGET_MB" -lt 50 ]; then
-            echo "::error::Na dlaždice zostáva len ${BUDGET_MB} MB. Zdvihni size_limit_mb alebo uber podiel vrstevniciam a terénu (BUDGET_*_PCT v env)."
-            exit 1
-          fi
-          LIMIT=$(( BUDGET_MB * 1024 * 1024 ))
-
-          Z=$MAXZOOM
-          while : ; do
-            echo "::group::Planetiler – maxzoom $Z"
-            java -Xmx5g -jar planetiler.jar \
-              --osm-path=data/region.osm.pbf \
-              --output="$OUT" \
-              --download --download-dir=data/sources \
-              --minzoom=0 \
-              --maxzoom="$Z" \
-              --render_maxzoom="$Z" \
-              --min_feature_size_at_max_zoom=0 \
-              --simplify_tolerance_at_max_zoom=0 \
-              --transportation_z13_paths=true \
-              --building_merge_z13=false \
-              --languages=sk,en \
-              --force
-            echo "::endgroup::"
-
-            BYTES=$(stat -c%s "$OUT")
-            MB=$(( BYTES / 1048576 ))
-            echo "maxzoom $Z → ${MB} MB (na dlaždice je ${BUDGET_MB} MB)"
-
-            if [ "$BYTES" -le "$LIMIT" ]; then break; fi
-
-            if [ '${{ needs.plan.outputs.opt_auto_shrink }}' != 'true' ] || [ "$Z" -le 12 ]; then
-              echo "::error::Dlaždice majú ${MB} MB, ale majú sa zmestiť do ${BUDGET_MB} MB (rozpočet stránky ${LIMIT_MB} MB mínus podiel vrstevníc, terénu a ikoniek). Možnosti: zníž maxzoom, vyber menší región, použi crop_bbox alebo uber vrstevniciam cez BUDGET_CONTOURS_PCT."
-              exit 1
-            fi
-
-            # O koľko zoomov ísť dolu: každý nižší zoom zmenší dlaždice zhruba
-            # 3,5×. Skákať po jednom by pri celom Slovensku znamenalo aj tri
-            # hodinové behy Planetileru za sebou; naraz ale ideme najviac o dva,
-            # nech sa detail nezahodí zbytočne.
-            DROP=1
-            EST=$MB
-            while [ "$DROP" -lt 2 ] && [ $(( EST * 10 / 35 )) -gt "$BUDGET_MB" ]; do
-              EST=$(( EST * 10 / 35 ))
-              DROP=$(( DROP + 1 ))
-            done
-            NEXT=$(( Z - DROP ))
-            if [ "$NEXT" -lt 12 ]; then NEXT=12; fi
-            echo "::warning::${MB} MB je nad rozpočtom ${BUDGET_MB} MB – skúšam maxzoom ${NEXT}."
-            Z=$NEXT
-          done
-
-          echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
-          echo "size_mb=$(( $(stat -c%s "$OUT") / 1048576 ))" >> "$GITHUB_OUTPUT"
-          ls -lh _site/tiles/
-          printf '%s\t%s\t%s\t%s\n' "70" "Mapové dlaždice (Planetiler)" "$(( $(date +%s) - T_TILES ))" \
-            "maxzoom $Z, $(( $(stat -c%s "$OUT") / 1048576 )) MB" \
-            >> steps-out/tiles.tsv
-
-      # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
-      # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
-      # aj .png sú už komprimované, balenie by len ukradlo minúty.
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
         uses: actions/upload-artifact@v4
@@ -2143,125 +1680,15 @@ jobs:
             _site/sprites
           key: assets-${{ hashFiles('poc/web/icon-sources.js', 'workers/build-sdf-sprite.mjs') }}-${{ env.GLYPHS_ZIP }}
 
+      # Sedemdesiat riadkov bashu je vo `workers/icons-build.sh`.
       - name: Stiahni a priprav sady ikoniek
         id: sprite
-        run: |
-          set -uo pipefail
-          T_SPR=$(date +%s)
-          mkdir -p _site/sprites /tmp/icons
+        run: workers/icons-build.sh
 
-          # Cache: hotové sprity sa nemenia, kým sa nezmení zoznam zdrojov ani
-          # generátor – v kľúči je hash oboch.
-          # find, nie ls: `ls vzor*` bez zhody končí kódom 2 a `pipefail`
-          # by ním zhodil celý krok (find nad existujúcim adresárom vráti 0).
-          CACHED_SPRITES=$(find _site/sprites -maxdepth 1 -name '*.json' | wc -l)
-
-          # Zoznam zdrojov je v poc/web/icon-sources.js – jedno miesto pre web
-          # aj pipeline. Z každého sa vyrobí SDF sprite: symboly bez koliesok
-          # a podkladov, ktorým sa dá nastaviť farba.
-          node -e "
-            import('./poc/web/icon-sources.js').then((m) => {
-              for (const s of m.ICON_SOURCES) console.log(s.id + ' ' + s.sprite);
-            });
-          " > /tmp/icons/list.txt
-          cat /tmp/icons/list.txt
-
-          ok=""
-          while read -r id url; do
-            [ -n "$id" ] || continue
-            if [ "$CACHED_SPRITES" -gt 0 ] && [ -s "_site/sprites/$id.json" ]; then
-              echo "── $id (z cache)"
-              ok="$ok $id"
-              continue
-            fi
-            echo "── $id"
-            got=1
-            for ext in .json .png; do
-              curl -fL --retry 4 --retry-delay 5 -o "/tmp/icons/$id$ext" "$url$ext" || got=0
-            done
-            # @2x je voliteľné – bez neho mapa funguje, len je na retine mäkšia.
-            for ext in '@2x.json' '@2x.png'; do
-              curl -fL --retry 2 --retry-delay 3 -o "/tmp/icons/$id$ext" "$url$ext" \
-                || rm -f "/tmp/icons/$id$ext"
-            done
-            if [ "$got" != 1 ]; then
-              echo "::warning::Sadu ikoniek $id sa nepodarilo stiahnuť – preskakujem."
-              continue
-            fi
-            if node workers/build-sdf-sprite.mjs --in="/tmp/icons/$id" --out="_site/sprites/$id"; then
-              ok="$ok $id"
-            else
-              echo "::warning::Sadu ikoniek $id sa nepodarilo prerobiť na SDF – preskakujem."
-            fi
-          done < /tmp/icons/list.txt
-
-          if [ -z "$ok" ]; then
-            echo "::error::Nepodarilo sa pripraviť ani jednu sadu ikoniek – mapa by bola bez ikon."
-            exit 1
-          fi
-
-          # Ktorú sadu má použiť štýl, hovoria úpravy z developer módu.
-          WANT=$(node -e "
-            Promise.all([import('./poc/web/themes.js'), import('node:fs')]).then(([m, fs]) => {
-              let raw = {};
-              try { raw = JSON.parse(fs.readFileSync('poc/web/style-overrides.json', 'utf8')); } catch {}
-              console.log(m.selectedIconSource(m.normalizeOverrides(raw).overrides));
-            });
-          ")
-          if [ ! -s "_site/sprites/$WANT.json" ]; then
-            WANT=$(printf '%s' "$ok" | awk '{print $1}')
-            echo "::warning::Zvolená sada ikoniek nie je k dispozícii – používam $WANT."
-          fi
-          echo "name=$WANT" >> "$GITHUB_OUTPUT"
-          echo "available=$(printf '%s' "$ok" | xargs)" >> "$GITHUB_OUTPUT"
-          echo "Nasadené sady:$ok, štýl použije $WANT"
-          printf '%s\t%s\t%s\t%s\n' "80" "Ikonky (SDF sprity)" "$(( $(date +%s) - T_SPR ))" \
-            "sady:$ok, štýl používa $WANT$([ "$CACHED_SPRITES" -gt 0 ] && echo ' (z cache)')" \
-            >> steps-out/assets.tsv
-
+      # Vo `workers/glyphs-fetch.sh`; `GLYPHS_ZIP` si berie z env workflowu.
       - name: Stiahni glyfy (fonty) k sebe na Pages
-        run: |
-          set -euo pipefail
-          mkdir -p _site/fonts
-          if [ -n "$(ls -A _site/fonts 2>/dev/null)" ]; then
-            echo "Glyfy z cache ✓"
-          elif curl -fL --retry 4 --retry-delay 5 -o /tmp/glyphs.zip "$GLYPHS_ZIP"; then
-            unzip -q /tmp/glyphs.zip -d /tmp/glyphs
+        run: workers/glyphs-fetch.sh
 
-            # Fontstack = adresár, ktorý obsahuje 0-255.pbf. Presné mená
-            # adresárov v balíku sa môžu líšiť, preto vyberáme postupne:
-            # 1) presne to, čo štýl chce, 2) čokoľvek "Noto Sans", 3) všetko.
-            mapfile -t stacks < <(find /tmp/glyphs -name '0-255.pbf' -printf '%h\n' | sort -u)
-            echo "V balíku je ${#stacks[@]} fontstackov."
-
-            copy_matching() { # $1 = grep -E vzor na názov adresára
-              local copied=0 d
-              for d in "${stacks[@]}"; do
-                if printf '%s' "$(basename "$d")" | grep -qiE "$1"; then
-                  cp -r "$d" _site/fonts/ && copied=$(( copied + 1 ))
-                fi
-              done
-              [ "$copied" -gt 0 ]
-            }
-
-            copy_matching '^Noto Sans (Regular|Bold|Italic)$' \
-              || copy_matching 'noto.?sans' \
-              || cp -r "${stacks[@]}" _site/fonts/ 2>/dev/null \
-              || true
-          else
-            echo "::warning::Balík glyfov sa nepodarilo stiahnuť."
-          fi
-
-          if [ -z "$(ls -A _site/fonts 2>/dev/null)" ]; then
-            echo "::warning::Lokálne glyfy nie sú k dispozícii – štýl použije fonts.openmaptiles.org (ak služba vypadne, mapa bude bez nápisov)."
-          else
-            du -sh _site/fonts
-            ls _site/fonts
-          fi
-
-      # Sprity sa ukladajú TU, ešte pred zapečením vzorov do atlasu – inak by
-      # sa do cache dostal už dopečený sprite a ďalší build by doň piekol
-      # vzory druhýkrát.
       - name: Cache glyfov a spritov (save)
         if: ${{ always() && steps.assets-cache.outputs.cache-hit != 'true' && hashFiles('_site/sprites/**') != '' }}
         continue-on-error: true
@@ -2381,116 +1808,37 @@ jobs:
               --sprite="_site/sprites/$id" --styles=_site/styles
           done
 
+      # Sto riadkov bashu a jq je vo `workers/build-site.sh` (strop súboru
+      # 128 kB). Sem chodia len výstupy ostatných jobov.
       - name: Poskladaj web (viewer + manifest)
-        run: |
-          set -euo pipefail
-          cp poc/web/index.html poc/web/app.js poc/web/themes.js \
-             poc/web/devmode.js poc/web/patterns.js poc/web/icon-sources.js \
-             poc/web/map-types.js poc/web/style-overrides.json _site/
-
-          BASE='${{ steps.pages.outputs.base_url }}'
-          BASE="${BASE%/}"
-          if [ -d _site/fonts ] && [ -n "$(ls -A _site/fonts)" ]; then
-            GLYPHS="$BASE/fonts/{fontstack}/{range}.pbf"
-          else
-            GLYPHS="https://fonts.openmaptiles.org/{fontstack}/{range}.pbf"
-          fi
-
-          jq -n \
-            --arg region '${{ needs.plan.outputs.key }}' \
-            --arg name '${{ needs.plan.outputs.name }}' \
-            --arg bbox '${{ needs.plan.outputs.bbox }}' \
-            --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            --arg glyphs "$GLYPHS" \
-            --arg sprite "$BASE/sprites/${{ needs.assets.outputs.name }}" \
-            --argjson icon_sources "$(node -e "
-              import('./poc/web/icon-sources.js').then((m) => {
-                const ok = '${{ needs.assets.outputs.available }}'.split(/\s+/).filter(Boolean);
-                console.log(JSON.stringify(m.ICON_SOURCES.filter((s) => ok.includes(s.id))
-                  .map((s) => ({ id: s.id, label: s.label, sprite: 'sprites/' + s.id,
-                                 license: s.license, source: s.source, suffix: s.suffix, note: s.note }))));
-              });
-            ")" \
-            --argjson maxzoom '${{ needs.tiles.outputs.maxzoom }}' \
-            --argjson size_mb '${{ needs.tiles.outputs.size_mb }}' \
-            --argjson trails '${{ needs.trails.outputs.enabled || 'false' }}' \
-            --argjson tmaxzoom '${{ needs.trails.outputs.maxzoom || '14' }}' \
-            --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
-            --argjson features '${{ needs.features.outputs.enabled || 'false' }}' \
-            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '15' }}' \
-            --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
-            --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
-            --argjson rocks '${{ needs.rocks.outputs.rocks_enabled || 'false' }}' \
-            --argjson rmaxzoom '${{ needs.rocks.outputs.rocks_maxzoom || '16' }}' \
-            --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
-            --argjson testkm2 '${{ needs.plan.outputs.test_km2 || '0' }}' \
-            --arg testbbox '${{ needs.plan.outputs.test_bbox }}' \
-            --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
-            --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
-            --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \
-            --arg demtilessource '${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
-            --arg rockslope '${{ needs.rocks.outputs.rock_slope || 'off' }}' \
-            --arg rocksource '${{ needs.rocks.outputs.rock_source || 'off' }}' \
-            '{
-              default_region: $region,
-              built_at: $built,
-              maxzoom: $maxzoom,
-              glyphs: $glyphs,
-              sprite: $sprite,
-              icon_sources: $icon_sources,
-              default_icons: "${{ needs.assets.outputs.name }}",
-              dem: $dem,
-              dem_maxzoom: $demmaxzoom,
-              # Model, z ktorého sú výškové dlaždice. Je hore pri `dem`
-              # a nie pri regióne, lebo dlaždice sú tiež spoločné – a nemusí
-              # to byť ten istý model ako pri vrstevniciach (`dem_source`
-              # v regióne), odkedy má tieňovanie vlastný výber.
-              dem_source: $demtilessource,
-              regions: {
-                ($region): ({
-                  name: $name,
-                  bbox: ($bbox | split(",") | map(tonumber)),
-                  pmtiles: ("tiles/" + $region + ".pmtiles"),
-                  maxzoom: $maxzoom,
-                  size_mb: $size_mb
-                }
-                # Rýchly test (switch `test`): mapa je celý región, ale
-                # vrstevnice, skaly a tieňovanie sú len na tomto štvorci.
-                # Viewer sa naň otvorí a napíše to do panelu – bez toho by
-                # sa 2 km² skál v kraji hľadali očami.
-                + (if $testkm2 > 0 and $testbbox != "" then {
-                  test_km2: $testkm2,
-                  test_bbox: ($testbbox | split(",") | map(tonumber))
-                } else {} end)
-                + (if $contours then {
-                  contours: ("tiles/" + $region + "-contours.pmtiles"),
-                  contours_maxzoom: $cmaxzoom,
-                  contour_interval: $cinterval
-                } else {} end)
-                # Skaly majú vlastný .pmtiles a vlastný maxzoom, takže sú
-                # v manifeste vlastnou položkou – vrstevnice sa dajú vypnúť
-                # a skaly nechať.
-                + (if $rocks then {
-                  rocks: ("tiles/" + $region + "-rocks.pmtiles"),
-                  rocks_maxzoom: $rmaxzoom
-                } else {} end)
-                + (if $contours or $rocks then { dem_source: $demsource } else {} end)
-                + (if $rockslope == "off" then {} else { rock_slope: ($rockslope | tonumber) } end)
-                + (if $rocksource == "off" then {} else { rock_source: $rocksource } end)
-                + (if $trails then {
-                  trails: ("tiles/" + $region + "-trails.pmtiles"),
-                  trails_maxzoom: $tmaxzoom,
-                  trail_count: $tcount
-                } else {} end)
-                # Krajinné prvky, ktoré schéma OpenMapTiles nemá – vlastný
-                # .pmtiles, takže aj vlastná položka a vlastný prepínač.
-                + (if $features then {
-                  features: ("tiles/" + $region + "-features.pmtiles"),
-                  features_maxzoom: $fmaxzoom
-                } else {} end))
-              }
-            }' > _site/tiles/manifest.json
-          cat _site/tiles/manifest.json
+        env:
+          BASE_URL: ${{ steps.pages.outputs.base_url }}
+          CONTOURS_DEM_SOURCE: ${{ needs.contours.outputs.dem_source || 'sonny' }}
+          CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
+          CONTOURS_MAXZOOM: ${{ needs.contours.outputs.maxzoom || '14' }}
+          CONTOUR_INTERVAL: ${{ inputs.contour_interval || '10' }}
+          DEM_MAXZOOM: ${{ needs.terrain.outputs.maxzoom || 15 }}
+          DEM_TILES_SOURCE: ${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}
+          DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}
+          FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
+          FEATURES_MAXZOOM: ${{ needs.features.outputs.maxzoom || '15' }}
+          ICONS_AVAILABLE: ${{ needs.assets.outputs.available }}
+          ICONS_NAME: ${{ needs.assets.outputs.name }}
+          REGION_BBOX: ${{ needs.plan.outputs.bbox }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          REGION_NAME: ${{ needs.plan.outputs.name }}
+          ROCKS_ENABLED: ${{ needs.rocks.outputs.rocks_enabled || 'false' }}
+          ROCKS_MAXZOOM: ${{ needs.rocks.outputs.rocks_maxzoom || '16' }}
+          ROCK_SLOPE: ${{ needs.rocks.outputs.rock_slope || 'off' }}
+          ROCK_SOURCE: ${{ needs.rocks.outputs.rock_source || 'off' }}
+          TEST_BBOX: ${{ needs.plan.outputs.test_bbox }}
+          TEST_KM2: ${{ needs.plan.outputs.test_km2 || '0' }}
+          TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
+          TILES_SIZE_MB: ${{ needs.tiles.outputs.size_mb }}
+          TRAILS_COUNT: ${{ needs.trails.outputs.count || '0' }}
+          TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+          TRAILS_MAXZOOM: ${{ needs.trails.outputs.maxzoom || '14' }}
+        run: workers/build-site.sh
 
       - name: Skontroluj, že štýl odkazuje len na existujúce súbory
         env:

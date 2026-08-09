@@ -58,10 +58,18 @@ preto má testovací výrez v kľúči príponu `_test2`.
 **3. Veľký `run:` blok patrí do `workers/`, nie do YAMLu.** Súbor s workflowom
 má strop 128 KiB a **GitHub nad ním workflow ticho neprijme** – po pushi
 vznikne beh bez jobov, s červeným krížikom a prázdnym logom, ktorý vyzerá, že
-sa spustil sám. `build-map.yml` je tesne pod stropom (`Lint workflows` to
-stráži a varuje už od 120 KiB), takže **doň nepridávaj dlhé komentáre ani
-skripty** – rozpis patrí do `workers/*.sh`, `workers/*.py` alebo
-`docs/pipeline.md` a v YAMLe ostane odkaz naň.
+sa spustil sám. `build-map.yml` už cez ten strop raz prešiel; odvtedy je z neho
+graf jobov (~90 KiB) a bash je v trinástich `workers/*.sh`. **Nevracaj ho tam** –
+rozpis patrí do `workers/*.sh`, `workers/*.py` alebo `docs/pipeline.md`
+a v YAMLe ostane odkaz naň. (`Lint workflows` varuje od 120 KiB.)
+
+Pri sťahovaní bloku do skriptu sú dve tiché chyby: `${{ výraz }}` sa zmení na
+`$PREMENNÚ` a tá sa zabudne dopísať do `env:` kroku (skript potom beží
+s prázdnym reťazcom a **nespadne**), alebo sa premenuje `id` kroku, na ktorý
+sa odkazujú výstupy jobu (job ticho vráti prázdno). Stráži to krok *„Skripty vo
+workers dostávajú svoje env"*. Blok, ktorý má viac jobov, patrí do JEDNÉHO
+súboru – dve kópie sa vždy raz rozídu (`contours-site.sh`,
+`fetch-planetiler.sh`).
 
 **4. Dlhý krok musí hovoriť, čo robí a ako ďaleko je.** Hodina ticha v logu sa
 nedá odlíšiť od zaseknutého behu. Pred drahou časťou vypíš **plán s odhadom**
@@ -164,18 +172,23 @@ curl -sSL https://github.com/rhysd/actionlint/releases/download/v1.7.7/actionlin
 # veľkosť workflowov (strop 128 KiB, varovanie od 120 KiB)
 wc -c .github/workflows/*.yml
 
+# bash vo workers (shellcheck nie je v CI, actionlint ho volá len na `run:`)
+for f in workers/*.sh; do bash -n "$f" || echo "CHYBA $f"; done
+
 # workery sa dajú spustiť aj lokálne – hodnoty berú z prostredia práve preto
 python3 workers/resolve-area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tatry
 python3 workers/dem-target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/check-dem.sh
+REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/build-site.sh   # a tak ďalej
 ```
 
 `Lint workflows` (`.github/workflows/lint-workflows.yml`) beží pri každom pushi
 do `.github/workflows/**` a kontroluje aj veci, ktoré actionlint nevie: veľkosť
 súboru, zdvojené zátvorky v `run:`, dĺžku popisov inputov, súlad výberov
-s `areas.json` a `dem-sources.json`, existenciu `needs.*.outputs.*` a to, že
-cesta k DMR 5.0 ostane celá. **Keď opravíš tichú chybu, pridaj naň kontrolu** –
-tak sú tam všetky ostatné.
+s `areas.json` a `dem-sources.json`, existenciu `needs.*.outputs.*`
+a `steps.*.outputs.*`, to, že každý `workers/*.sh` dostane env, ktoré číta,
+a že cesta k DMR 5.0 ostane celá. **Keď opravíš tichú chybu, pridaj naň
+kontrolu** – tak sú tam všetky ostatné.
 
 ## Commity a PR
 
