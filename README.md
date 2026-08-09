@@ -769,13 +769,27 @@ To je workflow **DMR 5.0 z Drive**
 
 ```
 area: <pohorie>       ─► out/ugkk-<pohorie>.tif  ─► release dem-ugkk
-                          ▲ Build map: rock_source: dmr5 + rovnaké rock_area
+                          ▲ Build map: vrstevnice a skaly s rovnakým `area`
+area: <bbox stupňov>  ─► out/N49E019.tif …       ─► release dem-dmr5
+  + tiles: true           ▲ Build map: tieňovanie a 3D terén
 area: cele_slovensko  ─► out/N49E019.tif …       ─► release dem-dmr5
-                          ▲ Build map: rock_source: dmr5 bez výrezu
+                          ▲ to isté, ale rovno na celú krajinu
 ```
 
 Výstup je **presne ten istý formát**, aký `workers/fetch-dem.sh` čaká už
 dávno, takže Build map sa nemení ani o riadok.
+
+**Nespúšťaš to ručne.** Workflow je volateľný a `Build map` si ho zavolá sám
+(joby `Doplniť DMR 5.0 (výrez…)` a `Doplniť DMR 5.0 (dlaždice)`), keď mu
+v release chýba to, čo si vypýtal. Dva joby preto, že `dmr5` má dve podoby
+a chýbať môžu naraz: vrstevnice a skaly čítajú výrez v plnom rozlíšení,
+tieňovanie 1° dlaždice na 5 m – to sa robí na celý región, kde 1 m verzia
+neexistuje.
+
+Dlaždice sa dopĺňajú **po celých stupňoch**: meno `N49E020.tif` je sľub o celom
+stupni a build si ju podľa mena hľadá, takže polovičná dlaždica by v ďalšom
+behu prešla kontrolou a tieňovanie by ticho skončilo v polovici mapy. Stojí to
+rádovo pol hodiny a ~2 GB z Drive na stupeň – ale raz.
 
 ### Pripraviť DMR 5.0: 198 GB cez HTTP Range
 
@@ -986,23 +1000,30 @@ gdalinfo "/vsizip//vsicurl/$URL/dmr5_0/dmr5_jtsk03.tif"
 **Licencia ÚGKK:** voľné použitie vrátane komerčného pri uvedení zdroja
 (ÚGKK SR) — atribúcia je v [`poc/web/themes.js`](poc/web/themes.js).
 
-**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, či je výrez v
-release `dem-ugkk`, a keď nie je, spustí si zrkadlo ako svoju úlohu – to isté,
-čo už robí `mirror-dem` pre Sonnyho. Ručne netreba spúšťať nič. **Výnimka je
-`dmr5`:** 198 GB archív sa vedome nespúšťa ako vedľajší účinok buildu mapy,
-takže `Pripraviť DMR 5.0` treba pustiť raz ručne. Build to povie – aj s tým,
-čo presne spustiť.
+**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, čo mu v release
+chýba, a doplnenie si spustí ako svoju úlohu. Ručne netreba spúšťať nič –
+vrátane `dmr5`, ktorý sa dopĺňa cez `DMR 5.0 z Drive` (číta cez HTTP Range len
+to, čo územie pretína, takže to nie je „prekvapenie na osem hodín", ako keby sa
+mal rozoberať 198 GB archív).
 
 ```
 Build map
-  └─ check-dem        je výrez v release dem-ugkk?
-       └─ (nie) → Doplniť ÚGKK 1 m LiDAR      ← spustí sa sám
-                    1. priame URL (ak si ich dal)
-                    2. ArcGIS ImageServer  (+ objaví služby v ich adresári)
-                    3. WCS GetCoverage
-                    → jeden COG do releasu dem-ugkk
-       └─ contours    stiahne COG z releasu a počíta
+  └─ check-dem        čo chýba pre vrstevnice / skaly / tieňovanie?
+       ├─ (výrez chýba)    → Doplniť DMR 5.0 (výrez)    ← spustí sa sám
+       │                       DMR 5.0 z Drive, area: <pohorie>
+       │                       → ugkk-<pohorie>.tif do dem-ugkk
+       ├─ (dlaždice chýbajú) → Doplniť DMR 5.0 (dlaždice)  ← spustí sa sám
+       │                       DMR 5.0 z Drive, area: <bbox stupňov>,
+       │                       tiles: true → N49E020.tif do dem-dmr5
+       ├─ contours    stiahne výrez z releasu a počíta
+       └─ terrain     stiahne dlaždice z releasu a tieňuje
 ```
+
+Ktorý release a ktoré assety ktorá vrstva potrebuje, hovorí jediné miesto –
+[`workers/dem-target.py`](workers/dem-target.py). Pýta sa doň aj kontrola
+(`workers/check-dem.sh`), aj sťahovanie (`workers/fetch-dem.sh`); kým to bolo
+napísané dvakrát, rozišlo sa to a build kontroloval jeden release, kým sťahoval
+z druhého ([beh 31307163093](https://github.com/skifahrer/fricomaps/actions/runs/31307163093)).
 
 > **Zrkadlo skúša štyri cesty a v každej sa tvári ako prehliadač.**
 > Geoportály za WAF-om bežne zahadzujú požiadavky, ktoré nevyzerajú ako

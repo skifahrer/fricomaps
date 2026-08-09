@@ -57,11 +57,19 @@ odkiaľ dáta prišli:
 
     pohorie          out/ugkk-<area>.tif      jeden COG vo WGS84 → dem-ugkk
     celé Slovensko   out/N49E019.tif …        dlaždice 1°×1°     → dem-dmr5
+    výrez + --tiles  out/N49E019.tif …        len dotknuté stupne → dem-dmr5
+
+Tretí riadok je to, čo si Build map dopĺňa sám: tieňovanie chce dlaždicovú
+podobu (na celý región 1 m neexistuje), ale nepotrebuje kvôli nej celú
+krajinu – stačia stupne, ktoré jeho bbox pretína. Okno sa pri `--tiles`
+rozširuje na celé stupne, lebo meno `N49E020.tif` je sľub o celej dlaždici
+a polovičná by v ďalšom behu prešla kontrolou ako hotová.
 
 Použitie:
     python3 workers/dmr5-drive.py --area=vysoke_tatry --grid-m=1 \\
         --out=out --asset=ugkk-vysoke_tatry.tif
     python3 workers/dmr5-drive.py --area=cele_slovensko --grid-m=5 --out=out
+    python3 workers/dmr5-drive.py --area=20,49,21,50 --grid-m=5 --tiles --out=out
     python3 workers/dmr5-drive.py --probe-only
 """
 import argparse
@@ -266,7 +274,12 @@ def to_wgs84(parts, dest, bbox_wgs, grid_m, work, env, geoid):
 
 
 def country_tiles(parts, out_dir, work, env, geoid):
-    """Celé Slovensko → dlaždice 1°×1° vo WGS84, ako ich čaká build mapy."""
+    """Mozaika → dlaždice 1°×1° vo WGS84, ako ich čaká build mapy.
+
+    Používa sa na celé Slovensko aj na `--tiles` s výrezom. Rez na stupne robí
+    `dem-tiles.py` podľa rozsahu rastra – preto sa okno pred čítaním rozširuje
+    na celé stupne, nech pod menom `N49E020.tif` nikdy neleží len jeho kúsok.
+    """
     vrt = os.path.join(work, "mozaika.vrt")
     run(["gdalbuildvrt", "-q", vrt, *parts], env)
     merged = os.path.join(work, "dmr5-national.tif")
@@ -302,6 +315,10 @@ def main():
                     help="koľko blokov sa číta naraz; nad ~16 začne Drive "
                          "odpovedať 403 a čakanie zožerie viac, než sa získa")
     ap.add_argument("--geoid", choices=("egm2008", "elipsoid"), default="egm2008")
+    ap.add_argument("--tiles", action="store_true",
+                    help="výstup sú 1° dlaždice (dem-dmr5) aj pri zadanom "
+                         "výreze – okno sa rozšíri na celé stupne. Bez toho "
+                         "je z výrezu jeden COG (dem-ugkk).")
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--probe-only", action="store_true",
                     help="len otvor zdroj a vypíš, čo v ňom je")
@@ -346,6 +363,21 @@ def main():
         f.write((info.get("coordinateSystem") or {}).get("wkt", ""))
 
     area_name, bbox = raster.resolve_area(args.area, os.path.join(_HERE, "areas.json"))
+
+    # DLAŽDICOVÝ REŽIM S VÝREZOM. Build mapy si dlaždice hľadá podľa mena
+    # (`N49E020.tif`) a to meno je sľub: „tento celý stupeň je tu". Keby sa
+    # pod ním v release ocitol len prienik s bboxom, ďalší beh by kontrolou
+    # prešiel („dlaždica tam je“) a tieňovanie by ticho končilo v polovici
+    # mapy. Okno sa preto rozširuje na celé stupne – čítať sa musí celá
+    # dlaždica, nie len to, čo dnes treba.
+    if bbox is not None and args.tiles:
+        w, s, e, n = bbox
+        bbox = (float(math.floor(w)), float(math.floor(s)),
+                float(math.ceil(e)), float(math.ceil(n)))
+        deg = int((bbox[2] - bbox[0]) * (bbox[3] - bbox[1]))
+        area_name += (f" → celé stupne {bbox[0]:g},{bbox[1]:g}…{bbox[2]:g},"
+                      f"{bbox[3]:g} ({deg} dlaždíc)")
+
     log(f"Územie: {area_name}, cieľová mriežka {args.grid_m:g} m")
 
     if bbox is None:
@@ -353,13 +385,15 @@ def main():
                + info["geoTransform"][5] * info["size"][1],
                info["geoTransform"][0] + info["geoTransform"][1] * info["size"][0],
                info["geoTransform"][3])
-        parts = read_blocks(src, box, args.grid_m, args.work, args.jobs, env, native_m)
+    else:
+        box = src_window(bbox, wkt_file, info, env)
+    parts = read_blocks(src, box, args.grid_m, args.work, args.jobs, env, native_m)
+
+    if bbox is None or args.tiles:
         country_tiles(parts, args.out, args.work, env, args.geoid)
         made = sorted(f for f in os.listdir(args.out) if f.endswith(".tif"))
         log(f"Hotovo: {len(made)} dlaždíc v {args.out}")
     else:
-        box = src_window(bbox, wkt_file, info, env)
-        parts = read_blocks(src, box, args.grid_m, args.work, args.jobs, env, native_m)
         asset = args.asset or f"ugkk-{args.area}.tif"
         dest = to_wgs84(parts, os.path.join(args.out, asset), bbox,
                         args.grid_m, args.work, env, args.geoid)

@@ -17,8 +17,20 @@
 # dlaždice majú tú istú pomenúvaciu schému (`N49E019.tif`), takže sa nižšie
 # nič nevetví.
 #
+# KTORÝ RELEASE A KTORÉ SÚBORY nerozhoduje tento skript – rozhoduje
+# `workers/dem-target.py`, lebo tú istú otázku si kladie aj job `check-dem`
+# v build-map.yml a musia si odpovedať rovnako. Kým to bolo napísané dvakrát,
+# rozišlo sa to: kontrola hľadala výrez v `dem-ugkk`, kým tieňovanie sťahovalo
+# dlaždice z `dem-dmr5` (beh 31307163093).
+#
 # Použitie:
 #   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv] [zdroj] [kľúč výrezu]
+#
+# KĽÚČ VÝREZU JE TO, ČO PREPÍNA PODOBU DMR 5.0. Vrstevnice a skaly ho podávajú
+# (`contours-build.sh`), tieňovanie nie (build-map.yml, krok „Tieňovanie
+# reliéfu“) – to sa robí na celý región, kde 1 m verzia neexistuje. Kto zmení
+# jedno z tých volaní, musí zmeniť aj tabuľku vrstiev v `check-dem`.
+#
 # Výstup:
 #   <adresár>/tiles/N49E019.tif …   stiahnuté dlaždice
 #   <adresár>/all.vrt               mozaika na čítanie
@@ -33,6 +45,16 @@ SOURCE="${4:-sonny}"
 AREA_KEY="${5:-cely}"
 T0=$(date +%s)
 
+# Čo sa má stiahnuť, povie jediný zdroj pravdy – ten istý, z ktorého sa pýta
+# aj `check-dem`. Sem prídu hotové mená a release; vetvenie „ktorá podoba
+# DMR 5.0" tu už nie je.
+TARGET=$(python3 "$(dirname "$0")/dem-target.py" \
+  --source="$SOURCE" --area-key="$AREA_KEY" --bbox="$BBOX")
+get() { printf '%s\n' "$TARGET" | sed -n "s/^$1=//p" | head -1; }
+FORM=$(get form)
+SRC_RELEASE=$(get release)
+SRC_LABEL=$(get label)
+
 # DMR 5.0 má DVE PODOBY a rozhoduje medzi nimi ROZSAH, nie druhý výber vo
 # formulári. Je to jeden a ten istý 1 m LiDAR, len sa nedá uložiť dvakrát:
 #
@@ -43,20 +65,20 @@ T0=$(date +%s)
 # v release je 2 GB. Celý región v metri sa teda nemá kam uložiť – a keďže
 # to je fyzikálne obmedzenie a nie voľba, nemá zmysel pýtať sa naň vo
 # formulári. Preto tu bývali dva zdroje (`dmr5` a `ugkk`) a je z nich jeden.
-if [ "$SOURCE" = "dmr5" ] && [ "$AREA_KEY" != "cely" ]; then
+if [ "$FORM" = "area" ]; then
   mkdir -p "$DIR"
-  UASSET="ugkk-${AREA_KEY}.tif"
-  if ! gh release download "${UGKK_RELEASE:-dem-ugkk}" --repo "$GITHUB_REPOSITORY" \
+  UASSET=$(get assets)
+  if ! gh release download "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
         --pattern "$UASSET" --dir "$DIR" --clobber >/dev/null 2>&1; then
     # Kód 3 = „pre tento výrez to nemáme", nie „všetko je zle". Volajúci sa
     # podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na hrubší model
     # (input ugkk_fallback).
-    echo "::warning::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY."
+    echo "::warning::V release $SRC_RELEASE nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY."
     exit 3
   fi
   gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
   SIZE=$(du -h "$DIR/$UASSET" | cut -f1)
-  echo "ÚGKK DMR 5.0 (výrez, plné rozlíšenie) z releasu: $UASSET, $SIZE"
+  echo "$SRC_LABEL z releasu: $UASSET, $SIZE"
   gdalinfo "$DIR/$UASSET" | grep -E "Pixel Size|Size is" || true
   if [ -n "$STEPS_TSV" ]; then
     printf '%s\t%s\t%s\t%s\n' 20 "DEM (DMR 5.0, výrez)" "$(( $(date +%s) - T0 ))" \
@@ -65,28 +87,13 @@ if [ "$SOURCE" = "dmr5" ] && [ "$AREA_KEY" != "cely" ]; then
   exit 0
 fi
 
-# Ktorý release a ako to volať v logu. Ďalej je to už to isté.
-case "$SOURCE" in
-  dmr35) SRC_RELEASE="${DMR35_RELEASE:-dem-dmr35}"; SRC_LABEL="ÚGKK DMR 3.5" ;;
-  dmr5)  SRC_RELEASE="${DMR5_RELEASE:-dem-dmr5}";   SRC_LABEL="ÚGKK DMR 5.0 (LLS)" ;;
-  *)     SRC_RELEASE="$DEM_RELEASE"; SRC_LABEL="Sonny's LiDAR DTM" ;;
-esac
-
-IFS=, read -r W S E N <<< "$BBOX"
 # Stiahnuté dlaždice majú vlastný podadresár: medzivýsledky (clip, slope…)
 # sú tiež .tif a nesmú sa dostať do mozaiky.
 mkdir -p "$DIR/tiles"
 
 # Dlaždice sú 1°×1°, pomenované podľa juhozápadného rohu (konvencia SRTM):
-# N49E019.
-python3 - "$W" "$S" "$E" "$N" > "$DIR/list.txt" <<'PY'
-import math, sys
-w, s, e, n = map(float, sys.argv[1:5])
-for lat in range(math.floor(s), math.floor(n) + 1):
-    for lon in range(math.floor(w), math.floor(e) + 1):
-        ns, ew = ("N" if lat >= 0 else "S"), ("E" if lon >= 0 else "W")
-        print(f"{ns}{abs(lat):02d}{ew}{abs(lon):03d}")
-PY
+# N49E019. Zoznam počíta dem-target.py – ten istý, z ktorého sa pýta kontrola.
+get assets | tr ' ' '\n' | sed '/^$/d;s/\.tif$//' > "$DIR/list.txt"
 WANT=$(wc -l < "$DIR/list.txt")
 echo "DEM dlaždíc pre bbox: $WANT"
 
@@ -113,10 +120,12 @@ if [ "$have" -eq 0 ]; then
   echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
-    # DMR 5.0 sa nedopĺňa sám: prevzorkovať celú krajinu znamená prejsť
-    # stotridsať gigabajtov cez sieť. To sa nemá spustiť ako vedľajší účinok
-    # buildu mapy – púšťa sa vedome.
-    echo "Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: cele_slovensko (mriežka 5 m). Trvá to dlho, preto sa to nespúšťa samo."
+    # Dlaždicovú podobu DMR 5.0 dopĺňa job `mirror-dmr5-tiles` v Build map,
+    # ktorý volá `DMR 5.0 z Drive` na presne tie stupne, čo bbox pretína.
+    # Keď tu aj tak nič nie je, ten job buď nebežal (kontrola sa rozišla
+    # s týmto skriptom – pozri dem-target.py), alebo spadol.
+    echo "Doplniť ich mal job 'Doplniť DMR 5.0 (dlaždice)' – pozri jeho log."
+    echo "Ručne: workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$(dirname "$0")/dem-target.py" --source=dmr5 --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m."
   else
     echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
   fi
