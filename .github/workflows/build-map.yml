@@ -68,12 +68,13 @@ on:
       # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
       # Kľúč testovacieho behu má príponu `_test2`, takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
-      # Spraví VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci zo
-      # stredu výrezu – z desiatok minút sú minúty a mapa sa otvorí rovno
-      # tam. Iná veľkosť: `options: test_km2=5`. Iné miesto:
-      # `options: test_at=lon,lat`.
+      # Zmenší LEN to drahé – vrstevnice, skaly a tieňovanie sa spočítajú na
+      # štvorci zo stredu výrezu. Mapa (kraj, cesty, trasy, prvky) ostáva celá
+      # podľa nastavení regiónu, aby sa ten štvorec dal pozerať v mape, do
+      # ktorej patrí. Mapa sa otvorí rovno na ňom. Iná veľkosť:
+      # `options: test_km2=5`. Iné miesto: `options: test_at=lon,lat`.
       test:
-        description: "Rýchly test: počítať len 2 km² zo stredu výrezu"
+        description: "Rýchly test: terén (vrstevnice, skaly, tieňovanie) len na 2 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -300,7 +301,10 @@ jobs:
           # Bbox aj výrez už raz vyriešila príprava (vrátane orezu a custom
           # regiónu), takže sa tu nepočítajú druhý raz – dva výpočty toho
           # istého sa vždy raz rozídu.
-          BBOX: ${{ needs.plan.outputs.bbox }}
+          # `dem_bbox`, nie `bbox`: kontroluje sa územie, na ktorom sa DEM
+          # naozaj číta. Pri rýchlom teste sú to 2 km², takže sa kvôli nemu
+          # nezrkadlí (a nedopĺňa) výškový model na celý kraj.
+          BBOX: ${{ needs.plan.outputs.dem_bbox }}
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
           SRC_CONTOURS: ${{ needs.plan.outputs.opt_contour_source }}
           SRC_ROCKS: ${{ needs.plan.outputs.opt_rock_dem }}
@@ -453,8 +457,15 @@ jobs:
     outputs:
       key: ${{ steps.region.outputs.key }}
       name: ${{ steps.region.outputs.name }}
+      # `bbox` je CELÝ región (mapa, cesty, trasy, prvky), `dem_bbox` je to,
+      # čo sa počíta z výškového modelu (vrstevnice, skaly, tieňovanie).
+      # Líšia sa len pri rýchlom teste: ten zmenšuje výpočet z DEM, nie mapu.
       bbox: ${{ steps.region.outputs.bbox }}
-      bboxkey: ${{ steps.region.outputs.bboxkey }}
+      dem_bbox: ${{ steps.region.outputs.dem_bbox }}
+      dem_bboxkey: ${{ steps.region.outputs.dem_bboxkey }}
+      # Testovací štvorec (prázdne pri ostrom behu) – pre obrázok „kde to je",
+      # súhrn a viewer, ktorý sa naň má otvoriť.
+      test_bbox: ${{ steps.region.outputs.test_bbox }}
       day: ${{ steps.day.outputs.d }}
       # `legacy` = zdroj Pages je vetva a mapu prepíše najbližší push.
       # Ide von, aby to súhrn vedel povedať nahlas a smoke test vedel,
@@ -625,7 +636,11 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: data/region.osm.pbf
-          key: pbf-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
+          # `v2`: kým rýchly test orezával región, ukladal orezané PBF pod
+          # kľúč BEZ orezu (`crop_bbox` bol pri teste prázdny) – ostrý beh
+          # v ten istý deň potom postavil celú mapu z tých 2 km². Odteraz test
+          # neorezáva nič, ale staré záznamy by ešte deň strašili.
+          key: pbf-v2-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
 
       - name: Stiahni PBF iba daného regiónu
         id: region
@@ -687,39 +702,9 @@ jobs:
 
           # ----- voliteľné orezanie na menšie územie -----
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
+          # Toto orezáva PBF, čiže samotnú mapu – na rozdiel od rýchleho testu
+          # o kus nižšie, ktorý mapu necháva celú.
           CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
-
-          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) je to isté
-          # orezanie, len bbox nezadávaš ty – vyreže sa štvorec zo stredu
-          # zvoleného výrezu. Orezaním REGIÓNU (a nie len výrezu) sa zmenší
-          # úplne všetko: vrstevnice, skaly aj tieňovanie, ktoré sa inak
-          # počíta na celý kraj. Presne o to ide – celý beh na pár km²
-          # namiesto vrstvy po vrstve. A keďže je orezaný región, je ten
-          # štvorec aj bboxom v manifeste – mapa sa otvorí rovno na ňom.
-          TEST_KM2='${{ steps.opts.outputs.opt_test_km2 }}'
-          TEST=""
-          if [ "${TEST_KM2:-0}" != "0" ]; then
-            if [ -n "$CROP" ]; then
-              echo '::error::Naraz crop_bbox aj test_km2 nejde – oboje orezáva región. Nechaj jedno z nich.'
-              exit 1
-            fi
-            AREA='${{ inputs.area }}'
-            AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
-            [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
-            RES=$(python3 workers/resolve-area.py \
-              --region-bbox="$BBOX" --area="$AREA" \
-              --test-km2="$TEST_KM2" \
-              --test-at='${{ steps.opts.outputs.opt_test_at }}')
-            CROP=$(printf '%s\n' "$RES" | sed -n 's/^bbox=//p')
-            [ -n "$CROP" ] || { echo "::error::Testovací štvorec sa nepodarilo spočítať."; exit 1; }
-            TEST=1
-            # Okolie pre obrázok „kde to je" je CELÝ výrez pred zmenšením
-            # (napr. Vysoké Tatry), nie celý región – z mapy Slovenska by
-            # bol štvorec s 2 km² neviditeľný bod.
-            printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
-            echo "Testovací režim: $TEST_KM2 km² → $CROP"
-          fi
-
           if [ -n "$CROP" ]; then
             if [ -z "$CACHED" ]; then
               command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
@@ -732,22 +717,51 @@ jobs:
               mv data/region-crop.osm.pbf data/region.osm.pbf
             fi
             BBOX="$CROP"
+            KEY="${KEY}_crop"
+            NAME="$NAME (výrez)"
+          fi
+
+          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) zmenšuje to,
+          # čo je naozaj drahé: vrstevnice, skaly a tieňovanie z výškového
+          # modelu – na kraji desiatky minút, na 2 km² sekundy.
+          #
+          # REGIÓN SA PRITOM NEOREZÁVA: mapa (cesty, vodstvo, trasy, prvky)
+          # vyjde celá podľa nastavení, prešovský kraj ostane prešovským
+          # krajom. Planetiler z PBF kraja je pár minút, takže sa tým nič
+          # neladí pomalšie – zato sa štvorec so skalami pozerá v mape, do
+          # ktorej patrí, a nie nad prázdnom.
+          TEST_KM2='${{ steps.opts.outputs.opt_test_km2 }}'
+          DEM_BBOX="$BBOX"
+          if [ "${TEST_KM2:-0}" != "0" ]; then
+            AREA='${{ inputs.area }}'
+            AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
+            [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
+            RES=$(python3 workers/resolve-area.py \
+              --region-bbox="$BBOX" --area="$AREA" \
+              --test-km2="$TEST_KM2" \
+              --test-at='${{ steps.opts.outputs.opt_test_at }}')
+            DEM_BBOX=$(printf '%s\n' "$RES" | sed -n 's/^bbox=//p')
+            [ -n "$DEM_BBOX" ] || { echo "::error::Testovací štvorec sa nepodarilo spočítať."; exit 1; }
+            # Okolie pre obrázok „kde to je" je CELÝ výrez pred zmenšením
+            # (napr. Vysoké Tatry), nie celý región – z mapy Slovenska by
+            # bol štvorec s 2 km² neviditeľný bod.
+            printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
+            echo "test_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
             # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa
             # nesmie tváriť ako ostrý a prepísať mu vrstevnice na celý kraj.
-            if [ -n "$TEST" ]; then
-              KEY="${KEY}_test${TEST_KM2}"
-              NAME="$NAME – test ${TEST_KM2} km²"
-            else
-              KEY="${KEY}_crop"
-              NAME="$NAME (výrez)"
-            fi
+            KEY="${KEY}_test${TEST_KM2}"
+            NAME="$NAME – test ${TEST_KM2} km²"
+            echo "Testovací režim: $TEST_KM2 km² → $DEM_BBOX (mapa ostáva celý región $BBOX)"
           fi
 
           echo "key=$KEY"   >> "$GITHUB_OUTPUT"
           echo "name=$NAME" >> "$GITHUB_OUTPUT"
           echo "bbox=$BBOX" >> "$GITHUB_OUTPUT"
-          # bezpečná podoba bboxu do kľúča cache
-          echo "bboxkey=$(echo "$BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
+          echo "dem_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
+          # bezpečná podoba bboxu do kľúča cache. Je z `dem_bbox`, lebo ho
+          # používajú len cache vrstevníc, skál a tieňovania – a tie sa pri
+          # teste počítajú na štvorci, takže si nesmú sadnúť na ostré.
+          echo "dem_bboxkey=$(echo "$DEM_BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
           echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
           ls -lh data/region.osm.pbf
           printf '%s\t%s\t%s\t%s\n' "10" "PBF regiónu" "$(( $(date +%s) - T0 ))" \
@@ -768,8 +782,11 @@ jobs:
           [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
           # stdout aj do premennej: kľúč výrezu treba hneď na kontrolu nižšie
           # a na vlastné výstupy sa krok odkazovať nemôže.
+          # Pretína sa s `dem_bbox`, nie s celým regiónom: výrez hovorí, kde sa
+          # počítajú vrstevnice a skaly, a to je pri rýchlom teste testovací
+          # štvorec. (Bez testu sú `dem_bbox` a `bbox` to isté.)
           RESOLVED=$(python3 workers/resolve-area.py \
-            --region-bbox='${{ steps.region.outputs.bbox }}' \
+            --region-bbox='${{ steps.region.outputs.dem_bbox }}' \
             --area="$AREA" --out="$GITHUB_OUTPUT")
           echo "$RESOLVED"
           AREA_KEY=$(printf '%s\n' "$RESOLVED" | sed -n 's/^key=//p')
@@ -804,7 +821,7 @@ jobs:
           python3 -m pip install --quiet pillow
           mkdir -p _site
           python3 workers/test-locator.py \
-            --bbox='${{ steps.region.outputs.bbox }}' \
+            --bbox='${{ steps.region.outputs.test_bbox }}' \
             --full-bbox='${{ steps.region.outputs.full_bbox }}' \
             --name='${{ steps.region.outputs.name }}' \
             --layers="vrstevnice: ${{ inputs.contour_source }} · skaly: ${{ inputs.rock_source }} · tieňovanie: ${{ inputs.shading_source }}" \
@@ -879,7 +896,9 @@ jobs:
         id: keys
         run: |
           set -euo pipefail
-          B='${{ needs.plan.outputs.bboxkey }}'
+          # Územie, na ktorom sa počíta z DEM – pri rýchlom teste testovací
+          # štvorec, inak celý región. Všetky kľúče nižšie sú o vrstvách z DEM.
+          B='${{ needs.plan.outputs.dem_bboxkey }}'
           # Otlačok releasu na vrstvu – každá si vyberá zdroj sama, takže
           # jeden spoločný by po doplnení ktoréhokoľvek releasu zahodil cache
           # všetkých troch.
@@ -1075,7 +1094,9 @@ jobs:
         if: ${{ needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
-          REGION_BBOX: ${{ needs.plan.outputs.bbox }}
+          # Územie výpočtu, nie mapy: pri rýchlom teste je to štvorec s 2 km²,
+          # kým mapa okolo neho ostáva celý región.
+          REGION_BBOX: ${{ needs.plan.outputs.dem_bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           AREA_KEY_IN: ${{ needs.plan.outputs.area_key }}
           AREA_NAME_IN: ${{ needs.plan.outputs.area_name }}
@@ -1327,7 +1348,9 @@ jobs:
           TSRC="výpočet"
           TZ='${{ needs.plan.outputs.opt_terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
-          BBOX='${{ needs.plan.outputs.bbox }}'
+          # Tieňovanie je vrstva z DEM, takže ide na `dem_bbox` – pri rýchlom
+          # teste na testovací štvorec, nie na celý región.
+          BBOX='${{ needs.plan.outputs.dem_bbox }}'
           TDEM='${{ needs.plan.outputs.opt_shading_source }}'
           # Zdroj je v mene assetu: tieňovanie zo Sonnyho a z DMR 3.5 nie je
           # to isté a nesmie sa jedno vydávať za druhé.
@@ -2177,6 +2200,7 @@ jobs:
             --features-maxzoom='${{ needs.features.outputs.maxzoom || '15' }}' \
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
+            --dem-bounds='${{ needs.plan.outputs.test_bbox }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
@@ -2236,6 +2260,7 @@ jobs:
             --argjson rmaxzoom '${{ needs.contours.outputs.rocks_maxzoom || '16' }}' \
             --argjson cinterval '${{ inputs.contour_interval || '10' }}' \
             --argjson testkm2 '${{ needs.plan.outputs.test_km2 || '0' }}' \
+            --arg testbbox '${{ needs.plan.outputs.test_bbox }}' \
             --arg demsource '${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --arg dem '${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}' \
             --argjson demmaxzoom '${{ needs.terrain.outputs.maxzoom || 15 }}' \
@@ -2265,11 +2290,14 @@ jobs:
                   maxzoom: $maxzoom,
                   size_mb: $size_mb
                 }
-                # Rýchly test (switch `test`): `bbox` vyššie JE ten testovací
-                # štvorec, lebo sa ním orezal celý región – viewer sa teda na
-                # neho nastaví sám. Číslo je tu preto, aby to aj napísal;
-                # inak vyzerá pár km² mapy ako pokazený build.
-                + (if $testkm2 > 0 then { test_km2: $testkm2 } else {} end)
+                # Rýchly test (switch `test`): mapa je celý región, ale
+                # vrstevnice, skaly a tieňovanie sú len na tomto štvorci.
+                # Viewer sa naň otvorí a napíše to do panelu – bez toho by
+                # sa 2 km² skál v kraji hľadali očami.
+                + (if $testkm2 > 0 and $testbbox != "" then {
+                  test_km2: $testkm2,
+                  test_bbox: ($testbbox | split(",") | map(tonumber))
+                } else {} end)
                 + (if $contours then {
                   contours: ("tiles/" + $region + "-contours.pmtiles"),
                   contours_maxzoom: $cmaxzoom,
@@ -2505,7 +2533,7 @@ jobs:
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
-          TEST_BBOX: ${{ needs.plan.outputs.bbox }}
+          TEST_BBOX: ${{ needs.plan.outputs.test_bbox }}
           TEST_FULL_BBOX: ${{ needs.plan.outputs.full_bbox }}
           # Celý formulár naraz, nie pole po poli: `toJSON(inputs)` sa nemá
           # ako rozísť so zoznamom inputov, kdežto desať riadkov áno – a to

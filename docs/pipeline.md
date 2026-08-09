@@ -223,9 +223,9 @@ návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 
-Switch `test` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²** a pustí
-na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút sú
-minúty, takže sa dá prah alebo interval overiť za jeden beh.
+Switch `test` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²** a spočíta
+na ňom to drahé – vrstevnice, skaly a tieňovanie. Z desiatok minút sú minúty,
+takže sa dá prah alebo interval overiť za jeden beh.
 
 **Predvolene je zapnutý**, ostrý beh na celý výrez ho chce odškrtnúť. Je to
 switch vo formulári a nie voľba v `options`, lebo sa preklikáva pri každom
@@ -238,11 +238,26 @@ chyba: inak by to bolo číslo, ktoré nič nerobí.
 inak strana štvorca v km². Vypočíta ho `parse-options.py` zo switchu
 a veľkosti, takže sa nikde inde nemusí riešiť „zapnuté a koľko".
 
-Technicky je to **to isté orezanie regiónu ako `crop_bbox`**, len bbox
-nezadávaš ty. To je celý trik: orezaním REGIÓNU (a nie len výrezu) sa zmenší
-aj to, čo sa inak počíta na celý kraj – tieňovanie a mapové dlaždice. Výrez
-sa potom pretína s už orezaným regiónom, takže vyjde ten istý štvorec bez
-druhého výpočtu. Oboje naraz je chyba: obe veci orezávajú to isté.
+**Mapa sa pritom neorezáva.** Príprava vydá dva bboxy a celý zvyšok pipeline
+sa delí podľa toho, ktorý si vypýta:
+
+| výstup prípravy | čo je to | kto ho číta |
+|---|---|---|
+| `bbox` | celý región (prípadne orezaný `crop_bbox`) | PBF, manifest, viewer – teda mapa: cesty, vodstvo, trasy, prvky |
+| `dem_bbox` | pri teste štvorec, inak `bbox` | `check-dem`, kľúče cache, `contours`, `terrain` – teda všetko z výškového modelu |
+| `test_bbox` | štvorec (prázdne bez testu) | obrázok „kde to je", súhrn, manifest, `bounds` tieňovania v štýle |
+
+Kedysi to bolo **to isté orezanie regiónu ako `crop_bbox`**, len s bboxom,
+ktorý nezadávaš ty – teda aj orezané PBF. Ušetrilo to pár minút Planetilera
+a stálo použiteľnosť výsledku: 2 km² skál viseli nad prázdnom, bez ciest
+a bez okolia, na ktorom by bolo vidno, či sedia. Prešovský kraj má teda pri
+teste ostať prešovským krajom. `crop_bbox` je odvtedy na to, keď chceš orezať
+naozaj aj mapu, a dá sa s testom kombinovať: najprv sa oreže región, štvorec
+sa ráta až z toho, čo ostane.
+
+Výrez (`area`) sa pretína s `dem_bbox`, nie s celým regiónom – vyjde teda ten
+istý štvorec bez druhého výpočtu a `contours-build.sh` počíta presne to, čo
+skontroloval `check-dem`.
 
 Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
@@ -254,7 +269,8 @@ Dve veci, na ktoré si treba dať pozor a sú vyriešené:
   zmaže a všetko sa spočíta nanovo. Testom sa ladí, a ladiť na výsledku
   z cache znamená ladiť ducha; kľúč síce nesie nastavenia aj otlačok
   skriptov, ale nie všetko. Cache ostrého behu tým netrpí – v kľúči je
-  `bboxkey` a ten je pri teste bboxom štvorca.
+  `dem_bboxkey` a ten je pri teste bboxom štvorca. (Cache PBF je spoločná
+  s ostrým behom, a to je správne: PBF je pri teste ten istý celý región.)
 
   Platí to aj pre **podpipeline skál z tieňovania**: tá si odkladá rozrobené
   obrysy, takže by po zmene prahu nadviazala na polovicu starého výsledku.
@@ -281,16 +297,23 @@ vie priamo ukázať – z artefaktu by sa musel sťahovať. Odkaz do mapy má tv
 (`hash: "map"` v MapLibre), takže sa rovnakým odkazom dá poslať aj ľubovoľné
 iné miesto a `F5` nehodí mapu späť na celý región.
 
-**Samotná mapa sa otvorí na štvorci aj bez odkazu.** Rýchly test oreže celý
-región, takže je ten štvorec bboxom regiónu v manifeste a viewer sa naň
-nastaví ako na hocijaký iný región – nie je to zvláštna vetva v kóde.
-Zvláštna vetva je len jedna, a rieši opačný problém: keď poloha v adrese
-mieri **mimo nasadeného bboxu** (hash z minulej návštevy, starý odkaz),
-viewer ju zahodí (`dropPosFromHash`) a nechá rozhodnúť bbox. Bez toho by
-`F5` po testovacom builde otvoril mapu nad prázdnom dvadsať kilometrov
-vedľa – a to vyzerá ako pokazený build, nie ako stará adresa. Manifest nesie
-pri regióne aj `test_km2`, takže to viewer vie aj napísať do panelu
-(`Rýchly test: 2 km² zo stredu výrezu`).
+**Samotná mapa sa otvorí na štvorci aj bez odkazu.** Manifest nesie pri
+regióne okrem `bbox` (celý kraj) aj `test_bbox` a `test_km2`; viewer sa pri
+štarte nastaví na `test_bbox`, keď je (`initialBounds` v `poc/web/app.js`),
+a do panelu napíše, že vrstevnice, skaly a tieňovanie sú len na tých 2 km².
+Bez toho by sa štvorec hľadal očami v štyroch tisícoch km² kraja – a kraj bez
+skál by vyzeral ako pokazený build.
+
+Posúvať sa dá kamkoľvek, mapa je celá. Polohu z adresy viewer zahodí
+(`dropPosFromHash`), len keď mieri **mimo nasadeného regiónu** – hash
+z minulej návštevy alebo starý odkaz môže byť z iného kraja a MapLibre by
+mapu otvoril nad prázdnom.
+
+Tieňovanie dostane v štýle `bounds` toho štvorca (`--dem-bounds` do
+`workers/build-styles.mjs`, `demBounds` v `poc/web/themes.js`). Vlastné
+výškové dlaždice sú totiž pri teste len tam, kým mapa je celý kraj – bez
+hranice by z každého posunu mapy padali stovky 404. `.pmtiles` (vrstevnice,
+skaly) si hranicu nesú v hlavičke samy, raster nie.
 
 ### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 

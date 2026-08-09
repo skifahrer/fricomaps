@@ -1477,6 +1477,9 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  *                                        výber, nemusí to byť ten istý model
  *                                        ako pri vrstevniciach (default: je)
  * @param {number} [opts.demMaxzoom]      najvyšší zoom výškových dlaždíc
+ * @param {number[]|null} [opts.demBounds] kde vlastné výškové dlaždice vôbec
+ *                                        sú (`[w,s,e,n]`) – pri rýchlom teste
+ *                                        je to štvorec s pár km², nie celý kraj
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
  * @param {string} [opts.mapType]   typ mapy (turistická / lyžiarska / cestná /
@@ -1505,6 +1508,7 @@ export function buildStyle({
   demTiles = DEFAULT_DEM_TILES,
   demTilesSource = null,
   demMaxzoom = DEFAULT_DEM_MAXZOOM,
+  demBounds = null,
   sdfIcons = false,
   iconSet = null,
   hillshade = null,
@@ -1649,6 +1653,14 @@ export function buildStyle({
         ? (DEM_SOURCES[tilesSource] || DEM_SOURCES[DEFAULT_DEM_SOURCE]).attribution
         : '<a href="https://registry.opendata.aws/terrain-tiles/">AWS Terrain Tiles</a>'
     };
+    // Vlastné dlaždice nemusia pokrývať celú mapu: rýchly test (switch `test`)
+    // ich počíta len na štvorci s pár km², kým mapa je celý kraj. `bounds`
+    // hovorí MapLibre, kde ich má vôbec pýtať – bez neho by z každého posunu
+    // mapy padali stovky 404 a v konzole by sa stratilo všetko ostatné.
+    // (.pmtiles si hranicu nesú v hlavičke samy, raster nie.)
+    if (ownDem && Array.isArray(demBounds) && demBounds.length === 4) {
+      style.sources.dem.bounds = demBounds.map(Number);
+    }
   }
 
   const L = style.layers;
