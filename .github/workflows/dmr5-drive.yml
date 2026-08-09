@@ -5,9 +5,13 @@ name: DMR 5.0 z Drive (ETRS89)
 # nemusí učiť nič nové:
 #
 #   area: <pohorie>       →  ugkk-<pohorie>.tif  →  release `dem-ugkk`
-#                            Build map: rock_source: ugkk + rovnaké `area`
+#                            Build map: rock_source: dmr5 + rovnaké `rock_area`
 #   area: cele_slovensko  →  dlaždice N49E019.tif →  release `dem-dmr5`
-#                            Build map: rock_source / contour_source: dmr5
+#                            Build map: rock_source: dmr5 bez výrezu
+#
+# V Build map je to jedna voľba `dmr5` a podobu si vyberá podľa rozsahu:
+# s výrezom plné 1 m, bez neho dlaždice na 5 m. Dva výbery to boli dovtedy,
+# kým sa dalo zadať 1 m na celý kraj – a to je 16 miliárd buniek.
 #
 # PREČO POPRI `dmr5.yml`, A NIE MIESTO NEHO: sú to dva rôzne zdroje s opačnými
 # pravidlami. Archív ÚGKK je ZIP, v ktorom je raster jedným deflate prúdom –
@@ -122,11 +126,15 @@ jobs:
         run: |
           set -euo pipefail
           AREA='${{ inputs.area }}'
+          # V Build map je to JEDNA voľba `dmr5` – podobu si vyberá podľa
+          # toho, či je vyplnený `rock_area`. Tu sa líši len release, do
+          # ktorého to ide.
           if [ "$AREA" = cele_slovensko ]; then
-            WHOLE=true;  REL=dem-dmr5; SRC=dmr5
+            WHOLE=true;  REL=dem-dmr5
           else
-            WHOLE=false; REL=dem-ugkk; SRC=ugkk
+            WHOLE=false; REL=dem-ugkk
           fi
+          SRC=dmr5
 
           GRID=$(printf '%s' '${{ inputs.grid_m }}' | grep -oE '^[0-9]+' || true)
           if [ -z "$GRID" ]; then

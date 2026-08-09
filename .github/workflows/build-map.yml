@@ -79,7 +79,7 @@ on:
       # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
       # Zoznam zdrojov drží workers/dem-sources.json (stráži to Lint workflows).
       contour_source:
-        description: "VRSTEVNICE – z ktorého modelu terénu. sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m. dmr5 = ÚGKK DMR 5.0 (LLS), 5 m. ugkk = 1 m LiDAR, LEN na výrez. ziadne = negenerovať"
+        description: "VRSTEVNICE – z ktorého modelu terénu. sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m. dmr5 = ÚGKK DMR 5.0 (LiDAR) – s výrezom 1 m, na celý región 5 m. ziadne = negenerovať"
         required: false
         default: sonny
         type: choice
@@ -87,10 +87,9 @@ on:
           - sonny
           - dmr35
           - dmr5
-          - ugkk
           - ziadne
       rock_source:
-        description: "SKALY – zo sklonu ktorého modelu (sonny / dmr35 / dmr5 / ugkk), alebo tienovanie = hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc“ (treba ho najprv pustiť na ten istý výrez). ziadne = negenerovať"
+        description: "SKALY – zo sklonu ktorého modelu (sonny / dmr35 / dmr5; dmr5 s výrezom je 1 m a na skaly najlepší), alebo tienovanie = hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc“. ziadne = negenerovať"
         required: false
         default: sonny
         type: choice
@@ -98,11 +97,10 @@ on:
           - sonny
           - dmr35
           - dmr5
-          - ugkk
           - tienovanie
           - ziadne
       shading_source:
-        description: "TIEŇOVANIE A 3D TERÉN – z ktorého modelu. ugkk tu nie je: 1 m LiDAR máme len na výrez, tieňovanie sa robí na celý región. ziadne = negenerovať"
+        description: "TIEŇOVANIE A 3D TERÉN – z ktorého modelu. Robí sa vždy na celý región, takže dmr5 je tu vždy 5 m. ziadne = negenerovať"
         required: false
         default: sonny
         type: choice
@@ -290,10 +288,22 @@ jobs:
           # doplnenie do NEED_SRC.
           check_source() { # $1 = vrstva (na výpis), $2 = zdroj
             local what="$1" src="$2" rel assets names need=false
+            # DMR 5.0 má dve podoby a rozhoduje rozsah, nie druhý výber:
+            # s výrezom je to jeden COG v plnom rozlíšení (release dem-ugkk),
+            # bez výrezu dlaždice na 5 m (dem-dmr5). Tá istá vetva je aj vo
+            # `workers/fetch-dem.sh` a musia hovoriť to isté – inak tu build
+            # kontroluje jeden release a sťahuje z druhého.
+            local dmr5_area=false
+            if [ "$src" = 'dmr5' ] && [ "$AREA_KEY" != 'cely' ]; then
+              dmr5_area=true
+            fi
             case "$src" in
               dmr35) rel="$DMR35_RELEASE" ;;
-              dmr5)  rel="$DMR5_RELEASE" ;;
-              ugkk)  rel="${UGKK_RELEASE:-dem-ugkk}" ;;
+              dmr5)  if [ "$dmr5_area" = true ]; then
+                       rel="${UGKK_RELEASE:-dem-ugkk}"
+                     else
+                       rel="$DMR5_RELEASE"
+                     fi ;;
               *)     rel="$DEM_RELEASE" ;;
             esac
             # Meno aj veľkosť naraz: z mien sa hľadá, z celého riadku počíta
@@ -304,9 +314,10 @@ jobs:
               -q '.assets[] | .name + ":" + (.size|tostring)' 2>/dev/null || true; } | sort)
             names=$(printf '%s\n' "$assets" | cut -d: -f1)
 
-            if [ "$src" = 'ugkk' ]; then
-              # ÚGKK sa zrkadlí po výrezoch (pri 1 m má jedna 1° dlaždica
-              # ~48 GB), takže sa hľadá jeden asset podľa kľúča výrezu.
+            if [ "$dmr5_area" = true ]; then
+              # Plné rozlíšenie sa zrkadlí po výrezoch (pri 1 m má jedna
+              # 1° dlaždica ~48 GB), takže sa hľadá jeden asset podľa kľúča
+              # výrezu.
               local uasset="ugkk-${AREA_KEY}.tif"
               if printf '%s\n' "$names" | grep -qx "$uasset"; then
                 echo "$what ($src): $uasset je v release $rel ✓"
@@ -784,26 +795,18 @@ jobs:
           echo "$RESOLVED"
           AREA_KEY=$(printf '%s\n' "$RESOLVED" | sed -n 's/^key=//p')
 
-          # 1 m model na celý kraj je 16 miliárd buniek (64 GB) – to sa
-          # nezmestí ani do releasu, ani do runnera. Povedať to tu je lacné;
-          # zistiť to po hodine sťahovania nie. Platí to pre oba výbery, kde
-          # sa `ugkk` dá zvoliť (vrstevnice aj skaly); v tieňovaní nie je.
+          # Kým boli 1 m a 5 m dva výbery, dalo sa zvoliť 1 m na celý kraj –
+          # 16 miliárd buniek (64 GB), ktoré sa nezmestia ani do releasu, ani
+          # na runner – a tento strážca to musel zakázať. Teraz to zakázať
+          # nemá čo: `dmr5` si podobu vyberá podľa rozsahu sám, takže na celý
+          # kraj vždy vyjde 5 m verzia.
           #
           # V testovacom režime je „celý región" už orezaný na pár km², takže
-          # tie dôvody neplatia – práve naopak, 1 m LiDAR na 2 km² je presne
-          # to, čo sa takým behom overuje.
+          # aj tam je 1 m presne to, čo sa takým behom overuje.
           if [ "$AREA_KEY" = 'cely' ] && [ '${{ steps.opts.outputs.opt_test_km2 }}' = '0' ]; then
-            for pair in \
-              "contour_source:${{ inputs.contour_source }}" \
-              "rock_source:${{ inputs.rock_source }}"; do
-              if [ "${pair#*:}" = 'ugkk' ]; then
-                echo "::error::${pair%%:*}: ugkk je 1 m LiDAR a ten má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry) alebo vyber sonny / dmr35 / dmr5."
-                exit 1
-              fi
-            done
-            # To isté pre skaly z tieňovania: sú to hotové dlaždice z cudzieho
-            # servera a na celý kraj by ich boli státisíce. Pipeline, ktorú si
-            # build volá, preto pozná len pohoria.
+            # Skaly z tieňovania sú hotové dlaždice z cudzieho servera a na
+            # celý kraj by ich boli státisíce. Pipeline, ktorú si build volá,
+            # preto pozná len pohoria.
             if [ '${{ inputs.rock_source }}' = 'tienovanie' ]; then
               echo "::error::rock_source: tienovanie sťahuje hotové tieňované dlaždice a to má zmysel len na výrez. Vyplň input „area“ (napr. vysoke_tatry), alebo vyber výškový model (sonny / dmr35 / dmr5)."
               exit 1
@@ -1150,10 +1153,10 @@ jobs:
           # Kľúče musia sedieť s workers/dem-sources.json – čo tu neprejde,
           # spadne na Sonnyho a mapa by potom v atribúcii tvrdila iný model,
           # než z ktorého naozaj je. (`dmr35` a `dmr5` tu kedysi chýbali.)
-          case "$DEM_USED" in sonny|dmr35|dmr5|ugkk) ;; *) DEM_USED=sonny ;; esac
+          case "$DEM_USED" in sonny|dmr35|dmr5) ;; *) DEM_USED=sonny ;; esac
           RSLOPE=$(cat contours-out/rock-slope.txt 2>/dev/null || echo off)
           RSRC=$(cat contours-out/rock-source.txt 2>/dev/null || echo off)
-          case "$RSRC" in sonny|dmr35|dmr5|ugkk|tienovanie) ;; *) RSRC=off ;; esac
+          case "$RSRC" in sonny|dmr35|dmr5|tienovanie) ;; *) RSRC=off ;; esac
           # `enabled` je odteraz o VRSTEVNICIACH, nie o súbore: pri
           # `contour_source: ziadne` je .pmtiles síce na disku, ale prázdny,
           # a štýl doň nemá čo odkazovať.
@@ -1319,8 +1322,9 @@ jobs:
             python3 -m pip install --quiet numpy
             # Model z výberu `shading_source`. Do podpriečinka podľa zdroja –
             # rovnako ako v jobe s vrstevnicami, nech sa dve rôzne mozaiky
-            # nikdy neprebijú v jednom `all.vrt`. (`ugkk` sa tu vybrať nedá:
-            # 1 m LiDAR máme len na výrez, tieňovanie chce celý región.)
+            # nikdy neprebijú v jednom `all.vrt`. Kľúč výrezu sa nepodáva, tak
+            # `dmr5` vyjde na dlaždicovú 5 m verziu – tieňovanie sa robí vždy
+            # na celý región.
             workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
             echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM"
             python3 workers/build-terrain.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \

@@ -7,15 +7,15 @@
 #
 # Zdroj hovorí, z ktorého releasu: `sonny` = 1°×1° dlaždice 20 m modelu
 # (release `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených
-# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `dmr5` = zase tie isté
-# dlaždice, len z LLS DMR 5.0 (release `dem-dmr5`, mriežka 5 m), `ugkk` =
-# jeden COG s 1 m LiDARom pre výrez (release `dem-ugkk`). Všetko sú zrkadlá –
-# build nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
-# `Stiahnuť výškové dáta` (update-dem.yml) a `Pripraviť DMR 5.0`
-# (dmr5.yml).
+# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `dmr5` = LLS DMR 5.0,
+# ktoré má dve podoby podľa rozsahu (viď nižšie). Všetko sú zrkadlá – build
+# nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
+# `Stiahnuť výškové dáta` (update-dem.yml), `DMR 5.0 z Drive`
+# (dmr5-drive.yml) a `Pripraviť DMR 5.0` (dmr5.yml).
 #
-# `sonny`, `dmr35` a `dmr5` sa líšia LEN menom releasu: dlaždice majú tú istú
-# pomenúvaciu schému (`N49E019.tif`), takže sa nižšie nič nevetví.
+# `sonny`, `dmr35` a `dmr5` na celý región sa líšia LEN menom releasu:
+# dlaždice majú tú istú pomenúvaciu schému (`N49E019.tif`), takže sa nižšie
+# nič nevetví.
 #
 # Použitie:
 #   workers/fetch-dem.sh <bbox W,S,E,N> <adresár> [tsv] [zdroj] [kľúč výrezu]
@@ -33,25 +33,33 @@ SOURCE="${4:-sonny}"
 AREA_KEY="${5:-cely}"
 T0=$(date +%s)
 
-if [ "$SOURCE" = "ugkk" ]; then
-  # 1 m LiDAR je v release ako jeden COG na výrez. Doplniť ho tam mal job
-  # `mirror-dem-ugkk`; keď tam nie je, niečo v tom reťazci zlyhalo a build
-  # to má povedať, nie ticho pokračovať so zlým modelom.
+# DMR 5.0 má DVE PODOBY a rozhoduje medzi nimi ROZSAH, nie druhý výber vo
+# formulári. Je to jeden a ten istý 1 m LiDAR, len sa nedá uložiť dvakrát:
+#
+#   výrez (`area`)   ugkk-<vyrez>.tif v release dem-ugkk, plné 1 m rozlíšenie
+#   celý región      dlaždice N49E019.tif v dem-dmr5, prevzorkované na 5 m
+#
+# Dôvod je veľkosť: pri 1 m má jedna 1°×1° dlaždica ~48 GB a strop assetu
+# v release je 2 GB. Celý región v metri sa teda nemá kam uložiť – a keďže
+# to je fyzikálne obmedzenie a nie voľba, nemá zmysel pýtať sa naň vo
+# formulári. Preto tu bývali dva zdroje (`dmr5` a `ugkk`) a je z nich jeden.
+if [ "$SOURCE" = "dmr5" ] && [ "$AREA_KEY" != "cely" ]; then
   mkdir -p "$DIR"
   UASSET="ugkk-${AREA_KEY}.tif"
   if ! gh release download "${UGKK_RELEASE:-dem-ugkk}" --repo "$GITHUB_REPOSITORY" \
         --pattern "$UASSET" --dir "$DIR" --clobber >/dev/null 2>&1; then
-    # Kód 3 = „ÚGKK nemáme", nie „všetko je zle". Volajúci sa podľa neho vie
-    # rozhodnúť: buď spadnúť, alebo prejsť na Sonnyho (input ugkk_fallback).
-    echo "::warning::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET – 1 m LiDAR pre tento výrez nemáme. Pozri log jobu 'Doplniť ÚGKK 1 m LiDAR'."
+    # Kód 3 = „pre tento výrez to nemáme", nie „všetko je zle". Volajúci sa
+    # podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na hrubší model
+    # (input ugkk_fallback).
+    echo "::warning::V release ${UGKK_RELEASE:-dem-ugkk} nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY."
     exit 3
   fi
   gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
   SIZE=$(du -h "$DIR/$UASSET" | cut -f1)
-  echo "ÚGKK DMR 5.0 z releasu: $UASSET, $SIZE"
+  echo "ÚGKK DMR 5.0 (výrez, plné rozlíšenie) z releasu: $UASSET, $SIZE"
   gdalinfo "$DIR/$UASSET" | grep -E "Pixel Size|Size is" || true
   if [ -n "$STEPS_TSV" ]; then
-    printf '%s\t%s\t%s\t%s\n' 20 "DEM (ÚGKK 1 m)" "$(( $(date +%s) - T0 ))" \
+    printf '%s\t%s\t%s\t%s\n' 20 "DEM (DMR 5.0, výrez)" "$(( $(date +%s) - T0 ))" \
       "$UASSET z releasu, $SIZE" >> "$STEPS_TSV"
   fi
   exit 0
@@ -105,10 +113,10 @@ if [ "$have" -eq 0 ]; then
   echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
-    # DMR 5.0 sa nedopĺňa sám: je to 198 GB archív a jeho rozobratie je
-    # desiatky paralelných jobov. To sa nemá spustiť ako vedľajší účinok
+    # DMR 5.0 sa nedopĺňa sám: prevzorkovať celú krajinu znamená prejsť
+    # stotridsať gigabajtov cez sieť. To sa nemá spustiť ako vedľajší účinok
     # buildu mapy – púšťa sa vedome.
-    echo "Spusti workflow 'Pripraviť DMR 5.0' s area: cele_slovensko (mriežka 5 m). Trvá to dlho, preto sa to nespúšťa samo."
+    echo "Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: cele_slovensko (mriežka 5 m). Trvá to dlho, preto sa to nespúšťa samo."
   else
     echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
   fi

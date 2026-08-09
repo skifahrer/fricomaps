@@ -291,24 +291,30 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
-| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive)) | naplniť |
-| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) – plní ho [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive) | naplniť |
+| **ÚGKK DMR 5.0** | `dmr5` | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive) | naplniť |
 
 **Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
 (tieňovanie a 3D terén) – a každý ponúka ten istý zoznam modelov plus
 `ziadne`, ktorým sa vrstva vypne. Kým to bol jeden `dem_source` pre všetko,
 nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly z najjemnejšieho
-modelu (aj keď ho máme len na výrez, `ugkk`) a tieňovanie z hrubšieho, ktorý
-pokrýva celý región.
+modelu a tieňovanie z hrubšieho, ktorý pokrýva celý región.
 
 Keď majú vrstevnice a skaly iný model, job si stiahne oba – každý do
 `dem/<zdroj>/` s vlastným `all.vrt`, takže sa dve mozaiky nikdy neprebijú.
 Pri rovnakom modeli sa druhé volanie `fetch-dem.sh` netrafí do siete vôbec.
 
-`shading_source` **nemá `ugkk`**: 1 m LiDAR máme len na výrez, kým tieňovanie
-sa robí vždy na celý región. Predtým sa to riešilo tichým prepnutím na
-Sonnyho v jobe s terénom – teraz sa taká voľba nedá ani zadať.
+**`dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber.** S vyplneným
+`area` si vezme `ugkk-<vyrez>.tif` v plnom metrovom rozlíšení, bez neho
+dlaždice na 5 m. Je to ten istý LiDAR; pri 1 m má jedna 1°×1° dlaždica ~48 GB
+a strop assetu je 2 GB, takže celý región v metri sa nemá kam uložiť.
+
+Boli to dva zdroje, `dmr5` a `ugkk`. Rozdiel medzi nimi nebol v modeli, len
+v tom, ako je uložený – a jediné, čo z toho v praxi plynulo, bolo, že sa dalo
+zadať `ugkk` bez výrezu (a beh spadol na strážcovi) alebo `dmr5` na pohorie
+(a build ticho vzal 5 m tam, kde bol meter). Preto je z nich jeden. Tieňovanie
+sa robí vždy na celý región, takže tam `dmr5` vyjde na 5 m verziu a nemusí
+sa zo zoznamu vynechávať.
 
 `rock_source` má navyše hodnotu `tienovanie`: to je [piaty workflow](#piaty-workflow-skaly-z-tieňovaných-dlaždíc),
 ktorá výškový model nečíta vôbec.
@@ -554,7 +560,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   ~20 m**, takže pri ňom auto vždy skončí na 2 m. Jemnejšia mriežka by len
   interpolovala medzi tými istými výškami – stála by štvornásobok času a
   nepridala ani jeden nový tvar terénu. Reálny skok v detaile prinesie až iný
-  zdroj (`rock_source: ugkk`, 1 m LiDAR → auto ide na 0,5 m).
+  zdroj (`rock_source: dmr5` s výrezom, 1 m LiDAR → auto ide na 0,5 m).
 
   Výber sa celý vypíše do logu, aj s tým, koľko by ktorá mriežka trvala.
   Namiesto čísla sa dá `rock_res` zadať aj natvrdo – je to voľba, nie input
