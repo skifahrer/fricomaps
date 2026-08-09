@@ -1,8 +1,8 @@
-name: DMR 5.0 z Drive (ETRS89)
+name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 
 # Výškový model z DMR 5.0 v ETRS89, ktorý leží na Google Drive ako dva holé
-# BigTIFFy. Výstup je ten istý ako z „Pripraviť DMR 5.0", takže Build map sa
-# nemusí učiť nič nové:
+# BigTIFFy. Výstup je ten istý ako zo zálohy „DMR 5.0 z archívu ÚGKK", takže
+# Build map sa nemusí učiť nič nové:
 #
 #   area: <pohorie>       →  ugkk-<pohorie>.tif  →  release `dem-ugkk`
 #                            Build map: rock_source: dmr5 + rovnaké `rock_area`
@@ -13,7 +13,13 @@ name: DMR 5.0 z Drive (ETRS89)
 # s výrezom plné 1 m, bez neho dlaždice na 5 m. Dva výbery to boli dovtedy,
 # kým sa dalo zadať 1 m na celý kraj – a to je 16 miliárd buniek.
 #
-# PREČO POPRI `dmr5.yml`, A NIE MIESTO NEHO: sú to dva rôzne zdroje s opačnými
+# TOTO JE TÁ PIPELINE, KTORÚ VOLÁ BUILD MAP. Volá ju DVAKRÁT, lebo DMR 5.0 má
+# dve podoby a chýbať môžu naraz (`mirror-dmr5-area` = výrez do `dem-ugkk`,
+# `mirror-dmr5-tiles` = 1° dlaždice do `dem-dmr5`). Sú to dva joby nad JEDNÝM
+# workflowom, nie dve pipeline.
+#
+# PREČO POPRI `dmr5.yml`, A NIE MIESTO NEHO: `dmr5.yml` je ZÁLOŽNÝ, RUČNÝ zdroj
+# na ten istý model – build ho nevolá nikdy. Sú to dva rôzne zdroje s opačnými
 # pravidlami. Archív ÚGKK je ZIP, v ktorom je raster jedným deflate prúdom –
 # v tom sa nedá skočiť dopredu, takže tam platí „čítaj raz a sekvenčne" a
 # výrez na juhu Slovenska stojí prechod celým súborom. Tu sú súbory holé,
@@ -99,6 +105,14 @@ on:
         required: false
         default: "12"
         type: string
+      # Meno výsledku pri výreze. Ručne sa nevypĺňa – je tu preto, že
+      # `inputs.asset` musí byť deklarovaný pre OBA spúšťače, inak je to
+      # výraz nad neexistujúcim vstupom (to isté ako `mode` nižšie).
+      asset:
+        description: "Meno súboru pri výreze (prázdne = ugkk-<area>.tif)"
+        required: false
+        default: ""
+        type: string
 
   # Volá ho aj „Build map", keď mu v release chýba výškový model. Doteraz to
   # nešlo a bola to tá diera, cez ktorú padali behy: `check-dem` povedal
@@ -110,10 +124,25 @@ on:
   # `workflow_call` nepozná `type: choice`, tak sem chodia holé hodnoty:
   # `area` je kľúč pohoria, `cele_slovensko`, ALEBO bbox `W,S,E,N`, `grid_m`
   # je číslo v metroch a `tiles` hovorí, ktorá z dvoch podôb sa má vyrobiť.
+  #
+  # BUILD MAP PODÁVA BBOX, NIE KĽÚČ POHORIA – a to je to podstatné. Čo sa má
+  # prečítať, vie len on: výrez pretnutý s regiónom, pri rýchlom teste štvorec
+  # na pár km². Keby sa sem podal kľúč, táto pipeline by si ho vyriešila
+  # z `areas.json` druhýkrát a prečítala celý obdĺžnik pohoria – rýchly test
+  # na 2 km² tak čítal z Drive 541 km² Vysokých Tatier (hodiny namiesto minút).
+  # Je to tá istá chyba ako beh 31307163093: dve odpovede na jednu otázku.
+  # Meno výsledku preto chodí zvlášť v `asset`.
   workflow_call:
     inputs:
       area:
         required: true
+        type: string
+      asset:
+        # Meno výrezového assetu. Pri bboxe v `area` je POVINNÉ: build si
+        # súbor hľadá podľa mena (`ugkk-vysoke_tatry.tif`) a
+        # `ugkk-20.1,49.1,20.2,49.2.tif` si vypýtať nevie.
+        required: false
+        default: ""
         type: string
       grid_m:
         # Prázdne = podľa rozsahu (1 m na výrez, 5 m na dlaždice).
@@ -147,10 +176,11 @@ permissions:
 
 concurrency:
   # Dva behy naraz by z Drive ťahali dvojnásobok a prepisovali ten istý asset.
-  # Podobu netreba do kľúča dávať zvlášť: výrez sa zadáva menom pohoria
-  # a dlaždice bboxom stupňov, takže `area` je pre ne rôzna už samo od seba
-  # a Build map si oba dopĺňa súbežne.
-  group: dmr5-drive-${{ inputs.area }}
+  # Podoba je v kľúči zvlášť: odkedy sa výrez zadáva bboxom (a nie menom
+  # pohoria), sú obe podoby „nejaký bbox" a na rozlíšenie sa spoľahnúť nedá.
+  # Build map si ich pritom dopĺňa SÚBEŽNE – keby si sadli do jednej skupiny,
+  # jedna by zbytočne čakala na druhú.
+  group: dmr5-drive-${{ inputs.tiles }}-${{ inputs.area }}
   cancel-in-progress: false
 
 jobs:
@@ -158,6 +188,26 @@ jobs:
     name: Výškový model z Drive
     runs-on: ubuntu-latest
     timeout-minutes: 350
+    # ROZDELENÉ NA KROKY, KTORÝCH JE ČO NAJVIAC. Kým to boli tri („Nastavenia",
+    # „Vyrež model", „Nahraj do releasu"), bol z hodinového behu v Actions
+    # jeden riadok bez konca a z padnutého behu sa nedalo povedať, či nesedelo
+    # zadanie, či nešlo otvoriť zdroj, či došiel čas pri čítaní, alebo sa
+    # nepodaril upload. Každý krok teraz hovorí, ČO ROBÍ a AKO ĎALEKO je:
+    #
+    #   1. príprava       runner, GDAL, miesto na disku
+    #   2. Nastavenia     z formulára konkrétne čísla a mená (jediné miesto)
+    #   3. Sonda          otvor zdroj – 8 s, 9 požiadaviek, 0,3 MB
+    #   4. Plán čítania   okno, počet blokov, odhad času a objemu
+    #   5. Čítanie        bloky z Drive, postup `[i/N]` po každom bloku
+    #   6. Zloženie       mozaika → COG alebo 1° dlaždice (už len nad diskom)
+    #   7. Kontrola       veľkosť assetov proti stropu 2 GB
+    #   8. Metadáta       meta-*.json vedľa modelu
+    #   9. Nahranie       do releasu
+    #  10. Súhrn          tabuľka do prehľadu behu
+    #
+    # Kroky 4–6 sú fázy jedného scriptu (`--stage`), ktoré si stav podávajú
+    # cez `drive-work/`. Vedľajší zisk: prečítané bloky sa v ňom zachovajú,
+    # takže opakovaný krok `Čítanie` dopočíta len zvyšok.
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -165,15 +215,20 @@ jobs:
       - name: Nainštaluj GDAL
         run: |
           set -euo pipefail
+          echo "Inštalujem gdal-bin a jq…"
           sudo apt-get update -qq
           sudo apt-get install -y -qq gdal-bin jq
+          echo "GDAL: $(gdalinfo --version)"
 
       - name: Uvoľni miesto na disku
         run: |
           set -uo pipefail
+          echo "Voľné miesto pred upratovaním:"
+          df -h / | tail -1
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
-          df -h /
+          echo "Voľné miesto po upratovaní:"
+          df -h / | tail -1
 
       # Jediné miesto, kde sa z formulára stanú konkrétne čísla a mená.
       - name: Nastavenia
@@ -202,15 +257,26 @@ jobs:
           fi
           SRC=dmr5
 
-          # Bbox namiesto pohoria dáva zmysel len v dlaždicovej podobe: názov
-          # výrezového assetu sa robí z `area` a `ugkk-20,49,21,50.tif` nie je
-          # meno, ktoré si vie Build map vypýtať.
+          # MENO VÝREZOVÉHO ASSETU. Robí sa z `area`, lenže `area` môže byť aj
+          # bbox – a `ugkk-20,49,21,50.tif` si Build map vypýtať nevie, lebo
+          # hľadá `ugkk-<kľúč výrezu>.tif`. Preto sa meno dá podať zvlášť
+          # v `asset` a pri bboxe je povinné.
+          #
+          # Bbox tu nie je okrajový prípad, ale to bežné: Build map ním hovorí,
+          # ČO SA MÁ NAOZAJ PREČÍTAŤ (výrez pretnutý s regiónom, pri rýchlom
+          # teste štvorec na pár km²). Kým sa sem podával kľúč pohoria, táto
+          # pipeline si ho vyriešila z `areas.json` druhýkrát a prečítala celý
+          # obdĺžnik – test na 2 km² tak čítal 541 km² Vysokých Tatier.
+          ASSET='${{ inputs.asset }}'
           case "$AREA" in
-            *,*) if [ "$TILES" != true ]; then
-                   echo '::error::Bbox v „area" ide len s „tiles: true" – výrezový asset sa volá podľa pohoria. Zadaj pohorie, alebo zapni tiles.'
+            *,*) if [ "$TILES" != true ] && [ -z "$ASSET" ]; then
+                   echo '::error::Bbox v „area" bez „asset" ide len s „tiles: true" – výrezový asset sa inak volá podľa pohoria a „ugkk-20,49,21,50.tif" si Build map vypýtať nevie. Zadaj pohorie, vyplň asset, alebo zapni tiles.'
                    exit 1
                  fi ;;
           esac
+          if [ "$TILES" != true ] && [ -z "$ASSET" ]; then
+            ASSET="ugkk-${AREA}.tif"
+          fi
 
           GRID=$(printf '%s' '${{ inputs.grid_m }}' | grep -oE '^[0-9]+' || true)
           if [ -z "$GRID" ]; then
@@ -236,16 +302,35 @@ jobs:
             echo "release=$REL"
             echo "dem_source=$SRC"
             echo "tiles=$TILES"
+            echo "asset=$ASSET"
             echo "whole_country=$([ "$AREA" = cele_slovensko ] && echo true || echo false)"
             echo "geoid=$GEOID"
           } >> "$GITHUB_OUTPUT"
-          echo "── $AREA, mriežka ${GRID} m, výšky $GEOID, podoba $([ "$TILES" = true ] && echo dlaždice || echo výrez) → release $REL"
+          {
+            echo "## Čo tento beh spraví"
+            echo
+            echo "| nastavenie | hodnota |"
+            echo "|---|---|"
+            echo "| územie | \`$AREA\` |"
+            echo "| mriežka | ${GRID} m |"
+            echo "| podoba | $([ "$TILES" = true ] && echo '1° dlaždice' || echo "výrez \`$ASSET\`") |"
+            echo "| release | \`$REL\` |"
+            echo "| výšky | $GEOID |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "── $AREA, mriežka ${GRID} m, výšky $GEOID, podoba $([ "$TILES" = true ] && echo dlaždice || echo "výrez $ASSET") → release $REL"
 
-      - name: Sonda
-        if: ${{ startsWith(inputs.mode, 'len sonda') }}
+      # Otvorenie zdroja stojí 8 s, 9 požiadaviek a 0,3 MB, tak sa robí VŽDY
+      # a nie len v režime sondy: keď Drive zmení odkaz alebo shim prestane
+      # opravovať `content-length`, má sa to povedať tu a nie po hodine
+      # čítania. `mode: len sonda` je potom už len „a tu skonči".
+      - name: Sonda – čo je v zdroji na Drive
         run: python3 workers/dmr5-drive.py --probe-only
 
-      - name: Vyrež model
+      # Lacný krok, ktorý odpovie na jedinú otázku, čo pred hodinovým čítaním
+      # zaujíma: koľko toho bude. Trojhodinový krok, ktorý spadne na timeout,
+      # je najhorší možný výsledok – minie celý rozpočet a nevyrobí nič.
+      - name: Plán čítania (okno, bloky, odhad)
+        id: plan
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
         run: |
           set -euo pipefail
@@ -255,47 +340,77 @@ jobs:
           ARGS=()
           if [ '${{ steps.cfg.outputs.tiles }}' = 'true' ]; then
             ARGS+=(--tiles)
+          else
+            ARGS+=(--asset="${{ steps.cfg.outputs.asset }}")
           fi
-          python3 workers/dmr5-drive.py \
+          python3 workers/dmr5-drive.py --stage=plan \
             --area='${{ inputs.area }}' \
             --grid-m='${{ steps.cfg.outputs.grid }}' \
             --geoid='${{ steps.cfg.outputs.geoid }}' \
             --jobs='${{ inputs.jobs }}' \
             "${ARGS[@]}" \
-            --out=out --work=drive-work \
-            --summary=model-summary.md
+            --out=out --work=drive-work
 
-      - name: Nahraj do releasu
+      # TOTO JE TÁ DLHÁ ČASŤ a jediná, ktorá siaha na sieť. Postup sa vypisuje
+      # po každom bloku (`[i/N]`, prečítané MB, odhad zvyšku), takže sa
+      # napredujúci beh dá odlíšiť od takého, čo visí na jednom bloku.
+      - name: Čítanie blokov z Drive
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.cfg.outputs.release }}'
-          # Meno metadát nesie územie. Dlaždicová podoba sa teraz dopĺňa po
-          # stupňoch (Build map si vypýta len tie, čo jeho bbox pretína), takže
-          # jedno spoločné `meta-dmr5-drive.json` by po každom behu tvrdilo, že
-          # v release je len to, čo vzniklo naposledy.
-          META="meta-dmr5-drive-$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_').json"
+          python3 workers/dmr5-drive.py --stage=read \
+            --geoid='${{ steps.cfg.outputs.geoid }}' \
+            --jobs='${{ inputs.jobs }}' \
+            --out=out --work=drive-work
+
+      # Už len nad diskom – na Drive sa nesiaha. Preto je to vlastný krok:
+      # keď zlyhá tu, nie je to sieť ani zdroj, ale prevod výšok alebo miesto
+      # na disku, a to sa hľadá úplne inde.
+      - name: Zloženie výstupu (mozaika, výšky, COG/dlaždice)
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        run: |
+          set -euo pipefail
+          python3 workers/dmr5-drive.py --stage=finish \
+            --geoid='${{ steps.cfg.outputs.geoid }}' \
+            --out=out --work=drive-work \
+            --summary=model-summary.md
+          echo "Vzniklo:"
+          ls -lh out/*.tif
+
+      # Vlastný krok, lebo je to zamietnutie zadania a nie zlyhanie výpočtu:
+      # model je hotový, len sa doň nezmestí. Nech je to v Actions vidieť ako
+      # „Kontrola veľkosti" a nie ako „Nahraj do releasu".
+      - name: Kontrola veľkosti assetov (strop 2 GB)
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        run: |
+          set -euo pipefail
           shopt -s nullglob
           FILES=(out/*.tif)
           [ ${#FILES[@]} -gt 0 ] || { echo "::error::Nevznikol ani jeden súbor."; exit 1; }
-
           BIG=0
           for f in "${FILES[@]}"; do
             SZ=$(stat -c%s "$f")
+            printf '  %-24s %6s MB\n' "$(basename "$f")" "$(( SZ / 1048576 ))"
             if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
               echo "::error::$f má $(( SZ / 1048576 )) MB, strop assetu je 2 GB. Zvoľ hrubšiu mriežku alebo menšie územie."
               BIG=1
             fi
           done
           [ "$BIG" -eq 0 ] || exit 1
+          echo "${#FILES[@]} súborov, všetky pod stropom ✓"
 
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
-              --notes "Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
-
+      # Meno metadát nesie územie. Dlaždicová podoba sa dopĺňa po stupňoch
+      # (Build map si vypýta len tie, čo jeho bbox pretína), takže jedno
+      # spoločné `meta-dmr5-drive.json` by po každom behu tvrdilo, že
+      # v release je len to, čo vzniklo naposledy.
+      - name: Metadáta modelu
+        id: meta
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        run: |
+          set -euo pipefail
+          META="meta-dmr5-drive-$(printf '%s' '${{ inputs.area }}' | tr -c 'a-zA-Z0-9' '_').json"
+          shopt -s nullglob
+          FILES=(out/*.tif)
           jq -n \
             --arg src "ÚGKK SR – DMR 5.0 (LLS), ETRS89" \
             --arg area '${{ inputs.area }}' \
@@ -306,8 +421,25 @@ jobs:
             '{source:$src, crs:"EPSG:3046", area:$area, cell_m:($grid|tonumber), heights:$geoid, built_at:$built, files:$files}' \
             > "out/$META"
           cat "out/$META"
+          echo "meta=$META" >> "$GITHUB_OUTPUT"
 
-          gh release upload "$TAG" "${FILES[@]}" "out/$META" \
+      - name: Nahraj do releasu
+        if: ${{ !startsWith(inputs.mode, 'len sonda') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.cfg.outputs.release }}'
+          shopt -s nullglob
+          FILES=(out/*.tif)
+
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
+              --notes "Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
+
+          echo "Nahrávam ${#FILES[@]} súborov do releasu $TAG…"
+          gh release upload "$TAG" "${FILES[@]}" "out/${{ steps.meta.outputs.meta }}" \
             --repo "$GITHUB_REPOSITORY" --clobber
           echo "V releasi $TAG: ${#FILES[@]} súborov ✓"
 
@@ -327,7 +459,8 @@ jobs:
               echo "Berie si ju **tieňovanie a 3D terén** (\`shading_source: dmr5\`)"
               echo "a vrstevnice/skaly vtedy, keď beh nemá výrez."
             else
-              echo "Výrez v plnom rozlíšení v release \`${{ steps.cfg.outputs.release }}\`."
+              echo "Výrez v plnom rozlíšení v release \`${{ steps.cfg.outputs.release }}\`"
+              echo "ako \`${{ steps.cfg.outputs.asset }}\`."
               echo "Berú si ho **vrstevnice a skaly** pri \`area: ${{ inputs.area }}\`."
               echo
               echo "| input | hodnota |"

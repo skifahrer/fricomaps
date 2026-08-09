@@ -105,6 +105,11 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | **assets** | SDF sprity a glyfy | 30 min | úplne so všetkým |
 | **deploy** | zlepí `_site`, štýly, manifest, kontrola, Pages, smoke test, súhrn | 45 min | — |
 
+> Tie dva `mirror-dmr5-*` joby sú **dve volania jedného workflowu**
+> (`dmr5-drive.yml`), nie dve pipeline – DMR 5.0 má dve podoby a chýbať môžu
+> naraz. Ten druhý súbor s „DMR 5" v mene, `dmr5.yml`, je **záložný ručný
+> zdroj** na ten istý model a build ho nevolá nikdy.
+
 Čo tým vzniklo a čo to stálo:
 
 - **Kratší beh.** Skaly (~40 min), tieňovanie (~10) a mapa (~20) bežali za
@@ -1163,7 +1168,16 @@ repozitára. Neznáma farba, neplatný hex, neprepísateľná vlastnosť či
 prehodený rozsah zoomu skončia varovaním a vyhodia sa, takže do zdrojáku sa
 nedostane nič, čo by štýl rozbilo.
 
-## Štvrtý workflow: „Pripraviť DMR 5.0"
+## Štvrtý workflow: „DMR 5.0 z archívu ÚGKK (záloha, ručne)"
+
+> **Dva workflowy s „DMR 5" v mene – ktorý je ktorý.** Build map volá **len**
+> `dmr5-drive.yml` („DMR 5.0 z Drive"), a to dvoma jobmi naraz, lebo model má
+> dve podoby. Tento (`dmr5.yml`) je **záloha na ručné spustenie**: ten istý
+> model z druhého zdroja, pre prípad, že Drive prestane odpovedať alebo treba
+> overiť výšky proti pôvodine. Do releasov `dem-ugkk` a `dem-dmr5` zapisujú
+> rovnaké assety, takže build medzi nimi nevidí rozdiel. Prečo nie jeden
+> workflow, hovorí [ďalšia kapitola](#ten-istý-model-druhá-cesta-dmr-50-z-drive):
+> archív a Drive majú **opačné pravidlá čítania**.
 
 Zdroj: `https://opendata.skgeodesy.sk/static/LLS/DMR5/DMR5_0_sjtsk03_bpv.zip`,
 **197,7 GB** (197 707 257 567 B, zmerané behom 31182614668), S-JTSK [JTSK03],
@@ -1291,10 +1305,9 @@ Kód: [`workers/zip-remote.py`](../workers/zip-remote.py) (čítanie vzdialenéh
 ZIP64), [`workers/dmr5-plan.py`](../workers/dmr5-plan.py) (inventár archívu)
 a [`workers/dmr5-raster.py`](../workers/dmr5-raster.py) (samotný model).
 
-**Tento workflow sa nespúšťa sám.** Ostatné výškové zdroje si `Build map`
-doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť
-vedľajší účinok buildu mapy, takže `dmr5` sa pustí raz vedome. Build to
-napíše aj s tým, čo presne spustiť.
+**Tento workflow sa nespúšťa sám a Build map ho nevolá.** Model si build
+dopĺňa z Drive (kapitola nižšie); táto cesta je záloha, ktorú pustíš vedome –
+198 GB a hodiny sekvenčného čítania nemajú byť vedľajší účinok buildu mapy.
 
 ### Ten istý model, druhá cesta: „DMR 5.0 z Drive"
 
@@ -1346,21 +1359,68 @@ požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
 Kód: [`workers/drive-serve.py`](../workers/drive-serve.py) (shim nad Drive)
 a [`workers/dmr5-drive.py`](../workers/dmr5-drive.py) (okno, bloky, výstup).
 
+**Job je rozdelený na čo najviac krokov a každý hovorí, čo robí a ako ďaleko
+je.** Kým to boli tri kroky, bola z hodinového behu v Actions jedna nemá
+položka a z padnutého behu sa nedalo povedať, čo presne zlyhalo:
+
+| krok | čo robí | čo vypíše |
+|---|---|---|
+| Nastavenia | z formulára konkrétne čísla a mená | tabuľku „čo tento beh spraví" do súhrnu |
+| Sonda | otvorí zdroj (8 s, 9 požiadaviek, 0,3 MB) | rozmer, mriežku, úrovne pyramíd |
+| Plán čítania | okno, bloky, odhad | `okno 5,2 × 5,6 km · 12 blokov · ~1 min · ~0,11 GB` |
+| Čítanie z Drive | jediná fáza na sieti | `[7/12] blok-0006 prečítaný, 9,1 MB – 0,6 min za sebou, zostáva ~0,5 min` |
+| Zloženie | mozaika → COG / 1° dlaždice | prevod výšok, veľkosť výstupu |
+| Kontrola veľkosti | strop assetu 2 GB | veľkosť každého súboru |
+| Metadáta, Nahranie | `meta-*.json`, upload | čo išlo do ktorého releasu |
+| Súhrn | tabuľka + rozbaliteľný log | namerané vs. odhad |
+
+Odhad v pláne je z merania (29 mil. buniek = 1,2 min a 0,11 GB pri
+`--jobs=12`), nie od stola, a má povedať „minúty alebo hodiny" – nad dve
+hodiny sa ozve varovanie. Kroky *Plán / Čítanie / Zloženie* sú fázy jedného
+scriptu (`--stage=plan|read|finish`), ktoré si stav podávajú cez
+`drive-work/`. Vedľajší zisk: prečítané bloky sa zapisujú cez `.part`
+a premenovanie, takže **opakovaný beh dopočíta len zvyšok** – rovnako ako
+sklad častí sklonu a z rovnakého dôvodu.
+
 ### Build map si to dopĺňa sám
 
 Táto pipeline sa **nespúšťa ručne**. Je volateľná (`workflow_call`) a `Build
 map` si ju zavolá, keď mu v release chýba to, čo si vypýtal:
 
 ```
-check-dem  ──►  mirror-dmr5-area   area: <pohorie>          ──► dem-ugkk
-           ──►  mirror-dmr5-tiles  area: <bbox stupňov>     ──► dem-dmr5
+check-dem  ──►  mirror-dmr5-area   area:  <bbox výrezu>     ──► dem-ugkk
+                                   asset: ugkk-<kľúč>.tif
+           ──►  mirror-dmr5-tiles  area:  <bbox stupňov>    ──► dem-dmr5
                                    tiles: true, grid_m: 5
 ```
 
-**Dva joby, lebo `dmr5` má dve podoby a chýbať môžu naraz.** Vrstevnice a skaly
-čítajú výrez v plnom rozlíšení (`ugkk-<pohorie>.tif` z `dem-ugkk`), tieňovanie
-1° dlaždice na 5 m (`N49E020.tif` z `dem-dmr5`) – to sa robí na celý región,
-kde 1 m verzia neexistuje. Jeden výber vo formulári, dva rôzne assety.
+**Dva joby nad jedným workflowom, lebo `dmr5` má dve podoby a chýbať môžu
+naraz.** Vrstevnice a skaly čítajú výrez v plnom rozlíšení (`ugkk-<pohorie>.tif`
+z `dem-ugkk`), tieňovanie 1° dlaždice na 5 m (`N49E020.tif` z `dem-dmr5`) – to
+sa robí na celý región, kde 1 m verzia neexistuje. Jeden výber vo formulári,
+dva rôzne assety. Nie sú to dve pipeline, len dve volania tej istej.
+
+**Výrez sa podáva BBOXOM, nie menom pohoria.** Čo sa má z Drive naozaj
+prečítať, vie len `Build map`: výrez UŽ PRETNUTÝ S REGIÓNOM, a pri rýchlom
+teste štvorec na pár km². Kým sa podával kľúč, `dmr5-drive.yml` si ho vyriešil
+z `areas.json` **druhýkrát** a prečítal celý obdĺžnik pohoria – rýchly test na
+2 km² tak čítal z Drive 541 km² Vysokých Tatier, čiže hodiny namiesto minút.
+Je to tá istá trieda chyby ako beh 31307163093 (dve odpovede na jednu otázku),
+len nezhodila beh, iba ho predražila. Meno assetu preto chodí zvlášť
+(`asset:`): z bboxu sa odvodiť nedá, lebo build si súbor hľadá podľa kľúča
+výrezu. Stráži to `Lint workflows`.
+
+**S tým súvisí kľúč výrezu v rýchlom teste.** `plan` ho rieši raz – keď počíta
+`dem_bbox`, teda ten štvorec pre terénne vrstvy – a krok „Vyrieš testovací
+výrez" si odpoveď preberá. Keď sa počítal druhýkrát, dostal `dem_bbox` (už ten
+štvorec) a `--test-km2` sa mu nepodávalo, tak vyšiel ten istý bbox, ale kľúč
+**bez** prípony `_test2`: výrez na 2 km² sa volal `vysoke_tatry` presne ako celé
+pohorie. Meno assetu je z kľúča, takže by testovací DEM sadol v release pod
+`ugkk-vysoke_tatry.tif` – meno, ktoré sľubuje celý obdĺžnik – a ďalší ostrý beh
+by z dvoch kilometrov štvorcových počítal vrstevnice celých Tatier. Je to
+presne ten istý druh sľubu ako pri dlaždiciach nižšie. (`cely` príponu
+zámerne nedostáva: je to sentinel „žiadny výrez", nie meno územia, a prípona
+by prepla podobu modelu z dlaždíc na výrez.)
 
 **Dlaždice sa dopĺňajú po celých stupňoch, nie po bboxe.** Meno `N49E020.tif`
 je sľub o celom stupni a build si dlaždicu podľa mena hľadá – keby v release

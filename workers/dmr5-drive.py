@@ -65,11 +65,33 @@ krajinu – stačia stupne, ktoré jeho bbox pretína. Okno sa pri `--tiles`
 rozširuje na celé stupne, lebo meno `N49E020.tif` je sľub o celej dlaždici
 a polovičná by v ďalšom behu prešla kontrolou ako hotová.
 
+`--area` BERIE AJ BBOX, a to je pri výreze to podstatné. Build map ho tak aj
+volá: čo sa má prečítať, je územie, ktoré si beh naozaj vypýtal (výrez pretnutý
+s regiónom, pri rýchlom teste štvorec na pár km²) – nie celý obdĺžnik pohoria
+z `areas.json`. Meno výsledku sa vtedy podá zvlášť cez `--asset`, lebo
+`ugkk-20,49,21,50.tif` si build vypýtať nevie. Kým sa podával len kľúč
+pohoria, prečítal sa vždy celý obdĺžnik z `areas.json` a rýchly test na 2 km²
+čítal z Drive 541 km² Vysokých Tatier.
+
+ROZDELENÉ NA FÁZY (`--stage`), aby dlhé čakanie nebolo jeden nemý krok:
+
+    plan     otvor zdroj, spočítaj okno a bloky, povedz, čo to bude stáť
+    read     prečítaj bloky z Drive (jediná fáza, ktorá siaha na sieť)
+    finish   mozaika → COG alebo 1° dlaždice (už len nad diskom)
+    all      všetko za sebou, ako predtým (predvolené pri ručnom spustení)
+
+Fázy si podávajú stav cez `<work>/dmr5-drive-stav.json` a rozčítané bloky
+cez `<work>/blok-*.tif`, takže sa dajú spustiť ako samostatné kroky workflowu
+– každý s vlastným nadpisom v logu a vlastným postupom.
+
 Použitie:
     python3 workers/dmr5-drive.py --area=vysoke_tatry --grid-m=1 \\
         --out=out --asset=ugkk-vysoke_tatry.tif
+    python3 workers/dmr5-drive.py --area=20.0,49.1,20.1,49.2 --grid-m=1 \\
+        --out=out --asset=ugkk-vysoke_tatry_test2.tif
     python3 workers/dmr5-drive.py --area=cele_slovensko --grid-m=5 --out=out
     python3 workers/dmr5-drive.py --area=20,49,21,50 --grid-m=5 --tiles --out=out
+    python3 workers/dmr5-drive.py --stage=plan --area=vysoke_tatry --grid-m=1
     python3 workers/dmr5-drive.py --probe-only
 """
 import argparse
@@ -79,6 +101,7 @@ import math
 import os
 import subprocess
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -94,6 +117,23 @@ SRC_EPSG = 3046           # ETRS89 / TM zone N34, priamo z GeoTIFF tagov
 # Elipsoidické výšky nad GRS80 (ETRS89) → ortometrické (EGM2008 ≈ Bpv).
 SRC_VERT = 4937           # ETRS89 (3D, elipsoidické výšky)
 DST_VERT = 3855           # EGM2008 height
+
+# Stav medzi fázami. Leží v `--work`, ktorý medzi krokmi jobu prežije.
+STATE = "dmr5-drive-stav.json"
+
+# Odhad ceny čítania, NA PIXEL ZDROJA. Namerané, nie odhadnuté od stola:
+# výrez 5,2 × 5,6 km pri 1 m (29 km² = 29 mil. px na plnom rozlíšení) trval
+# 1,2 min a stiahol 0,11 GB v 697 požiadavkách, pri `--jobs=12`.
+#
+# Na pixel ZDROJA, a nie cieľa, preto, že hrubšiu mriežku číta GDAL z pyramíd
+# a tie majú vlastné rozlíšenie: cieľ 5 m sa berie z úrovne 4 m, čiže sa
+# prečíta (5/4)² = 1,6× viac pixelov, než má výstup. Kontrola na inom konci
+# rozsahu: jeden 1° stupeň na 5 m = 8 065 km² z pyramídy 4 m = 504 mil. px,
+# čiže ~21 min a ~1,9 GB. Sedí s tým, čo o cene stupňa hovorí check-dem.sh.
+#
+# Je to rádový odhad – má povedať „minúty alebo hodiny", nie predpovedať minútu.
+PX_PER_MIN = 24e6         # pri --jobs=12
+BYTES_PER_PX = 3.8
 
 
 def load(name, path):
@@ -201,39 +241,63 @@ def blocks(box, grid_m, jobs, max_px=4096):
     return out, (nx, ny)
 
 
-def read_blocks(src, box, grid_m, work, jobs, env, native_m=1.0):
+def read_blocks(src, parts, grid_m, work, jobs, env, native_m=1.0):
     """Bloky sa čítajú SÚBEŽNE – latencia Drive sa inak nedá prekonať.
 
     Vracia zoznam hotových súborov. Prázdne bloky (samé nodata) sa
     nezahadzujú: diera v mozaike by sa v ďalšom kroku doplnila nulami.
+
+    HOTOVÝ BLOK SA NEČÍTA ZNOVA. Zapisuje sa cez `.part` a až premenovanie
+    z neho spraví blok – takže krok, ktorý spadol alebo mu došiel čas,
+    o prečítané bloky nepríde a ďalší dopočíta len zvyšok. To isté robí
+    sklad častí sklonu a z rovnakého dôvodu: hodina čítania z Drive je
+    najdrahšia vec v celej pipeline.
     """
     os.makedirs(work, exist_ok=True)
-    parts, (nx, ny) = blocks(box, grid_m, jobs)
-    log(f"  {len(parts)} blokov ({nx}×{ny}), {jobs} naraz")
-
     resample = [] if abs(grid_m - native_m) < 1e-9 else ["-r", "average"]
     tr = [] if abs(grid_m - native_m) < 1e-9 else ["-tr", repr(grid_m), repr(grid_m)]
-    done = []
     t0 = time.time()
+    done_n = [0]
+    reused = [0]
+    lock = threading.Lock()
 
     def one(idx_part):
         idx, (bw, bs, be, bn) = idx_part
         dest = os.path.join(work, f"blok-{idx:04d}.tif")
-        cmd = ["gdal_translate", "-q",
-               "-projwin", repr(bw), repr(bn), repr(be), repr(bs),
-               *tr, *resample, "-ovr", "AUTO",
-               "-of", "GTiff", "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
-               "-co", "TILED=YES", "-co", "BIGTIFF=YES",
-               src, dest]
-        subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+        hit = os.path.exists(dest) and os.path.getsize(dest) > 0
+        if not hit:
+            tmp = dest + ".part"
+            cmd = ["gdal_translate", "-q",
+                   "-projwin", repr(bw), repr(bn), repr(be), repr(bs),
+                   *tr, *resample, "-ovr", "AUTO",
+                   "-of", "GTiff", "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
+                   "-co", "TILED=YES", "-co", "BIGTIFF=YES",
+                   src, tmp]
+            subprocess.run(cmd, check=True, env=env, capture_output=True, text=True)
+            os.replace(tmp, dest)
+        # Postup sa vypisuje PO KAŽDOM bloku, nie len raz za pol minúty:
+        # inak sa z logu nedá povedať, či beh napreduje, alebo visí na jednom
+        # bloku, ktorému Drive neodpovedá.
+        with lock:
+            done_n[0] += 1
+            if hit:
+                reused[0] += 1
+            el = time.time() - t0
+            eta = el / done_n[0] * (len(parts) - done_n[0])
+            print(f"  [{done_n[0]}/{len(parts)}] blok-{idx:04d} "
+                  f"{'už bol' if hit else 'prečítaný'}, "
+                  f"{os.path.getsize(dest) / 1e6:.1f} MB – "
+                  f"{el / 60:.1f} min za sebou, zostáva ~{eta / 60:.1f} min",
+                  flush=True)
         return dest
 
     with raster.Heartbeat(f"čítanie {len(parts)} blokov z Drive"):
         with ThreadPoolExecutor(max_workers=jobs) as ex:
-            for dest in ex.map(one, enumerate(parts)):
-                done.append(dest)
+            done = list(ex.map(one, enumerate(parts)))
     mb = sum(os.path.getsize(p) for p in done) / 1048576
-    log(f"  bloky hotové za {(time.time() - t0) / 60:.1f} min, {mb:.0f} MB na disku")
+    log(f"  bloky hotové za {(time.time() - t0) / 60:.1f} min, {mb:.0f} MB na "
+        f"disku" + (f" (z toho {reused[0]} už bolo z predošlého pokusu)"
+                    if reused[0] else ""))
     return done
 
 
@@ -299,33 +363,44 @@ def country_tiles(parts, out_dir, work, env, geoid):
     return merged
 
 
-# ---------- beh ----------
+# ---------- stav medzi fázami ----------
 
-def main():
-    ap = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--area", default="cele_slovensko",
-                    help="kľúč z workers/areas.json, `cele_slovensko`, alebo bbox W,S,E,N")
-    ap.add_argument("--grid-m", type=float, default=1.0)
-    ap.add_argument("--out", default="out")
-    ap.add_argument("--work", default="drive-work")
-    ap.add_argument("--asset", default=None,
-                    help="meno výsledku pri výreze; predvolene ugkk-<area>.tif")
-    ap.add_argument("--jobs", type=int, default=12,
-                    help="koľko blokov sa číta naraz; nad ~16 začne Drive "
-                         "odpovedať 403 a čakanie zožerie viac, než sa získa")
-    ap.add_argument("--geoid", choices=("egm2008", "elipsoid"), default="egm2008")
-    ap.add_argument("--tiles", action="store_true",
-                    help="výstup sú 1° dlaždice (dem-dmr5) aj pri zadanom "
-                         "výreze – okno sa rozšíri na celé stupne. Bez toho "
-                         "je z výrezu jeden COG (dem-ugkk).")
-    ap.add_argument("--port", type=int, default=0)
-    ap.add_argument("--probe-only", action="store_true",
-                    help="len otvor zdroj a vypíš, čo v ňom je")
-    ap.add_argument("--summary", default=None)
-    args = ap.parse_args()
+def state_path(work):
+    return os.path.join(work, STATE)
 
-    t_all = time.time()
+
+# Koľko riadkov LOGu už v stave je. Fázy sú samostatné procesy, takže bez
+# tohto by v súhrne na konci ostal len log poslednej z nich.
+_LOG_SAVED = 0
+
+
+def save_state(work, state):
+    global _LOG_SAVED
+    state["log"] = state.get("log", []) + LOG[_LOG_SAVED:]
+    _LOG_SAVED = len(LOG)
+    os.makedirs(work, exist_ok=True)
+    with open(state_path(work), "w") as f:
+        json.dump(state, f, indent=1)
+
+
+def load_state(work):
+    """Stav z fázy `plan`. Keď chýba, volajúci spustil fázy v zlom poradí –
+    a to je chyba zadania, nie niečo, čo sa dá dopočítať: `read` bez plánu by
+    prečítal iné okno, než na aké sa pýtal `plan`."""
+    p = state_path(work)
+    if not os.path.exists(p):
+        raise SystemExit(
+            f"::error::Chýba {p} – fáza sa spúšťa až po `--stage=plan`.")
+    with open(p) as f:
+        return json.load(f)
+
+
+def open_source(args):
+    """Shim nad Drive + otvorený raster. Vracia (src, env, info, native_m, stats).
+
+    Robia to fázy `plan` a `read`; `finish` už na sieť nesiaha vôbec, počíta
+    nad blokmi na disku – a práve preto je oddelená.
+    """
     log("Otváram DMR 5.0 (ETRS89) na Drive cez lokálny shim…")
     base, sizes, stats = drive.serve(
         {TIF_NAME: TIF_ID, TIF_NAME + ".ovr": OVR_ID}, args.port)
@@ -346,16 +421,35 @@ def main():
     if not ov:
         log("::warning::Pyramídy sa nenašli – hrubšie mriežky sa budú počítať "
             "z plného 1 m rastra a potrvá to násobne dlhšie.")
-    native_m = abs(info["geoTransform"][1])
+    return src, env, info, abs(info["geoTransform"][1]), stats
 
-    if args.probe_only:
-        log(f"  CRS: {(info.get('coordinateSystem') or {}).get('wkt', '')[:80]}…")
-        log(f"  origin: {info['geoTransform'][0]}, {info['geoTransform'][3]}")
-        for i, (w, h) in enumerate(ov):
-            log(f"    úroveň {i}: {w:,} × {h:,} px = "
-                f"{native_m * info['size'][0] / w:.0f} m")
-        return 0
 
+def drive_totals(state, stats):
+    """Prirátaj, čo z Drive prišlo v tejto fáze, k tomu, čo prišlo v predošlých.
+
+    Fázy sú samostatné procesy, takže počítadlo shimu začína v každej od nuly –
+    bez tohto by súhrn na konci tvrdil, že sa stiahlo len to z poslednej.
+    """
+    if stats is None:
+        return state.get("drive_bytes", 0), state.get("drive_requests", 0)
+    with stats["lock"]:
+        req, got = stats["requests"], stats["bytes"]
+    state["drive_bytes"] = state.get("drive_bytes", 0) + got
+    state["drive_requests"] = state.get("drive_requests", 0) + req
+    return state["drive_bytes"], state["drive_requests"]
+
+
+# ---------- fáza 1: plán ----------
+
+def stage_plan(args):
+    """Otvor zdroj, spočítaj okno a bloky a povedz, čo to bude stáť.
+
+    Vlastná fáza preto, že je LACNÁ (otvorenie stojí 9 požiadaviek a 0,3 MB)
+    a odpovedá na jedinú otázku, ktorá pred hodinovým čítaním zaujíma: koľko
+    toho bude. Trojhodinový krok, ktorý spadne na timeout, je najhorší možný
+    výsledok – minie celý rozpočet a nevyrobí nič.
+    """
+    src, env, info, native_m, stats = open_source(args)
     os.makedirs(args.out, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
     wkt_file = os.path.join(args.work, "src.wkt")
@@ -370,6 +464,7 @@ def main():
     # prešiel („dlaždica tam je“) a tieňovanie by ticho končilo v polovici
     # mapy. Okno sa preto rozširuje na celé stupne – čítať sa musí celá
     # dlaždica, nie len to, čo dnes treba.
+    tiles_out = bbox is None or args.tiles
     if bbox is not None and args.tiles:
         w, s, e, n = bbox
         bbox = (float(math.floor(w)), float(math.floor(s)),
@@ -387,39 +482,237 @@ def main():
                info["geoTransform"][3])
     else:
         box = src_window(bbox, wkt_file, info, env)
-    parts = read_blocks(src, box, args.grid_m, args.work, args.jobs, env, native_m)
+    parts, (nx, ny) = blocks(box, args.grid_m, args.jobs)
 
-    if bbox is None or args.tiles:
-        country_tiles(parts, args.out, args.work, env, args.geoid)
+    km_x, km_y = (box[2] - box[0]) / 1000, (box[3] - box[1]) / 1000
+    area_m2 = (box[2] - box[0]) * (box[3] - box[1])
+    cells = area_m2 / args.grid_m ** 2
+
+    # ČO SA BUDE ČÍTAŤ, NIE ČO VYPADNE. Cena je počet pixelov, ktoré prídu
+    # z Drive, a tie nie sú bunky cieľa: `gdal_translate -ovr AUTO` siahne po
+    # najhrubšej pyramíde, ktorá je ešte jemnejšia než cieľ. Pri cieli 5 m to
+    # je úroveň 4 m, čiže (5/4)² = 1,6× viac pixelov, než má výstup – a to je
+    # presne ten rozdiel medzi „13 minút" a „21 minút na stupeň".
+    read_m = native_m
+    for o in info["bands"][0].get("overviews", []):
+        r = native_m * info["size"][0] / o["size"][0]
+        if read_m < r <= args.grid_m + 1e-9:
+            read_m = r
+    src_px = area_m2 / read_m ** 2
+
+    # Rýchlosť je meraná pri `--jobs=12`; pri inom počte vlákien sa škáluje,
+    # ale nie donekonečna – nad ~16 vláknami Drive začne odpovedať 403.
+    rate = PX_PER_MIN * min(args.jobs, 16) / 12.0
+    est_min = src_px / max(rate, 1.0)
+    est_gb = src_px * BYTES_PER_PX / 1e9
+    asset = args.asset or f"ugkk-{args.area}.tif"
+
+    print("── Plán čítania z Drive ─────────────────────────────")
+    print(f"  územie          {area_name}")
+    print(f"  okno            {km_x:.1f} × {km_y:.1f} km "
+          f"({km_x * km_y:.0f} km²) v EPSG:{SRC_EPSG}")
+    print(f"  cieľová mriežka {args.grid_m:g} m → {cells / 1e6:.1f} mil. buniek")
+    print(f"  číta sa z       {read_m:g} m "
+          + ("(plné rozlíšenie)" if read_m == native_m else "(pyramída)")
+          + f" → {src_px / 1e6:.1f} mil. px")
+    print(f"  blokov          {len(parts)} ({nx}×{ny}), {args.jobs} naraz")
+    print(f"  odhad           ~{est_min:.0f} min, ~{est_gb:.2f} GB z Drive")
+    print("  výstup          " + (f"1° dlaždice do {args.out}/" if tiles_out
+                                  else f"{args.out}/{asset}"))
+    print("  výšky           " + ("EGM2008 (≈ Bpv)" if args.geoid == "egm2008"
+                                  else "elipsoidické ETRS89"))
+    print("─────────────────────────────────────────────────────", flush=True)
+    if est_min > 120:
+        print(f"::warning::Odhad čítania je ~{est_min / 60:.1f} h. Kratšie to "
+              f"ide s menším územím alebo hrubšou mriežkou (--grid-m).")
+
+    state = {
+        "area": args.area,
+        "area_name": area_name,
+        "bbox": list(bbox) if bbox is not None else None,
+        "box": list(box),
+        "blocks": [list(p) for p in parts],
+        "grid_m": args.grid_m,
+        "native_m": native_m,
+        "tiles": tiles_out,
+        "geoid": args.geoid,
+        "asset": asset,
+        "src_px": list(info["size"]),
+        "cells": cells,
+        "est_min": est_min,
+    }
+
+    # ROZČÍTANÉ BLOKY SÚ DOBRÉ, LEN KEĎ SEDIA NA TENTO PLÁN. Fáza `read`
+    # pozná blok podľa poradového čísla v mene (`blok-0007.tif`), takže po
+    # zmene územia či mriežky by pod tým istým menom ležal úplne iný kus zeme
+    # a mozaika by bola poskladaná z dvoch rôznych zadaní. Rovnaký plán =
+    # opakovaný krok dopočíta zvyšok; iný plán = začína sa odznova.
+    old = None
+    if os.path.exists(state_path(args.work)):
+        with open(state_path(args.work)) as f:
+            old = json.load(f)
+    same = old is not None and all(old.get(k) == state[k]
+                                   for k in ("box", "blocks", "grid_m", "geoid"))
+    stale = [f for f in os.listdir(args.work)
+             if f.startswith("blok-") and f.endswith((".tif", ".part"))]
+    if stale and not same:
+        for f in stale:
+            os.remove(os.path.join(args.work, f))
+        log(f"  plán sa zmenil – zahodených {len(stale)} blokov z predošlého")
+    elif stale:
+        log(f"  {len(stale)} blokov z predošlého pokusu sedí na tento plán "
+            f"a znova sa čítať nebudú")
+
+    if same and old.get("t_start"):
+        state["t_start"] = old["t_start"]
+        state["drive_bytes"] = old.get("drive_bytes", 0)
+        state["drive_requests"] = old.get("drive_requests", 0)
+        state["log"] = old.get("log", [])
+    else:
+        state["t_start"] = time.time()
+    drive_totals(state, stats)
+    save_state(args.work, state)
+    return state
+
+
+# ---------- fáza 2: čítanie ----------
+
+def stage_read(args, state):
+    """Bloky z Drive na disk. Jediná fáza, ktorá siaha na sieť – a tá dlhá."""
+    src, env, _info, _native, stats = open_source(args)
+    parts = [tuple(p) for p in state["blocks"]]
+    log(f"  {len(parts)} blokov, {args.jobs} naraz, cieľová mriežka "
+        f"{state['grid_m']:g} m")
+    read_blocks(src, parts, state["grid_m"], args.work, args.jobs, env,
+                state["native_m"])
+    got, req = drive_totals(state, stats)
+    log(f"Z Drive doteraz {got / 1e9:.2f} GB v {req:,} požiadavkách")
+    save_state(args.work, state)
+    return state
+
+
+# ---------- fáza 3: zloženie výstupu ----------
+
+def stage_finish(args, state):
+    """Bloky na disku → COG alebo 1° dlaždice. Na sieť sa už nesiaha.
+
+    Výnimka je mriežka geoidu, ktorú si PROJ stiahne z CDN – pár MB, nie Drive.
+    """
+    env = drive.gdal_env()
+    if state["geoid"] == "egm2008":
+        env["PROJ_NETWORK"] = "ON"
+    parts = sorted(os.path.join(args.work, f)
+                   for f in os.listdir(args.work)
+                   if f.startswith("blok-") and f.endswith(".tif"))
+    if not parts:
+        raise SystemExit(f"::error::V {args.work} nie je ani jeden blok – "
+                         f"fáza `read` nebežala alebo spadla.")
+    if len(parts) != len(state["blocks"]):
+        raise SystemExit(
+            f"::error::Na disku je {len(parts)} blokov, plán ich má "
+            f"{len(state['blocks'])}. Mozaika s dierou by sa doplnila nulami "
+            f"a z nuly je v mape more – spusti fázu `read` znova.")
+    log(f"Skladám {len(parts)} blokov, "
+        f"{sum(os.path.getsize(p) for p in parts) / 1048576:.0f} MB na disku")
+
+    if state["tiles"]:
+        country_tiles(parts, args.out, args.work, env, state["geoid"])
         made = sorted(f for f in os.listdir(args.out) if f.endswith(".tif"))
         log(f"Hotovo: {len(made)} dlaždíc v {args.out}")
     else:
-        asset = args.asset or f"ugkk-{args.area}.tif"
-        dest = to_wgs84(parts, os.path.join(args.out, asset), bbox,
-                        args.grid_m, args.work, env, args.geoid)
+        dest = to_wgs84(parts, os.path.join(args.out, state["asset"]),
+                        state["bbox"], state["grid_m"], args.work, env,
+                        state["geoid"])
         made = [os.path.basename(dest)]
 
+    # Bloky až teraz: kým výstup nie je hotový, sú to jediné prečítané dáta
+    # a opakovaný `read` by ich musel stiahnuť znova.
     for p in parts:
         os.remove(p)
-    with stats["lock"]:
-        req, got = stats["requests"], stats["bytes"]
-    log(f"Z Drive prišlo {got / 1e9:.2f} GB v {req:,} požiadavkách, "
-        f"celý beh {(time.time() - t_all) / 60:.1f} min")
+    state["made"] = made
+    save_state(args.work, state)
+    return state
+
+
+def write_summary(path, state):
+    got = state.get("drive_bytes", 0)
+    req = state.get("drive_requests", 0)
+    made = state.get("made", [])
+    with open(path, "w") as f:
+        f.write("## DMR 5.0 (ETRS89) z Drive\n\n")
+        f.write("| vec | hodnota |\n|---|---|\n")
+        f.write(f"| územie | {state['area_name']} |\n")
+        f.write(f"| mriežka | {state['grid_m']:g} m |\n")
+        f.write(f"| okno | {(state['box'][2] - state['box'][0]) / 1000:.1f} × "
+                f"{(state['box'][3] - state['box'][1]) / 1000:.1f} km, "
+                f"{len(state['blocks'])} blokov |\n")
+        f.write(f"| zdroj | {state['src_px'][0]:,}×{state['src_px'][1]:,} px "
+                f"@ {state['native_m']:g} m, EPSG:{SRC_EPSG} |\n")
+        f.write(f"| výšky | {'EGM2008 (≈ Bpv)' if state['geoid'] == 'egm2008' else 'elipsoidické ETRS89'} |\n")
+        f.write(f"| z Drive | {got / 1e9:.2f} GB / {req:,} požiadaviek |\n")
+        f.write(f"| trvanie | {(time.time() - state['t_start']) / 60:.1f} min "
+                f"(odhad bol {state['est_min']:.0f} min) |\n")
+        f.write(f"| výstup | {', '.join(f'`{m}`' for m in made[:12]) or '–'} |\n")
+        f.write("\n<details><summary>Log</summary>\n\n```\n"
+                + "\n".join(state.get("log", []) + LOG[_LOG_SAVED:])
+                + "\n```\n\n</details>\n")
+
+
+# ---------- beh ----------
+
+def main():
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--area", default="cele_slovensko",
+                    help="kľúč z workers/areas.json, `cele_slovensko`, alebo bbox W,S,E,N")
+    ap.add_argument("--grid-m", type=float, default=1.0)
+    ap.add_argument("--out", default="out")
+    ap.add_argument("--work", default="drive-work")
+    ap.add_argument("--asset", default=None,
+                    help="meno výsledku pri výreze; predvolene ugkk-<area>.tif. "
+                         "Pri bboxe v --area je povinné – `ugkk-20,49,21,50.tif` "
+                         "si build vypýtať nevie.")
+    ap.add_argument("--jobs", type=int, default=12,
+                    help="koľko blokov sa číta naraz; nad ~16 začne Drive "
+                         "odpovedať 403 a čakanie zožerie viac, než sa získa")
+    ap.add_argument("--geoid", choices=("egm2008", "elipsoid"), default="egm2008")
+    ap.add_argument("--tiles", action="store_true",
+                    help="výstup sú 1° dlaždice (dem-dmr5) aj pri zadanom "
+                         "výreze – okno sa rozšíri na celé stupne. Bez toho "
+                         "je z výrezu jeden COG (dem-ugkk).")
+    ap.add_argument("--stage", choices=("all", "plan", "read", "finish"),
+                    default="all",
+                    help="ktorú fázu spustiť; stav si podávajú cez --work")
+    ap.add_argument("--port", type=int, default=0)
+    ap.add_argument("--probe-only", action="store_true",
+                    help="len otvor zdroj a vypíš, čo v ňom je")
+    ap.add_argument("--summary", default=None)
+    args = ap.parse_args()
+
+    if args.probe_only:
+        _src, _env, info, native_m, _stats = open_source(args)
+        log(f"  CRS: {(info.get('coordinateSystem') or {}).get('wkt', '')[:80]}…")
+        log(f"  origin: {info['geoTransform'][0]}, {info['geoTransform'][3]}")
+        for i, o in enumerate(info["bands"][0].get("overviews", [])):
+            w, h = o["size"]
+            log(f"    úroveň {i}: {w:,} × {h:,} px = "
+                f"{native_m * info['size'][0] / w:.0f} m")
+        return 0
+
+    # Fázy sa reťazia zhora nadol; `all` je všetky tri v jednom procese.
+    state = None
+    if args.stage in ("all", "plan"):
+        state = stage_plan(args)
+    if args.stage in ("all", "read"):
+        state = stage_read(args, state or load_state(args.work))
+    if args.stage in ("all", "finish"):
+        state = stage_finish(args, state or load_state(args.work))
+        got, req = state.get("drive_bytes", 0), state.get("drive_requests", 0)
+        log(f"Z Drive prišlo {got / 1e9:.2f} GB v {req:,} požiadavkách, "
+            f"celý beh {(time.time() - state['t_start']) / 60:.1f} min")
 
     if args.summary:
-        with open(args.summary, "w") as f:
-            f.write("## DMR 5.0 (ETRS89) z Drive\n\n")
-            f.write("| vec | hodnota |\n|---|---|\n")
-            f.write(f"| územie | {area_name} |\n")
-            f.write(f"| mriežka | {args.grid_m:g} m |\n")
-            f.write(f"| zdroj | {info['size'][0]:,}×{info['size'][1]:,} px "
-                    f"@ {native_m:g} m, EPSG:{SRC_EPSG} |\n")
-            f.write(f"| výšky | {'EGM2008 (≈ Bpv)' if args.geoid == 'egm2008' else 'elipsoidické ETRS89'} |\n")
-            f.write(f"| z Drive | {got / 1e9:.2f} GB / {req:,} požiadaviek |\n")
-            f.write(f"| trvanie | {(time.time() - t_all) / 60:.1f} min |\n")
-            f.write(f"| výstup | {', '.join(f'`{m}`' for m in made[:12])} |\n")
-            f.write("\n<details><summary>Log</summary>\n\n```\n"
-                    + "\n".join(LOG) + "\n```\n\n</details>\n")
+        write_summary(args.summary, state or load_state(args.work))
     return 0
 
 
