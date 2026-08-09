@@ -89,6 +89,14 @@ SCALE = 100
 SLOPE_CELLS_PER_S = 5.1e6    # gdalwarp + gdaldem slope + gdal_translate
 # Contour: ten istý beh mal po 105 min ešte nedokončených 23,1 mld., takže
 # rýchlosť je NAJVIAC 3,7 mil./s. Berieme 3,5 – odhad má radšej prestreliť.
+#
+# JE TO LEN RÁDOVÝ ODHAD A VIE SA MÝLIŤ AJ DESAŤNÁSOBNE. Cena `gdal_contour -p`
+# nie je daná počtom buniek, ale zložitosťou obrysu, ktorý z nich vyjde: na
+# hrubej mriežke je hranica prahu hladká, na 0,5 m je sklon zrnitý a z tých
+# istých buniek vypadnú desaťtisíce drobných prstencov. Beh 31334778253
+# (2 km², 0,5 m) šiel rýchlosťou ~45 tis. buniek/s, teda 78× pomalšie než
+# hovorí táto konštanta. Preto sa počas behu hlási odhad z NAMERANÝCH
+# percent (`watch.py`) a toto číslo slúži len na hrubý strážca rozpočtu.
 CONTOUR_CELLS_PER_S = 3.5e6  # gdal_contour -p nad hotovou mozaikou
 # Ten istý beh na OOM NEspadol, čiže pri 23,1 mld. buniek bol pod 16 GB.
 # Pamäť teda nie je to, o čo sa zadanie zabije – zabije sa o čas.
@@ -230,9 +238,10 @@ def intersects_bbox(cx0, cy0, cx1, cy1, bbox):
                 or max(ys) < bbox[1] or min(ys) > bbox[3])
 
 
-# Z čoho `--res=auto` vyberá. Jemnejšie než 0,5 m nemá zmysel ani pri 1 m
-# LiDARe – obrys by sa už len leštil a buniek by pribudlo štvornásobne.
-RES_LADDER = (0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0, 15.0, 20.0)
+# Z čoho `--res=auto` vyberá. Najjemnejšie je 1 m: ani 1 m LiDAR pod to nedá
+# nový detail (len interpoluje) a pixel dlaždice má pri z16 aj tak 1,57 m.
+# Polmetrová priečka tu bola a stála štvornásobok buniek za nič – viď pick_res.
+RES_LADDER = (1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0, 15.0, 20.0)
 
 
 def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
@@ -247,7 +256,22 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
     Dva stropy zdola:
       * desatina bunky zdrojového DEM – jemnejšia mriežka už nové detaily
         terénu nevymyslí, len interpoluje medzi tými istými výškami,
-      * 0,5 m absolútne.
+      * 1 m absolútne.
+
+    TEN ABSOLÚTNY STROP BOL 0,5 m A PRI DMR 5.0 TO BOLA CHYBA. Model má bunku
+    1 m, takže z `max(0.5, 0.1)` vyšlo 0,5 m – dvojnásobné prevzorkovanie
+    v každej osi, čiže ŠTVORNÁSOBOK buniek, ktoré nenesú ani o jeden meter
+    terénu viac. Pri z18 má pixel dlaždice 0,39 m a pri z16 (kam skaly naozaj
+    idú) 1,57 m, takže tá polovica metra nie je vidieť ani teoreticky.
+    Zaplatilo sa za ňu ale plnou cenou: beh 31334778253 strávil na 2 km²
+    štvrť hodiny a nedošiel ani do tretiny.
+
+    Hladší obrys, kvôli ktorému to prevzorkovanie bolo, robia `--simplify`
+    a `--smooth` (Chaikin) za zlomok ceny – zaoblujú hotové čiary, nie milióny
+    buniek navyše.
+
+    Pre ostatné zdroje sa nemení nič: `dmr35` (10 m) mal aj má 1 m, `sonny`
+    (20 m) mal aj má 2 m – tam strop drží desatina bunky, nie toto číslo.
     """
     # Koľko plochy naozaj leží v území, zistené na hrubom rastri častí –
     # nezávisí to od mriežky, tak sa to počíta raz a lacno.
@@ -258,7 +282,7 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
     if not area_m2:
         return RES_LADDER[3]  # nič sa netrafilo – nech to povie až chunk_plan
 
-    floor = max(0.5, round((dem_cell_m or 0) / 10.0, 1))
+    floor = max(1.0, round((dem_cell_m or 0) / 10.0, 1))
     per_s = 1.0 / (1.0 / SLOPE_CELLS_PER_S + 1.0 / CONTOUR_CELLS_PER_S)
     budget_s = budget_min * 60 if budget_min else float("inf")
 
@@ -296,6 +320,52 @@ def mosaic_cells(vrt):
         return float(w) * float(h)
     except Exception:
         return 0.0
+
+
+def mosaic_info(vrt):
+    """(šírka, výška, rozsah v metroch, počet zdrojov) hotovej mozaiky."""
+    try:
+        info = json.loads(run(["gdalinfo", "-json", vrt]).stdout)
+        w, h = info["size"]
+        gt = info["geoTransform"]
+        x0, y1 = gt[0], gt[3]
+        x1, y0 = x0 + gt[1] * w, y1 + gt[5] * h
+        try:
+            zdroje = open(vrt).read().count("<SourceFilename")
+        except OSError:
+            zdroje = 0
+        return int(w), int(h), (x0, y0, x1, y1), zdroje
+    except Exception:
+        return 0, 0, None, 0
+
+
+def clip_vrt(vrt, box, res, tmp):
+    """Mozaika orezaná presne na územie, ktoré si beh vypýtal.
+
+    PREČO TO NIE JE ZBYTOČNÉ. Sklad sklonu má ABSOLÚTNU mriežku častí – to je
+    jeho zmysel, lebo tá istá zem tak padne vždy do tej istej časti a časti sa
+    dajú znovu použiť. Lenže mozaika je potom zjednotenie CELÝCH častí, nie
+    územia: pri strane časti 2 048 m môže 2 km² štvorec pretínať štyri z nich,
+    čiže 67 mil. buniek namiesto 8 mil.
+
+    `gdal_contour` potom vektorizoval osemnásobok toho, čo treba – a tie plochy
+    navyše nikto neorezal, takže skončili v mape mimo územia, ktoré si beh
+    vypýtal. Toto je oboje naraz: menej práce aj správny výsledok.
+
+    Orezáva sa VRT, nie dáta – je to zápis do XML, nie kopírovanie rastra,
+    takže to stojí milisekundy a časti v sklade ostávajú nedotknuté.
+
+    Hranice sa prichytávajú na mriežku `res`, aby sa bunky neposunuli o zlomok
+    a `gdal_contour` nedostal inú mriežku, než na akej sa sklon počítal.
+    """
+    x0 = math.floor(box[0] / res) * res
+    y0 = math.floor(box[1] / res) * res
+    x1 = math.ceil(box[2] / res) * res
+    y1 = math.ceil(box[3] / res) * res
+    out = os.path.join(tmp, "slope-clip.vrt")
+    run(["gdalbuildvrt", "-q", "-te", repr(x0), repr(y0), repr(x1), repr(y1),
+         "-tr", repr(res), repr(res), out, vrt])
+    return out
 
 
 def main():
@@ -378,32 +448,58 @@ def main():
         print(f"::error::Mozaika sklonu {vrt} neexistuje – najprv musí prejsť "
               f"workers/slope-chunks.py.")
         return 2
-    cells = mosaic_cells(vrt)
-    print(f"Mozaika sklonu: {vrt}, {cells / 1e9:.2f} mld. buniek "
-          f"pri mriežke {res:g} m")
-
-    # Strážca ešte pred vektorizáciou: trojhodinový beh, ktorý spadne na
-    # timeout, je horší než beh, ktorý sa vôbec nezačne. Sklon je už hotový a
-    # zaplatený, takže sa tu meria len ten jeden priechod.
-    if args.budget_min > 0 and cells:
-        odhad = cells / CONTOUR_CELLS_PER_S / 60
-        if odhad > args.budget_min:
-            print(f"::error::Vektorizácia {cells / 1e9:.2f} mld. buniek by "
-                  f"trvala ~{odhad:.0f} min, rozpočet je {args.budget_min:.0f}. "
-                  f"Zvoľ hrubšiu mriežku (rock_res) alebo menší výrez "
-                  f"(rock_area). Sklon v sklade ostáva, takže sa nezahodí.")
-            return 2
+    mw, mh, mbox, zdrojov = mosaic_info(vrt)
+    cells = float(mw) * mh if mw else mosaic_cells(vrt)
+    print(f"Mozaika sklonu: {vrt}, {mw}×{mh} px = {cells / 1e9:.2f} mld. buniek "
+          f"pri mriežke {res:g} m ({zdrojov} častí skladu)")
 
     t_start = time.time()
     tmp = tempfile.mkdtemp(prefix="rock-", dir=os.path.dirname(args.out) or ".")
     try:
-        # ---------- 2. vektorizácia NARAZ nad celou mozaikou ----------
+        # ---------- 2. orez mozaiky na územie ----------
+        # Sklad má absolútnu mriežku častí, takže mozaika je zjednotenie CELÝCH
+        # častí – nie územia. Bez orezu sa vektorizuje aj to okolo a tie plochy
+        # potom skončia v mape mimo výrezu, ktorý si beh vypýtal. Viď `clip_vrt`.
+        #
+        # Reže sa PRED strážcom rozpočtu nižšie: ten má merať prácu, ktorá sa
+        # naozaj spraví, nie tú, ktorú sme sa práve rozhodli nerobiť.
+        box = to_metric(bbox)
+        treba = (box[2] - box[0]) * (box[3] - box[1]) / (res * res)
+        if mbox and cells and treba and cells > treba * 1.05:
+            vrt = clip_vrt(vrt, box, res, tmp)
+            cw, ch, _, _ = mosaic_info(vrt)
+            orezane = float(cw) * ch
+            print(f"Orez na územie: {mw}×{mh} → {cw}×{ch} px, "
+                  f"{cells / 1e9:.2f} → {orezane / 1e9:.2f} mld. buniek "
+                  f"({cells / max(orezane, 1):.1f}× menej práce). "
+                  f"Časti skladu ostávajú celé, reže sa len pohľad na ne.")
+            cells = orezane
+        else:
+            print(f"Mozaika už sedí na územie ({treba / 1e9:.2f} mld. buniek "
+                  f"treba) – nič sa neoreže.")
+
+        # Strážca ešte pred vektorizáciou: trojhodinový beh, ktorý spadne na
+        # timeout, je horší než beh, ktorý sa vôbec nezačne. Sklon je už hotový
+        # a zaplatený, takže sa tu meria len ten jeden priechod. Je to hrubé
+        # sito – skutočný čas stráži `max_s` nižšie, na nameraných sekundách.
+        if args.budget_min > 0 and cells:
+            odhad = cells / CONTOUR_CELLS_PER_S / 60
+            if odhad > args.budget_min:
+                print(f"::error::Vektorizácia {cells / 1e9:.2f} mld. buniek by "
+                      f"trvala ~{odhad:.0f} min, rozpočet je "
+                      f"{args.budget_min:.0f}. Zvoľ hrubšiu mriežku (rock_res) "
+                      f"alebo menší výrez (area). Sklon v sklade ostáva, takže "
+                      f"sa nezahodí.")
+                return 2
+
+        # ---------- 3. vektorizácia NARAZ nad celou mozaikou ----------
         # Jediný priechod = žiadne švy a diery ostanú dierami. Prahy sú
         # v jednotkách uloženého rastra (0,5° na krok).
         bands = os.path.join(tmp, "bands.gpkg")
         print(f"Vektorizujem sklon jedným priechodom nad celým územím "
-              f"({cells/1e9:.2f} mld. buniek, odhad "
-              f"{hms(cells / CONTOUR_CELLS_PER_S)})…", flush=True)
+              f"({cells/1e9:.2f} mld. buniek, hrubý odhad "
+              f"{hms(cells / CONTOUR_CELLS_PER_S)} – presnejší príde z percent "
+              f"po pár minútach)…", flush=True)
         # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediná úroveň, teda
         # jediné pásmo „sklon nad prahom". Druhá úroveň (`cliff`) mala zmysel,
         # kým sa kreslila tmavšie – ležala v diere pásma `steep` a spolu
@@ -412,21 +508,38 @@ def main():
         urovne = ([repr(args.slope * SCALE)] if args.plne else
                   [repr(args.slope * SCALE), repr(args.cliff * SCALE)])
         try:
+            # ROZPOČET SA STRÁŽI NA NAMERANOM ČASE, nie len na odhade pred
+            # spustením. Odhad stojí na `CONTOUR_CELLS_PER_S` a tá sa vie
+            # mýliť aj osemdesiatnásobne, takže strážca, ktorý sa pýta len
+            # jej, prepustí čokoľvek – beh 31334778253 tak bežal štvrť hodiny
+            # na 2 km² a zastavil ho až človek. `watch.py` ten strop vie,
+            # len mu ho dovtedy nikto nepodal.
+            zvysok_s = max(60.0, args.budget_min * 60 - (time.time() - t_start))
             run_watched(["gdal_contour", "-p", "-fl"] + urovne +
                         ["-amin", "smin", "-amax", "smax",
                          "-f", "GPKG", "-nln", "band", vrt, bands],
                         "gdal_contour", tmp=tmp,
-                        max_rss_mb=args.max_rss_gb * 1024)
+                        max_rss_mb=args.max_rss_gb * 1024,
+                        max_s=zvysok_s if args.budget_min > 0 else 0)
         except MemoryError:
             print("::error::Vektorizácia sa nezmestila do pamäte. Zmenši "
                   "územie cez rock_area alebo zvoľ hrubšiu mriežku rock_res.")
+            return 2
+        except TimeoutError:
+            hotovo = time.time() - t_start
+            print(f"::error::Vektorizácia bežala {hms(hotovo)} a rozpočet je "
+                  f"{args.budget_min:.0f} min – zastavené. Sklon v sklade "
+                  f"ostáva, takže sa nezahodil. Ďalej: hrubšia mriežka "
+                  f"(`rock_res`, teraz {res:g} m – každé zdvojnásobenie je "
+                  f"štvrtina práce), menší výrez (`area`), alebo vyšší "
+                  f"`rock_budget_min`, ak to naozaj má trvať dlhšie.")
             return 2
 
         # Mozaika sa tu ZÁMERNE NEMAŽE, hoci je vyše gigabajtu: sú to časti
         # trvalého skladu (`slope-chunks.py`) a ukladajú sa do cache aj do
         # releasu. Práve preto, aby ich ďalší beh nemusel počítať znova.
 
-        # ---------- 3. rozbitie na plochy ----------
+        # ---------- 4. rozbitie na plochy ----------
         # gdal_contour zlepí každé pásmo do jedného multipolygónu; bez
         # rozbitia by sa nedala merať plocha jednotlivej skaly. Diery
         # rozbitie NErieši – vnútorné prstence ostávajú v svojej ploche.
@@ -445,7 +558,7 @@ def main():
             print("::warning::Nenašla sa ani jedna plocha nad prahom sklonu.")
             return 1
 
-        # ---------- 4. filter najmenšej plochy + atribúty ----------
+        # ---------- 5. filter najmenšej plochy + atribúty ----------
         # DIERY OSTÁVAJÚ: miesto pod prahom vnútri steny (polica, terasa,
         # zarastený stupeň) sa nezafarbí, aj keď je dookola všade sklon nad
         # prahom. Práve ony robia tvar skaly čitateľným.
@@ -488,7 +601,7 @@ def main():
                 run(["ogr2ogr", "-f", "GPKG", final_metric, stage, "-nln",
                      "rock", "-dialect", "SQLITE", "-sql", sql] + simplify)
 
-        # ---------- 5. zaoblenie obrysu ----------
+        # ---------- 6. zaoblenie obrysu ----------
         # Zjednodušenie vyššie zmaže schodíky, ale to, čo po ňom ostane, sú
         # ostré rohy – priemerný lom medzi segmentmi vyskočí zo 4,6° na 28,5°
         # a práve tak vyzerá skala pri max zoome „zubatá". Chaikin ich zaobli
@@ -513,9 +626,20 @@ def main():
              "-overwrite", "-t_srs", "EPSG:4326"])
         n = int(st.get("n", ogr_count(args.out)))
         took = time.time() - t_start
+        naozaj = cells / max(took, 1)
         print(f"Skalných plôch: {n} (celý výpočet {hms(took)}, "
               f"{cells/1e9:.2f} mld. buniek → "
-              f"{cells/max(took, 1)/1e6:.1f} mil. buniek/s)")
+              f"{naozaj/1e6:.1f} mil. buniek/s)")
+        # Odhady sa robia z konštánt hore a tie sa časom rozídu s realitou –
+        # a keď sa rozídu, prestane platiť aj strážca rozpočtu, ktorý na nich
+        # stojí. Nech to teda beh povie sám, nech sa nemusí hľadať.
+        if naozaj and CONTOUR_CELLS_PER_S / naozaj > 3:
+            print(f"::warning::Vektorizácia išla {naozaj/1e6:.2f} mil. buniek/s, "
+                  f"ale `CONTOUR_CELLS_PER_S` v rock-areas.py hovorí "
+                  f"{CONTOUR_CELLS_PER_S/1e6:.1f} – teda "
+                  f"{CONTOUR_CELLS_PER_S/naozaj:.0f}× vedľa. Odhady aj strážca "
+                  f"rozpočtu z nej vychádzajú; oprav ju podľa tohto behu "
+                  f"(mriežka {res:g} m).")
         if st:
             print(f"  spolu {st['total']/1e6:.2f} km², najväčšia "
                   f"{st['max']/10000:.1f} ha, najmenšia {st['min']:.0f} m², "
