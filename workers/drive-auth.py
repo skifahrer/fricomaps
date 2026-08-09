@@ -39,6 +39,37 @@ omylu, na ktorý sa potom pol dňa čaká.
      Viac netreba – workflowy si ho podávajú samy a `dmr5-drive.py` si ho
      vyzdvihne z prostredia.
 
+BEZ POČÍTAČA (z telefónu). `--login` potrebuje prehliadač a loopback server na
+tom istom stroji, takže na telefóne nepobeží. Token sa NESMIE vyrobiť ani
+v behu Actions: v public repozitári vidí logy behov ktokoľvek, takže by bol
+verejný. Cesta, pri ktorej token nikdy neopustí prehliadač telefónu, vedie cez
+Googlom hostovaný OAuth Playground:
+
+  1. V Console vyrob DRUHÉHO klienta, typ **Web application**, a do
+     „Authorized redirect URIs" daj presne
+     `https://developers.google.com/oauthplayground`. (Ten prvý, „Desktop
+     app", to nedovolí – smie mať len loopback.)
+  2. Na telefóne otvor `https://developers.google.com/oauthplayground`,
+     v ozubenom kolese zapni **Use your own OAuth credentials** a vlož
+     `client_id` a `client_secret` toho web klienta. *Access type:* **Offline**
+     a *Force prompt:* **Consent** – bez toho refresh token nepríde.
+  3. Do „Input your own scopes" vlož
+     `https://www.googleapis.com/auth/drive.readonly` → *Authorize APIs* →
+     prihlás sa účtom, ktorý DMR 5.0 **vlastní** → povoľ.
+  4. *Exchange authorization code for tokens* → na obrazovke je **Refresh
+     token**.
+  5. Do secretu **GDRIVE_CREDENTIALS** vlož tri riadky (JSON sa na mobile
+     skladať nemusí, `parse_creds` berie oboje):
+
+         client_id=…apps.googleusercontent.com
+         client_secret=GOCSPX-…
+         refresh_token=1//…
+
+Do secretu patria údaje TOHO klienta, ktorým si token vyrobil: refresh token
+platí len pre pár, ktorý ho vydal. Čiže keď si ho vyrobil v Playgrounde web
+klientom, do secretu idú `client_id`/`client_secret` toho **web** klienta, nie
+toho desktopového.
+
 ROZSAH PRÁV je `drive.readonly`: pipeline z Drive iba číta. Zapisovať tam
 nemá čo a token, ktorý nemôže nič zmazať, sa dá aj oveľa pokojnejšie nechať
 v secrets.
@@ -241,9 +272,10 @@ def token_error(status, data, source):
                 "alebo po odvolaní prístupu.")
     if reason == "invalid_client":
         return (f"Drive nepozná OAuth klienta z {source} ({detail}). "
-                "`client_id` a `client_secret` musia byť z toho istého "
-                "projektu, v ktorom si token vyrobil, a klient musí byť typu "
-                "„Desktop app“.")
+                "`client_id` a `client_secret` musia byť z TOHO ISTÉHO "
+                "klienta, ktorým bol refresh token vyrobený – token platí len "
+                "pre pár, ktorý ho vydal. Keď vznikol v OAuth Playgrounde, "
+                "patria sem údaje toho web klienta, nie desktopového.")
     if reason == "invalid_scope":
         return (f"Rozsah práv {SCOPE} nie je pre tento OAuth projekt povolený "
                 "– skontroluj, či je v projekte zapnuté Google Drive API.")
@@ -263,6 +295,47 @@ def _flatten(data, source):
     return out
 
 
+def parse_creds(raw, source):
+    """Text secretu → dict. Berie JSON **aj riadky `kľúč=hodnota`**.
+
+    Tie riadky nie sú rozmar: secret sa dá vyplniť aj z telefónu, kde token
+    nevzniká cez `--login` (loopback server nie je kde spustiť), ale sa
+    prepisuje z Google OAuth Playgroundu. Skladať pritom na mobilnej
+    klávesnici JSON so zátvorkami a úvodzovkami je presne ten druh roboty,
+    v ktorej sa spraví preklep a hodinu sa hľadá:
+
+        client_id=…apps.googleusercontent.com
+        client_secret=GOCSPX-…
+        refresh_token=1//…
+
+    Oddeľovač smie byť `=` alebo `:`, prázdne riadky a `#` sa preskočia.
+    """
+    raw = raw.strip()
+    if raw.startswith("{"):
+        try:
+            return _flatten(json.loads(raw), source)
+        except ValueError as exc:
+            raise AuthError(
+                f"{source} vyzerá ako JSON, ale nie je platný ({exc}). Skús "
+                "namiesto neho tri riadky `client_id=…`, `client_secret=…`, "
+                "`refresh_token=…` – to sa píše bez zátvoriek.") from None
+    out = {}
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Delí sa na PRVOM oddeľovači: v tokene sa `=` aj `:` môžu vyskytovať
+        # (`1//0gAbC…`), a keby sa delilo na poslednom, prišli by sme o kus.
+        cut = min((line.find(c) for c in "=:" if c in line), default=-1)
+        if cut <= 0:
+            raise AuthError(
+                f"{source}: riadok {line[:24]!r}… nemá tvar `kľúč=hodnota`. "
+                f"Čakám {', '.join(KEYS)} – každé na vlastnom riadku.")
+        key = line[:cut].strip().lower().replace("-", "_")
+        out[key] = line[cut + 1:].strip().strip('"').strip("'").rstrip(",")
+    return out
+
+
 def from_env(env=None):
     """Prihlasovacie údaje z prostredia, alebo None, keď v ňom nie sú.
 
@@ -276,12 +349,7 @@ def from_env(env=None):
     data, source = None, None
     if raw:
         source = "secret GDRIVE_CREDENTIALS"
-        try:
-            data = _flatten(json.loads(raw), source)
-        except ValueError as exc:
-            raise AuthError(
-                f"{source} nie je platný JSON ({exc}). Má to byť presne to, "
-                "čo vypíše `python3 workers/drive-auth.py --login`.") from None
+        data = parse_creds(raw, source)
     elif path:
         source = f"súbor {path} (GDRIVE_CREDENTIALS_FILE)"
         if not os.path.exists(path):

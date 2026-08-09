@@ -1307,6 +1307,35 @@ NAOZAJ použilo.
 Rozsah práv je `drive.readonly` – pipeline z Drive iba číta, takže token
 v secrets nemôže na Drive nič zmeniť ani zmazať.
 
+**Bez počítača (z telefónu).** `--login` potrebuje prehliadač a loopback server
+na tom istom stroji. Token sa pritom **nesmie** vyrobiť v behu Actions: tento
+repozitár je public, takže logy behov aj artefakty vidí ktokoľvek a refresh
+token by bol verejný. Zostáva cesta, pri ktorej token nikdy neopustí prehliadač
+telefónu – Googlom hostovaný **OAuth Playground**:
+
+1. V Console vyrob **druhého** klienta, typ *Web application*, s presne týmto
+   v „Authorized redirect URIs": `https://developers.google.com/oauthplayground`.
+   Desktopový klient to nedovolí – smie mať len loopback.
+2. Na telefóne otvor Playground → ozubené koleso → **Use your own OAuth
+   credentials**, vlož `client_id`/`client_secret`, *Access type* **Offline**,
+   *Force prompt* **Consent**.
+3. Do „Input your own scopes" vlož `https://www.googleapis.com/auth/drive.readonly`
+   → *Authorize APIs* → prihlás sa účtom, ktorý dáta **vlastní**.
+4. *Exchange authorization code for tokens* → na obrazovke je **Refresh token**.
+5. Secret `GDRIVE_CREDENTIALS` prijme namiesto JSONu aj **tri riadky**, aby sa
+   na mobilnej klávesnici nemuseli skladať zátvorky a úvodzovky:
+
+   ```
+   client_id=…apps.googleusercontent.com
+   client_secret=GOCSPX-…
+   refresh_token=1//…
+   ```
+
+Do secretu patria údaje **toho** klienta, ktorým token vznikol: refresh token
+platí len pre pár, ktorý ho vydal. Oddeľovač smie byť `=` alebo `:` a delí sa
+na prvom výskyte – v tokene `1//0gAb=cD` sa `=` bežne vyskytuje a delenie na
+poslednom by z neho odrezalo kus.
+
 **Kam všade sa ten secret musí dostať**, je na prekvapenie viac miest než
 jedno, a práve preto to stráži `Lint workflows`:
 

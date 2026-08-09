@@ -782,9 +782,16 @@ python3 workers/dmr5-drive.py --auth-check      # ktorým účtom sa číta a č
 Klient je typu *Desktop app* z Google Cloud Console, rozsah práv iba
 `drive.readonly` (pipeline z Drive len číta). **Publishing status appky musí
 byť „In production"** — v „Testing" platí refresh token 7 dní a pipeline by
-raz do týždňa spadla. Bez secretu sa nemení nič, len sa v každom behu
-výslovne vypíše, že platí verejný limit. Podrobne (aj kam všade sa ten secret
-musí dostať) v [`docs/pipeline.md`](docs/pipeline.md#prihlásenie-ako-vlastník-dát-secret-gdrive_credentials).
+raz do týždňa spadla; pri type *Internal* (Workspace) to neplatí.
+
+**Bez počítača** sa token vyrobí z telefónu cez Google OAuth Playground
+(nesmie sa vyrábať v behu Actions — logy public repozitára vidí ktokoľvek).
+Secret vtedy prijme namiesto JSONu aj tri riadky `client_id=…`,
+`client_secret=…`, `refresh_token=…`, aby sa na mobile neskladali zátvorky.
+
+Bez secretu sa nemení nič, len sa v každom behu výslovne vypíše, že platí
+verejný limit. Podrobne (aj kam všade sa ten secret musí dostať, aj postup
+z telefónu) v [`docs/pipeline.md`](docs/pipeline.md#prihlásenie-ako-vlastník-dát-secret-gdrive_credentials).
 
 **Výšky sú elipsoidické, nie Bpv.** Maximum v súbore je 2 697,03 m, kým
 Gerlachovský štít má 2 654,4 m n. m. — tých **+42,6 m je geoidová undulácia**.
