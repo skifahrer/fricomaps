@@ -70,9 +70,28 @@ def wgs84_bounds(info):
 def is_geographic(info):
     """Zemepisná (stupne) alebo projektovaná (metre) sústava? Rozhoduje typ
     v WKT – hľadať jednotku „degree" v texte je krehké, lebo sa líši podľa
-    verzie GDALu aj podľa toho, či ide o VRT."""
+    verzie GDALu aj podľa toho, či ide o VRT.
+
+    COMPOUNDCRS je tu preto, že raster s prevedenými výškami (`-t_srs
+    EPSG:4326+3855`) má vodorovnú zložku v stupňoch, ale WKT začína
+    `COMPOUNDCRS[` – a bez tohto riadku vyzeral ako metrický. Veľkosť pixela
+    (0,00008°) sa potom delila 111 320, vyšlo 8·10⁻¹⁰° a `gdalwarp` mal
+    z jedného stupňa vyrobiť dlaždicu širokú 1,2 miliardy pixelov:
+
+        ERROR 6: File too large regarding tile size. This would result in
+        a file with tile arrays larger than 2GB
+
+    Zhodilo to beh 31310604408. Týkalo sa to KAŽDÉHO krájania na dlaždice
+    s predvoleným geoidom, teda aj `dmr5-drive.py --area=cele_slovensko`.
+    """
     wkt = (info.get("coordinateSystem") or {}).get("wkt", "")
-    return wkt.strip().upper().startswith(("GEOGCRS", "GEOGCS", "BASEGEOGCRS"))
+    wkt = wkt.strip().upper()
+    if wkt.startswith("COMPOUNDCRS"):
+        # Vodorovná zložka je prvá vnorená CRS – zaujíma nás len ona.
+        inner = wkt.split("[", 1)[1] if "[" in wkt else ""
+        inner = inner.split(",", 1)[1].lstrip() if "," in inner else ""
+        return inner.startswith(("GEOGCRS", "GEOGCS", "BASEGEOGCRS"))
+    return wkt.startswith(("GEOGCRS", "GEOGCS", "BASEGEOGCRS"))
 
 
 def pixel_degrees(info, lat):

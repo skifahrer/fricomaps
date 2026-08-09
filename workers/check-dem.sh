@@ -140,9 +140,15 @@ for pair in \
   src="${pair#*:}"
   DEMKEY=""
   NEED_SRC=""
+  # SKALY Z DMR 5.0 SI DEM NEPÝTAJÚ. Sklon si ich `slope-chunks.py` prečíta
+  # z Drive po častiach a každú si odloží do vlastného skladu, takže celý
+  # výrez ako jeden COG netreba – a to je práve tá hodina, ktorú predtým
+  # zožral job `Doplniť DMR 5.0 (výrez)` a pri zrušení zahodil.
+  if [ "$layer" = 'rocks' ] && [ "$src" = 'dmr5' ]; then
+    echo "rocks ($src): DEM sa nedopĺňa – sklon sa číta z Drive po častiach"
   # Prázdny zdroj = vrstva je vypnutá (alebo skaly idú z tieňovania) a žiadny
   # výškový model sa pre ňu nečíta.
-  if [ -n "$src" ] && [ "$src" != 'ziadne' ]; then
+  elif [ -n "$src" ] && [ "$src" != 'ziadne' ]; then
     check_source "$layer" "$src"
   fi
   echo "demkey_$layer=$DEMKEY" >> "$OUT"

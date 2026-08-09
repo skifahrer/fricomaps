@@ -27,7 +27,13 @@ sudo apt-get install -y -qq gdal-bin libsqlite3-mod-spatialite zstd
 python3 -m pip install --quiet numpy
 # `work/` sú medzivýsledky (orez, surové izolínie) – zámerne mimo
 # `dem/`, ktoré ide celé do cache. `clip.tif` má aj gigabajty.
-mkdir -p dem data work contours-out
+#
+# `slope-chunks/` je NIEČO INÉ než medzivýsledok: je to sklad častí rastra
+# sklonu. Má vlastnú cache aj vlastný release, lebo práve on robí to, že
+# zrušený alebo spadnutý beh nezahodí hodinu čítania z Drive. Preto sa ani
+# na konci nemaže.
+SLOPE_STORE="${SLOPE_STORE:-slope-chunks}"
+mkdir -p dem data work contours-out "$SLOPE_STORE"
 
 BBOX="$REGION_BBOX"
 IFS=, read -r W S E N <<< "$BBOX"
@@ -140,10 +146,20 @@ if [ "$OPT_CONTOUR_LINES" = 'true' ]; then
   dem_info "vrstevnice ($CONTOUR_DEM)" "$CONTOUR_VRT"
 fi
 if [ -n "$ROCK_DEM" ]; then
-  fetch_dem "$ROCK_DEM"
-  ROCK_VRT="$DEM_VRT"; ROCK_DEM_USED="$DEM_GOT"
-  [ "$ROCK_VRT" = "$CONTOUR_VRT" ] \
-    || dem_info "skaly ($ROCK_DEM_USED)" "$ROCK_VRT"
+  # DMR 5.0 sa na skaly NESŤAHUJE VCELKU. Sklon si ho prečíta z Drive po
+  # častiach (`slope-chunks.py --drive`) a každú časť si odloží do skladu,
+  # takže zrušený beh o hotové časti nepríde. Sťahovať popri tom ešte celý
+  # výrez ako jeden COG by znamenalo prejsť tie isté dáta dvakrát – raz do
+  # `ugkk-<vyrez>.tif` a druhý raz po častiach.
+  if [ "$ROCK_DEM" = 'dmr5' ]; then
+    ROCK_VRT=""; ROCK_DEM_USED=dmr5
+    echo "DEM skaly (dmr5): číta sa z Drive po častiach, nesťahuje sa vcelku"
+  else
+    fetch_dem "$ROCK_DEM"
+    ROCK_VRT="$DEM_VRT"; ROCK_DEM_USED="$DEM_GOT"
+    [ "$ROCK_VRT" = "$CONTOUR_VRT" ] \
+      || dem_info "skaly ($ROCK_DEM_USED)" "$ROCK_VRT"
+  fi
 fi
 
 # Zjemnenie DEM pred trasovaním vrstevníc. Priemerovanie na hrubšiu
@@ -308,15 +324,61 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     # zadanie a build sa má zastaviť hneď, nie nasadiť mapu bez
     # skál po hodine práce. Iný nenulový kód je skutočné zlyhanie
     # výpočtu a tam prázdna vrstva stačí.
+    # ---- 1. odkiaľ sa číta výška ----
+    # `dmr5` ide priamo z Drive po častiach; ostatné modely sú lokálne
+    # dlaždice, ktoré už stiahol `fetch_dem`.
+    SRC_ARGS=(--dem "$ROCK_VRT")
+    [ "$ROCK_DEM_USED" = 'dmr5' ] && SRC_ARGS=(--drive --dem-cell-m 1)
+
+    # Testovací beh a pregenerovanie sa skladu nesmú dotknúť: test počíta
+    # pár km² s inými nastaveniami a jeho časti by v sklade vyzerali ako
+    # plnohodnotné, `rocks_rebuild` zase znamená „never ničomu uloženému".
+    STORE_ARGS=()
+    [ "${OPT_TEST_KM2:-0}" != '0' ] && STORE_ARGS+=(--no-store)
+    [ "$OPT_ROCKS_REBUILD" = 'true' ] && STORE_ARGS+=(--rebuild)
+
+    # ---- 2. mriežka ----
+    # Vyberá ju `slope-chunks.py`, lebo ju musí poznať skôr, než začne
+    # počítať; `rock-areas.py` ju potom dostane hotovú. Dva výbery toho
+    # istého by sa raz rozišli a vektorizovalo by sa niečo iné, než sa
+    # počítalo.
     set +e
-    python3 workers/rock-areas.py --dem="$ROCK_VRT" --bbox="$AREA_BBOX" \
-      --res="$RR" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+    RES=$(python3 workers/slope-chunks.py --bbox="$AREA_BBOX" --res="$RR" \
+      "${SRC_ARGS[@]}" --budget-min="$ROCK_BUDGET_MIN" \
+      --chunk-cells="$ROCK_CHUNK_CELLS" --print-res)
+    RC=$?
+    set -e
+    if [ "$RC" -ne 0 ] || [ -z "$RES" ]; then
+      echo "::error::Nepodarilo sa vybrať mriežku pre skaly."
+      exit 1
+    fi
+
+    # ---- 3. sklon po častiach (sklad prežije zrušený beh) ----
+    set +e
+    python3 workers/slope-chunks.py --bbox="$AREA_BBOX" --res="$RES" \
+      "${SRC_ARGS[@]}" "${STORE_ARGS[@]}" \
+      --out="$SLOPE_STORE" --jobs="${SLOPE_JOBS:-6}" \
+      --release="${SLOPE_RELEASE:-dem-slope}" \
+      --stats=contours-out/slope-stats.txt
+    RC=$?
+    set -e
+    if [ "$RC" -ne 0 ]; then
+      echo "::error::Sklon po častiach zlyhal – skaly sa počítať nedajú."
+      exit 1
+    fi
+    SLOPE_VRT=$(sed -n 's/^vrt=//p' contours-out/slope-stats.txt)
+
+    # ---- 4. vektorizácia jedným priechodom nad celou mozaikou ----
+    set +e
+    python3 workers/rock-areas.py --slope-vrt="$SLOPE_VRT" --bbox="$AREA_BBOX" \
+      --res="$RES" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+      --dem="$ROCK_VRT" \
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
       --plne="${OPT_ROCK_PLNE:-1}" \
       --zapln-diery="${OPT_ROCK_ZAPLN_DIERY:-0}" \
       --smooth="$ROCK_SMOOTH" \
       --stats=contours-out/rock-stats.txt \
-      --chunk-cells="$ROCK_CHUNK_CELLS" --budget-min="$ROCK_BUDGET_MIN" \
+      --budget-min="$ROCK_BUDGET_MIN" \
       --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
       --out=data/rock.gpkg
     RC=$?
