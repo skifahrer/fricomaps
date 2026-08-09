@@ -117,16 +117,40 @@ bloky sťahujú do `workers/`, kde sa dajú aj spustiť ručne:
 
 | skript | čo robí | bolo |
 |---|---|---|
-| [`terrain-build.sh`](../workers/terrain-build.sh) | tieňovanie: cache → release → prepočet | 5,2 kB v YAMLe |
+| [`fetch-pbf.sh`](../workers/fetch-pbf.sh) | PBF regiónu: stiahnutie, orez, kľúč a bbox | 5,6 kB v YAMLe |
+| [`build-site.sh`](../workers/build-site.sh) | viewer + `manifest.json` do `_site` | 5,0 kB |
+| [`tiles-build.sh`](../workers/tiles-build.sh) | Planetiler → `{región}.pmtiles` s rozpočtom | 3,5 kB |
+| [`terrain-build.sh`](../workers/terrain-build.sh) | tieňovanie: cache → release → prepočet | 5,2 kB |
+| [`contours-site.sh`](../workers/contours-site.sh) | hotové vrstevnice a skaly do `_site` | **2× tá istá kópia** |
+| [`trails-build.sh`](../workers/trails-build.sh) | značené trasy → `-trails.pmtiles` | 2,9 kB |
+| [`features-build.sh`](../workers/features-build.sh) | krajinné prvky → `-features.pmtiles` | 2,8 kB |
+| [`cache-keys.sh`](../workers/cache-keys.sh) | kľúče cache pre celý build | 2,8 kB |
+| [`icons-build.sh`](../workers/icons-build.sh) | SDF sprity zo sád ikoniek | 2,6 kB |
+| [`glyphs-fetch.sh`](../workers/glyphs-fetch.sh) | glyfy k sebe na Pages | 1,3 kB |
 | [`check-site.sh`](../workers/check-site.sh) | štýl neodkazuje na nič, čo v `_site` nie je | 3,6 kB |
 | [`smoke-test.sh`](../workers/smoke-test.sh) | nasadená mapa naozaj odpovedá (a PMTiles cez `206`) | 3,2 kB |
 | [`fetch-planetiler.sh`](../workers/fetch-planetiler.sh) | Planetiler do `planetiler.jar` | **4× tá istá kópia** |
 
-Ten posledný je duplicita, nie veľkosť: Planetiler si sťahujú štyri joby
+Dokopy je z **124 KiB súbor s 90 KiB** a v YAMLe ostal graf jobov: čo od čoho
+závisí, čo je podmienené a čo si čo podáva. Bash sa číta vedľa, v súboroch,
+ktoré sa dajú spustiť lokálne.
+
+**Vytiahnutý blok potrebuje `env:`, a to je tichá chyba tohto presunu.**
+`${{ výraz }}` sa v skripte zmení na `$PREMENNÚ` a keď sa tá zabudne dopísať do
+`env:` kroku, skript nespadne – beží s prázdnym reťazcom a vyrobí prázdny bbox,
+prázdny kľúč cache alebo asset menom `ugkk-.tif`. Rovnako tiché je premenovanie
+kroku, na ktorého `id` sa odkazujú výstupy jobu. Oboje stráži `Lint workflows`
+krokom *„Skripty vo workers dostávajú svoje env"*.
+
+Dva z nich sú duplicita, nie veľkosť. Planetiler si sťahujú štyri joby
 (`tiles`, `contours`, `trails`, `features`), každý má vlastný runner a vlastnú
 cache, takže sa to spraviť raz a podať ďalej nedá. Kým to boli štyri kópie
 jedného bloku, bola to štvornásobná príležitosť, aby sa rozišli – verzia sa
-zmení na jednom mieste a tri joby ticho stavajú z inej.
+zmení na jednom mieste a tri joby ticho stavajú z inej. To isté platilo pre
+`contours-site.sh`: krok „Zaraď vrstevnice do webu" majú joby `contours`
+a `rocks` oba, lebo obidva vychádzajú z jedného výpočtu a každý si z neho berie
+svoju polovicu. Tá druhá kópia už aj prišla o všetky komentáre – presne tak sa
+kópie začínajú rozchádzať.
 
 Popri tom sa zliali dva rady takmer rovnakých vetiev: kontrola „má štýl zdroj
 `contours`/`rocks`/`trails`/`features`, a je k nemu súbor?" a to isté v smoke
