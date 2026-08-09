@@ -113,10 +113,29 @@ v secrete `GDRIVE_CREDENTIALS` (alebo po troch: `DRIVE_CLIENT`/`DRIVE_SECRET`/
 `DRIVE_REFRESH`) ho posúva rádovo vyššie. Drží ho `workers/drive-auth.py`
 (`--login` z počítača, `drive-login.yml` z telefónu – tam sa token nikde
 nevypíše, lebo log public repozitára vidí ktokoľvek; `dmr5-drive.py
---auth-check` overí), musí sa dostať do `dmr5-drive.yml` aj do jobov `contours`/`rocks`
-v `build-map.yml` – skaly z `dmr5` čítajú sklon rovno z Drive – a `Lint
-workflows` to stráži. Bez secretu sa nemení nič, len sa výslovne vypíše, že
+--auth-check` overí). Bez secretu sa nemení nič, len sa výslovne vypíše, že
 platí verejný limit.
+
+**Ten strop visí na VLASTNÍKOVI súboru, nie na tom, kto sťahuje.** Na DMR 5.0
+(naše vlastné súbory) prihlásenie strop dvíha; na cudzí priečinok zdieľaný
+odkazom – Sonny – nie, a nesmie sa tváriť, že áno (`drive-folder.py` preto
+vypíše, koľko súborov účet nevlastní). Aj tam sa ale prihlásiť oplatí: Drive
+API povie dôvod odmietnutia rovno, kým verejná cesta vráti HTTP 200 a HTML
+stránku. Proti Sonnyho stropu chráni zrkadlo v releasi, nie token.
+
+**Token sa musí dostať na všetky štyri miesta, kde sa z Drive číta** –
+`workflow_call` nededí secrets sám:
+
+| kde | čo | ako |
+|---|---|---|
+| `dmr5-drive.yml` | DMR 5.0 | `secrets: inherit` z `build-map.yml` |
+| `update-dem.yml` | Sonnyho priečinok | `secrets: inherit` z `build-map.yml` |
+| job `contours` | vrstevnice z `dmr5` | `env:` v jobe |
+| job `rocks` | sklon z `dmr5` rovno z Drive | `env:` v jobe |
+
+`Lint workflows` to stráži staticky, z oboch strán, a hlási aj nekompletnú
+trojicu secretov (polovica údajov nie je „veď tam niečo je" – `drive-auth.py`
+na nej padne).
 
 **Keď Drive nepustí, DMR 5.0 sa v tom behu nedoplní** – a nesmie to byť tiché:
 `drive-serve.py` vráti 502 s vysvetlením, beh spadne v sekundách a so zapnutým

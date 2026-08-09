@@ -155,7 +155,8 @@ limit). Preto je medzi tým **zrkadlo v releasi**:
 
 ```
 Google Drive (priečinok krajiny)
-  → gdown              stiahne celý priečinok
+  → workers/drive-folder.py   stiahne celý priečinok, prihlásene cez Drive API
+                              (bez tokenu gdown a s varovaním o limite)
   → 7z / unzip         rozbalí .zip
   → workers/dem-tiles.py   GeoTIFF (aj celá krajina v metrickej projekcii)
                            → dlaždice 1°×1° N49E019.tif vo WGS84

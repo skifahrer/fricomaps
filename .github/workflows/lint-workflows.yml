@@ -483,10 +483,16 @@ jobs:
           # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
           # v texte – inak by kontrola našla samu seba a ostatné kontroly,
           # ktoré tie isté mená spomínajú ako dáta.
-          CMD = re.compile(r"^\s*(?:python3?|bash|sh|\./)\s+\S*"
-                           r"(?:dmr5-drive|slope-chunks|contours-build)"
+          CMD = re.compile(r"^\s*(?:\w+=\$\()?(?:python3?|bash|sh|\./)\s+\S*"
+                           r"(?:dmr5-drive|slope-chunks|contours-build"
+                           r"|drive-folder)"
                            r"\.(?:py|sh)\b", re.M)
-          CALLED = "./.github/workflows/dmr5-drive" + ".yml"
+          # Workflowy, ktoré samy z Drive čítajú, takže im volajúci MUSÍ
+          # prihlásenie podať. `update-dem.yml` sem pribudol s Sonnym: jeho
+          # dlaždice sú tiež na Drive a ťahali sa anonymne, kým bol token
+          # zapojený len do cesty k DMR 5.0.
+          CALLED = ("./.github/workflows/dmr5-drive" + ".yml",
+                    "./.github/workflows/update-dem" + ".yml")
           bad = 0
 
           for path in sorted(glob.glob(".github/workflows/*.yml")):
@@ -496,13 +502,14 @@ jobs:
                   job = job or {}
                   # Volaný workflow si secret vyzdvihne sám, ale volajúci mu ho
                   # musí podať – `workflow_call` nededí nič automaticky.
-                  if job.get("uses") == CALLED:
+                  if job.get("uses") in CALLED:
+                      called = job["uses"].rsplit("/", 1)[1]
                       sec = job.get("secrets")
                       if not (sec == "inherit"
                               or (isinstance(sec, dict) and authed(sec))):
                           print(f"::error file={path}::job '{name}' volá "
-                                f"dmr5-drive.yml bez `secrets: inherit`, takže "
-                                f"doplnenie DMR 5.0 by čítalo verejným odkazom "
+                                f"{called} bez `secrets: inherit`, takže "
+                                f"doplnenie by z Drive čítalo verejným odkazom "
                                 f"s denným limitom.")
                           bad += 1
                       continue
@@ -522,14 +529,15 @@ jobs:
                       bad += 1
 
           # A druhá strana toho istého: volaný workflow to musí prijať.
-          d = yaml.safe_load(open(CALLED[2:]))
-          on = d[[k for k in d if k is True or k == "on"][0]]
-          decl = (on.get("workflow_call") or {}).get("secrets") or {}
-          if not authed(decl):
-              print(f"::error file={CALLED[2:]}::`workflow_call` nedeklaruje "
-                    f"prihlásenie na Drive ({why_not(decl)}), takže mu ho "
-                    f"volajúci nemá ako podať.")
-              bad += 1
+          for called in CALLED:
+              d = yaml.safe_load(open(called[2:]))
+              on = d[[k for k in d if k is True or k == "on"][0]]
+              decl = (on.get("workflow_call") or {}).get("secrets") or {}
+              if not authed(decl):
+                  print(f"::error file={called[2:]}::`workflow_call` "
+                        f"nedeklaruje prihlásenie na Drive ({why_not(decl)}), "
+                        f"takže mu ho volajúci nemá ako podať.")
+                  bad += 1
           print(f"prihlásenie na Drive: {bad} chýb")
           sys.exit(1 if bad else 0)
           PY

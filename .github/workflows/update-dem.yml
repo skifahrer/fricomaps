@@ -117,6 +117,20 @@ on:
         required: false
         default: false
         type: boolean
+    # Prihlásenie na Drive – `workflow_call` nededí secrets automaticky, takže
+    # bez tejto deklarácie by ich volajúci nemal ako podať a Sonny by sa ťahal
+    # anonymne. Dva tvary toho istého: všetko v jednom (GDRIVE_CREDENTIALS),
+    # alebo po troch. Nič nie je povinné – bez tokenu sa nemení nič, len sa
+    # výslovne vypíše, že platí verejný limit.
+    secrets:
+      GDRIVE_CREDENTIALS:
+        required: false
+      DRIVE_CLIENT:
+        required: false
+      DRIVE_SECRET:
+        required: false
+      DRIVE_REFRESH:
+        required: false
 
 permissions:
   contents: write
@@ -128,6 +142,15 @@ jobs:
       # Sonny distribuuje cez Google Drive a priečinok sa nemení – nemá čo
       # zaberať pole vo formulári. Iný priečinok sa dá dať cez `custom_url`.
       SONNY_DRIVE_FOLDER: https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa
+      # Token vlastníka dát. Na súbory, ktoré ten účet naozaj vlastní, dvíha
+      # denný strop sťahovania rádovo; na cudzí zdieľaný priečinok (Sonny) nie
+      # – tam z anonymnej požiadavky spraví aspoň pomenovanú a hlavne dovolí
+      # čítať cez Drive API, ktoré odmietnutie povie rovno, namiesto HTML
+      # stránky s HTTP 200. Rozpis vo `workers/drive-folder.py`.
+      GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+      DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     timeout-minutes: 90
     steps:
       - name: Checkout
@@ -206,6 +229,11 @@ jobs:
           set -uo pipefail
           mkdir -p dl
 
+          # Čím sa to naozaj stiahlo, ide do súhrnu. Rovnaké pravidlo ako pri
+          # `dem-source.txt`: keď sa použije náhradná cesta, musí to byť vidieť
+          # – inak sa tichý návrat k verejnému limitu zistí až o pol dňa.
+          DRIVE_MODE="priame URL (mimo Drive)"
+
           URLS='${{ steps.src.outputs.url }}'
           if [ -n "${URLS//[[:space:]]/}" ]; then
             # Priame URL (napr. mirror) majú prednosť – Drive vie limitovať.
@@ -217,20 +245,44 @@ jobs:
           else
             FOLDER="${SONNY_DRIVE_FOLDER}"
             echo "Sťahujem Google Drive priečinok: $FOLDER"
-            # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
-            # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
-            # neexistuje (a limit tiež nie), takže sa pridáva len ak ho daná
-            # verzia pozná.
-            REMAINING=""
-            gdown --help 2>&1 | grep -q -- --remaining-ok && REMAINING="--remaining-ok"
-            gdown --folder $REMAINING --no-cookies -O dl "$FOLDER" || {
-              echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí skús o pár hodín neskôr, alebo vyplň input direct_urls (mirror)."
-              exit 1
-            }
+            # „Vieme sa prihlásiť?" má JEDNU odpoveď a je vo `workers/
+            # drive-folder.py --mode`. Nezisťuje sa to tu z toho, či je
+            # nastavený secret: to by boli dve miesta, ktoré si tú istú vec
+            # počítajú samy, a nekompletná trojica by tadiaľ prešla ako
+            # „veď tam niečo je" (`from_env` ju správne odmieta).
+            #
+            # `|| exit 1` je tu podstatné: krok beží bez `set -e`, takže bez
+            # neho by neúplná trojica secretov (na ktorej `--mode` padne)
+            # vyšla ako prázdny reťazec a beh by ticho prepadol do vetvy
+            # s verejným limitom – čiže presne to, čomu sa vyhýbame.
+            MODE=$(python3 workers/drive-folder.py --mode) || exit 1
+            if [ "$MODE" = "auth" ]; then
+              DRIVE_MODE="Drive API, prihlásený ako vlastník tokenu"
+              python3 workers/drive-folder.py --folder="$FOLDER" --out=dl || exit 1
+            else
+              DRIVE_MODE="**verejný odkaz (neprihlásene)** – platí denný limit"
+              # Bez tokenu sa nemení nič oproti stavu spred prihlásenia – ale
+              # nesmie to byť tiché. Verejný odkaz má denný strop sťahovania
+              # na súbor a ten zdieľajú všetci, kto naň siahnu; keď sa vyčerpá,
+              # Drive vráti HTTP 200 a HTML stránku namiesto dát.
+              echo "::warning::Sťahujem z Google Drive NEPRIHLÁSENE – platí verejný denný limit sťahovania, zdieľaný so všetkými klientmi. Doplň secrety DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH (workflow „Prihlásenie na Drive (jednorazové)“) a pôjde to cez Drive API."
+              # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
+              # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
+              # neexistuje (a limit tiež nie), takže sa pridáva len ak ho daná
+              # verzia pozná.
+              REMAINING=""
+              gdown --help 2>&1 | grep -q -- --remaining-ok && REMAINING="--remaining-ok"
+              gdown --folder $REMAINING --no-cookies -O dl "$FOLDER" || {
+                echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí sa prihlás (secrety DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH), skús o pár hodín neskôr, alebo vyplň custom_url odkazom na mirror."
+                exit 1
+              }
+            fi
           fi
 
           find dl -type f | head -100
           echo "Stiahnutých súborov: $(find dl -type f | wc -l)"
+          echo "Cesta k dátam: $DRIVE_MODE"
+          echo "drive_mode=$DRIVE_MODE" >> "$GITHUB_OUTPUT"
 
       - name: Rozbaľ archívy a preveď na GeoTIFF dlaždice
         id: convert
@@ -502,6 +554,12 @@ jobs:
             echo "| release | \`${{ steps.src.outputs.release }}\` |"
             echo "| URL | ${{ steps.src.outputs.url }} |"
           } >> "$GITHUB_STEP_SUMMARY"
+          # Sonny leží na Drive, takže „ako sa k nemu beh dostal" je súčasť
+          # výsledku, nie detail v logu.
+          if [ -n '${{ steps.fetch.outputs.drive_mode }}' ]; then
+            echo "| cesta k dátam | ${{ steps.fetch.outputs.drive_mode }} |" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
           # Čítať `key=value`, NIE `source`. Hodnoty nie sú shell kód:
           # `crs=S-JTSK / Krovak East North` sa pri `.` vykoná ako príkaz `/`
           # a shell skončí so 126 („Is a directory"). Presne toto zhodilo beh

@@ -340,6 +340,9 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
+    # Sonny chodí z Google Drive: bez tokenu by sa ťahal anonymne a platil by
+    # naň verejný denný limit. `workflow_call` nededí secrets sám.
+    secrets: inherit
     with:
       what: ${{ needs.check-dem.outputs.mirror_contours }}
       area: ${{ inputs.area }}
@@ -355,6 +358,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
+    secrets: inherit                      # Drive, ako vyššie
     with:
       what: ${{ needs.check-dem.outputs.mirror_rocks }}
       area: ${{ inputs.area }}
@@ -367,6 +371,7 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/update-dem.yml
+    secrets: inherit                      # Drive, ako vyššie
     with:
       what: ${{ needs.check-dem.outputs.mirror_terrain }}
       area: ${{ inputs.area }}
