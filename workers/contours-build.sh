@@ -53,6 +53,25 @@ if [ "$AREA_KEY" != "cely" ]; then
   IFS=, read -r W S E N <<< "$AREA_BBOX"
 fi
 
+# ---------- ktorá polovica ----------
+# Vrstevnice a skaly sú DVA SAMOSTATNÉ JOBY (viď build-map.yml), ale jeden
+# skript: obe polovice stoja na tom istom výreze, tom istom DEM a tom istom
+# rozpočte, takže dve kópie by sa časom rozišli. Čo sa má počítať, hovorí
+# `ONLY` – a keďže sa každá polovica gatuje premennou, ktorú si už skript
+# aj tak čítal, nie je to nová vetva, len jej vypnutie.
+#
+# Prečo dva joby: kým to bol jeden, z „Vrstevnice a skaly" trvajúceho 14 minút
+# sa nedalo povedať, ktorá polovica ten čas žerie – a strop času platí na job,
+# takže pomalé skaly vzali so sebou aj hotové vrstevnice.
+ONLY="${ONLY:-all}"
+case "$ONLY" in
+  contours) OPT_ROCK_DEM=""; OPT_ROCKS=false ;;
+  rocks)    OPT_CONTOUR_LINES=false ;;
+  all)      ;;
+  *) echo "::error::ONLY musí byť 'contours', 'rocks' alebo 'all' (dostal '$ONLY')."; exit 1 ;;
+esac
+echo "Táto polovica: $ONLY"
+
 # ---------- výškové modely ----------
 # Sťahovanie DEM je v samostatnom skripte – potrebuje ho aj job
 # s tieňovaním a dve kópie by časom zaostali jedna za druhou.
@@ -515,16 +534,24 @@ pmtiles_do_rozpoctu() { # $1 schéma $2 výstup $3 maxzoom $4 strop MB $5 dno $6
 }
 
 T_PM=$(date +%s)
-pmtiles_do_rozpoctu workers/contours.yml contours-out/contours.pmtiles \
-  "$CZ" "$CBUDGET_MB" 10 "Vrstevnice" \
-  "zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
-CZ="$PM_Z"
+# Balí sa len tá polovica, ktorú tento job počítal. Druhá má vlastný job
+# a vlastný `.pmtiles`; keby sa tu vyrobil prázdny, prepísal by v deploy
+# ten skutočný, ktorý prišiel z toho druhého (a mapa by ticho prišla
+# o vrstvu, ktorá sa spočítala správne).
+if [ "$ONLY" != 'rocks' ]; then
+  pmtiles_do_rozpoctu workers/contours.yml contours-out/contours.pmtiles \
+    "$CZ" "$CBUDGET_MB" 10 "Vrstevnice" \
+    "zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
+  CZ="$PM_Z"
+fi
 
-pmtiles_do_rozpoctu workers/rocks.yml contours-out/rocks.pmtiles \
-  "$RZ" "$RBUDGET_MB" 12 "Skaly" \
-  "zvýš rock_min_area alebo zmenši výrez."
-RZ="$PM_Z"
-echo "$RZ" > contours-out/rock-maxzoom.txt
+if [ "$ONLY" != 'contours' ]; then
+  pmtiles_do_rozpoctu workers/rocks.yml contours-out/rocks.pmtiles \
+    "$RZ" "$RBUDGET_MB" 12 "Skaly" \
+    "zvýš rock_min_area alebo zmenši výrez."
+  RZ="$PM_Z"
+  echo "$RZ" > contours-out/rock-maxzoom.txt
+fi
 
 # Skutočne použitý maxzoom si odloží aj cache, nech štýl vie, po
 # ktorý zoom vrstevnice naozaj existujú. To isté platí pre zdroj
