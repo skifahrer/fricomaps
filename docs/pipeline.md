@@ -688,9 +688,33 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
 - **Počas výpočtu je vidieť, čo sa deje.** Pri počítaní sklonu ide po každej
   časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky;
   `gdal_contour` hlási percentá a nezávisle od neho beží *tep* každých 30 s
-  (`ROCK_HEARTBEAT_S`) s časom behu, pamäťou procesu a miestom na disku.
-  Predtým bola vektorizácia hodinu a pol úplne ticho a z logu sa nedalo
-  odlíšiť „počíta" od „zaseklo sa".
+  (`ROCK_HEARTBEAT_S`). Ten hovorí, **prečo** to trvá, nie len že to trvá:
+
+  ```
+  … gdal_contour: beží 0:05:30, pamäť 0.2 GB, CPU 99 %, disk +0/+12 MB,
+    výstup 0 MB, podľa 20 % skončí o ~0:22:00
+  ```
+
+  `CPU %` rozlíši „počíta" od „visí na I/O" – pri 99 % pomôže len menej práce,
+  pri 0 % je problém inde. `disk +čítané/+zapísané` ukáže, či sa vôbec hýbe.
+  A **odhad konca je z nameraných percent**, nie z konštanty: tá sa pri
+  `gdal_contour` mýlila aj 78× a odhad „0:00:19" pred behom, ktorý trval
+  štvrť hodiny, je horší než žiadny.
+- **Rozpočet sa stráži aj na nameranom čase.** `ROCK_BUDGET_MIN` (default
+  100 min) sa dovtedy kontroloval len ako odhad *pred* spustením – a keďže
+  odhad stojí na tej istej rozbitej konštante, prepustil čokoľvek. Teraz sa
+  zvyšok rozpočtu podáva tepu ako `max_s`, takže beh, ktorý sa doňho nezmestí,
+  zastaví sám seba s hláškou, čo zmenšiť. Sklon v sklade pritom ostáva.
+- **Mozaika sa pred vektorizáciou oreže na územie.** Sklad má **absolútnu**
+  mriežku častí – to je jeho zmysel, lebo tá istá zem tak padne vždy do tej
+  istej časti a časti sa dajú znovu použiť. Mozaika je potom ale zjednotenie
+  CELÝCH častí, nie územia: pri strane časti 4 096 m môže 2 km² štvorec
+  pretínať štyri z nich, čiže **67 miliónov buniek namiesto dvoch**.
+  `gdal_contour` toľko aj vektorizoval a plochy navyše nikto neorezal – končili
+  v mape mimo výrezu, ktorý si beh vypýtal. Reže sa VRT, nie dáta (zápis do
+  XML, nie kopírovanie rastra), takže to stojí milisekundy a časti v sklade
+  ostávajú nedotknuté. Spolu s mriežkou vyššie je to na tom teste **34× menej
+  práce**: 25 min → necelá minúta.
 - **Časti mimo územia sa preskočia.** EPSG:3035 je pootočená voči poludníkom,
   takže obdĺžnik opísaný bboxu je v metroch väčší než región – pri Prešovskom
   kraji 208×111 km namiesto 200×82 km. Časti, ktoré do bboxu vôbec
@@ -700,18 +724,28 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   runnera na OOM, po ktorom v logu nie je nič.
 - **Aký je to detail a kto ho vyberá.** `rock_res: auto` (default) nechá
   mriežku vybrať `rock-areas.py`: zoberie najjemnejšiu z rebríčka
-  0,5 / 1 / 1,5 / 2 / 3 / 4 / 5 / 8 / 10 / 15 / 20 m, ktorá naraz
+  1 / 1,5 / 2 / 3 / 4 / 5 / 8 / 10 / 15 / 20 m, ktorá naraz
 
   1. **sa zmestí do rozpočtu času** (`ROCK_BUDGET_MIN`, default 100 min) – to
      je ten istý odhad, ktorý inak beh zastaví, len použitý dopredu, a
   2. **má pri danom DEM ešte zmysel** – dolný strop je desatina bunky
-     zdrojového modelu, najmenej 0,5 m.
+     zdrojového modelu, najmenej 1 m.
 
   Ten druhý strop je dôležitejší, než sa zdá: **Sonny má pre Slovensko bunku
   ~20 m**, takže pri ňom auto vždy skončí na 2 m. Jemnejšia mriežka by len
   interpolovala medzi tými istými výškami – stála by štvornásobok času a
   nepridala ani jeden nový tvar terénu. Reálny skok v detaile prinesie až iný
-  zdroj (`rock_source: dmr5` s výrezom, 1 m LiDAR → auto ide na 0,5 m).
+  zdroj (`rock_source: dmr5` s výrezom, 1 m LiDAR → auto ide na 1 m).
+
+  > **Ten absolútny strop bol 0,5 m a pri DMR 5.0 to bola chyba.** Model má
+  > bunku 1 m, takže z `max(0.5, 0.1)` vyšlo 0,5 m – dvojnásobné
+  > prevzorkovanie v každej osi, čiže štvornásobok buniek bez jediného nového
+  > metra terénu. Pixel dlaždice má pri z16 (kam skaly idú) 1,57 m a pri z18
+  > 0,39 m, takže tá polovica metra nie je vidieť ani teoreticky – zaplatila sa
+  > ale plnou cenou. [Beh 31334778253](https://github.com/skifahrer/fricomaps/actions/runs/31334778253)
+  > strávil na **2 km²** štvrť hodiny a nedošiel ani do tretiny. Hladší obrys,
+  > kvôli ktorému to prevzorkovanie bolo, robia `--simplify` a `--smooth`
+  > (Chaikin) za zlomok ceny: zaoblujú hotové čiary, nie milióny buniek navyše.
 
   Výber sa celý vypíše do logu, aj s tým, koľko by ktorá mriežka trvala.
   Namiesto čísla sa dá `rock_res` zadať aj natvrdo – je to voľba, nie input

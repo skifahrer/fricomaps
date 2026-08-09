@@ -65,6 +65,38 @@ def proc_rss_mb(pid):
     return 0.0
 
 
+def proc_cpu_s(pid):
+    """Koľko sekúnd procesor tomu procesu naozaj venoval.
+
+    Toto je tá otázka, na ktorú „beží 7 minút, pamäť 0,2 GB" neodpovedá:
+    POČÍTA sa, alebo sa ČAKÁ? Keď je CPU blízko 100 %, je to výpočet a treba
+    zmenšiť prácu; keď je blízko nule, visí to na I/O alebo na sieti a
+    zmenšovanie územia nepomôže.
+    """
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            # 14. a 15. pole sú utime a stime v tikoch; meno procesu môže
+            # obsahovať medzery a zátvorky, tak sa reže až za poslednou `)`.
+            polia = f.read().rpartition(")")[2].split()
+        tiky = int(polia[11]) + int(polia[12])
+        return tiky / os.sysconf("SC_CLK_TCK")
+    except (OSError, IndexError, ValueError):
+        return 0.0
+
+
+def proc_io_mb(pid):
+    """(prečítané, zapísané) MB – rozlíši „čítam raster" od „nerobím nič"."""
+    try:
+        vals = {}
+        with open(f"/proc/{pid}/io") as f:
+            for line in f:
+                k, _, v = line.partition(":")
+                vals[k] = int(v)
+        return vals.get("read_bytes", 0) / 1048576, vals.get("write_bytes", 0) / 1048576
+    except (OSError, ValueError):
+        return 0.0, 0.0
+
+
 class Heartbeat(threading.Thread):
     """Každých `every` sekúnd povie, že sa stále niečo deje – a čo."""
 
@@ -77,6 +109,14 @@ class Heartbeat(threading.Thread):
         self.stop_flag = threading.Event()
         self.killed_for_memory = False
         self.killed_for_time = False
+        # Posledné percento, ktoré GDAL nahlásil, a kedy. Dopĺňa to `run_watched`
+        # a tep z toho počíta odhad konca – jediné číslo, ktoré počas
+        # dlhého behu naozaj zaujíma.
+        self.pct = 0
+        self.pct_at = self.t0
+        self._last_cpu = 0.0
+        self._last_t = self.t0
+        self._last_io = (0.0, 0.0)
 
     def run(self):
         while not self.stop_flag.wait(self.every):
@@ -90,8 +130,31 @@ class Heartbeat(threading.Thread):
             rss = proc_rss_mb(self.pid) if self.pid else 0
             if rss:
                 parts.append(f"pamäť {rss / 1024:.1f} GB")
+
+            # POČÍTA, ALEBO ČAKÁ? Bez tohto sa z tepu nedá povedať nič o tom,
+            # prečo to trvá – len že to trvá.
+            if self.pid:
+                cpu = proc_cpu_s(self.pid)
+                teraz = time.time()
+                if cpu:
+                    podiel = 100 * (cpu - self._last_cpu) / max(teraz - self._last_t, 1e-6)
+                    parts.append(f"CPU {podiel:.0f} %")
+                    self._last_cpu, self._last_t = cpu, teraz
+                r, w = proc_io_mb(self.pid)
+                dr, dw = r - self._last_io[0], w - self._last_io[1]
+                if dr or dw:
+                    parts.append(f"disk +{dr:.0f}/+{dw:.0f} MB")
+                    self._last_io = (r, w)
+
             if self.tmp and os.path.exists(self.tmp):
                 parts.append(f"výstup {dir_mb(self.tmp):.0f} MB")
+
+            # Odhad konca z NAMERANÉHO postupu, nie z konštanty vopred.
+            # Konštanta sa mýli aj osemdesiatnásobne (`gdal_contour` nad
+            # jemným sklonom); percentá z bežiaceho procesu nie.
+            if 0 < self.pct < 100:
+                celkom = beh / (self.pct / 100.0)
+                parts.append(f"podľa {self.pct} % skončí o ~{hms(celkom - beh)}")
             print(f"  … {self.label}: {', '.join(parts)}", flush=True)
             if self.max_rss_mb and rss > self.max_rss_mb:
                 self.killed_for_memory = True
@@ -158,7 +221,13 @@ def run_watched(cmd, label, tmp=None, max_rss_mb=0, every=30, max_s=0):
                 # ako „1" a „10", a to nie je krok späť na 10 %.
                 if pct > last and pct % 10 == 0 and pct <= 100:
                     last = pct
-                    print(f"  … {label}: {pct} % (beží {hms(time.time() - t0)})",
+                    beh = time.time() - t0
+                    # Tepu sa to podá, aby vedel dopočítať odhad aj medzi
+                    # desiatkami – pri pomalom behu je medzi nimi aj pol hodiny.
+                    hb.pct, hb.pct_at = pct, time.time()
+                    zvysok = (f", zostáva ~{hms(beh / (pct / 100.0) - beh)}"
+                              if 0 < pct < 100 else "")
+                    print(f"  … {label}: {pct} % (beží {hms(beh)}{zvysok})",
                           flush=True)
     finally:
         proc.wait()
