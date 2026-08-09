@@ -395,6 +395,13 @@ teda systematicky nájde severozápadné steny a systematicky prehliadne
 juhovýchodné. Preto je to jedna z možností vo výbere `rock_source`
 (`tienovanie`) a nie náhrada skál počítaných zo sklonu.
 
+**Najtenšie vlákna siete skala nie sú.** Prah nájde aj vlásočnicové ryhy
+a mikrotiene cez celý svah. Vektorizáciou sa z nich stane jeden prepojený
+polygón cez celý výrez a v mape z neho pri z14 a nižšie nie je sieť, ale
+**rovnomerná sivá deka**. Zahadzuje ich `open` (default 3 m) – podľa ŠÍRKY,
+nie podľa plochy, lebo celá sieť je jeden veľký útvar a `min_area` na ňu
+nesiaha. Namerané pri Gerlachu: 21,6 % plochy bez neho, **9,5 %** s ním.
+
 **Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
 skala; stena v presvetlenej doline býva svetlejšia než tráva vedľa. Prah sa
 preto skladá z troch:
@@ -565,12 +572,14 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 | skaly z tieňovania, nech to trvá koľko chce | `rock_source: tienovanie` |
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
+| aj najtenšie ryhy ako skalu (sivá deka pri z14) | `options: rock_img_options="open=0"` |
+| len výrazné steny | `options: rock_img_options="open=6"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
 | len rýchlo overiť, či to vôbec niečo nájde | switch `test` (predvolene zapnutý, viď nižšie) |
 
 ### Rýchly test: pár km² namiesto celého pohoria
 
-Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec so 4 km²**
+Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
 a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
 celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
 kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
@@ -580,7 +589,7 @@ jeden beh a nie za jeden obed.
 Opačné poradie znamenalo, že sa každé ladenie prahu platilo desiatkami minút,
 kým si niekto spomenul dopísať voľbu do textového poľa — a to je práve tá
 vec, ktorá sa preklikáva pri každom behu. Veľkosť štvorca sa naopak mení
-zriedka, tak ostala voľbou (`options: test_km2=2`). Za miesto vo formulári
+zriedka, tak ostala voľbou (`options: test_km2=5`). Za miesto vo formulári
 zaplatila mriežka `rock_res`, ktorá sa prestavuje len s iným zdrojom výšok;
 je z nej tiež voľba (`options: rock_res=1`).
 
@@ -589,10 +598,10 @@ testom sa oreže celý región, takže je ten štvorec bboxom regiónu v manifes
 a mapa sa naň nastaví ako na hocijaký iný región. Navrch viewer zahodí polohu
 z adresy (`#map=…`), keď mieri mimo nasadeného bboxu — inak by `F5` alebo
 starý odkaz otvorili mapu nad prázdnom dvadsať kilometrov vedľa a vyzeralo by
-to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 4 km²`,
+to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 2 km²`,
 nech sa pár km² mapy nedá zameniť s pokazeným buildom.
 
-Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
+Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
 **Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
@@ -601,6 +610,10 @@ to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastave
 aj otlačok skriptov, ale nie všetko, a pár km² prepočítať stojí minúty, kým
 jedno takto stratené kolo ladenia stojí viac. Cache ostrého behu je pritom
 v bezpečí: v kľúči je bbox a ten je pri teste bboxom testovacieho štvorca.
+Platí to aj pre skaly z tieňovania – tá podpipeline dostane `fresh=1`, takže
+nenadviaže na rozrobené obrysy z minulého behu. Zo stiahnutých **vstupov**
+(PBF, DEM dlaždice, JPG dlaždice tieňovania, Planetiler, glyfy) sa nezahadzuje
+nič: nie sú to výsledky a v kľúči majú dátum alebo otlačok zdroja.
 
 Beh do súhrnu vypíše, kde ten štvorec je:
 
@@ -693,8 +706,8 @@ sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
 
 Platí pre **vrstevnice, skaly aj tieňovanie** – všetko sa počíta z toho istého
 modelu, nech obrys skaly, priebeh vrstevnice a tieň pod nimi sedia na tom istom
-teréne. (Výnimka je `ugkk`: 1 m LiDAR máme len na výrez, ale tieňovanie
-potrebuje celý región, takže tam ostáva Sonny.)
+teréne. (Pri `dmr5` s vyplneným výrezom to platí tiež, len tieňovanie sa robí
+na celý región, takže tam vyjde jeho 5 m podoba.)
 
 > **Dlaždice sú vo WGS84, nie v S-JTSK.** Zdrojový ZIP je v *S-JTSK / Krovak
 > East North* — to hlási súhrn ako „CRS zdroja“ — ale `fetch-dem-open.py` ho
@@ -1077,8 +1090,8 @@ plus curl.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
 vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.
-Build to preto odmietne **v prvej minúte**, v prípravnom jobe, nie po hodine
-sťahovania. Preto ide `ugkk` ruka v ruke s inputom `area`:
+Preto si `dmr5` podobu vyberá podľa rozsahu: s vyplneným `area` ide plné 1 m,
+bez neho dlaždice na 5 m. Nie je to teda čo zakázať, ale čo dopočítať:
 
 | výrez | plocha | 1 m raster (Float32) |
 |---|--:|--:|
@@ -1491,7 +1504,11 @@ a kosodrevina odlíšená od lúky (`landcover subclass=scrub/heath/fell`).
 ### Ovládanie
 
 Vo workflowe: `options: features=false` (vypnutie) a `features_maxzoom`
-(default 14). V mape sa prvky vypínajú prepínačom **Krajinné prvky**
+(default 15). Nižšia hodnota nie je zakázaná, ale **ticho zahodí** triedy
+s vyšším `min_zoom` – Planetiler o tom nepovie nič, preto na to job
+upozorní varovaním. Pri z14 takto chýbali ploty, živé ploty, geodetické body
+a hraničné kamene; z15 stojí 1,6× väčší súbor (nameraná Andorra: 248 kB →
+394 kB), čo sú pri jednotkách MB drobné. V mape sa prvky vypínajú prepínačom **Krajinné prvky**
 v paneli ⚙. Vrstvy sú v developer móde v skupine **Krajinné prvky (mimo
 schémy)**, farby v rovnomennej skupine palety. Job sa **necachuje** a beží
 súbežne so všetkým ostatným; podiel na rozpočte stránky je
@@ -1816,17 +1833,17 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
-   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
-   | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
+   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 2 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
+   | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
-   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=2`, mriežka na obrys skál `rock_res=1`) |
+   | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
    **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké
-   Tatry, rýchly test na 4 km². Formulár *Run workflow* sa totiž po každom
+   Tatry, rýchly test na 2 km². Formulár *Run workflow* sa totiž po každom
    otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
    pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
    prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než
@@ -1836,7 +1853,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    **Prečo je vo formulári `test` a nie `rock_res`.** Polí je desať a je to
    strop, takže sa dá pridať len to, za čo niečo vypadne. Rýchly test sa
    zapína a vypína pri každom behu — to je switch. Jeho veľkosť aj mriežka na
-   obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=2`,
+   obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=5`,
    `rock_res=1`); mriežku navyše `auto` vyberie z bunky DEM a rozpočtu času
    lepšie, než sa háda ručne.
 
@@ -1849,8 +1866,8 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    (jediná vrstva bez výberu zdroja, ide z toho istého PBF ako mapa) sa
    vypínajú cez `options: trails=false`.
 
-   `ugkk` v tieňovaní zámerne nie je: 1 m LiDAR máme len na výrez, kým
-   tieňovanie sa robí vždy na celý región. Zoznamy vo formulári stráži
+   `dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber: s vyplneným
+   `area` plné 1 m, bez neho dlaždice na 5 m. Zoznamy vo formulári stráži
    `Lint workflows` proti [workers/dem-sources.json](workers/dem-sources.json)
    – zdroj sa nedá pridať do jedného a zabudnúť v druhom.
 

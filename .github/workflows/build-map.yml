@@ -36,8 +36,10 @@ on:
           - banskobystricky
           - presovsky
           - kosicky
+      # Celý kraj trvá ~40 min, jedno pohorie ~2. Ešte rýchlejší je switch
+      # `test` pod týmto. Vlastný bbox: `options: area_bbox=W,S,E,N`.
       area:
-        description: "TESTOVACÍ VÝREZ – vrstevnice aj skaly len na tomto pohorí (celý kraj trvá ~40 min, jedno pohorie ~2). Ešte rýchlejší je switch test pod týmto. Vlastný bbox cez options: area_bbox=W,S,E,N"
+        description: "Pohorie, na ktorom sa počítajú vrstevnice a skaly"
         required: false
         default: vysoke_tatry
         type: choice
@@ -58,16 +60,20 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
-      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (4 km² sedia skoro
+      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (2 km² sedia skoro
       # vždy), kým test sa zapína a vypína pri každom behu – a to je presne
       # rozdiel medzi switchom a textovým poľom. Veľkosť ostala ako voľba
       # `test_km2=2`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
       # odškrtnúť – opačné poradie znamenalo, že sa každé ladenie prahu
       # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
-      # Kľúč testovacieho behu má príponu `_test4`, takže si nesadne do cache
+      # Kľúč testovacieho behu má príponu `_test2`, takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
+      # Spraví VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci zo
+      # stredu výrezu – z desiatok minút sú minúty a mapa sa otvorí rovno
+      # tam. Iná veľkosť: `options: test_km2=5`. Iné miesto:
+      # `options: test_at=lon,lat`.
       test:
-        description: "RÝCHLY TEST – spraviť VŠETKO (vrstevnice, skaly aj tieňovanie) len na štvorci 4 km² zo stredu výrezu: z desiatok minút sú minúty a mapa sa otvorí rovno tam. Iná veľkosť cez options: test_km2=2, iné miesto cez options: test_at=lon,lat"
+        description: "Rýchly test: počítať len 2 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -78,8 +84,12 @@ on:
       # zapínač je tým pádom v tom istom poli ako zdroj a nie vedľa neho,
       # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
       # Zoznam zdrojov drží workers/dem-sources.json (stráži to Lint workflows).
+      # sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m.
+      # dmr5 = ÚGKK DMR 5.0 (LiDAR): s vyplneným `area` plné 1 m, bez neho
+      # dlaždice na 5 m. Rozhoduje rozsah, nie ďalší výber: pri 1 m má jedna
+      # 1° dlaždica ~48 GB a strop assetu 2 GB.
       contour_source:
-        description: "VRSTEVNICE – z ktorého modelu terénu. sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m. dmr5 = ÚGKK DMR 5.0 (LiDAR) – s výrezom 1 m, na celý región 5 m. ziadne = negenerovať"
+        description: "Vrstevnice – z ktorého modelu terénu (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -88,8 +98,13 @@ on:
           - dmr35
           - dmr5
           - ziadne
+      # Buď zo sklonu výškového modelu (sonny / dmr35 / dmr5), alebo
+      # `tienovanie` = hotové polygóny z workflowu „Skaly z tieňovaných
+      # dlaždíc“ – ten si build v prípade potreby zavolá sám.
+      # Na skaly je `dmr5` s `area` najlepšie, čo máme – mriežka zdroja
+      # stropuje skutočný detail obrysu.
       rock_source:
-        description: "SKALY – zo sklonu ktorého modelu (sonny / dmr35 / dmr5; dmr5 s výrezom je 1 m a na skaly najlepší), alebo tienovanie = hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc“. ziadne = negenerovať"
+        description: "Skaly – zo sklonu modelu, alebo z tieňovania (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -99,8 +114,9 @@ on:
           - dmr5
           - tienovanie
           - ziadne
+      # Tieňovanie je vždy na celý región, takže tu `dmr5` vyjde na 5 m.
       shading_source:
-        description: "TIEŇOVANIE A 3D TERÉN – z ktorého modelu. Robí sa vždy na celý región, takže dmr5 je tu vždy 5 m. ziadne = negenerovať"
+        description: "Tieňovanie a 3D terén – z ktorého modelu (ziadne = negenerovať)"
         required: false
         default: sonny
         type: choice
@@ -110,17 +126,20 @@ on:
           - dmr5
           - ziadne
       contour_interval:
-        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie, 20 = redšie). Každá 10. sa kreslí ako hlavná, každá 5. ako polovičná"
+        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie)"
         required: false
         default: "10"
         type: string
       rock_slope:
-        description: "Od akého sklonu (°) je terén skala – 50 = steny, 40 = aj strmé svahy (oveľa väčšie plochy)"
+        description: "Od akého sklonu (°) je terén skala (50 = steny, 40 = aj strmé svahy)"
         required: false
         default: "50"
         type: string
+      # Zmaže cache aj uloženú verziu v release. Pri zapnutom switchi `test`
+      # sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto
+      # pole je vtedy jedno.
       rebuild:
-        description: "Čo pregenerovať nanovo (zmaže cache aj uloženú verziu). Pri zapnutom switchi test sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto pole je vtedy jedno"
+        description: "Čo pregenerovať nanovo, aj keď to už je v cache"
         required: false
         default: nic
         type: choice
@@ -130,8 +149,13 @@ on:
           - skaly
           - teren
           - vsetko
+      # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
+      # Veľkosť rýchleho testu: `test_km2=5` (default 2).
+      # Mriežka na obrys skál: `rock_res=1` (default auto).
+      # Celý zoznam aj s predvolenými hodnotami je vo workers/parse-options.py
+      # a neznámy kľúč je chyba, nie ticho ignorovaná hodnota.
       options:
-        description: "Zriedka menené nastavenia ako kľúč=hodnota, napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`. Veľkosť rýchleho testu: `test_km2=2` (default 4). Mriežka na obrys skál: `rock_res=1` (default auto). Zoznam kľúčov je vo workers/parse-options.py"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota (viď workers/parse-options.py)"
         required: false
         default: ""
         type: string
@@ -455,7 +479,14 @@ jobs:
       # toho istého sa raz rozídu. Rozísť sa tu znamená skaly mimo mapy.
       area: ${{ needs.plan.outputs.test_km2 != '0' && needs.plan.outputs.area_bbox || inputs.area }}
       zoom: ${{ needs.plan.outputs.opt_rock_img_zoom }}
-      options: ${{ needs.plan.outputs.opt_rock_img_options }}
+      # Rýchly test nepoužije nič z cache – vrátane TEJTO podpipeline. Sama
+      # si totiž odkladá rozrobené obrysy a bez `fresh=1` by na ne nadviazala,
+      # takže by si po zmene prahu dostal polovicu starého výsledku a polovicu
+      # nového. Vlastné `rock_img_options` to vedia prebiť (`fresh=0`) – tokeny
+      # sa spracúvajú zľava doprava a posledná hodnota vyhráva.
+      # Stiahnuté JPG dlaždice sa nezahadzujú: to sú vstupné dáta z cudzieho
+      # (dobrovoľníckeho) servera, nie výsledok výpočtu.
+      options: ${{ needs.plan.outputs.test_km2 != '0' && format('fresh=1 {0}', needs.plan.outputs.opt_rock_img_options) || needs.plan.outputs.opt_rock_img_options }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
@@ -710,7 +741,7 @@ jobs:
           # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
           CROP='${{ steps.opts.outputs.opt_crop_bbox }}'
 
-          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) je to isté
+          # RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) je to isté
           # orezanie, len bbox nezadávaš ty – vyreže sa štvorec zo stredu
           # zvoleného výrezu. Orezaním REGIÓNU (a nie len výrezu) sa zmenší
           # úplne všetko: vrstevnice, skaly aj tieňovanie, ktoré sa inak
@@ -1661,8 +1692,16 @@ jobs:
 
           # ---- 2. dlaždice ----
           FZ='${{ needs.plan.outputs.opt_features_maxzoom }}'
-          case "$FZ" in ''|*[!0-9]*) FZ=14 ;; esac
+          case "$FZ" in ''|*[!0-9]*) FZ=15 ;; esac
           if [ "$FZ" -gt 16 ]; then FZ=16; fi
+
+          # Poistka proti tichej strate: čo má v schéme `min_zoom` nad
+          # maxzoomom, Planetiler zahodí bez slova. Viď workers/features.yml.
+          TOPZ=$(grep -oE 'min_zoom: [0-9]+' workers/features.yml \
+                 | grep -oE '[0-9]+' | sort -n | tail -1)
+          if [ "${TOPZ:-0}" -gt "$FZ" ]; then
+            echo "::warning::workers/features.yml má triedy s min_zoom až ${TOPZ}, ale dlaždice idú po z${FZ} – tie sa do nich vôbec nedostanú. Zdvihni features_maxzoom na ${TOPZ}, alebo tým triedam zníž min_zoom."
+          fi
 
           T_PM=$(date +%s)
           OUT="_site/tiles/${{ needs.plan.outputs.key }}-features.pmtiles"
@@ -2127,7 +2166,7 @@ jobs:
             --trails='${{ needs.trails.outputs.enabled || 'false' }}' \
             --trails-maxzoom='${{ needs.trails.outputs.maxzoom || '14' }}' \
             --features='${{ needs.features.outputs.enabled || 'false' }}' \
-            --features-maxzoom='${{ needs.features.outputs.maxzoom || '14' }}' \
+            --features-maxzoom='${{ needs.features.outputs.maxzoom || '15' }}' \
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
@@ -2182,7 +2221,7 @@ jobs:
             --argjson tmaxzoom '${{ needs.trails.outputs.maxzoom || '14' }}' \
             --argjson tcount '${{ needs.trails.outputs.count || '0' }}' \
             --argjson features '${{ needs.features.outputs.enabled || 'false' }}' \
-            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '14' }}' \
+            --argjson fmaxzoom '${{ needs.features.outputs.maxzoom || '15' }}' \
             --argjson contours '${{ needs.contours.outputs.enabled || 'false' }}' \
             --argjson cmaxzoom '${{ needs.contours.outputs.maxzoom || '14' }}' \
             --argjson rocks '${{ needs.contours.outputs.rocks_enabled || 'false' }}' \

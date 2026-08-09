@@ -221,14 +221,14 @@ návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 
-Switch `test` vyreže zo stredu zvoleného výrezu **štvorec so 4 km²** a pustí
+Switch `test` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²** a pustí
 na ňom celý build – vrstevnice, skaly aj tieňovanie. Z desiatok minút sú
 minúty, takže sa dá prah alebo interval overiť za jeden beh.
 
 **Predvolene je zapnutý**, ostrý beh na celý výrez ho chce odškrtnúť. Je to
 switch vo formulári a nie voľba v `options`, lebo sa preklikáva pri každom
 behu; miesto uvoľnila mriežka `rock_res` (desať inputov je strop), z ktorej
-je naopak voľba. Veľkosť (`test_km2=2`) a stred (`test_at=lon,lat`) ostali
+je naopak voľba. Veľkosť (`test_km2=5`) a stred (`test_at=lon,lat`) ostali
 voľbami – tie sa prestavujú zriedka. `test_km2` bez zapnutého switchu je
 chyba: inak by to bolo číslo, ktoré nič nerobí.
 
@@ -244,7 +244,7 @@ druhého výpočtu. Oboje naraz je chyba: obe veci orezávajú to isté.
 
 Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
-- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test4`, takže si
+- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test2`, takže si
   testovací beh nesadne na to, čo počítal ostrý.
 - **Pregenerúva sa vždy všetko.** `parse-options.py` pri zapnutom teste
   prebije `rebuild` a zapne všetky tri príznaky (`contours_rebuild`,
@@ -253,6 +253,14 @@ Dve veci, na ktoré si treba dať pozor a sú vyriešené:
   z cache znamená ladiť ducha; kľúč síce nesie nastavenia aj otlačok
   skriptov, ale nie všetko. Cache ostrého behu tým netrpí – v kľúči je
   `bboxkey` a ten je pri teste bboxom štvorca.
+
+  Platí to aj pre **podpipeline skál z tieňovania**: tá si odkladá rozrobené
+  obrysy, takže by po zmene prahu nadviazala na polovicu starého výsledku.
+  Build jej preto pri teste posiela `fresh=1` (vpredu, nech to vlastné
+  `rock_img_options` vedia prebiť). Stiahnuté JPG dlaždice sa nezahadzujú –
+  to sú vstupné dáta z cudzieho dobrovoľníckeho servera, nie výsledok.
+  Rovnako ostávajú PBF, DEM dlaždice, Planetiler a glyfy: vstupy majú v kľúči
+  dátum alebo otlačok zdroja, takže cez ne starý výsledok neprejde.
 - **Skaly z tieňovania.** Tie počíta vlastný workflow, ktorý si výrez rieši
   sám – v testovacom režime mu preto ide dole rovno **bbox štvorca**, nie
   meno pohoria. Jeho vlastný prienik je s bboxom Slovenska, nie s regiónom,
@@ -280,7 +288,7 @@ viewer ju zahodí (`dropPosFromHash`) a nechá rozhodnúť bbox. Bez toho by
 `F5` po testovacom builde otvoril mapu nad prázdnom dvadsať kilometrov
 vedľa – a to vyzerá ako pokazený build, nie ako stará adresa. Manifest nesie
 pri regióne aj `test_km2`, takže to viewer vie aj napísať do panelu
-(`Rýchly test: 4 km² zo stredu výrezu`).
+(`Rýchly test: 2 km² zo stredu výrezu`).
 
 ### `contours` a `terrain` – vrstevnice, skaly a tieňovanie z DEM
 
@@ -799,7 +807,8 @@ Kladný offset je vpravo v smere čiary a presne tam je podľa konvencie OSM
 dolná strana.
 
 Job sa **necachuje** a beží súbežne so všetkým ostatným. Vypína sa voľbou
-`options: features=false`, zoom dlaždíc riadi `features_maxzoom` (default 14).
+`options: features=false`, zoom dlaždíc riadi `features_maxzoom` (default 15 –
+nižšia hodnota ticho zahodí triedy s vyšším `min_zoom`, job na to upozorní).
 Podiel na rozpočte stránky je `BUDGET_FEATURES_PCT` (4 %).
 
 **Čo do `features` NEPATRÍ, hoci to tak vyzerá:** `natural=cliff`, `ridge`
@@ -1274,6 +1283,10 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
    │                          ref   = clip(pozadie − rel, dark_always, dark)
    │                          po pásoch dlaždicových riadkov, s presahom,
    │                          na disk ako komprimovaný GTiff
+   ▼
+otvorenie (`open`, 3 m)       preč všetko užšie než stena – vlásočnicové
+   │                          ryhy a mikrotiene, z ktorých je pri z14
+   │                          sivá deka (erózia + dilatácia)
    ├─► artefakt `nahlad-…`     PNG mozaika vedľa masky + histogram
    ▼
 gdal_contour -p -fl 0,5 -fl 256             PO BLOKOCH (block_tiles=8,
@@ -1340,6 +1353,29 @@ Nie je to iný algoritmus, len menší bbox – celé je to jeden prepínač
 v `resolve-area.py`. Kľúč dostane príponu `_test2`, takže si testovací
 výsledok nesadne do tej istej cache ani na ten istý asset ako ostrý. Beh
 navyše vypíše obrázok, kde ten štvorec leží (viď nižšie).
+
+### Pásmo pod prahom sa musí zahodiť
+
+`gdal_contour -p` nevyrobí len pásmo, ktoré si pýtaš – vyrobí **všetky**.
+Pri `-fl 0,5 -fl 256` sú to dve: `[0; 0,5)` a `[0,5; 256)`. To prvé je
+„všetko, čo skala nie je" a je to jeden obrovský polygón na každý blok.
+
+Keď prejde do výsledku, mapu prekryje **súvislá plocha bez detailu a bez
+obrysov** – skaly v nej síce sú, ale nevidno ich, lebo pozadie má tú istú
+sivú. Presne to sa dialo pri `rock_source: tienovanie`; namerané na
+testovacom výreze: skaly „pokrývali" 1,44 km² z 1,44 km² územia.
+
+Filter ho preto zahadzuje podľa `dmin` (`min_level`, dolná hranica pásma
+skál). Skaly z DEM tým nikdy netrpeli – `rock-areas.py` má
+`WHERE smin >= prah` priamo v SQL; v ceste cez tieňovanie ten filter chýbal.
+
+Ako poistka beh **kričí**, keď skaly vyjdú na viac než 60 % územia. Toľko
+skál nie je nikde, takže je to spoľahlivý podpis tejto chyby:
+
+```
+::warning::Skaly pokrývajú 1.44 km² z 1.44 km² územia (100 %). Toľko skál
+nikde nie je – vyzerá to, že do výsledku prešlo pásmo POD prahom (pozadie).
+```
 
 ### Prečo `gdal_contour`, a nie `gdal_polygonize`
 
@@ -1462,6 +1498,40 @@ Kód: [`workers/shading-rocks.py`](../workers/shading-rocks.py). Formát
 výstupu je zhodný so skalami z DEM (vrstva `rock`, EPSG:4326, `class`
 = `steep`/`cliff`, `area` v m²); jediný rozdiel je, že skaly z DEM majú
 atribút `slope` a skaly z obrázka `dark`.
+
+### Najtenšie vlákna siete skala nie sú
+
+Prah nad hillshade nenájde len steny. Nájde aj **vlásočnicové ryhy
+a mikrotiene** cez celý rozčlenený svah – a tie sú v mape to, čo škodí.
+Vektorizáciou sa z nich stane **jeden prepojený polygón** cez celý výrez
+a pri z14 a nižšie z neho nie je sieť, ale **rovnomerná sivá deka**.
+
+Namerané na výreze pri Gerlachu (2 km², z17, `dark 125`):
+
+| `open` | pokrytie | pri z14 zaliatych pixelov | ako to vyzerá |
+|---|--:|--:|---|
+| `0` (dovtedy) | 21,6 % | 20,7 % | súvislý sivý záves cez celý výrez |
+| `2` (1,6 m) | 15,4 % | 15,2 % | – |
+| **`3` (default)** | **9,5 %** | **9,2 %** | **čitateľné samostatné telesá** |
+| `6` | 5,5 % | 5,3 % | len výrazné steny |
+
+Zahadzuje sa podľa **ŠÍRKY**, nie podľa plochy: celá sieť je jeden veľký
+útvar, takže `min_area` na ňu vôbec nesiaha. Robí to morfologické
+**otvorenie** – erózia zmaže všetko užšie než `2 × open`, dilatácia vráti
+prežitým jadrám ich pôvodný rozsah. Stena teda ostane stenou, vlásočnica
+zmizne. Presne tým sa stena od ryhy líši.
+
+Počíta sa to na hotovej maske tmavosti, ešte pred vektorizáciou: pred prahom
+by sa mazalo z plynulej tmavosti a `dark_always` by sa nemal ako uplatniť,
+po vektorizácii je už celá sieť jeden polygón a šírka sa z neho nedá
+vytiahnuť. Polomer je v **metroch na zemi**, takže to isté nastavenie platí
+na každom zoome rovnako.
+
+Implementácia je separovateľné bežiace min/max (dva prechody po `2r+1`
+posunoch namiesto `(2r+1)²`) – namerané 140 mil. px/s, čiže na z17 nad
+Vysokými Tatrami okolo 7 sekúnd. Obrysy sa tým naopak **zrýchlia**: menej
+vlákien = rádovo menej segmentov na poskladanie, a to je najdrahšia fáza
+celého behu.
 
 ### Tmavé nie je plocha, ale sieť
 

@@ -212,7 +212,7 @@ function styleFor(manifest) {
       region.features && featuresCheck.checked
         ? `pmtiles://${baseUrl}/${region.features}`
         : null,
-    featuresMaxzoom: region.features_maxzoom || 14,
+    featuresMaxzoom: region.features_maxzoom || 15,
     demSource: region.dem_source || DEFAULT_DEM_SOURCE,
     demTiles,
     // Tieňovanie má vo formulári pipeline vlastný výber modelu, takže
@@ -267,7 +267,7 @@ function applyStyle(manifest) {
         `(pásiky vedľa cesty, farba podľa značky)<br>`
       : "") +
     (region.features
-      ? `Krajinné prvky do z${region.features_maxzoom || 14} ` +
+      ? `Krajinné prvky do z${region.features_maxzoom || 15} ` +
         `(násypy, múry, vedenia, pramene, zjazdovky)<br>`
       : "") +
     (hasOverrides(overrides) ? "Štýl s vlastnými úpravami (developer mode)<br>" : "") +

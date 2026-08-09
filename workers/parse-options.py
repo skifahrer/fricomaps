@@ -15,7 +15,7 @@ Takto sú v ňom veci, ktoré meníš pri každom behu, a ostatné majú rozumn�
 predvolené hodnoty. Ktoré to sú, sa časom mení: `rock_res` (mriežka na obrys
 skál) sa prestavuje len s iným zdrojom výšok, kým rýchly test sa zapína
 a vypína pri každom behu – tak si vymenili miesto. Zapnutie je switch `test`,
-veľkosť štvorca ostala voľbou (`test_km2`, default 4 km²): jedno sa preklikáva
+veľkosť štvorca ostala voľbou (`test_km2`, default 2 km²): jedno sa preklikáva
 stále, druhé skoro nikdy.
 
 TRI VÝBERY ZDROJA namiesto jedného `dem_source` a zoznamu `layers`:
@@ -49,7 +49,7 @@ DEFAULTS = {
     # a miesto štvorca – oboje sa mení zriedka, kým samotné zapnutie pri
     # každom behu. Platí to len pri zapnutom switchi: `test_km2` bez neho je
     # chyba, nie ticho ignorované číslo.
-    "test_km2": ("4", "veľkosť štvorca pri zapnutom switchi `test` (km²)"),
+    "test_km2": ("2", "veľkosť štvorca pri zapnutom switchi `test` (km²)"),
     "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
@@ -88,7 +88,12 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
-    "features_maxzoom": ("14", "max zoom dlaždíc s krajinnými prvkami"),
+    # 15, nie 14: schéma má triedy s `min_zoom: 15` (ploty, živé ploty,
+    # geodetické body, hraničné kamene). Čo má min_zoom nad maxzoomom
+    # archívu, Planetiler ZAHODÍ BEZ SLOVA – pri 14 ich v dlaždiciach bola
+    # presne nula. Nárast je 1,6× (Andorra 248 kB → 394 kB), čo je pri
+    # jednotkách MB nič.
+    "features_maxzoom": ("15", "max zoom dlaždíc s krajinnými prvkami"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
@@ -206,7 +211,7 @@ def main():
     # ---------- rýchly test na pár km² ----------
     # Zo switchu a veľkosti vyjde jedno číslo, s ktorým ďalej pracuje celý
     # workflow: 0 = ostrý beh, čokoľvek iné = strana štvorca v km². Ide do
-    # mena cache aj do kľúča uložených výsledkov (`…_test4`) a inde sa
+    # mena cache aj do kľúča uložených výsledkov (`…_test2`) a inde sa
     # porovnáva s „0" ako s reťazcom, takže sa tu aj normalizuje – `4.0`
     # aj `4` dajú to isté „4".
     test_on = (args.test or "false").strip().lower()

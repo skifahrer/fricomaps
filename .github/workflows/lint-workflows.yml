@@ -178,6 +178,39 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # Popis inputu je vo formulári GitHubu jednoriadková nápoveda pod
+      # poľom. Keď z neho spravíš odsek, formulár sa stane nečitateľným –
+      # a práve to sa tu stalo: `options` v shading-rocks.yml mal 474 znakov,
+      # čiže šesť riadkov textu pod jedným políčkom. Detail patrí do
+      # komentára nad input (ten číta ten, kto workflow upravuje) alebo do
+      # docs/pipeline.md, nie do formulára.
+      - name: Popisy inputov sú jednoriadkové
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys, yaml
+          LIMIT = 100
+          bad = 0
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(path)) or {}
+              on = d.get(True) or d.get("on") or {}
+              for kind in ("workflow_dispatch", "workflow_call"):
+                  for name, spec in ((on.get(kind) or {}) or {}).get("inputs", {}).items():
+                      desc = (spec or {}).get("description") or ""
+                      if "\n" in desc:
+                          print(f"::error file={path}::input `{name}`: popis je "
+                                f"viacriadkový – formulár ho zlepí do jedného odseku.")
+                          bad += 1
+                      elif len(desc) > LIMIT:
+                          print(f"::error file={path}::input `{name}`: popis má "
+                                f"{len(desc)} znakov, strop je {LIMIT}. Vo formulári "
+                                f"je to nápoveda pod poľom, nie dokumentácia – "
+                                f"detail daj do komentára nad input.")
+                          bad += 1
+          print(f"inputov s pridlhým popisom: {bad}")
+          sys.exit(1 if bad else 0)
+          PY
+
       # Výber pohorí vo formulári musí sedieť s workers/areas.json. Choice
       # options musia byť v YAML doslovne, takže sa to nedá generovať – ale
       # dá sa to strážiť, aby zoznam nezostarol.

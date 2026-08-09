@@ -70,7 +70,7 @@ const hasRocks = args.rocks === "true" || args.rocks === "1";
 const trailsMaxzoom = Number(args["trails-maxzoom"] || 14);
 const hasTrails = args.trails === "true" || args.trails === "1";
 // Krajinné prvky – to isté: vlastný .pmtiles, vlastný maxzoom, voliteľné.
-const featuresMaxzoom = Number(args["features-maxzoom"] || 14);
+const featuresMaxzoom = Number(args["features-maxzoom"] || 15);
 const hasFeatures = args.features === "true" || args.features === "1";
 // Zdroj výšok ovplyvňuje atribúciu vrstevníc a skál v štýle.
 const demSource = DEM_SOURCES[args["dem-source"]]
