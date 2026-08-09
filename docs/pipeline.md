@@ -1294,6 +1294,29 @@ v `resolve-area.py`. Kľúč dostane príponu `_test2`, takže si testovací
 výsledok nesadne do tej istej cache ani na ten istý asset ako ostrý. Beh
 navyše vypíše obrázok, kde ten štvorec leží (viď nižšie).
 
+### Pásmo pod prahom sa musí zahodiť
+
+`gdal_contour -p` nevyrobí len pásmo, ktoré si pýtaš – vyrobí **všetky**.
+Pri `-fl 0,5 -fl 256` sú to dve: `[0; 0,5)` a `[0,5; 256)`. To prvé je
+„všetko, čo skala nie je" a je to jeden obrovský polygón na každý blok.
+
+Keď prejde do výsledku, mapu prekryje **súvislá plocha bez detailu a bez
+obrysov** – skaly v nej síce sú, ale nevidno ich, lebo pozadie má tú istú
+sivú. Presne to sa dialo pri `rock_source: tienovanie`; namerané na
+testovacom výreze: skaly „pokrývali" 1,44 km² z 1,44 km² územia.
+
+Filter ho preto zahadzuje podľa `dmin` (`min_level`, dolná hranica pásma
+skál). Skaly z DEM tým nikdy netrpeli – `rock-areas.py` má
+`WHERE smin >= prah` priamo v SQL; v ceste cez tieňovanie ten filter chýbal.
+
+Ako poistka beh **kričí**, keď skaly vyjdú na viac než 60 % územia. Toľko
+skál nie je nikde, takže je to spoľahlivý podpis tejto chyby:
+
+```
+::warning::Skaly pokrývajú 1.44 km² z 1.44 km² územia (100 %). Toľko skál
+nikde nie je – vyzerá to, že do výsledku prešlo pásmo POD prahom (pozadie).
+```
+
 ### Prečo `gdal_contour`, a nie `gdal_polygonize`
 
 `gdal_polygonize` by obrys viedol po hranách pixelov (schodíky) a potreboval

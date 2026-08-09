@@ -205,7 +205,9 @@ env:
   ROCK_IMG_RELEASE: dem-rocks-img
   # Verzia algoritmu v mene assetu. Zmena algoritmu = iné skaly.
   # v2: diery v plochách ostávajú (v1 ich zapĺňal a zožral tým detail)
-  ROCK_IMG_ALGO: v2
+  # v3: pásmo POD prahom (pozadie) sa zahadzuje – dovtedy prešlo do výsledku
+  #     a v mape z neho bola sivá plocha cez celý výrez
+  ROCK_IMG_ALGO: v3
   # Bbox Slovenska – `resolve-area.py` pretína výrez s „regiónom", a tu je
   # regiónom celé územie, na ktorom tá dlaždicová vrstva vôbec existuje.
   SK_BBOX: "16.79,47.71,22.58,49.63"
