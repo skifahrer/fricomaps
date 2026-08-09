@@ -1146,13 +1146,32 @@ z neho nedá sťahovať v každom builde mapy.
 
 ```
 Google Drive priečinok (napr. Slovensko, model 20m)
-  │  gdown --folder     … stiahne celý priečinok naraz
+  │  workers/drive-folder.py … prihlásený, cez Drive API (bez tokenu gdown)
   │  7z                 … rozbalí .zip / .7z
   │  workers/dem-tiles.py … GeoTIFF → dlaždice 1°×1° vo WGS84
   │  (alebo .hgt priamo … to je už 1° dlaždica, len bez hlavičky)
   ▼
 release `dem-sonny`: N49E019.tif … + meta.json
 ```
+
+- **Sťahuje sa prihlásene** ([`workers/drive-folder.py`](../workers/drive-folder.py)).
+  Kým to robil `gdown --folder --no-cookies`, chodila požiadavka anonymne –
+  a na verejný odkaz platí denný strop sťahovania zdieľaný so všetkými, kto
+  naň siahnu. Prihlásená cesta ide cez Drive API: obsah priečinka sa vypíše
+  z `files.list` (namiesto parsovania HTML stránky, ktoré `gdown` robí a ktoré
+  sa mení), súbory sa čítajú cez `Range` tým istým `Pool`-om ako DMR 5.0,
+  takže odmietnutie príde ako 403 s dôvodom a nie ako HTML stránka s HTTP 200.
+  Jednotkou práce je **súbor**: hotový sa preskočí, rozrobený sa dopočíta
+  z `.part`, takže zrušený beh nezahodí, čo už stiahol. Bez tokenu sa nemení
+  nič – použije sa `gdown` ako predtým a do logu aj do súhrnu ide `::warning::`,
+  že platí verejný limit.
+- **Prihlásenie tu strop NEDVÍHA, a nesmie sa tváriť, že áno.** Denný limit je
+  viazaný na **vlastníka** súboru, nie na toho, kto sťahuje: na DMR 5.0 (naše
+  vlastné súbory) je strop rádovo vyšší, na Sonnyho cudzí priečinok zdieľaný
+  odkazom platí ten istý ako predtým. `drive-folder.py` preto pri každom behu
+  vypíše, koľko súborov účet nevlastní. Skutočná poistka proti Sonnyho stropu
+  je práve to zrkadlo v releasi: stiahne sa raz sem a build mapy už na Drive
+  nesiaha.
 
 - **Ktorý model.** Sonny má 1″/3″ ako `.hgt` (20×30 m, výška po celých
   metroch) a 20m/50m ako GeoTIFF (20×20 m, výška po 0,1 m). Berieme **20m** –
@@ -1273,8 +1292,12 @@ siahne. Keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní **vôbec**, lebo je t
 jediná cesta k nemu. Nedá sa to vyriešiť opakovaním ani iným zdrojom.
 
 Prihlásený **vlastník** má na svoje vlastné súbory strop rádovo vyšší a nedelí
-sa o neho s cudzími klientmi. Preto sú tie isté dáta dostupné dvoma cestami
-a rozhoduje o nich prítomnosť tokenu:
+sa o neho s cudzími klientmi. Dôraz na *vlastné*: strop visí na vlastníkovi
+súboru, nie na tom, kto sťahuje, takže na **cudzí** priečinok zdieľaný odkazom
+(Sonny) prihlásenie strop nedvihne. Aj tam sa ale oplatí – Drive API povie
+dôvod odmietnutia rovno, kým verejná cesta vráti HTTP 200 a HTML stránku.
+Preto sú tie isté dáta dostupné dvoma cestami a rozhoduje o nich prítomnosť
+tokenu:
 
 | | cesta | limit |
 |---|---|---|
@@ -1287,7 +1310,24 @@ k verejnému limitu (zmazaný secret, preklep v mene) by sa inak zistil až tým
 že Drive po pol dni prestane púšťať dáta. Preto to hlási krok **Prihlásenie na
 Drive** na začiatku behu, riadok `prístup:` v logu čítania aj riadok
 `prístup` v súhrne – rovnaká logika ako `dem-source.txt`: nesie sa, čo sa
-NAOZAJ použilo.
+NAOZAJ použilo. To isté platí pre Sonnyho: `Stiahnuť výškové dáta` píše cestu
+k dátam do riadku `cesta k dátam` v súhrne behu.
+
+**Kam všade sa token musí dostať.** `workflow_call` nededí secrets sám, takže
+volajúci ich musí podať – a čítanie z Drive je na štyroch miestach, z ktorých
+dve nie sú tam, kde by ich človek čakal:
+
+| kde | čo číta | ako sa tam token dostane |
+|---|---|---|
+| `dmr5-drive.yml` | DMR 5.0 (výrez aj dlaždice) | `secrets: inherit` z `build-map.yml` |
+| `update-dem.yml` | Sonnyho priečinok | `secrets: inherit` z `build-map.yml` |
+| job `contours` v `build-map.yml` | vrstevnice z DMR 5.0 | `env:` priamo v jobe |
+| job `rocks` v `build-map.yml` | sklon z DMR 5.0 (`slope-chunks.py`) | `env:` priamo v jobe |
+
+Stráži to staticky `Lint workflows` (krok *Token vlastníka Drive sa dostane
+všade, kde sa z Drive číta*): pozerá aj na volajúceho, aj na volaného, a hlási
+aj **nekompletnú** trojicu – tá sa nesmie brať ako „veď tam niečo je", lebo
+`drive-auth.py` na polovicu údajov (správne) padne.
 
 **Čo treba raz nastaviť** (potom sa na to nesiaha, kým sa token neodvolá):
 
