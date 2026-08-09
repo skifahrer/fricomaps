@@ -1,9 +1,20 @@
 #!/usr/bin/env python3
 """
-Skaly z TIEŇOVANÝCH DLAŽDÍC (JPG) → vektorové plochy (GeoPackage).
+TMAVÉ PLOCHY z TIEŇOVANÝCH DLAŽDÍC (JPG) → vektorové plochy (GeoPackage).
 
-Pokusná druhá cesta k skalám. Tá prvá (`workers/rock-areas.py`) počíta sklon
-z DEM a vektorizuje izolíniu sklonu. Táto berie hotový hillshade – dlaždice
+TOTO NIE SÚ SKALY, TOTO JE MASKA. Výstup ide do `rock_source: tienovanie`,
+kde ním `workers/rock-areas.py` OREŽE svoje pásmo sklonu (`--clip`) – skala
+je až to, čo je zároveň tmavé a zároveň strmé. Dôvod je nižšie („prečo to
+môže klamať"): hillshade je osvetlený z jednej strany, takže tmavý je každý
+odvrátený svah, aj úplne mierny. Kým sa tieto polygóny brali ako hotové
+skaly, pokryli na testovacom výreze v Tatrách 0,68 km² z 2 km² (34 %)
+a v mape z toho bola jedna sivá deka bez detailu.
+
+Čo teda maska pridáva: TVAR. Hires vrstva freemap.sk je z 1 m LiDARu, kým
+sklon sa počíta zo Sonnyho (20 m) – obrys skaly tak drží jemný detail, ktorý
+by samotný DEM nikdy nedal, a sklon rozhoduje, kde skala vôbec je.
+
+Berie hotový hillshade – dlaždice
 `https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg` – a hľadá v ňom
 TMAVÉ PLOCHY. Nič sa nepočíta z výšok, čítajú sa obrázky:
 
@@ -34,10 +45,12 @@ dlaždice a obrysy rastú ešte rýchlejšie, pričom mapa z toho nemá nič.
 Aj tak je to jemnejšie, než na čo vieme rozumne spočítať sklon sami.
 
 PREČO TO MÔŽE KLAMAŤ: tmavý nie je len sklon, ale sklon NA ODVRÁTENEJ STRANE.
-Rovnako strmá stena otočená k slnku je na hillshade najsvetlejšia zo všetkého.
-Táto cesta preto systematicky nájde severozápadné steny a systematicky
-prehliadne juhovýchodné. Je to POKUS, nie náhrada `rock-areas.py`; v mape sa
-zapína zvlášť (`rock_source: tienovanie`).
+Rovnako strmá stena otočená k slnku je na hillshade najsvetlejšia zo všetkého,
+a naopak mierny severozápadný svah je tmavý bez toho, aby bol skala. Táto
+cesta preto systematicky nájde severozápadné steny, systematicky prehliadne
+juhovýchodné a bez sklonu navrch berie aj to, čo skala nie je. Preto je to
+maska pre `rock-areas.py`, a nie jeho náhrada; v mape sa zapína výberom
+`rock_source: tienovanie`.
 
 ── čo ukázala skutočná dlaždica ────────────────────────────────────────────
 

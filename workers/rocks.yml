@@ -11,11 +11,13 @@
 # do maximálneho zoomu mapy; z vyššieho maxzoomu je ostrejší tvar, nie väčší
 # rozsah zoomov.
 #
-# Vstup `data/rock.gpkg` vyrába jedna z dvoch ciest:
-#   gdaldem slope → gdal_contour -p → ogr2ogr   (workers/rock-areas.py)
-#   tmavé plochy v hillshade JPG                (workers/shading-rocks.py)
-# Formát je ten istý, len atribúty sa líšia – skaly z DEM majú `slope`, skaly
-# z obrázka `dark`. Vždy je vyplnený len jeden z nich.
+# Vstup `data/rock.gpkg` vyrába vždy `workers/rock-areas.py`:
+#   gdaldem slope → gdal_contour -p → ogr2ogr
+# Skala je teda vždy pásmo sklonu nad prahom. `rock_source: tienovanie` to
+# navyše OREŽE tmavými plochami z hillshade dlaždíc
+# (`workers/shading-rocks.py`) – tie sú maska, nie skaly: hillshade je
+# osvetlený z jednej strany, takže tmavý je aj úplne mierny odvrátený svah
+# a samotná tmavosť pokryla na testovacom výreze 34 % územia.
 #
 # JEDNA TRIEDA: obe cesty predvolene vyrábajú plochy v jedinej triede, teda
 # žiadnu plochu vnútri inej. Kým sa `steep` a `cliff` kreslili rôzne tmavo,
@@ -50,10 +52,12 @@ layers:
         min_zoom: 9
         attributes:
           - key: class
-          # sklon v stupňoch – len pri skalách z DEM
+          # prah sklonu v stupňoch
           - key: slope
             type: integer
-          # o koľko stupňov šedej pod prahom – len pri skalách z tieňovania
+          # o koľko stupňov šedej pod prahom. Ostáva kvôli surovému výstupu
+          # workflowu „Skaly z tieňovaných dlaždíc" (dá sa pozrieť v QGISe);
+          # v mape je `rock.gpkg` vždy pásmo sklonu, takže tam býva prázdny.
           - key: dark
             type: integer
           # plocha v m² – nech sa dá v štýle rozlíšiť bralo od odrobinky

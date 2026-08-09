@@ -48,10 +48,11 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
                              ▲ výstup je vstup pre Build map: vrstevnice,
                                skaly aj tieňovanie sa počítajú z neho
 
-Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
-(pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
-                             ▲ Build map si ich vypýta výberom
-                               rock_source: tienovanie
+Skaly z tieňovaných dlaždíc  hillshade JPG z freemap.sk ─► tmavé plochy
+(maska, na jedno pohorie)    ─► polygóny ─► release `dem-rocks-img`
+                             ▲ Build map ich pri rock_source: tienovanie
+                               použije ako MASKU: oreže nimi pásmo sklonu,
+                               takže skala = tmavé A strmé
 
 Uložiť úpravy štýlu          style-overrides.json z developer módu
 (po doladení mapy)           ─► kontrola + prečistenie
@@ -382,10 +383,18 @@ freemap.sk je robená z 1 m LiDARu – pri z18 vyjde jeden pixel na **~0,4 m**
 terénu. To je jemnejšie, než na čo si sklon vieme rozumne spočítať sami.
 
 **Prečo to klame:** hillshade je osvetlený z jednej strany. Rovnako strmá
-stena otočená k slnku je na ňom **najsvetlejšia zo všetkého**. Táto cesta
-teda systematicky nájde severozápadné steny a systematicky prehliadne
-juhovýchodné. Preto je to jedna z možností vo výbere `rock_source`
-(`tienovanie`) a nie náhrada skál počítaných zo sklonu.
+stena otočená k slnku je na ňom **najsvetlejšia zo všetkého** – a naopak
+mierny severozápadný svah je tmavý bez toho, aby bol skala. Táto cesta teda
+systematicky nájde severozápadné steny, systematicky prehliadne juhovýchodné
+a bez sklonu naberie aj to, čo skala nie je: na testovacom výreze v Tatrách
+pokryli tmavé plochy **34 % územia** (0,68 km² z 2 km²) a v mape z nich bola
+jedna sivá deka. Pre porovnanie, skaly zo sklonu majú vo Vysokých Tatrách pri
+50° 1,6 %.
+
+**Preto to nie sú skaly, ale maska.** Pri `rock_source: tienovanie` sa tmavé
+plochy pretnú s pásmom sklonu (`rock-areas.py --clip`) – skala je až to, čo
+je zároveň tmavé a zároveň strmé. Sklon rozhoduje, KDE skala je; tieňovanie
+z 1 m LiDARu dáva jej TVAR.
 
 **Prah nie je jedno číslo.** Celý zatienený svah je tmavý bez toho, aby bol
 skala; stena v presvetlenej doline býva svetlejšia než tráva vedľa. Prah sa
@@ -554,7 +563,7 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 
 | chcem | ako |
 |---|---|
-| skaly z tieňovania, nech to trvá koľko chce | `rock_source: tienovanie` |
+| skaly orezané tieňovaním, nech to trvá koľko chce | `rock_source: tienovanie` |
 | iný zoom dlaždíc | `options: rock_img_zoom=18` |
 | iné prahy / vyplnenie | `options: rock_img_options="fill=40 min_hole=5"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
@@ -644,8 +653,9 @@ Tri výbery vo formulári – `contour_source` (vrstevnice), `rock_source`
 | `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *Pripraviť DMR 5.0* |
 | `ziadne` | – | – | – | vrstva sa negeneruje |
 
-Navyše: `rock_source: tienovanie` neberie výšky vôbec – vezme hotové polygóny
-z workflowu *Skaly z tieňovaných dlaždíc*. A `shading_source` nemá `ugkk`:
+Navyše: `rock_source: tienovanie` počíta sklon zo `sonny` a orezáva ho
+tmavými plochami z workflowu *Skaly z tieňovaných dlaždíc*. A `shading_source`
+nemá `ugkk`:
 1 m LiDAR máme len na výrez, kým tieňovanie sa robí na celý región.
 
 Vrstvy môžu mať **rôzny model naraz** – napríklad vrstevnice zo `sonny`
@@ -1744,7 +1754,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
    | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 2 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (5 m), `ugkk` (1 m LiDAR, len s výrezom), `ziadne` |
-   | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
+   | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (sklon zo `sonny` orezaný tmavými plochami z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |

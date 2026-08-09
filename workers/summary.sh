@@ -72,9 +72,11 @@ if [ -s steps-out/rock-stats.txt ]; then
   . steps-out/rock-stats.txt
 fi
 
-# Skaly z tieňovaných dlaždíc majú vlastnú tabuľku: nemajú sklon,
-# mriežku ani bunku DEM, takže tá dole by bola stĺpec otáznikov
-# a pod ním text o izolínii sklonu, ktorá tu nikdy nevznikla.
+# Kedysi tu bola vlastná tabuľka pre skaly z tieňovania (`source=tienovanie`),
+# lebo tie sa brali ako hotové skaly a sklon v nich nefiguroval. Odvtedy sú
+# tmavé plochy len MASKOU nad sklonom (`clip` nižšie), takže aj tie prejdú
+# tabuľkou dole – sklon, mriežka aj bunka DEM pre ne existujú. Vetva ostáva
+# kvôli starým `rock-stats.txt`, ktoré ešte môžu byť v cache.
 if [ "${source:-dem}" = "tienovanie" ]; then
   {
     echo
@@ -119,6 +121,9 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo "|---|---|"
     echo "| územie | ${area_name:-celý región}${area_bbox:+ (\`$area_bbox\`)} |"
     echo "| výškový model | ${rock_dem:-?} |"
+    if [ -n "${clip:-}" ]; then
+      echo "| maska z tieňovania | \`${clip}\` (${clip_features:-?} tmavých plôch) |"
+    fi
     echo "| počet samostatných plôch | ${count:-?} |"
     echo "| obrys sa počíta na mriežke | ${grid_m:-?} m |"
     echo "| buniek sklonu / čas výpočtu | ${cells_g:-?} mld. / ${took:-?} |"
@@ -143,6 +148,15 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo "| zaoblenie rohov (Chaikin) | ${smooth_passes:-0}× |"
     echo
     echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
+    if [ -n "${clip:-}" ]; then
+      echo
+      echo "Skaly sú tu **prienik dvoch podmienok**: sklon nad prahom"
+      echo "**a zároveň** tmavé miesto v hillshade dlaždiciach freemap.sk"
+      echo "(\`rock_source: tienovanie\`). Samotná tmavosť skala nie je –"
+      echo "hillshade je osvetlený z jednej strany, takže tmavý je každý"
+      echo "odvrátený svah, aj úplne mierny. Bez sklonu z toho bola sivá"
+      echo "plocha cez celý výrez (namerané: 34 % územia)."
+    fi
     if [ "${zapln_diery:-0}" = '1' ]; then
       echo "Diery sú **zaplnené** (\`options: rock_zapln_diery=1\`), takže"
       echo "z každej skaly je súvislá plocha bez vnútorného tvaru. Vypnutie"

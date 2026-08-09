@@ -318,8 +318,9 @@ Pri rovnakom modeli sa druhé volanie `fetch-dem.sh` netrafí do siete vôbec.
 sa robí vždy na celý región. Predtým sa to riešilo tichým prepnutím na
 Sonnyho v jobe s terénom – teraz sa taká voľba nedá ani zadať.
 
-`rock_source` má navyše hodnotu `tienovanie`: to je [piaty workflow](#piaty-workflow-skaly-z-tieňovaných-dlaždíc),
-ktorá výškový model nečíta vôbec.
+`rock_source` má navyše hodnotu `tienovanie`: to je [piaty workflow](#piaty-workflow-skaly-z-tieňovaných-dlaždíc).
+Výškový model číta aj ona – tmavé plochy z hillshade sú len maska nad pásmom
+sklonu, takže `rock_dem` je pri nej `sonny`.
 
 Zoznamy vo formulári stráži `Lint workflows` proti kľúču `for`
 v [`workers/dem-sources.json`](../workers/dem-sources.json) – zdroj sa nedá
@@ -496,6 +497,19 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
 
   Pri 40° má najväčšia súvislá plocha 428 ha – to už nie je skala, ale celý
   strmý svah. Preto je predvolený prah 50°.
+- **Skala je vždy pásmo sklonu – aj pri `rock_source: tienovanie`.** Tmavé
+  plochy z hillshade sa nepoužijú ako skaly, ale ako **maska** (`--clip`):
+  pred vektorizáciou sa do dlaždíc sklonu vypáli mimo nich nula
+  (`gdal_rasterize -i -burn 0`), takže pásmo nad prahom tam nevznikne. Von
+  ide prienik „tmavé **a** strmé". Bez toho pokryli samotné tmavé plochy na
+  testovacom výreze v Tatrách 34 % územia a v mape z nich bola jedna sivá
+  deka; podrobne v časti [„Piaty workflow"](#piaty-workflow-skaly-z-tieňovaných-dlaždíc).
+- **Poistka proti sivej deke.** Keď skaly vyjdú na viac než **40 %** počítaného
+  územia, beh zakričí `::warning::`. Toľko skál nikde nie je – Vysoké Tatry
+  majú pri 50° 1,6 % – takže je to spoľahlivý podpis chyby (zlý prah,
+  prehodená maska), nie prísna hranica. Skaly sa kreslia jednou sivou bez
+  priehľadnosti, takže sa taká chyba v mape neprejaví ako „veľa skál", ale
+  ako plocha, v ktorej nie je vidieť nič.
 - **Testovací výrez** (`area`). Terén je najdrahšia časť buildu, tak sa dá
   počítať len na kuse regiónu – pri ladení prahu, mriežky alebo zdroja netreba
   čakať polhodinu na celý kraj. Platí na **vrstevnice aj skaly**; sťahovanie
@@ -1206,9 +1220,19 @@ napíše aj s tým, čo presne spustiť.
 
 ## Piaty workflow: „Skaly z tieňovaných dlaždíc"
 
-Pokusná druhá cesta k skalám. Všetko ostatné v pipeline počíta skaly zo
-**sklonu DEM**; tento workflow sa výšok nedotkne a hľadá **tmavé plochy**
-v hotovom hillshade z freemap.sk.
+**Vyrába MASKU, nie skaly.** Skaly sú v tejto pipeline vždy pásmo sklonu nad
+prahom (`workers/rock-areas.py`); tento workflow sa výšok nedotkne a hľadá
+**tmavé plochy** v hotovom hillshade z freemap.sk. Pri `rock_source:
+tienovanie` sa tie dve veci **pretnú**: skala je to, čo je zároveň tmavé
+a zároveň strmé.
+
+> ⚠️ Kým sa tmavé plochy brali ako hotové skaly, bola z nich v mape **jedna
+> sivá deka**. Namerané na testovacom výreze v Tatrách (2 km², `dark 125`):
+> 2 223 plôch, **0,68 km² = 34 % územia**, najväčšia 30,6 ha. Pre porovnanie
+> skaly zo sklonu: Vysoké Tatry pri 50° majú 884 ha z 541 km², teda **1,6 %**.
+> Príčina nie je v prahoch: hillshade je osvetlený z jednej strany, takže
+> tmavý je **každý odvrátený svah** – aj úplne mierny. Tmavosť teda hovorí
+> „sem nesvieti", nie „tu je stena".
 
 ```
 job „Stiahnuť dlaždice" (strop 2 h)
@@ -1243,6 +1267,12 @@ rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
    ├─► release `dem-rocks-img`   pre Build map (výber `rock_source: tienovanie`)
    ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
    └─► artefakt `cisla-…`          namerané hodnoty behu
+
+a v „Build map" ešte JEDEN krok navyše
+───────────────────────────────────────────────────────────────────────
+rock-areas.py --clip=<ten asset>            sklon zo Sonnyho, orezaný maskou
+   ▼                                        (gdal_rasterize -i -burn 0)
+data/rock.gpkg = tmavé A strmé
 ```
 
 **Prečo tri joby a nie tri kroky.** Strop času platí na JOB. Sťahovanie
@@ -1409,19 +1439,42 @@ rozbili beh:
 
 ### Ako sa to dostane do mapy
 
-Build map to **nepočíta** – ale zavolá si na to túto pipeline. Pri
+Build map tmavé plochy **nehľadá** – ale zavolá si na to túto pipeline. Pri
 `rock_source: tienovanie` sa v behu objaví job *Skaly z tieňovania*, ktorý je
 `workflow_call` na `shading-rocks.yml`: stiahne dlaždice, nájde plochy,
-nahrá ich do releasu, a job s vrstevnicami si ich potom už len vytiahne.
-Platí teda to isté, čo pri výškových modeloch – **`Build map` je jediné, čo
-spúšťaš**.
+nahrá ich do releasu, a job s vrstevnicami si ich potom vytiahne **ako
+masku**. Platí teda to isté, čo pri výškových modeloch – **`Build map` je
+jediné, čo spúšťaš**.
+
+Sklon sa počíta aj tu: `rock_source: tienovanie` znamená
+`rock_dem = sonny`, takže sa v behu stiahne Sonny a `rock-areas.py` pustí
+svoj obvyklý výpočet – len s `--clip` na stiahnutý asset. **Orezáva sa
+v rastri**, nie prienikom hotových polygónov: pred vektorizáciou sa do
+každej dlaždice sklonu vypáli mimo masky nula
+(`gdal_rasterize -i -burn 0`), takže pásmo nad prahom tam vôbec nevznikne.
+Prienik dvoch vrstiev by bol n×m a nad desiatkami tisíc tmavých plôch by
+bežal dlhšie než celý zvyšok výpočtu; takto je to jeden `gdal_rasterize` na
+dlaždicu a všetko za ním (diery, `min_area`, zjednodušenie, zaoblenie)
+ostáva nezmenené.
+
+**Čo tým maska pridáva:** tvar. Hires tieňovanie je z 1 m LiDARu, kým sklon
+zo Sonnyho má bunku 20 m – obrys tak drží detail, ktorý by samotný DEM nikdy
+nedal, a sklon rozhoduje, kde skala vôbec je. Mriežka `rock_res` je zároveň
+strop toho detailu (maska sa vypaľuje na ňu), takže `rock_res=auto` pri
+Sonnym dá 2 m.
+
+Meno assetu je aj v mene uloženého assetu skál (`…-c<8 znakov hashu>-…`),
+takže sa orezané skaly z releasu nikdy nevydajú za neorezané ani naopak.
 
 ```
-rock_source: tienovanie                    stiahne dlaždice a spočíta skaly
+rock_source: tienovanie                    stiahne dlaždice, nájde masku
+                                           a oreže ňou sklon (zo Sonnyho)
   + options: rock_img_zoom=18              iný zoom dlaždíc
-  + options: rock_img_options="fill=40"    prepínače pre výpočet
-  + options: rock_img_asset=rockimg-…      presne tento hotový asset
-                                           (vtedy sa nepočíta nič)
+  + options: rock_img_options="fill=40"    prepínače pre hľadanie masky
+  + options: rock_img_asset=rockimg-…      presne táto hotová maska
+                                           (vtedy sa dlaždice nesťahujú)
+  + rock_slope: 45                         od akého sklonu je to skala –
+                                           platí aj tu
 ```
 
 Stiahnuté JPG dlaždice vypadnú ako artefakt `dlazdice-tienovania-{výrez}-z{zoom}`.
@@ -1431,13 +1484,15 @@ na veľké pohorie to je aj vyše gigabajtu, preto sa držia 14 dní a nie 90 ak
 polygóny.
 
 Keby v release aj tak nič nebolo, build to povie (`::error::`) a nespadne
-späť na skaly z DEM – to by bola tichá zámena jedného zdroja za druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
+späť na neorezané skaly z DEM – to by bola tichá zámena jedného zdroja za
+druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
 `dem` a `shading` nemôžu navzájom vrátiť z cache.
 
 Kód: [`workers/shading-rocks.py`](../workers/shading-rocks.py). Formát
 výstupu je zhodný so skalami z DEM (vrstva `rock`, EPSG:4326, `class`
-= `steep`/`cliff`, `area` v m²); jediný rozdiel je, že skaly z DEM majú
-atribút `slope` a skaly z obrázka `dark`.
+= `steep`/`cliff`, `area` v m²) – práve preto sa dá použiť ako `--clip`
+pre `rock-areas.py`. V mape má potom výsledok atribút `slope` (je to pásmo
+sklonu); `dark` nesie len surový asset v release.
 
 ### Tmavé nie je plocha, ale sieť
 
@@ -1484,7 +1539,16 @@ overiť, či pomáha, tak sa nepridával naslepo.
 
 ### Čo od toho čakať
 
-Hillshade je obraz sklonu, ale **osvetleného z jednej strany**. Severozápadné
-steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie – tie druhé teda táto
-cesta systematicky prehliadne. Zato má rozlíšenie, na aké si sami sklon
-nespočítame. Je to pokus vedľa hlavnej cesty, nie jej náhrada.
+Hillshade je obraz sklonu, ale **osvetleného z jednej strany**. To má dva
+dôsledky a oba sú systematické:
+
+* **Chýbajú juhovýchodné steny.** Rovnako strmá stena otočená k slnku je na
+  hillshade najsvetlejšia zo všetkého. Tie táto cesta prehliadne a orezanie
+  sklonu ich nevráti – čo nie je v maske, to sa do mapy nedostane.
+* **Prebytočné sú mierne odvrátené svahy.** Tie sú tmavé bez toho, aby boli
+  skala; na testovacom výreze z nich vyšlo 34 % územia. Práve toto rieši
+  orezanie sklonom.
+
+Zato má maska rozlíšenie, na aké si sami sklon nespočítame (1 m LiDAR proti
+20 m Sonnymu). Je to teda spresnenie tvaru nad hlavnou cestou, nie jej
+náhrada: bez `rock-areas.py` by z tmavých plôch nebola mapa skál.
