@@ -371,12 +371,15 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    ogr2ogr        … dopočíta atribút `level`
   │
   ├─ skaly ──────────────────────────────────────────────────
-  │    workers/rock-areas.py
-  │    a) sklon PO ČASTIACH (pamäťovo drahé), na disk:
+  │    workers/slope-chunks.py
+  │    a) sklon PO ČASTIACH (pamäťovo drahé), každá časť do SKLADU:
   │      gdalwarp -t_srs EPSG:3035 … do metrickej projekcie, mriežka `rock_res`
+  │                                  (pri dmr5 rovno z Drive cez HTTP Range)
   │      gdaldem slope             … sklon v stupňoch
   │      gdal_translate -ot Int16  … stotiny °, aby sa mozaika zmestila
+  │      → sklad: slope-chunks/ (cache) + release dem-slope (trvalý)
   │      gdalbuildvrt              … mozaika sklonu celého územia
+  │    workers/rock-areas.py
   │    b) vektorizácia NARAZ nad mozaikou:
   │      gdal_contour -p -fl …     … izolínie sklonu ako plochy (s dierami)
   │      -explodecollections       … samostatné skaly
@@ -394,6 +397,64 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   ▼
 {región}-contours.pmtiles   (vrstvy `contour` a `rock`)
 ```
+
+#### Sklad častí sklonu
+
+Skaly pre pohorie sa dovtedy počítali takto: job `Doplniť DMR 5.0 (výrez)`
+prečítal z Drive **celý** výrez naraz a uložil ho ako jeden COG
+(`ugkk-<pohorie>.tif`, do 2 GB), a až z neho sa rátal sklon. Jednotka práce aj
+jednotka uloženia bola „celé územie", takže to bolo všetko alebo nič – beh
+[31310604408](https://github.com/skifahrer/fricomaps/actions/runs/31310604408)
+čítal Vysoké Tatry hodinu, niekto ho zrušil a ostala **nula**.
+
+Teraz je jednotkou **časť**:
+
+```
+územie (napr. vysoke_tatry)
+   │  workers/slope-chunks.py
+   ├─ rozdelí na časti absolútnej mriežky EPSG:3035 (4096² px)
+   ├─ pre každú časť:
+   │    v sklade? → vezmi           (cache → release dem-slope)
+   │    nie?      → prečítaj z Drive len jej okno (HTTP Range),
+   │                gdaldem slope, Int16 → ulož do skladu
+   └─ gdalbuildvrt nad časťami → mozaika bez švov
+        │  workers/rock-areas.py – JEDEN priechod gdal_contour
+        ▼
+      rock.gpkg → rocks.pmtiles
+```
+
+**Prečo je jednotkou sklon, a nie hotové skaly.** Vektorizovať po častiach sa
+skúšalo a nefunguje: diera prerezaná hranicou časti sa zmenila na zárez
+v okraji a späť sa už nezlepila – z dvoch plôch s dierami vyšli štyri bez
+dier. Sklon je pritom presne tá drahá časť (čítanie z Drive + warp +
+`gdaldem`), kým vektorizácia je jeden lacný priechod nad hotovou mozaikou.
+
+**Mriežka častí je absolútna**, ukotvená v počiatku EPSG:3035 – nie v bboxe
+územia. To je ten rozdiel, vďaka ktorému má sklad zmysel: tá istá zem padne
+vždy do tej istej časti s tým istým menom. Overené – všetkých 14 častí
+Vysokých Tatier pri 2 m je podmnožinou 36 častí Tatier, takže neskorší beh na
+`tatry` ich už nepočíta.
+
+**Prah sklonu v mene časti nie je.** Uplatňuje sa až pri vektorizácii, takže
+zmena `rock_slope` sklad použije a preráta len tú lacnú časť – minúty namiesto
+hodiny čítania z Drive.
+
+| situácia | čo sa stane |
+|---|---|
+| druhý beh na tom istom pohorí | všetko zo skladu, nič sa nečíta |
+| zrušený beh, znovuspustenie | dopočíta sa len to, čo chýba |
+| zmazaná cache (nový runner) | časti prídu z releasu `dem-slope` |
+| zmena `rock_slope` | sklad sa použije, prepočíta sa len vektorizácia |
+| `rocks_rebuild` | prepočíta sa všetko (`--rebuild`) |
+| testovací beh (`test`) | sklad sa použije, ale nič sa doň neuloží |
+
+Dve vrstvy skladu zámerne: cache je rýchla, ale GitHub ju po siedmich dňoch
+bez použitia zmaže a repo má strop 10 GB; release nevyprší. Cache sa ukladá
+pod **prefix + číslo behu** a obnovuje cez `restore-keys` – pri pevnom kľúči
+by ju prvý beh zabral a časti dopočítané neskôr by sa už nikdy neuložili.
+
+Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
+`rocks` nič nedopĺňa a `slope-chunks.py` si číta priamo z Drive po častiach.
 
 - **`level`** rozdelí vrstevnice na `major` (po 100 m), `mid` (50 m) a
   `minor` (10 m). Vďaka tomu ich štýl vie zapínať postupne podľa zoomu a

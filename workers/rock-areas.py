@@ -33,6 +33,12 @@ prerezaná hranicou časti sa zmenila na zárez v okraji a späť sa už nezlepi
 na disk a `gdal_contour` potom ide **jedným priechodom nad celou mozaikou**.
 Žiadne švy, žiadne zlepovanie, diery na správnych miestach.
 
+SKLON SEM CHODÍ HOTOVÝ. Počíta ho `workers/slope-chunks.py` po častiach
+absolútnej mriežky a ukladá ich do trvalého skladu (cache + release), takže
+zrušený beh o hotové časti nepríde a ďalší dopočíta len zvyšok. Tu ostáva len
+ten jeden priechod, ktorý sa deliť nedá. Vedľajší zisk: zmena prahu `--slope`
+už NEznamená nové čítanie DEM – prahy sa uplatňujú až tu.
+
 Sklon sa ukladá ako **Int16 v stotinách stupňa**. Byte s krokom 0,5° by bol
 polovičný, ale robil obrys zubatý: pri hrubom kroku vznikajú v poli sklonu
 plošiny a izolínia po nich chodí po hranách buniek, teda schodíkmi. Int16
@@ -49,9 +55,11 @@ Jemnejšia mriežka teda robí obrys hladším a presnejšie umiestneným (sklon
 medzi bunkami DEM interpoluje), nové detaily terénu však nevymyslí. Script to
 na konci vypíše aj s rozmerom buniek DEM.
 
-Použitie:
-    python3 workers/rock-areas.py --dem=dem/all.vrt --bbox=W,S,E,N \\
-        --res=2 --slope=50 --cliff=65 --min-area=4 --out=data/rock.gpkg
+Použitie (mriežku aj mozaiku dáva slope-chunks.py, tak sa musia podať):
+    python3 workers/slope-chunks.py --bbox=W,S,E,N --res=auto --drive \\
+        --out=slope-chunks --stats=slope.txt
+    python3 workers/rock-areas.py --slope-vrt=slope-chunks/slope-r2.vrt \\
+        --bbox=W,S,E,N --res=2 --slope=50 --cliff=65 --out=data/rock.gpkg
 """
 import argparse
 import json
@@ -92,7 +100,7 @@ MOSAIC_MB_PER_GCELL = 240    # Int16 + DEFLATE + PREDICTOR (Byte bol 50, ale zub
 # workflowu, tak nech je to jedna implementácia a nie dve, ktoré sa časom
 # rozídu.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from watch import hms, dir_mb, Heartbeat, run_watched  # noqa: E402
+from watch import hms, run_watched  # noqa: E402
 
 
 def run(cmd, **kw):
@@ -280,108 +288,26 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
     return chosen
 
 
-def print_plan(cells, res, n_chunks, n_all, geom, budget_min):
-    """Čo to bude stáť – PRED tým, než sa to začne počítať.
-
-    Trojhodinový beh, ktorý spadne na timeout, je najhorší možný výsledok:
-    minie celý rozpočet a nevyrobí nič. Toto to povie za pár sekúnd.
-    """
-    nx, ny, step_x, step_y, width_m, height_m = geom
-    slope_s = cells / SLOPE_CELLS_PER_S
-    contour_s = cells / CONTOUR_CELLS_PER_S
-    total_s = slope_s + contour_s
-    mosaic_mb = cells / 1e9 * MOSAIC_MB_PER_GCELL
-    peak_mb = cells / 1e9 * CONTOUR_MB_PER_GCELL
-
-    print("── Plán výpočtu skál ────────────────────────────────")
-    print(f"  územie          {width_m/1000:.0f}×{height_m/1000:.0f} km "
-          f"(obdĺžnik v EPSG:3035)")
-    print(f"  mriežka         {res:g} m")
-    print(f"  buniek          {cells/1e9:.2f} mld.")
-    print(f"  častí           {n_chunks} z {n_all} "
-          f"({n_all - n_chunks} mimo územia sa preskočí), "
-          f"po {step_x/1000:.1f}×{step_y/1000:.1f} km")
-    print(f"  odhad sklon     {hms(slope_s)}")
-    print(f"  odhad obrysy    {hms(contour_s)}")
-    print(f"  odhad SPOLU     {hms(total_s)}  (rozpočet {hms(budget_min * 60)})")
-    print(f"  mozaika na disk ~{mosaic_mb/1024:.1f} GB")
-    print(f"  špička pamäte   ~{peak_mb/1024:.1f} GB")
-    print("─────────────────────────────────────────────────────", flush=True)
-
-    if budget_min and total_s > budget_min * 60:
-        # Čo by sa zmestilo: čas rastie lineárne s počtom buniek a ten
-        # kvadraticky s jemnosťou mriežky, takže hrubšia mriežka pomôže
-        # druhou mocninou, menšie územie priamo úmerne.
-        share = budget_min * 60 / total_s
-        ok_res = res / math.sqrt(share)
-        print(f"::error::Skaly by trvali {hms(total_s)} ({cells/1e9:.2f} mld. "
-              f"buniek), rozpočet je {hms(budget_min * 60)}. Celý job má na "
-              f"runneri 3 hodiny a musí sa doň zmestiť aj mapa – takto by "
-              f"spadol na timeout a nevyrobil NIČ.")
-        print(f"::error::Zmestí sa: (1) rock_res aspoň "
-              f"{math.ceil(ok_res * 10) / 10:g} m na tomto území, alebo "
-              f"(2) rock_area na výrez s ~{share*100:.0f} % plochy – napr. "
-              f"vysoke_tatry, tatry, slovensky_raj (viď workers/areas.json). "
-              f"Rozpočet sa dá zdvihnúť cez ROCK_BUDGET_MIN v env.")
-        return False
-    return True
-
-
-def slope_tiles(dem, chunks, res, tmp, heartbeat_every):
-    """Raster sklonu po častiach na disk (Byte, krok 0,5°) → zoznam dlaždíc.
-
-    Toto je jediná časť, ktorá sa musí krájať: bbox kraja má pri 2 m miliardy
-    buniek, čo je vo Float32 desiatky GB na jeden raster. Vektorizuje sa až
-    mozaika, naraz – inak by sa diery prerezané hranicou časti stratili.
-    """
-    margin = 8 * res  # presah, aby sklon na okraji časti nebol zrezaný
-    tiles = []
-    dem_tif = os.path.join(tmp, "chunk.tif")
-    slope_tif = os.path.join(tmp, "slope.tif")
-    t0 = time.time()
-    hb = Heartbeat("sklon", tmp=tmp, every=heartbeat_every)
-    hb.start()
+def mosaic_cells(vrt):
+    """Koľko buniek má hotová mozaika sklonu – na odhad času vektorizácie."""
     try:
-        for iy, ix, cx0, cy0, cx1, cy1 in chunks:
-            out = os.path.join(tmp, f"slope-{iy:03d}-{ix:03d}.tif")
-            for f in (dem_tif, slope_tif):
-                if os.path.exists(f):
-                    os.remove(f)
-
-            run(["gdalwarp", "-q", "-overwrite", "-t_srs", METRIC,
-                 "-te", repr(cx0 - margin), repr(cy0 - margin),
-                 repr(cx1 + margin), repr(cy1 + margin),
-                 "-tr", repr(res), repr(res), "-r", "cubicspline",
-                 "-ot", "Float32", "-co", "COMPRESS=DEFLATE", "-co", "TILED=YES",
-                 "-multi", dem, dem_tif])
-            run(["gdaldem", "slope", "-q", "-compute_edges",
-                 "-co", "COMPRESS=DEFLATE", "-co", "TILED=YES", dem_tif, slope_tif])
-            # Presah preč a Float32 → Byte s krokom 0,5°: mozaika celého kraja
-            # sa vo Float32 na disk runnera nezmestí.
-            run(["gdal_translate", "-q", "-ot", "Int16",
-                 "-scale", "0", repr(90.0), "0", repr(90.0 * SCALE),
-                 "-projwin", repr(cx0), repr(cy1), repr(cx1), repr(cy0),
-                 "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=2", "-co", "TILED=YES",
-                 slope_tif, out])
-            tiles.append(out)
-
-            done, total = len(tiles), len(chunks)
-            elapsed = time.time() - t0
-            eta = elapsed / done * (total - done)
-            print(f"  [{done}/{total}] sklon – {hms(elapsed)} za sebou, "
-                  f"zostáva ~{hms(eta)}, mozaika {dir_mb(tmp):.0f} MB", flush=True)
-    finally:
-        hb.stop()
-
-    for f in (dem_tif, slope_tif):
-        if os.path.exists(f):
-            os.remove(f)
-    return tiles
+        info = json.loads(run(["gdalinfo", "-json", vrt]).stdout)
+        w, h = info["size"]
+        return float(w) * float(h)
+    except Exception:
+        return 0.0
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--dem", required=True)
+    # Sklon už tento skript nepočíta – dostane ho hotový z `slope-chunks.py`,
+    # ktorý ho robí po častiach a ukladá do trvalého skladu. Vektorizácia tu
+    # ostáva JEDNÝM priechodom nad celou mozaikou; to je to podstatné, čo sa
+    # rozdeliť nedá (viď zápis o dierach hore).
+    ap.add_argument("--slope-vrt", required=True,
+                    help="mozaika sklonu z workers/slope-chunks.py")
+    ap.add_argument("--dem", default="",
+                    help="zdrojový DEM – len na výpis skutočného detailu")
     ap.add_argument("--bbox", required=True, help="west,south,east,north v stupňoch")
     ap.add_argument("--out", required=True, help="výstupný GeoPackage (vrstva rock)")
     ap.add_argument("--res", default="auto",
@@ -420,14 +346,18 @@ def main():
     args = ap.parse_args()
 
     bbox = tuple(float(v) for v in args.bbox.split(","))
-    x0, y0, x1, y1 = to_metric(bbox)
-    dem_dx, dem_dy = dem_cell_metres(args.dem, (bbox[1] + bbox[3]) / 2)
+    dem_dx, dem_dy = (dem_cell_metres(args.dem, (bbox[1] + bbox[3]) / 2)
+                      if args.dem else (None, None))
 
+    # Mriežku vyberá `slope-chunks.py` (musí ju poznať skôr, než začne
+    # počítať) a sem príde hotová. Dva výbery toho istého by sa raz rozišli
+    # a vektorizovalo by sa niečo iné, než sa počítalo.
     if str(args.res).strip().lower() in ("auto", "", "0"):
-        res = pick_res(x0, y0, x1, y1, args.chunk_cells, bbox,
-                       args.budget_min, dem_dx)
-    else:
-        res = float(args.res)
+        print("::error::--res musí byť konkrétne číslo: mriežku vyberá "
+              "workers/slope-chunks.py (`--print-res`) a tento skript ju "
+              "dostáva hotovú.")
+        return 2
+    res = float(args.res)
     # Štvrtina bunky: zmaže schodíky po hranách buniek, ale obrys neposunie
     # o viac než štvrtinu mriežky. Namerané: bodov na obrys klesne 5,7×
     # (423 763 → 74 395) a počet plôch sa nezmení vôbec. Ostré rohy, ktoré
@@ -442,32 +372,31 @@ def main():
         print(f"Zdrojový DEM má bunku ~{dem_dx:.0f}×{dem_dy:.0f} m – to je "
               f"strop skutočného detailu; mriežka {res:g} m len hladší obrys.")
 
-    # Plán a strážca ešte pred prvým gdalwarpom: trojhodinový beh, ktorý
-    # spadne na timeout, je horší než beh, ktorý sa vôbec nezačne.
-    chunks, n_all, cells, geom = chunk_plan(x0, y0, x1, y1, res,
-                                            args.chunk_cells, bbox)
-    if not chunks:
-        print("::error::Ani jedna počítaná časť nezasahuje do územia "
-              f"{args.bbox} – skontroluj bbox.")
+    # ---------- 1. hotová mozaika sklonu ----------
+    vrt = args.slope_vrt
+    if not os.path.exists(vrt):
+        print(f"::error::Mozaika sklonu {vrt} neexistuje – najprv musí prejsť "
+              f"workers/slope-chunks.py.")
         return 2
-    if not print_plan(cells, res, len(chunks), n_all, geom, args.budget_min):
-        return 2
+    cells = mosaic_cells(vrt)
+    print(f"Mozaika sklonu: {vrt}, {cells / 1e9:.2f} mld. buniek "
+          f"pri mriežke {res:g} m")
+
+    # Strážca ešte pred vektorizáciou: trojhodinový beh, ktorý spadne na
+    # timeout, je horší než beh, ktorý sa vôbec nezačne. Sklon je už hotový a
+    # zaplatený, takže sa tu meria len ten jeden priechod.
+    if args.budget_min > 0 and cells:
+        odhad = cells / CONTOUR_CELLS_PER_S / 60
+        if odhad > args.budget_min:
+            print(f"::error::Vektorizácia {cells / 1e9:.2f} mld. buniek by "
+                  f"trvala ~{odhad:.0f} min, rozpočet je {args.budget_min:.0f}. "
+                  f"Zvoľ hrubšiu mriežku (rock_res) alebo menší výrez "
+                  f"(rock_area). Sklon v sklade ostáva, takže sa nezahodí.")
+            return 2
 
     t_start = time.time()
     tmp = tempfile.mkdtemp(prefix="rock-", dir=os.path.dirname(args.out) or ".")
     try:
-        # ---------- 1. sklon po častiach na disk ----------
-        tiles = slope_tiles(args.dem, chunks, res, tmp, args.heartbeat)
-        if not tiles:
-            print("::warning::Nepodarilo sa spočítať sklon ani pre jednu časť.")
-            return 1
-        mb = sum(os.path.getsize(t) for t in tiles) / 1048576
-        print(f"Mozaika sklonu: {len(tiles)} dlaždíc, {mb:.0f} MB na disku, "
-              f"sklon trval {hms(time.time() - t_start)}")
-
-        vrt = os.path.join(tmp, "slope.vrt")
-        run(["gdalbuildvrt", "-q", vrt] + tiles)
-
         # ---------- 2. vektorizácia NARAZ nad celou mozaikou ----------
         # Jediný priechod = žiadne švy a diery ostanú dierami. Prahy sú
         # v jednotkách uloženého rastra (0,5° na krok).
@@ -493,8 +422,9 @@ def main():
                   "územie cez rock_area alebo zvoľ hrubšiu mriežku rock_res.")
             return 2
 
-        for t in tiles:  # mozaika je vyše gigabajtu, ďalej ju netreba
-            os.remove(t)
+        # Mozaika sa tu ZÁMERNE NEMAŽE, hoci je vyše gigabajtu: sú to časti
+        # trvalého skladu (`slope-chunks.py`) a ukladajú sa do cache aj do
+        # releasu. Práve preto, aby ich ďalší beh nemusel počítať znova.
 
         # ---------- 3. rozbitie na plochy ----------
         # gdal_contour zlepí každé pásmo do jedného multipolygónu; bez

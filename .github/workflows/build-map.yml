@@ -197,6 +197,11 @@ env:
   # workflow „Skaly z tieňovaných dlaždíc". Build ich nikdy nepočíta, len
   # si ich vypýta výberom `rock_source: tienovanie`.
   ROCK_IMG_RELEASE: dem-rocks-img
+  # Sklad častí rastra sklonu (workers/slope-chunks.py). Na rozdiel od cache
+  # nevyprší, takže hodina čítania z Drive sa nemá ako stratiť ani vtedy, keď
+  # GitHub cache zahodí. Časti majú absolútnu mriežku, takže sa delia medzi
+  # výrezmi: čo sa spočítalo pre vysoke_tatry, použijú aj tatry.
+  SLOPE_RELEASE: dem-slope
   ROCK_RES: auto # záložná mriežka na sklon (m), keď voľba rock_res chýba
   # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
   # 4 m²) – menšie útvary sú už len zubaté artefakty jednej bunky, nie skala.
@@ -862,6 +867,7 @@ jobs:
       demtiles_contours: ${{ steps.keys.outputs.demtiles_contours }}
       demtiles_terrain: ${{ steps.keys.outputs.demtiles_terrain }}
       terrain: ${{ steps.keys.outputs.terrain }}
+      slope: ${{ steps.keys.outputs.slope }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -898,6 +904,19 @@ jobs:
             echo "demtiles_contours=demtiles-v2-c$CS$DC-r$RS$DR-$B"
             echo "demtiles_terrain=demtiles-v2-t$TS$DT-$B"
             echo "terrain=terrain-v2-$TS-$DT-$B-z${{ needs.plan.outputs.opt_terrain_maxzoom }}"
+            # Sklad častí sklonu. V kľúči je VÝREZ, MODEL a MRIEŽKA – teda
+            # presne to, čo mení obsah častí. Prah sklonu v ňom zámerne NIE
+            # JE: uplatňuje sa až pri vektorizácii, takže po jeho zmene sa
+            # sklad použije a preráta sa len tá lacná časť (minúty namiesto
+            # hodiny čítania z Drive). Prefix musí sedieť s `restore-keys`
+            # v jobe s vrstevnicami.
+            # Končí pomlčkou zámerne: je to PREFIX. Cache v GitHube sa nedá
+            # prepísať, takže keby bol kľúč pevný, prvý beh by ho zabral a
+            # časti dopočítané v ďalších behoch by sa už nikdy neuložili –
+            # sklad by navždy ostal taký, aký bol po prvom behu. Ukladá sa
+            # preto pod prefix + číslo behu a obnovuje sa cez `restore-keys`,
+            # čiže vždy z najnovšieho záznamu, ktorý na prefix sedí.
+            echo "slope=slope-v1-${{ needs.plan.outputs.area_key }}-$RS-g${{ needs.plan.outputs.opt_rock_res }}-"
           } >> "$GITHUB_OUTPUT"
           cat "$GITHUB_OUTPUT"
 
@@ -1030,6 +1049,25 @@ jobs:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}
 
+      # SKLAD ČASTÍ SKLONU. Toto je tá vrstva, vďaka ktorej zrušený beh
+      # nezahodí hodinu čítania z Drive. Kľúč nesie výrez a mriežku, ale NIE
+      # prah sklonu – ten sa uplatňuje až pri vektorizácii, takže jeho zmena
+      # smie sklad použiť a preráta sa len tá lacná časť.
+      #
+      # `restore-keys` je tu podstatné: časti majú absolútnu mriežku, takže
+      # starší záznam pre to isté pohorie je použiteľný aj po zmene ostatných
+      # nastavení – čo sa v ňom nájde, to sa nepočíta. Čo chýba, dopočíta beh
+      # a uloží aj do releasu `dem-slope`, ktorý na rozdiel od cache nevyprší.
+      - name: Cache častí sklonu (restore)
+        id: slope-cache
+        if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
+        uses: actions/cache/restore@v4
+        with:
+          path: slope-chunks
+          key: ${{ needs.keys.outputs.slope }}${{ github.run_id }}
+          restore-keys: |
+            ${{ needs.keys.outputs.slope }}
+
       # Dvadsať kilobajtov bashu je vo `workers/contours-build.sh` – workflow
       # súbor má strop, nad ktorým ho GitHub ticho neprijme (stráži to Lint
       # workflows). Sem chodia len hodnoty z formulára a z prípravy.
@@ -1060,6 +1098,14 @@ jobs:
           OPT_ROCKS_REBUILD: ${{ needs.plan.outputs.opt_rocks_rebuild }}
           OPT_SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
+          # Sklad častí sklonu. Testovací beh sa ho nesmie dotknúť (počíta
+          # pár km² a jeho časti by v sklade vyzerali ako plnohodnotné),
+          # `rocks_rebuild` ho má obísť.
+          OPT_TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
+          SLOPE_STORE: slope-chunks
+          # Drive je latenčný, nie úzky – šesť častí naraz je meraný
+          # kompromis (nad ~16 vláknami začne odpovedať 403).
+          SLOPE_JOBS: "6"
         run: bash workers/contours-build.sh
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
@@ -1071,6 +1117,24 @@ jobs:
         with:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}
+
+      # `always()` je tu to podstatné: sklad má prežiť práve tie behy, ktoré
+      # sa nedopočítali. Keď job spadne alebo ho niekto zruší v polovici,
+      # hotové časti sa aj tak uložia a ďalší beh dopočíta len zvyšok.
+      # (Do releasu `dem-slope` ich ukladá `slope-chunks.py` hneď, ako
+      # vzniknú – toto je len rýchlejšia vrstva.)
+      # Testovací beh sa neukladá. Počíta pár km², takže by pod ten istý
+      # prefix uložil takmer prázdny sklad – a `restore-keys` berie NAJNOVŠÍ
+      # záznam, takže by ďalší ostrý beh dostal ten chudobný namiesto plného.
+      # (Prísť by o nič netrpel, časti sú aj v release `dem-slope`, ale ťahal
+      # by ich zbytočne odtiaľ.)
+      - name: Cache častí sklonu (save)
+        if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.test_km2 == '0' && steps.slope-cache.outputs.cache-hit != 'true' && hashFiles('slope-chunks/**') != '' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: slope-chunks
+          key: ${{ needs.keys.outputs.slope }}${{ github.run_id }}
 
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/**') != '' }}
