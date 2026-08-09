@@ -39,22 +39,25 @@ Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
                              ▲ Build map ho zavolá automaticky, keď v release
                                nie je pre jeho územie ani jedna dlaždica
 
-Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
-(vedome, trvá dlho)          priamo cez /vsizip//vsicurl/ – nič sa nesťahuje:
-                               plan   centrálny adresár ─► inventár archívu
-                               model  jeden prechod ─► hotový model do releasu
-                             celé Slovensko (5 m) ─► `dem-dmr5`  ┐ jeden zdroj
-                             pohorie (1 m)        ─► `dem-ugkk`  ┘ `dmr5`
-                             ▲ výstup je vstup pre Build map: vrstevnice,
-                               skaly aj tieňovanie sa počítajú z neho
-
 DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
-(toto je cesta k 1 m)        čítané cez HTTP Range – berie sa len to, čo
+(toto si volá Build map)     čítané cez HTTP Range – berie sa len to, čo
                              výrez pretína:
-                               pohorie (1 m)        ─► `dem-ugkk` ┐ jeden zdroj
-                               celé Slovensko (5 m) ─► `dem-dmr5` ┘ `dmr5`
+                               výrez (1 m)          ─► `dem-ugkk` ┐ jeden zdroj
+                               1° dlaždice (5 m)    ─► `dem-dmr5` ┘ `dmr5`
                              ▲ výšky sú elipsoidické, prevádzajú sa cez EGM2008
                              ▲ toto je zdroj pre skaly v plnom rozlíšení
+                             ▲ Build map ju volá DVOMA jobmi (výrez + dlaždice),
+                               lebo model má dve podoby a chýbať môžu naraz
+
+DMR 5.0 z archívu ÚGKK       ZÁLOHA, ručne. TEN ISTÝ model z druhého zdroja:
+(záloha, ručne, trvá dlho)   198 GB ZIP z opendata.skgeodesy.sk, čítaný
+                             priamo cez /vsizip//vsicurl/ – nič sa nesťahuje:
+                               plan   centrálny adresár ─► inventár archívu
+                               model  jeden prechod ─► hotový model do releasu
+                             plní tie isté releasy `dem-dmr5` a `dem-ugkk`
+                             ▲ Build map ju NEVOLÁ. Je na to, keď Drive
+                               prestane odpovedať alebo treba overiť výšky
+                               proti pôvodine (tu sú rovno v Bpv)
 
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
 (pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
@@ -691,10 +694,11 @@ voľba, tak sa na ňu formulár nepýta.
 > pohorie a build ticho vzal 5 m tam, kde bol k dispozícii meter.
 
 Oba release plnia dva workflowy – [*DMR 5.0 z
-Drive*](#dmr-50-z-drive-145-gb-cez-http-range) (ETRS89 verzia, odporúčaná)
-a [*Pripraviť DMR 5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) (archív
-ÚGKK) – a ani jeden sa **nedopĺňa sám**: sto gigabajtov nie je vedľajší
-účinok buildu mapy.
+Drive*](#dmr-50-z-drive-145-gb-cez-http-range) (ETRS89 verzia, **toto si
+`Build map` volá sám**, a to dvoma jobmi, lebo model má dve podoby)
+a [*DMR 5.0 z archívu ÚGKK*](#dmr-50-z-archívu-úgkk-198-gb-cez-http-range-záloha-ručne)
+(**záloha na ručné spustenie**, build ju nevolá nikdy). Sú to dva zdroje
+toho istého modelu s opačnými pravidlami čítania, nie dve rôzne dáta.
 
 **`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
 v pipeline.** Overené behom
@@ -803,7 +807,12 @@ stupni a build si ju podľa mena hľadá, takže polovičná dlaždica by v ďal
 behu prešla kontrolou a tieňovanie by ticho skončilo v polovici mapy. Stojí to
 rádovo pol hodiny a ~2 GB z Drive na stupeň – ale raz.
 
-### Pripraviť DMR 5.0: 198 GB cez HTTP Range
+### DMR 5.0 z archívu ÚGKK: 198 GB cez HTTP Range (záloha, ručne)
+
+> **Toto Build map nevolá.** Model si dopĺňa z
+> [*DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range); táto cesta je
+> záloha na ručné spustenie – ten istý model z druhého zdroja, pre prípad,
+> že Drive prestane odpovedať alebo treba overiť výšky proti pôvodine.
 
 ÚGKK dal DMR 5.0 (1 m LiDAR) na to isté statické úložisko, z ktorého ide
 DMR 3.5 — ako **jeden ZIP na celé Slovensko**:
@@ -850,7 +859,7 @@ Klasické „stiahni a rozbaľ“ tu teda neexistuje. Ale nič sťahovať netreb
 ZIP sa číta cez HTTP Range, GeoTIFF je dlaždicovaný (512×512, DEFLATE), takže
 si GDAL vypýta len tie dlaždice, ktoré potrebuje. Na disku nepristane nič.
 
-To je workflow **Pripraviť DMR 5.0** ([`dmr5.yml`](.github/workflows/dmr5.yml)),
+To je workflow **DMR 5.0 z archívu ÚGKK** ([`dmr5.yml`](.github/workflows/dmr5.yml)),
 dva joby a **tri polia vo formulári**:
 
 ```
@@ -1104,8 +1113,8 @@ ktorým začať.
 **Prakticky:** `dmr5` **s výrezom** (teda plné metrové rozlíšenie) funguje len
 vtedy, keď je ten výrez už v releasi `dem-ugkk`. Dostane sa tam **workflowom
 [*DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range)** (`area:
-<pohorie>`), prípadne starším [*Pripraviť DMR
-5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) alebo jednorazovým exportom zo
+<pohorie>`), prípadne záložným [*DMR 5.0 z archívu
+ÚGKK*](#dmr-50-z-archívu-úgkk-198-gb-cez-http-range-záloha-ručne) alebo jednorazovým exportom zo
 ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²)
 a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho a napíše
 to.

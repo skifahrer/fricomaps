@@ -133,9 +133,19 @@ def main():
             return 1
         # Do kľúča, nie len do mena: kľúč je v menách cache aj assetov
         # a testovací výsledok sa nesmie tváriť ako ostrý.
-        key = f"{key}_test{args.test_km2:g}"
-        if args.test_at.strip():
-            key += "_" + hashlib.sha1(args.test_at.encode()).hexdigest()[:4]
+        #
+        # `cely` je ale SENTINEL („žiadny výrez, ber celý región"), nie meno
+        # územia. Prípona by z neho spravila meno – a tým by sa prepla podoba
+        # výškového modelu: `dem-target.py` dáva na kľúč `cely` dlaždice, na
+        # čokoľvek iné výrez v plnom rozlíšení. Testovací beh by tak počítal
+        # z 1 m modelu to, čo ostrý počíta z 5 m dlaždíc, a nepreveril by
+        # presne tú cestu, kvôli ktorej sa spúšťa. Kolízia tu nehrozí:
+        # dlaždice sú pomenované podľa stupňov a kľúč regiónu (z ktorého sa
+        # robia mená cache a assetov) príponu `_test2` nesie tak či tak.
+        if key != "cely":
+            key = f"{key}_test{args.test_km2:g}"
+            if args.test_at.strip():
+                key += "_" + hashlib.sha1(args.test_at.encode()).hexdigest()[:4]
         name = f"{name} – test {args.test_km2:g} km²"
         out.append("test=1")
         out.append(f"test_km2={args.test_km2:g}")

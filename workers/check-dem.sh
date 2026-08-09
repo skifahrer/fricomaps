@@ -26,20 +26,36 @@
 # to `Lint workflows`.
 #
 # Použitie (hodnoty chodia z prostredia, aby sa dal skript spustiť aj ručne):
-#   BBOX=W,S,E,N AREA_KEY=vysoke_tatry \
+#   BBOX=W,S,E,N AREA_KEY=vysoke_tatry AREA_BBOX=W,S,E,N \
 #   SRC_CONTOURS=dmr5 SRC_ROCKS=dmr5 SRC_TERRAIN=dmr5 \
 #   GH_TOKEN=… GITHUB_REPOSITORY=owner/repo workers/check-dem.sh
 #
 # Zapisuje do $GITHUB_OUTPUT (keď je nastavený):
 #   demkey_<vrstva>       otlačok obsahu releasu, ide do kľúča cache
 #   mirror_<vrstva>       zdroj pre update-dem.yml (sonny/dmr35), inak prázdne
-#   mirror_dmr5_area      kľúč výrezu pre `DMR 5.0 z Drive`, inak prázdne
+#   mirror_dmr5_area      bbox výrezu `W,S,E,N` pre `DMR 5.0 z Drive`
+#   mirror_dmr5_asset     meno, pod ktorým ten výrez build hľadá v release
 #   mirror_dmr5_tiles     stupne `W,S,E,N` pre `DMR 5.0 z Drive`, inak prázdne
+#
+# PREČO SA VÝREZ PODÁVA BBOXOM A NIE KĽÚČOM POHORIA. `DMR 5.0 z Drive` dostane
+# presne to územie, ktoré si beh naozaj vypýtal – teda výrez UŽ PRETNUTÝ
+# S REGIÓNOM a pri rýchlom teste štvorec na pár km². Kým sa podával kľúč, tá
+# pipeline si ho vyriešila z `areas.json` DRUHÝKRÁT a prečítala z Drive celý
+# obdĺžnik pohoria: rýchly test na 2 km² tak čítal 541 km² Vysokých Tatier,
+# čiže hodiny namiesto minút. Je to tá istá chyba ako beh 31307163093 – dve
+# odpovede na jednu otázku – len tentoraz nezhodila beh, iba ho predražila.
+#
+# Meno assetu ide zvlášť: bbox sa doň dať nedá, build si súbor hľadá podľa
+# kľúča výrezu (`ugkk-vysoke_tatry.tif`), a to meno vie povedať `dem-target.py`.
 set -euo pipefail
 
 HERE="$(dirname "$0")"
 BBOX="${BBOX:-}"
 AREA_KEY="${AREA_KEY:-cely}"
+# Bbox výrezu, už pretnutý s regiónom (počíta ho `resolve-area.py` v príprave).
+# Prázdny = beží sa bez výrezu alebo skript spustil niekto ručne; vtedy je
+# výrezom celý región a jeho bbox je to isté.
+AREA_BBOX="${AREA_BBOX:-$BBOX}"
 OUT="${GITHUB_OUTPUT:-/dev/null}"
 
 # Ktorá vrstva podáva kľúč výrezu – viď rozpis vyššie.
@@ -52,7 +68,8 @@ layer_area_key() {
 
 MIRROR=""       # už zaradené na doplnenie (podľa PODOBY, nie podľa zdroja)
 MIRROR_LIST=""  # na výpis
-DMR5_AREA=""    # čo doplniť ako výrez v plnom rozlíšení
+DMR5_AREA=""    # bbox, ktorý sa má prečítať ako výrez v plnom rozlíšení
+DMR5_ASSET=""   # a meno, pod ktorým ho build hľadá
 DMR5_TILES=""   # ktoré stupne doplniť ako 1° dlaždice
 
 # Pozrie sa na jeden zdroj: či pre naše územie v jeho release niečo je a aký je
@@ -119,7 +136,12 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
           # Drive, runner má voľných ~60 GB). Robí to `DMR 5.0 z Drive`, ktorá
           # číta cez HTTP Range len to, čo územie pretína.
           if [ "$form" = 'area' ]; then
-            DMR5_AREA="$AREA_KEY"
+            # Bbox, nie kľúč: čítať sa má presne to, čo si beh vypýtal (viď
+            # rozpis hore). Meno assetu je to isté `$want`, ktoré sa o pár
+            # riadkov vyššie hľadalo v release – z jedného zdroja pravdy,
+            # takže sa doplní práve to, čo chýbalo.
+            DMR5_AREA="$AREA_BBOX"
+            DMR5_ASSET="$want"
           else
             DMR5_TILES="$degrees"
           fi
@@ -169,9 +191,36 @@ if [ -n "$DMR5_TILES" ]; then
   if [ "$DEG" -gt 2 ]; then
     echo "::warning::Doplnenie $DEG stupňov DMR 5.0 je rádovo $(( DEG / 2 ))–$DEG hodín. Kratšie to ide s menším územím (input \`area\`) alebo so switchom \`test\`; hrubší model (sonny, dmr35) je hotový hneď."
   fi
+  # A NAOPAK: keď je územie oveľa menšie než stupeň, ktorý sa preň číta.
+  # Dlaždica sa VŽDY musí prečítať celá – jej meno je sľub o celom stupni –
+  # takže rýchly test na 2 km² zaplatí za tieňovanie pol hodinu, kým zvyšok
+  # behu trvá minúty. Nie je to chyba, ale je to prekvapenie, a to má byť
+  # v logu vopred. Raz doplnená dlaždica v release ostane, takže ďalší
+  # testovací beh na tom istom stupni je zadarmo.
+  python3 - "$BBOX" "$DEG" <<'PY' || true
+import math, sys
+try:
+    w, s, e, n = (float(v) for v in sys.argv[1].split(","))
+except ValueError:
+    raise SystemExit(0)
+deg = int(sys.argv[2])
+km2 = ((e - w) * 111.32 * math.cos(math.radians((s + n) / 2))) * ((n - s) * 110.54)
+tile_km2 = deg * 111.32 * 110.54 * math.cos(math.radians((s + n) / 2))
+if km2 > 0 and tile_km2 / km2 > 50:
+    print(f"::warning::Tieňovanie z DMR 5.0 potrebuje {deg}° dlaždice, čo je "
+          f"~{tile_km2:.0f} km² čítania na územie s {km2:.0f} km² "
+          f"({tile_km2 / km2:.0f}× viac). Dlaždica sa musí prečítať celá – jej "
+          f"meno je sľub o celom stupni. Je to rádovo pol hodiny na stupeň; "
+          f"na rýchly test je lacnejšie `shading_source: sonny`. Raz doplnená "
+          f"dlaždica v release ostane, takže ďalší beh ju už neplatí.")
+PY
+fi
+if [ -n "$DMR5_AREA" ]; then
+  echo "DMR 5.0 výrez: prečíta sa $DMR5_AREA → $DMR5_ASSET"
 fi
 {
   echo "mirror_dmr5_area=$DMR5_AREA"
+  echo "mirror_dmr5_asset=$DMR5_ASSET"
   echo "mirror_dmr5_tiles=$DMR5_TILES"
 } >> "$OUT"
 

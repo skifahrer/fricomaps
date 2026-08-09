@@ -11,7 +11,8 @@
 # ktoré má dve podoby podľa rozsahu (viď nižšie). Všetko sú zrkadlá – build
 # nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
 # `Stiahnuť výškové dáta` (update-dem.yml), `DMR 5.0 z Drive`
-# (dmr5-drive.yml) a `Pripraviť DMR 5.0` (dmr5.yml).
+# (dmr5-drive.yml – tú si volá build sám) a `DMR 5.0 z archívu ÚGKK`
+# (dmr5.yml – záloha na ručné spustenie).
 #
 # `sonny`, `dmr35` a `dmr5` na celý región sa líšia LEN menom releasu:
 # dlaždice majú tú istú pomenúvaciu schému (`N49E019.tif`), takže sa nižšie

@@ -182,8 +182,8 @@ env:
   # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
   DMR35_RELEASE: dem-dmr35
   # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
-  # ich workflow „Pripraviť DMR 5.0" s `area: cele_slovensko`; sám sa nedopĺňa, lebo je
-  # to 198 GB archív a desiatky paralelných jobov.
+  # ich job `mirror-dmr5-tiles` cez „DMR 5.0 z Drive" – po stupňoch, ktoré
+  # bbox pretína (celé Slovensko naraz netreba).
   DMR5_RELEASE: dem-dmr5
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
@@ -277,7 +277,10 @@ jobs:
       # výrez v plnom rozlíšení a 1° dlaždice sú dva rôzne assety v dvoch
       # rôznych releasoch, takže si aj pri jedinom `dmr5` vo formulári môžu
       # chýbať oba naraz (vrstevnice chcú výrez, tieňovanie dlaždice).
+      # `mirror_dmr5_area` je BBOX (to, čo si beh naozaj vypýtal), nie kľúč
+      # pohoria; meno assetu preto ide zvlášť. Prečo: workers/check-dem.sh.
       mirror_dmr5_area: ${{ steps.check.outputs.mirror_dmr5_area }}
+      mirror_dmr5_asset: ${{ steps.check.outputs.mirror_dmr5_asset }}
       mirror_dmr5_tiles: ${{ steps.check.outputs.mirror_dmr5_tiles }}
       # Otlačok releasu na vrstvu. Ide do kľúča cache – keď sa release
       # doplní, nesmie sa z nej vrátiť starý výsledok. Na vrstvu preto, aby
@@ -306,6 +309,9 @@ jobs:
           # nezrkadlí (a nedopĺňa) výškový model na celý kraj.
           BBOX: ${{ needs.plan.outputs.dem_bbox }}
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          # Výrez pretnutý s regiónom (v teste zmenšený na štvorec). Presne
+          # toto sa má z Drive prečítať – viď workers/check-dem.sh.
+          AREA_BBOX: ${{ needs.plan.outputs.area_bbox }}
           SRC_CONTOURS: ${{ needs.plan.outputs.opt_contour_source }}
           SRC_ROCKS: ${{ needs.plan.outputs.opt_rock_dem }}
           SRC_TERRAIN: ${{ needs.plan.outputs.opt_shading_source }}
@@ -377,9 +383,11 @@ jobs:
   # Build teda pokojne pokračoval do jobu, ktorý si model vypýtal, a spadol tam
   # (beh 31307163093). Odteraz sa DMR 5.0 dopĺňa naozaj.
   #
-  # Dva joby, lebo `dmr5` má dva tvary a chýbať môžu naraz: vrstevnice a skaly
-  # čítajú výrez v plnom rozlíšení z `dem-ugkk`, tieňovanie 1° dlaždice na 5 m
-  # z `dem-dmr5`. Ktoré z toho treba, rozhodol `check-dem`.
+  # DVA JOBY NAD JEDNÝM WORKFLOWOM – nie dve pipeline. `dmr5` má dva tvary
+  # a chýbať môžu naraz: vrstevnice a skaly čítajú výrez v plnom rozlíšení
+  # z `dem-ugkk`, tieňovanie 1° dlaždice na 5 m z `dem-dmr5`. Ktoré z toho
+  # treba, rozhodol `check-dem`. (`dmr5.yml` – „DMR 5.0 z archívu ÚGKK" – je
+  # ZÁLOŽNÝ ručný zdroj na ten istý model; build ho nevolá nikdy.)
   mirror-dmr5-area:
     name: Doplniť DMR 5.0 (výrez, plné rozlíšenie)
     needs: [plan, check-dem]
@@ -388,7 +396,12 @@ jobs:
       contents: write
     uses: ./.github/workflows/dmr5-drive.yml
     with:
+      # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v release
+      # hľadal a nenašiel. Kľúč pohoria sem NEchodí: `dmr5-drive.yml` by si
+      # ho vyriešil z `areas.json` druhýkrát a prečítal celý obdĺžnik (test
+      # na 2 km² tak čítal 541 km² Tatier). Rozpis: workers/check-dem.sh.
       area: ${{ needs.check-dem.outputs.mirror_dmr5_area }}
+      asset: ${{ needs.check-dem.outputs.mirror_dmr5_asset }}
       tiles: false
 
   mirror-dmr5-tiles:
@@ -747,6 +760,11 @@ jobs:
             # bol štvorec s 2 km² neviditeľný bod.
             printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
             echo "test_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
+            # A ODLOŽ CELÚ ODPOVEĎ pre krok „Vyrieš testovací výrez": je v nej
+            # už všetko, čo ten krok potrebuje – vrátane kľúča s príponou
+            # `_test2`, ktorý mu druhým výpočtom vyjsť nemôže (prečo, hovorí
+            # komentár v tom kroku). Rátať sa to má RAZ.
+            printf '%s\n' "$RES" > /tmp/vyrez.txt
             # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa
             # nesmie tváriť ako ostrý a prepísať mu vrstevnice na celý kraj.
             KEY="${KEY}_test${TEST_KM2}"
@@ -775,19 +793,30 @@ jobs:
         id: area
         run: |
           set -euo pipefail
-          # Vlastný bbox z options prebije výber pohoria – výber je na
-          # bežné použitie, bbox na to, čo v zozname nie je.
-          AREA='${{ inputs.area }}'
-          AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
-          [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
-          # stdout aj do premennej: kľúč výrezu treba hneď na kontrolu nižšie
-          # a na vlastné výstupy sa krok odkazovať nemôže.
-          # Pretína sa s `dem_bbox`, nie s celým regiónom: výrez hovorí, kde sa
-          # počítajú vrstevnice a skaly, a to je pri rýchlom teste testovací
-          # štvorec. (Bez testu sú `dem_bbox` a `bbox` to isté.)
-          RESOLVED=$(python3 workers/resolve-area.py \
-            --region-bbox='${{ steps.region.outputs.dem_bbox }}' \
-            --area="$AREA" --out="$GITHUB_OUTPUT")
+          # RÝCHLY TEST UŽ VÝREZ VYRIEŠIL – plán ho musel spočítať, aby vedel,
+          # kam položiť štvorec pre terénne vrstvy. Odpoveď sa preberie, nie
+          # preráta: druhý výpočet dostáva `dem_bbox`, teda UŽ ten štvorec, tak
+          # mu vyjde ten istý bbox, ale kľúč BEZ prípony `_test2` – lebo tu sa
+          # `--test-km2` nepodáva. A z kľúča je meno DEM assetu, takže by výrez
+          # na 2 km² sadol v release pod `ugkk-vysoke_tatry.tif` – meno, ktoré
+          # sľubuje celé pohorie (viď docs/pipeline.md).
+          if [ -s /tmp/vyrez.txt ]; then
+            RESOLVED=$(cat /tmp/vyrez.txt)
+            cat /tmp/vyrez.txt >> "$GITHUB_OUTPUT"
+            echo "Výrez z rýchleho testu (spočítaný v pláne):"
+          else
+            # Vlastný bbox z options prebije výber pohoria – výber je na
+            # bežné použitie, bbox na to, čo v zozname nie je.
+            AREA='${{ inputs.area }}'
+            AREA_BBOX='${{ steps.opts.outputs.opt_area_bbox }}'
+            [ -n "$AREA_BBOX" ] && AREA="$AREA_BBOX"
+            # stdout aj do premennej: kľúč výrezu treba hneď na kontrolu nižšie
+            # a na vlastné výstupy sa krok odkazovať nemôže.
+            # Bez testu sú `dem_bbox` a `bbox` to isté.
+            RESOLVED=$(python3 workers/resolve-area.py \
+              --region-bbox='${{ steps.region.outputs.dem_bbox }}' \
+              --area="$AREA" --out="$GITHUB_OUTPUT")
+          fi
           echo "$RESOLVED"
           AREA_KEY=$(printf '%s\n' "$RESOLVED" | sed -n 's/^key=//p')
 

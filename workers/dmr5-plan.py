@@ -3,7 +3,8 @@
 Čo je v archíve ÚGKK DMR 5.0 – prečítané zo 198 GB bez toho, aby sa čokoľvek
 stiahlo.
 
-Beží ako prvý job workflowu „Pripraviť DMR 5.0“ a číta iba centrálny adresár
+Beží ako prvý job workflowu „DMR 5.0 z archívu ÚGKK“ (záloha, ručne) a číta
+iba centrálny adresár
 ZIPu (pár MB na konci súboru). Z toho vyrobí:
 
   plan.json    zoznam položiek s offsetmi a veľkosťami
