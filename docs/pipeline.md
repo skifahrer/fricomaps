@@ -291,8 +291,8 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
-| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [Pripraviť DMR 5.0](#štvrtý-workflow-pripraviť-dmr-50)) | naplniť |
-| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) | naplniť |
+| **ÚGKK DMR 5.0 (LLS)** | `dmr5` | ten istý 1 m LiDAR, ale prevzorkovaný na 5 m, aby sa celé Slovensko zmestilo do releasu | náš release `dem-dmr5` (viď [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive)) | naplniť |
+| **ÚGKK DMR 5.0** | `ugkk` | slovenský **1 m LiDAR** – najpodrobnejší dostupný model terénu | náš release `dem-ugkk`, jeden COG na výrez (`area`) – plní ho [DMR 5.0 z Drive](#ten-istý-model-druhá-cesta-dmr-50-z-drive) | naplniť |
 
 **Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
@@ -1194,6 +1194,56 @@ a [`workers/dmr5-raster.py`](../workers/dmr5-raster.py) (samotný model).
 doplní ako svoju úlohu; 198 GB a desiatky paralelných jobov ale nemajú byť
 vedľajší účinok buildu mapy, takže `dmr5` sa pustí raz vedome. Build to
 napíše aj s tým, čo presne spustiť.
+
+### Ten istý model, druhá cesta: „DMR 5.0 z Drive"
+
+DMR 5.0 existuje aj v **ETRS89 verzii a mimo ZIPu** – dva holé BigTIFFy na
+Google Drive. Plní tie isté dva release (`dem-ugkk`, `dem-dmr5`) a rovnakým
+formátom, takže `fetch-dem.sh` ani `Build map` o ňom nemusia vedieť.
+
+```
+dmr5_etrs89.tif      145,39 GiB   423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
+dmr5_etrs89.tif.ovr   43,35 GiB   pyramídy 2, 4, 8, 16, 32, 64, 128, 256 m
+CRS EPSG:3046 (ETRS89 / TM zone N34), origin X 191 148, Y 5 497 220
+```
+
+**Prečo je to iný workflow a nie ďalší input.** Celý `dmr5-raster.py` stojí
+na pravidle „čítaj raz a sekvenčne", lebo v ZIPe je raster jedným deflate
+prúdom a skok späť znamená rozbaľovanie od začiatku. Tu to pravidlo neplatí:
+každá dlaždica má vlastnú kompresiu a Range funguje na ľubovoľnom offsete,
+takže výrez stojí podľa počtu dlaždíc, ktoré pretína, a nie podľa toho, ako
+ďaleko v súbore leží. Zliať dva job grafy s opačnými pravidlami do jedného by
+znamenalo, že polovica komentárov v ňom vždy klame.
+
+Tri veci, ktoré ten workflow rieši, a všetky sú zmerané:
+
+1. **Drive vracia na `HEAD` `content-length: 0`**, takže GDAL súbor odmietne
+   (`GetFileSize()=0`). S `CPL_VSIL_CURL_USE_HEAD=NO` sa otvorí, ale veľkosť
+   si domyslí zle (~16 MB) a všetko nad ňou padá na „after end of file".
+   [`workers/drive-serve.py`](../workers/drive-serve.py) je HTTP server na
+   localhoste, ktorý tú hlavičku opraví a podáva **oba** súbory pod jedným
+   menom – GDAL si tak nájde `.ovr` ako sidecar a pri hrubšom cieli číta
+   z pyramíd. Otvorenie 145 GiB: 8 s, 9 požiadaviek, 0,3 MB.
+
+2. **Limituje latencia, nie pásmo.** 48 náhodných výrezov po 400 kB:
+   1 vlákno 1 143 ms/req, 8 vlákien 147 ms/req, 24 vlákien 68 ms/req. Preto
+   sa okno krája na bloky **prichytené na cieľovú mriežku** (inak by susedné
+   bloky mali navzájom posunuté mriežky a `gdalbuildvrt` by ich zlepil so
+   švom) a číta sa súbežne.
+
+3. **Výšky sú elipsoidické**, nie Bpv – je to ETRS89 verzia. Maximum v súbore
+   2 697,03 m vs. Gerlach 2 654,4 m n. m. je tých +42,6 m geoidu. Predvolene
+   sa odčíta EGM2008 (`-s_srs EPSG:3046+4937 -t_srs EPSG:4326+3855`,
+   s `ERROR_ON_MISSING_VERT_SHIFT=YES`, aby chýbajúca mriežka nebola tichý
+   omyl). Po prevode vyjde na Gerlachu 2 653,92 m. Na skaly by na tom
+   nezáležalo – sklon sa geoidom nemení – na vrstevnice áno.
+
+Namerané: výrez 5,2 × 5,6 km pri 1 m trvá 1,2 min, stiahne 0,11 GB v 697
+požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú
+4 514 plôch a 5,08 km² na 29 km² územia.
+
+Kód: [`workers/drive-serve.py`](../workers/drive-serve.py) (shim nad Drive)
+a [`workers/dmr5-drive.py`](../workers/dmr5-drive.py) (okno, bloky, výstup).
 
 ## Piaty workflow: „Skaly z tieňovaných dlaždíc"
 

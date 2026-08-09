@@ -48,6 +48,14 @@ Pripraviť DMR 5.0            198 GB ZIP z opendata.skgeodesy.sk, čítaný
                              ▲ výstup je vstup pre Build map: vrstevnice,
                                skaly aj tieňovanie sa počítajú z neho
 
+DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
+(toto je cesta k 1 m)        čítané cez HTTP Range – berie sa len to, čo
+                             výrez pretína:
+                               pohorie (1 m)        ─► `dem-ugkk` ─► zdroj: ugkk
+                               celé Slovensko (5 m) ─► `dem-dmr5` ─► zdroj: dmr5
+                             ▲ výšky sú elipsoidické, prevádzajú sa cez EGM2008
+                             ▲ toto je zdroj pre skaly v plnom rozlíšení
+
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
 (pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
                              ▲ Build map si ich vypýta výberom
@@ -636,8 +644,8 @@ Tri výbery vo formulári – `contour_source` (vrstevnice), `rock_source`
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
 | **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
-| **`dmr5`** | ÚGKK DMR 5.0 (LLS, otvorené dáta) | **5 m** | celý región | naplniť *Pripraviť DMR 5.0* |
-| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *Pripraviť DMR 5.0* |
+| **`dmr5`** | ÚGKK DMR 5.0 (LLS, otvorené dáta) | **5 m** | celý región | naplniť *DMR 5.0 z Drive* |
+| `ugkk` | ÚGKK DMR 5.0 (1 m LiDAR) | **1 m** | **len s výrezom** (`area`) | naplniť *DMR 5.0 z Drive* ✓ |
 | `ziadne` | – | – | – | vrstva sa negeneruje |
 
 Navyše: `rock_source: tienovanie` neberie výšky vôbec – vezme hotové polygóny
@@ -650,9 +658,11 @@ je pri každej vrstve atribúcia toho modelu, z ktorého naozaj je.
 
 `dmr5` a `ugkk` sú **ten istý zdroj**, len inak nakrájaný: `dmr5` je celá
 krajina na hrubšej mriežke v dlaždiciach `N49E019.tif`, `ugkk` je jedno
-pohorie v plnom metrovom rozlíšení ako `ugkk-<vyrez>.tif`. Oba release plní
-workflow [*Pripraviť DMR 5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) a ani
-jeden sa **nedopĺňa sám** – 198 GB archív nie je vedľajší účinok buildu mapy.
+pohorie v plnom metrovom rozlíšení ako `ugkk-<vyrez>.tif`. Oba release plnia
+dva workflowy – [*DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range)
+(ETRS89 verzia, odporúčaná) a [*Pripraviť DMR
+5.0*](#pripraviť-dmr-50-198-gb-cez-http-range) (archív ÚGKK) – a ani jeden
+sa **nedopĺňa sám**: sto gigabajtov nie je vedľajší účinok buildu mapy.
 
 **`dmr35` funguje a je to najlepší model, ktorý vieme vziať priamo
 v pipeline.** Overené behom
@@ -684,6 +694,68 @@ potrebuje celý región, takže tam ostáva Sonny.)
 > pri krájaní prepočíta (`gdalwarp -t_srs EPSG:4326`). Overené na hotovej
 > dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
 > 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
+
+### DMR 5.0 z Drive: 145 GB cez HTTP Range
+
+Tá istá dátová sada, ale **ETRS89 verzia a bez ZIPu** — dva holé BigTIFFy na
+Google Drive:
+
+```
+dmr5_etrs89.tif      156 108 150 990 B = 145,39 GiB   423 518 × 207 589 px, 1 m
+dmr5_etrs89.tif.ovr   46 550 149 948 B =  43,35 GiB   pyramídy 2 … 256 m
+```
+
+**To, že nie sú v ZIPe, mení všetko.** V archíve ÚGKK je raster jedným
+deflate prúdom a v deflate sa nedá skočiť dopredu — dá sa doň len rozbaliť od
+začiatku, takže výrez na juhu Slovenska stojí prechod celým súborom. Tu má
+každá dlaždica (128×128) vlastnú kompresiu a HTTP Range funguje na
+ľubovoľnom offsete (overené na 20 GB aj 145 GB). **Číta sa len to, čo výrez
+pretína** — Vysoké Tatry stoja rovnako ako Slovenský kras.
+
+Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
+
+| | |
+|---|---|
+| CRS | **EPSG:3046** — ETRS89 / TM zone N34 (cm 21° E, k₀ 0,9996, FE 500 000) |
+| origin | X **191 148,0**, Y **5 497 220,0** (ľavý horný roh) |
+| bunka | 1,0 × 1,0 m, Float32, nodata 3,4e38, LZW |
+
+**Dve veci, ktoré to komplikujú, a ako sú vyriešené:**
+
+1. **Drive klame o veľkosti.** Na `HEAD` vracia `content-length: 0`, takže
+   GDAL súbor odmietne (`GetFileSize()=0` → „not recognized as a supported
+   file format"). Na `Range` GET pritom odpovedá správne. Rieši to
+   [`workers/drive-serve.py`](workers/drive-serve.py) — malý HTTP server na
+   localhoste, ktorý tú jednu hlavičku opraví a Range requesty prepája ďalej.
+   Podáva **oba** súbory pod jedným menom, takže si GDAL nájde `.ovr` ako
+   sidecar sám: `gdalinfo` potom vypíše všetkých 8 úrovní, otvorenie 145 GiB
+   trvá **8 s** a stojí 9 požiadaviek / 0,3 MB.
+
+2. **Limituje latencia, nie šírka pásma.** Jeden Range request trvá rádovo
+   0,1–1 s bez ohľadu na veľkosť. Zmerané na 48 náhodných výrezoch po 400 kB:
+   1 vlákno 1 143 ms/req, 8 vlákien 147 ms/req, 24 vlákien 68 ms/req. Preto
+   sa okno **krája na bloky prichytené na cieľovú mriežku** a číta sa
+   súbežne (`jobs`, default 12). Výrez 5,2 × 5,6 km pri 1 m: **1,2 min,
+   0,11 GB, 697 požiadaviek.**
+
+**Výšky sú elipsoidické, nie Bpv.** Maximum v súbore je 2 697,03 m, kým
+Gerlachovský štít má 2 654,4 m n. m. — tých **+42,6 m je geoidová undulácia**.
+Workflow ich preto predvolene prevádza cez EGM2008; kontrola na Gerlachu dá
+po prevode 2 653,92 m, čiže rozdiel 0,5 m na 1 m mriežke. Na skaly a
+tieňovanie by to bolo jedno (sklon sa geoidom nemení), na vrstevnice nie.
+
+To je workflow **DMR 5.0 z Drive**
+([`dmr5-drive.yml`](.github/workflows/dmr5-drive.yml)), jeden job:
+
+```
+area: <pohorie>       ─► out/ugkk-<pohorie>.tif  ─► release dem-ugkk
+                          ▲ Build map: rock_source: ugkk + rovnaké rock_area
+area: cele_slovensko  ─► out/N49E019.tif …       ─► release dem-dmr5
+                          ▲ Build map: rock_source / contour_source: dmr5
+```
+
+Výstup je **presne ten istý formát**, aký `workers/fetch-dem.sh` čaká už
+dávno, takže Build map sa nemení ani o riadok.
 
 ### Pripraviť DMR 5.0: 198 GB cez HTTP Range
 
