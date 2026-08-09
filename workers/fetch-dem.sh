@@ -118,7 +118,11 @@ while IFS= read -r t; do
 done < "$DIR/list.txt"
 
 if [ "$have" -eq 0 ]; then
-  echo "::error::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
+  # Kód 3 = „tento model nemáme", nie „všetko je zle" – rovnako ako pri výreze
+  # vyššie. Volajúci sa podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na
+  # hrubší model. Pri Sonnym sa už nie je kam vrátiť, tak je to tvrdá chyba;
+  # keby aj on vracal 3, volajúci s fallbackom by sa zacyklil.
+  echo "::warning::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
     # Dlaždicovú podobu DMR 5.0 dopĺňa job `mirror-dmr5-tiles` v Build map,
@@ -130,7 +134,8 @@ if [ "$have" -eq 0 ]; then
   else
     echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
   fi
-  exit 1
+  [ "$SOURCE" = "sonny" ] && exit 1
+  exit 3
 fi
 if [ -n "$missing" ]; then
   # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za hranicou

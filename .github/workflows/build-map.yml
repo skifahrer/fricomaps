@@ -1371,10 +1371,12 @@ jobs:
         if: ${{ needs.plan.outputs.opt_terrain == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
+          OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
         run: |
           set -euo pipefail
           T_TER=$(date +%s)
           TSRC="výpočet"
+          FELL_BACK=false
           TZ='${{ needs.plan.outputs.opt_terrain_maxzoom }}'
           case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
           # Tieňovanie je vrstva z DEM, takže ide na `dem_bbox` – pri rýchlom
@@ -1416,7 +1418,31 @@ jobs:
             # nikdy neprebijú v jednom `all.vrt`. Kľúč výrezu sa nepodáva, tak
             # `dmr5` vyjde na dlaždicovú 5 m verziu – tieňovanie sa robí vždy
             # na celý región.
+            #
+            # KÓD 3 = „ten model pre toto územie nemáme". Vrstevnice to vedeli
+            # ustáť odjakživa, tieňovanie nie – a beh 31307163093 preto
+            # sčervenel na poslednom jobe, hoci mapa sa nasadila. Rovnaký
+            # fallback ako pri vrstevniciach, riadený tým istým prepínačom.
+            set +e
             workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
+            TRC=$?
+            set -e
+            if [ "$TRC" -eq 3 ]; then
+              if [ "${OPT_UGKK_FALLBACK:-true}" != 'true' ]; then
+                echo "::error::Model $TDEM pre tieňovanie nie je k dispozícii a ugkk_fallback je vypnutý. Naplň ho, zapni fallback, alebo vyber iný shading_source."
+                exit 1
+              fi
+              echo "::warning::Model $TDEM pre tieňovanie nie je k dispozícii – tieňovanie sa počíta zo Sonnyho (20 m). Mapa bude, len s hrubším reliéfom, a atribúcia bude hovoriť Sonny."
+              TDEM=sonny
+              FELL_BACK=true
+              # Meno assetu nesie zdroj, tak sa musí prepočítať – inak by sa
+              # Sonnyho dlaždice uložili do releasu pod menom toho druhého
+              # modelu a nabudúce by sa vydávali za neho.
+              ASSET="terrain-${{ needs.plan.outputs.key }}-${TDEM}-z${TZ}.tar.zst"
+              workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
+            elif [ "$TRC" -ne 0 ]; then
+              exit "$TRC"
+            fi
             echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM"
             python3 workers/build-terrain.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \
               --minzoom=5 --maxzoom="$TZ" --out=terrain-out
@@ -1444,13 +1470,18 @@ jobs:
           # tieňovanie vlastný výber, nemusí to byť ten istý model ako
           # pri vrstevniciach – a mapa nesmie tvrdiť cudzí zdroj.
           echo "dem_source=$TDEM" >> "$GITHUB_OUTPUT"
+          # Keď sa spadlo na Sonnyho, dlaždice sa NESMÚ uložiť pod kľúč cache
+          # toho pôvodného modelu – kľúč nesie jeho meno a nabudúce by sa
+          # z neho vrátili ako keby boli jeho. Do releasu ísť môžu, tam ich
+          # meno assetu už hovorí pravdu.
+          echo "fell_back=$FELL_BACK" >> "$GITHUB_OUTPUT"
           echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ z modelu $TDEM, $(du -sm _site/terrain | cut -f1) MB"
           printf '%s\t%s\t%s\t%s\n' "60" "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
             "$(find _site/terrain -name '*.png' | wc -l) PNG dlaždíc do z$TZ z $TDEM, $(du -sm _site/terrain | cut -f1) MB ($TSRC)" \
             >> steps-out/terrain.tsv
 
       - name: Cache výškových dlaždíc (save)
-        if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
+        if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain.outputs.fell_back != 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
