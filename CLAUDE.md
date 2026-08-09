@@ -147,4 +147,13 @@ zoznam súborov. Pozri `git log`: „Skaly po častiach: sklad sklonu, ktorý pr
 zrušený beh", „Z dvoch výberov výškového modelu jeden: `dmr5` si podobu berie
 podľa rozsahu".
 
-PR nezakladaj, kým oň niekto nepožiada.
+**PR zakladaj vždy, aj keď oň nikto nepožiadal.** Hotová práca na vetve, ku
+ktorej PR nie je, sa nemá ako dostať do mastera – a z histórie tohto repozitára
+je vidieť, že tadiaľ ide všetko (#54 … #71). Nečakaj na vyzvanie: keď je zmena
+dokončená a pushnutá, otvor k nej PR.
+
+Do popisu PR patrí to isté, čo do commit message – **čo sa zmenilo vecne a
+prečo** – a k tomu ako sa to overilo (`Lint workflows`, lokálne spustené
+workery, číslo behu). Keď ostalo niečo nedokončené alebo neoverené, napíš to
+tam; tichý PR, ktorý vyzerá hotovo, je tá istá trieda chyby ako tichý omyl
+v behu.
