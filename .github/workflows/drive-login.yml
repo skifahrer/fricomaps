@@ -141,6 +141,7 @@ jobs:
             --code="$CODE" --out=refresh-token.txt
 
       - name: Zapíš ho do secretu
+        id: save
         if: ${{ inputs.code != '' }}
         env:
           GH_TOKEN: ${{ secrets.DRIVE_PAT }}
@@ -169,12 +170,22 @@ jobs:
         run: |
           set -uo pipefail
           shred -u refresh-token.txt 2>/dev/null || rm -f refresh-token.txt
+          # Súhrn musí povedať PRAVDU o tom, či token niekde je. Kým tu stálo
+          # „token je v secrete" nastvrdo, tvrdil to aj beh, v ktorom sa nič
+          # neuložilo – a to je ten istý druh tichého omylu, aký táto pipeline
+          # inde stráži.
           {
             echo "## Čo ešte spraviť"
             echo
-            echo "1. **Zmaž secret \`DRIVE_PAT\`** – už netreba a je to právo zapisovať secrets."
-            echo "2. Skús \`DMR 5.0 z Drive (ETRS89)\` v režime *len sonda*: krok"
-            echo "   *Prihlásenie na Drive* má vypísať tvoj účet a pri oboch súboroch \`✓\`."
-            echo
-            echo "Token je len v secrete \`${{ inputs.secret_name }}\`; v tomto behu nikde neostal."
+            if [ '${{ steps.save.outcome }}' = 'success' ]; then
+              echo "Token je v secrete \`${{ inputs.secret_name }}\`; v logu tohto behu nikde neostal."
+              echo
+              echo "1. **Zmaž secret \`DRIVE_PAT\`** – už netreba a je to právo zapisovať secrets."
+              echo "2. Skús \`DMR 5.0 z Drive (ETRS89)\` v režime *len sonda*: krok"
+              echo "   *Prihlásenie na Drive* má vypísať tvoj účet a pri oboch súboroch \`✓\`."
+            else
+              echo "**Token sa neuložil** – secret \`${{ inputs.secret_name }}\` je taký, aký bol."
+              echo "Dôvod je v logu vyššie. Kód od Googlu je jednorazový, tak"
+              echo "prihlásenie treba spustiť odznova (beh bez \`code\`)."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

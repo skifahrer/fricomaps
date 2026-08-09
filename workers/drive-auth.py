@@ -164,6 +164,35 @@ def request_json(method, host, path, body=None, headers=None, tries=4):
                     f"pokus ({last}). Skontroluj sieť alebo proxy.")
 
 
+def project_of(client_id):
+    """Číslo projektu z client_id (`<projekt>-<hash>.apps.googleusercontent.com`)."""
+    head = (client_id or "").split("-", 1)[0]
+    return head if head.isdigit() else ""
+
+
+def api_hint(status, data, creds, path):
+    """Hláška k chybe z Drive API – aj s tým, čo s ňou."""
+    reason = api_reason(data) or f"HTTP {status}"
+    err = data.get("error") if isinstance(data, dict) else None
+    detail = str(err.get("message") or "") if isinstance(err, dict) else ""
+    if reason == "accessNotConfigured":
+        # Toto NIE JE chyba tokenu: token je platný, len projekt nemá zapnuté
+        # Drive API, tak ho API neobslúži. Bez odkazu s číslom projektu sa to
+        # hľadá po Console zbytočne dlho (beh 31332232209).
+        proj = project_of(creds.client_id)
+        where = ("https://console.cloud.google.com/apis/library/"
+                 "drive.googleapis.com" + (f"?project={proj}" if proj else ""))
+        return (f"V projekte na Google Cloud{f' (číslo {proj})' if proj else ''} "
+                f"nie je zapnuté **Google Drive API**, takže token síce platí, "
+                f"ale API ho neobslúži. Zapni ho tu: {where} – a potom to spusti "
+                f"znova." + (f" Google k tomu píše: {detail}" if detail else ""))
+    if reason in ("insufficientPermissions", "forbidden") and "scope" in detail.lower():
+        return (f"Token nemá rozsah {SCOPE} ({detail}). Vyrob ho znova – pri "
+                "prihlásení musí byť zaškrtnuté právo čítať Drive.")
+    return (f"Drive API vrátilo HTTP {status} na {path.split('?')[0]}: {reason}"
+            + (f" – {detail}" if detail else ""))
+
+
 def api_get(creds, path):
     """GET na Drive API s tokenom. Vracia dict; chybu prekladá do hlášky."""
     status, data = request_json("GET", API_HOST, path,
@@ -174,8 +203,7 @@ def api_get(creds, path):
             "GET", API_HOST, path,
             headers={"Authorization": "Bearer " + creds.renew(None)})
     if status != 200:
-        raise AuthError(f"Drive API vrátilo HTTP {status} na "
-                        f"{path.split('?')[0]}: {api_reason(data) or data}")
+        raise AuthError(api_hint(status, data, creds, path))
     return data
 
 
@@ -455,15 +483,29 @@ def exchange_to_file(code, redirect_uri, out, env=None):
     Do súboru zámerne: v public repozitári vidí log behu ktokoľvek, takže
     token sa nesmie ocitnúť ani v `echo`. Volajúci ho z toho súboru pošle
     rovno do secretu a súbor zmaže.
+
+    TOKEN SA ULOŽÍ SKÔR, NEŽ SA ČOKOĽVEK OVERUJE. Kód od Googlu je
+    JEDNORAZOVÝ a na jeho získanie treba človeka v prehliadači – je to
+    najdrahšia vec v celom postupe. Kým sa ukladal až po `whoami`, stačilo,
+    aby v projekte nebolo zapnuté Drive API (`accessNotConfigured`), a hotový
+    platný token sa zahodil aj s kódom: beh 31332232209. Overenie je od toho
+    odteraz oddelené a token prežije aj to, keď zlyhá.
     """
     client_id, client_secret, source = client_from_env(env)
     data = exchange(client_id, client_secret, code_from(code), redirect_uri)
-    creds = Credentials(client_id, client_secret, data["refresh_token"], source)
-    user = whoami(creds)
     with open(out, "w") as f:
         f.write(data["refresh_token"])
     os.chmod(out, 0o600)
-    return creds, user
+    creds = Credentials(client_id, client_secret, data["refresh_token"], source)
+    try:
+        return creds, whoami(creds)
+    except AuthError as exc:
+        # Token je uložený a platný; nefunguje len otázka „kto som". Nech to
+        # volajúci dokončí (zapíše secret) a padne až na overení – inak by sa
+        # celé prihlásenie robilo odznova pre nastavenie v Console.
+        print(f"::warning::Token je vyrobený a uložený, ale overenie účtu "
+              f"neprešlo: {exc}")
+        return creds, {}
 
 
 def whoami(creds):
