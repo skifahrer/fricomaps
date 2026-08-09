@@ -541,10 +541,11 @@ Dáta si joby podávajú cache: dlaždice pod vlastným kľúčom, rozrobené po
 druhým (takže sa gigabajty JPEGov neukladajú dvakrát). Zvolený zoom ide
 z prvého jobu ďalej ako výstup, takže sa pri `auto` nehádá trikrát.
 
-**Testovací režim** (`test: 2`) vyreže zo stredu výrezu štvorec s 2 km².
-Ladenie prahov je potom minúty namiesto hodín — a beh do súhrnu vypíše
-obrázok s okolím (červený štvorec = testované územie), súradnice a odkaz,
-ktorý otvorí hotovú mapu presne tam.
+**Testovací režim** (switch `test`) vyreže zo stredu výrezu štvorec s 2 km²
+a počíta na ňom terén — vrstevnice, skaly a tieňovanie; mapa okolo ostáva
+celá podľa nastavení regiónu. Ladenie prahov je potom minúty namiesto hodín
+— a beh do súhrnu vypíše obrázok s okolím (červený štvorec = testované
+územie), súradnice a odkaz, ktorý otvorí hotovú mapu presne tam.
 
 **Čo je hotové, sa nepočíta znova.** Rozrobené leží v cache dlaždíc, ktorá
 sa ukladá aj po páde a po timeoute:
@@ -580,10 +581,18 @@ a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
 ### Rýchly test: pár km² namiesto celého pohoria
 
 Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
-a na ňom spraví všetko — vrstevnice, skaly aj tieňovanie. Orezáva sa pritom
-celý región, nie len výrez, takže sa zmenší aj to, čo sa inak počíta na celý
-kraj. Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za
-jeden beh a nie za jeden obed.
+a na ňom spočíta to drahé — vrstevnice, skaly a tieňovanie. Z desiatok minút
+sú minúty, čiže sa dá prah alebo interval overiť za jeden beh a nie za jeden
+obed.
+
+**Mapa pritom ostáva celá podľa nastavení regiónu.** Zvolený kraj je zvolený
+kraj: cesty, vodstvo, značené trasy aj krajinné prvky vyjdú na celom
+prešovskom (alebo hocijakom inom zvolenom) území a orezáva sa len to, čo sa
+počíta z výškového modelu. Kedysi sa testom orezával celý región vrátane PBF
+a bolo to lacnejšie o pár minút Planetilera — ale výsledok sa nedal poriadne
+pozerať: dva kilometre štvorcové skál viseli nad prázdnom, bez ciest a bez
+okolia, na ktorom by bolo vidno, či sedia. Kto chce orezať aj mapu, má na to
+`options: crop_bbox=W,S,E,N` (dá sa aj spolu s testom).
 
 **Predvolene je zapnutý.** Ostrý build na celý výrez ho chce odškrtnúť.
 Opačné poradie znamenalo, že sa každé ladenie prahu platilo desiatkami minút,
@@ -593,13 +602,15 @@ zriedka, tak ostala voľbou (`options: test_km2=5`). Za miesto vo formulári
 zaplatila mriežka `rock_res`, ktorá sa prestavuje len s iným zdrojom výšok;
 je z nej tiež voľba (`options: rock_res=1`).
 
-**Mapa sa otvorí rovno na tom štvorci.** Nie je to zvláštny prípad vo viewri:
-testom sa oreže celý región, takže je ten štvorec bboxom regiónu v manifeste
-a mapa sa naň nastaví ako na hocijaký iný región. Navrch viewer zahodí polohu
-z adresy (`#map=…`), keď mieri mimo nasadeného bboxu — inak by `F5` alebo
-starý odkaz otvorili mapu nad prázdnom dvadsať kilometrov vedľa a vyzeralo by
-to, že build nič nevyrobil. V paneli je pritom napísané `Rýchly test: 2 km²`,
-nech sa pár km² mapy nedá zameniť s pokazeným buildom.
+**Mapa sa otvorí rovno na tom štvorci.** Manifest nesie pri regióne okrem
+`bbox` (celý kraj) aj `test_bbox` (štvorec) a viewer sa pri štarte nastaví na
+ten druhý — inak by sa 2 km² skál hľadali očami v štyroch tisícoch km².
+Posúvať sa dá kamkoľvek, mapa je celá. Polohu z adresy (`#map=…`) viewer
+zahodí, len keď mieri mimo nasadeného regiónu, aby `F5` ani starý odkaz
+neotvorili mapu nad cudzím krajom. V paneli je napísané, že vrstevnice, skaly
+a tieňovanie sú len na tých 2 km² — nech kraj bez skál nevyzerá ako pokazený
+build. Tieňovanie má navyše v štýle `bounds` toho štvorca, takže sa jeho
+dlaždice mimo neho ani nepýtajú.
 
 Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
@@ -609,7 +620,8 @@ ním prah, interval alebo kód – a keby sa výsledok vrátil z cache, videl by
 to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastavenia
 aj otlačok skriptov, ale nie všetko, a pár km² prepočítať stojí minúty, kým
 jedno takto stratené kolo ladenia stojí viac. Cache ostrého behu je pritom
-v bezpečí: v kľúči je bbox a ten je pri teste bboxom testovacieho štvorca.
+v bezpečí: v kľúči terénových vrstiev je bbox výpočtu a ten je pri teste
+bboxom testovacieho štvorca.
 Platí to aj pre skaly z tieňovania – tá podpipeline dostane `fresh=1`, takže
 nenadviaže na rozrobené obrysy z minulého behu. Zo stiahnutých **vstupov**
 (PBF, DEM dlaždice, JPG dlaždice tieňovania, Planetiler, glyfy) sa nezahadzuje

@@ -216,6 +216,8 @@ def zapis(args, test, clat, clon, strana_km, vyska_km, km2, cely_vidno):
         f"| stred | `{clat:.5f}, {clon:.5f}` |",
         f"| bbox | `{w:.6f},{s:.6f},{e:.6f},{n:.6f}` |",
         f"| veľkosť | {strana_km:.2f} × {vyska_km:.2f} km |", "",
+        "Vrstevnice, skaly a tieňovanie sú len na tomto štvorci – **mapa "
+        "okolo neho je celý región** podľa nastavení behu.", "",
     ]
     odkazy = []
     if mapa:

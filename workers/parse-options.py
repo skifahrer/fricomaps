@@ -302,9 +302,9 @@ def main():
     # nastavenia aj otlačok skriptov, ale nie všetko: pár km² prepočítať
     # stojí minúty, kým jedno takto stratené kolo ladenia stojí viac.
     #
-    # Cache ostrého behu je pritom v bezpečí: kľúč nesie `bboxkey` a ten je
-    # pri teste bboxom testovacieho štvorca, takže sa maže a prepisuje len
-    # cache toho testu.
+    # Cache ostrého behu je pritom v bezpečí: kľúče vrstevníc, skál
+    # a tieňovania nesú `dem_bboxkey` a ten je pri teste bboxom testovacieho
+    # štvorca, takže sa maže a prepisuje len cache toho testu.
     if test_on:
         for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
             values[flag] = "true"
@@ -330,8 +330,9 @@ def main():
     print(f"\nVrstevnice: {contour_src}   Skaly: {rock_src}   "
           f"Tieňovanie: {shading_src}   Trasy: {values['trails']}   "
           f"Krajinné prvky: {values['features']}")
-    print("Rýchly test: " + (f"ZAPNUTÝ, {values['test_km2']} km² zo stredu "
-                             f"výrezu (mapa sa otvorí tam)"
+    print("Rýchly test: " + (f"ZAPNUTÝ, terén (vrstevnice, skaly, tieňovanie) "
+                             f"len na {values['test_km2']} km² zo stredu "
+                             f"výrezu; mapa ostáva celý región a otvorí sa tam"
                              if test_on else "vypnutý – ostrý beh"))
     return 0
 

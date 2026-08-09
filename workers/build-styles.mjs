@@ -86,6 +86,16 @@ const demTilesSource = DEM_SOURCES[args["dem-tiles-source"]]
 const demTiles =
   args["dem-tiles"] === "none" ? null : args["dem-tiles"] || DEFAULT_DEM_TILES;
 const demMaxzoom = Number(args["dem-maxzoom"] || DEFAULT_DEM_MAXZOOM);
+// Kde vlastné výškové dlaždice vôbec sú. Rýchly test (switch `test`) ich
+// počíta len na štvorci s pár km², kým mapa je celý kraj – bez tejto hranice
+// by klient pýtal tieňovanie po celom kraji a dostával 404.
+const demBounds = args["dem-bounds"]
+  ? args["dem-bounds"].split(",").map(Number)
+  : null;
+if (demBounds && (demBounds.length !== 4 || demBounds.some((n) => !Number.isFinite(n)))) {
+  console.error("--dem-bounds musí byť W,S,E,N (štyri čísla)");
+  process.exit(1);
+}
 
 if (!baseUrl) {
   console.error("Chýba --base-url (URL GitHub Pages stránky)");
@@ -263,6 +273,7 @@ for (const type of MAP_TYPES) {
       demTiles,
       demTilesSource,
       demMaxzoom,
+      demBounds,
       name: `FricoMaps ${regionName} – ${type.label} (${THEMES[themeKey].label})`
     });
     const json = JSON.stringify(style, null, 2);

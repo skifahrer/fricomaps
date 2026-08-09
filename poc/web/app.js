@@ -220,9 +220,21 @@ function styleFor(manifest) {
     // hore pri `dem`, lebo dlaždice sú spoločné pre všetky regióny.
     demTilesSource: manifest.dem_source || region.dem_source || DEFAULT_DEM_SOURCE,
     demMaxzoom: manifest.dem_maxzoom || DEFAULT_DEM_MAXZOOM,
+    // Pri rýchlom teste je tieňovanie len na testovacom štvorci, kým mapa je
+    // celý región – bez tejto hranice by MapLibre pýtal dlaždice po celom kraji.
+    demBounds: region.test_bbox || null,
     overrides,
     name: `FricoMaps – ${region.name}`
   });
+}
+
+// Kam mapu otvoriť. Bežne na celý región – ale pri rýchlom teste (switch
+// `test`) sú vrstevnice, skaly a tieňovanie len na štvorci s pár km², kým
+// mapa je celý kraj. Bez tohto by sa výsledok testu hľadal očami niekde
+// v štyroch tisícoch km²; s ním je mapa hneď tam, kde sa niečo počítalo.
+function initialBounds(region) {
+  const [w, s, e, n] = region.test_bbox || region.bbox;
+  return [[w, s], [e, n]];
 }
 
 function applyStyle(manifest) {
@@ -240,11 +252,12 @@ function applyStyle(manifest) {
 
   metaEl.innerHTML =
     `Región: <b>${region.name}</b><br>` +
-    // Rýchly test nasadí mapu na pár km² – bez tejto vety vyzerá výsledok
-    // ako pokazený build (všade naokolo nič), nie ako testovací výrez.
+    // Rýchly test počíta vrstevnice, skaly a tieňovanie len na štvorci; mapa
+    // je pritom celý región. Bez tejto vety vyzerá kraj bez skál ako pokazený
+    // build – pritom sú skaly na tých dvoch kilometroch, kde sa čakali.
     (region.test_km2
-      ? `<b>Rýchly test:</b> ${region.test_km2} km² zo stredu výrezu – ` +
-        `mapa je len tu<br>`
+      ? `<b>Rýchly test:</b> vrstevnice, skaly a tieňovanie len na ` +
+        `${region.test_km2} km² zo stredu výrezu – zvyšok mapy je celý región<br>`
       : "") +
     `Mapa: <b>${kind.label}</b> – ${kind.note}<br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
@@ -277,12 +290,11 @@ function applyStyle(manifest) {
   if (!map) {
     const [w, s, e, n] = region.bbox;
     // Poloha z adresy má prednosť pred bboxom regiónu – ale len keď v tom
-    // regióne naozaj leží. Rýchly test (switch `test`) nasadí mapu na pár
-    // km²; hash z minulej návštevy alebo starý odkaz mieri inam a MapLibre
-    // by mapu otvoril nad prázdnom – vyzeralo by to, že build nič nevyrobil,
-    // pritom sú dlaždice o dvadsať kilometrov vedľa. Hash sa preto zahodí
-    // a rozhodne bbox. Musí to byť PRED vytvorením mapy: `hash: "map"` si
-    // adresu prečíta hneď pri štarte.
+    // regióne naozaj leží. Hash z minulej návštevy alebo starý odkaz môže
+    // mieriť do iného kraja a MapLibre by mapu otvoril nad prázdnom –
+    // vyzeralo by to, že build nič nevyrobil, pritom sú dlaždice o sto
+    // kilometrov vedľa. Hash sa preto zahodí a rozhodne bbox. Musí to byť
+    // PRED vytvorením mapy: `hash: "map"` si adresu prečíta hneď pri štarte.
     const pos = posFromHash();
     if (pos && (pos.lon < w || pos.lon > e || pos.lat < s || pos.lat > n)) {
       dropPosFromHash();
@@ -290,7 +302,7 @@ function applyStyle(manifest) {
     map = new maplibregl.Map({
       container: "map",
       style,
-      bounds: [[w, s], [e, n]],
+      bounds: initialBounds(region),
       fitBoundsOptions: { padding: 20 },
       maxZoom: MAX_DISPLAY_Z,
       maxPitch: 75,
@@ -531,8 +543,9 @@ async function main() {
   regionSelect.addEventListener("change", () => {
     syncControls();
     applyStyle(manifest);
-    const [w, s, e, n] = manifest.regions[regionSelect.value].bbox;
-    map.fitBounds([[w, s], [e, n]], { padding: 20 });
+    map.fitBounds(initialBounds(manifest.regions[regionSelect.value]), {
+      padding: 20
+    });
   });
   devCheck.addEventListener("change", () =>
     setDevMode(devCheck.checked, manifest)

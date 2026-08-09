@@ -262,10 +262,11 @@ python3 workers/summary-inputs.py \
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
-  echo "Ešte rýchlejší je switch \`test\` (predvolene zapnutý): vyreže zo"
-  echo "stredu výrezu štvorec s 2 km², spraví na ňom VŠETKO vrátane"
-  echo "tieňovania a mapu otvorí rovno tam. Ostrý beh na celom výreze ho"
-  echo "chce odškrtnúť; iná veľkosť je \`options: test_km2=5\`."
+  echo "Ešte rýchlejší je switch \`test\` (predvolene zapnutý): vrstevnice,"
+  echo "skaly aj tieňovanie sa spočítajú len na štvorci s 2 km² zo stredu"
+  echo "výrezu a mapa sa otvorí rovno tam. **Samotná mapa ostáva celá podľa"
+  echo "nastavení regiónu** – kraj, cesty, trasy aj prvky. Ostrý beh na celom"
+  echo "výreze switch odškrtne; iná veľkosť je \`options: test_km2=5\`."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then
