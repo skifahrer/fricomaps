@@ -80,14 +80,22 @@ fetch_dem() { # $1 = zdroj → DEM_VRT, DEM_GOT (čo sa NAOZAJ použilo)
   rc=$?
   set -e
   if [ "$rc" -eq 3 ]; then
-    # DMR 5.0 pre tento výrez nemáme. Buď to zhodíme, alebo dopočítame
+    # Ten model pre toto územie nemáme. Buď to zhodíme, alebo dopočítame
     # zo Sonnyho – ale nikdy ticho: `dem-source.txt` nesie, čo sa NAOZAJ
     # použilo, takže atribúcia v mape nebude tvrdiť DMR 5.0 tam, kde je Sonny.
+    local how
+    if [ "$src" = 'dmr5' ] && [ "$AREA_KEY_IN" != 'cely' ]; then
+      how="workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY_IN"
+    elif [ "$src" = 'dmr5' ]; then
+      how="workflow 'DMR 5.0 z Drive (ETRS89)' s area: cele_slovensko"
+    else
+      how="workflow 'Stiahnuť výškové dáta' so zdrojom $src"
+    fi
     if [ "$OPT_UGKK_FALLBACK" != 'true' ]; then
-      echo "::error::DMR 5.0 pre tento výrez nie je k dispozícii a ugkk_fallback je vypnutý. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s rovnakým `area`, zapni fallback, alebo vyber sonny / dmr35."
+      echo "::error::Model $src pre toto územie nie je k dispozícii a ugkk_fallback je vypnutý. Naplň ho ($how), zapni fallback, alebo vyber iný zdroj."
       exit 1
     fi
-    echo "::warning::DMR 5.0 pre tento výrez nie je k dispozícii – počíta sa zo Sonnyho (20 m). Mapa bude, len s hrubším modelom. Doplní ho workflow 'DMR 5.0 z Drive (ETRS89)' s rovnakým \`area\`."
+    echo "::warning::Model $src pre toto územie nie je k dispozícii – počíta sa zo Sonnyho (20 m). Mapa bude, len s hrubším modelom. Doplní ho $how."
     fetch_dem sonny
     return 0
   elif [ "$rc" -ne 0 ]; then
