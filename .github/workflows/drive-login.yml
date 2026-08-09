@@ -78,13 +78,28 @@ jobs:
         uses: actions/checkout@v4
 
       # PRVÝ BEH SKONČÍ TU. Odkaz sa skladá z `client_id` v secrete, aby sa
-      # nič neprepisovalo ručne – a je v súhrne, nie v logu, lebo v súhrne sa
-      # dá na telefóne kliknúť.
+      # nič neprepisovalo ručne.
+      #
+      # VYPISUJE SA NA DVE MIESTA, a to naschvál: v súhrne behu sa dá kliknúť,
+      # ale **mobilná appka GitHubu súhrny nezobrazuje** – tam je vidieť len
+      # log kroku. Tak je odkaz aj v logu, na vlastnom riadku a bez ozdôb, aby
+      # sa dal označiť a skopírovať. Tajné na ňom nie je nič: `client_id` je
+      # verejná časť OAuth klienta (chodí v každej adrese prihlásenia)
+      # a bez `client_secret` sa z kódu token vymeniť nedá.
       - name: Odkaz na prihlásenie
         if: ${{ inputs.code == '' }}
         run: |
           set -euo pipefail
           URL=$(python3 workers/drive-auth.py --auth-url)
+          echo
+          echo "Otvor v prehliadači tento odkaz (celý jeden riadok):"
+          echo
+          echo "$URL"
+          echo
+          echo "Prihlás sa účtom, ktorý DMR 5.0 na Drive VLASTNÍ, a povoľ prístup."
+          echo "Prehliadač potom skončí na http://127.0.0.1:8731/?code=… , čo sa"
+          echo "nemá kde otvoriť – to je správne. Skopíruj tú adresu z adresného"
+          echo "riadku celú a spusti tento workflow znova s ňou v políčku 'code'."
           {
             echo "## Prihlás sa na Drive"
             echo
