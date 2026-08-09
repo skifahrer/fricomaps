@@ -384,15 +384,16 @@ def main():
     env = None
     stats_drive = None
     if args.drive:
-        # Shim nad Drive a jeho ID súborov sú v `dmr5-drive.py` – sem sa
-        # neopisujú, nech je jedno miesto, kde sa dá vymeniť zdroj.
+        # Shim nad Drive, ID súborov aj prihlásenie vlastníka sú v
+        # `dmr5-drive.py` – sem sa neopisujú, nech je jedno miesto, kde sa dá
+        # vymeniť zdroj (a jedno miesto, ktoré vie, čím sa prihlasuje).
         dd = load("dmr5_drive", "dmr5-drive.py")
-        base, sizes, stats_drive = dd.drive.serve(
-            {dd.TIF_NAME: dd.TIF_ID, dd.TIF_NAME + ".ovr": dd.OVR_ID}, 0)
+        base, sizes, stats_drive, creds = dd.serve_drive(0)
         dem = f"/vsicurl/{base}/{dd.TIF_NAME}"
         env = dd.drive.gdal_env()
         print(f"  zdroj: DMR 5.0 na Drive, "
               + ", ".join(f"{n} {s / 2**30:.1f} GiB" for n, s in sizes.items()))
+        print(f"  prístup: {dd.auth.describe(creds)}")
     elif args.dem:
         dem = args.dem
         print(f"  zdroj: {dem}")

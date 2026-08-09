@@ -443,6 +443,73 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
+      # PRIHLÁSENIE NA DRIVE SA MUSÍ DOSTAŤ KU KAŽDÉMU KROKU, ČO Z DRIVE ČÍTA.
+      # Keď chýba, nič nespadne – beh len ticho prepadne na verejný odkaz,
+      # ktorý má denný limit sťahovania zdieľaný so všetkými klientmi, a zistí
+      # sa to až vtedy, keď Drive prestane dávať dáta (beh 31315890474 na tom
+      # visel 2 h 16 min). Presne ten druh tichého omylu, ktorý má mať
+      # kontrolu – a je to o jeden krok ľahšie prehliadnuť, než sa zdá: skaly
+      # z DMR 5.0 čítajú sklon rovno z Drive v úplne inom jobe než ten, ktorý
+      # model dopĺňa.
+      - name: Token vlastníka Drive sa dostane všade, kde sa z Drive číta
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, sys, yaml
+
+          SECRET = "GDRIVE_CREDENTIALS"
+          # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
+          # v texte – inak by kontrola našla samu seba a ostatné kontroly,
+          # ktoré tie isté mená spomínajú ako dáta.
+          CMD = re.compile(r"^\s*(?:python3?|bash|sh|\./)\s+\S*"
+                           r"(?:dmr5-drive|slope-chunks|contours-build)"
+                           r"\.(?:py|sh)\b", re.M)
+          CALLED = "./.github/workflows/dmr5-drive" + ".yml"
+          bad = 0
+
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(path)) or {}
+              top = d.get("env") or {}
+              for name, job in (d.get("jobs") or {}).items():
+                  job = job or {}
+                  # Volaný workflow si secret vyzdvihne sám, ale volajúci mu ho
+                  # musí podať – `workflow_call` nededí nič automaticky.
+                  if job.get("uses") == CALLED:
+                      sec = job.get("secrets")
+                      if not (sec == "inherit"
+                              or (isinstance(sec, dict) and SECRET in sec)):
+                          print(f"::error file={path}::job '{name}' volá "
+                                f"dmr5-drive.yml bez `secrets: inherit`, takže "
+                                f"doplnenie DMR 5.0 by čítalo verejným odkazom "
+                                f"s denným limitom.")
+                          bad += 1
+                      continue
+                  jenv = job.get("env") or {}
+                  for step in job.get("steps") or []:
+                      step = step or {}
+                      if not CMD.search(str(step.get("run") or "")):
+                          continue
+                      if any(SECRET in (e or {})
+                             for e in (top, jenv, step.get("env"))):
+                          continue
+                      print(f"::error file={path}::krok "
+                            f"'{step.get('name', '?')}' v jobe '{name}' číta "
+                            f"z Drive, ale nemá v `env` {SECRET} – bežal by na "
+                            f"verejnom dennom limite. Doplň ho k tomu kroku "
+                            f"alebo celému jobu.")
+                      bad += 1
+
+          # A druhá strana toho istého: volaný workflow ten secret musí prijať.
+          d = yaml.safe_load(open(CALLED[2:]))
+          on = d[[k for k in d if k is True or k == "on"][0]]
+          if SECRET not in ((on.get("workflow_call") or {}).get("secrets") or {}):
+              print(f"::error file={CALLED[2:]}::`workflow_call` nedeklaruje "
+                    f"secret {SECRET}, takže mu ho volajúci nemá ako podať.")
+              bad += 1
+          print(f"prihlásenie na Drive: {bad} chýb")
+          sys.exit(1 if bad else 0)
+          PY
+
       # To isté pre tri výbery výškového zdroja (`contour_source`,
       # `rock_source`, `shading_source`): musia sedieť s kľúčmi
       # v workers/dem-sources.json a s tým, pre ktoré vrstvy sa zdroj ponúka

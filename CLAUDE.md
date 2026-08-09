@@ -107,11 +107,20 @@ offsete a číta sa len to, čo výrez pretína. **Tá záloha je zrušená** �
 Drive púšťa spoľahlivo, neoplácalo sa udržiavať druhú cestu s opačnými
 pravidlami.
 
+**Číta sa prihlásený ako vlastník dát.** Verejný odkaz má denný limit
+sťahovania na súbor a ten zdieľajú všetci, kto naň siahnu; token vlastníka
+v secrete `GDRIVE_CREDENTIALS` ho posúva rádovo vyššie. Drží ho
+`workers/drive-auth.py` (`--login` vyrobí, `dmr5-drive.py --auth-check`
+overí), musí sa dostať do `dmr5-drive.yml` aj do jobov `contours`/`rocks`
+v `build-map.yml` – skaly z `dmr5` čítajú sklon rovno z Drive – a `Lint
+workflows` to stráži. Bez secretu sa nemení nič, len sa výslovne vypíše, že
+platí verejný limit.
+
 **Keď Drive nepustí, DMR 5.0 sa v tom behu nedoplní** – a nesmie to byť tiché:
 `drive-serve.py` vráti 502 s vysvetlením, beh spadne v sekundách a so zapnutým
 `ugkk_fallback` prejde na hrubší model, čo `dem-source.txt` aj atribúcia
-povedia. Náhrada je nahrať kópiu na iný účet a prepísať `TIF_ID`/`OVR_ID`
-vo `workers/dmr5-drive.py`.
+povedia. Prvá vec, čo s tým: prihlásiť sa ako vlastník. Až potom nahrať kópiu
+na iný účet a prepísať `TIF_ID`/`OVR_ID` vo `workers/dmr5-drive.py`.
 
 Tie **dva joby** sú `mirror-dmr5-area` a `mirror-dmr5-tiles` – dve volania
 jedného workflowu, lebo DMR 5.0 má dve podoby a chýbať môžu naraz:

@@ -24,6 +24,14 @@ vlastnú kompresiu a Range funguje na ľubovoľnom offsete (overené na 20 GB aj
 neplatí vzdialenosťou od začiatku súboru, ale počtom dlaždíc, ktoré ho
 pretínajú.
 
+ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK, keď je čím. Verejný odkaz („ktokoľvek
+s odkazom") má denný limit sťahovania na súbor a ten zdieľajú všetci, kto naň
+siahnu – keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní vôbec, lebo je to
+jediná cesta k nemu (beh 31315890474). Token vlastníka zo secretu
+`GDRIVE_CREDENTIALS` ten strop posúva rádovo vyššie; drží ho
+`workers/drive-auth.py` a `--auth-check` povie, ktorým účtom beh číta. Bez
+secretu sa nič nemení, len sa výslovne vypíše, že platí verejný limit.
+
 TRI VECI, KTORÉ TENTO SÚBOR RIEŠI:
 
   1. DRIVE KLAME O VEĽKOSTI. Na HEAD vracia `content-length: 0`, takže GDAL
@@ -93,6 +101,7 @@ Použitie:
     python3 workers/dmr5-drive.py --area=20,49,21,50 --grid-m=5 --tiles --out=out
     python3 workers/dmr5-drive.py --stage=plan --area=vysoke_tatry --grid-m=1
     python3 workers/dmr5-drive.py --probe-only
+    python3 workers/dmr5-drive.py --auth-check
 """
 import argparse
 import importlib.util
@@ -107,8 +116,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Drive file id. Sú to verejné odkazy „ktokoľvek s odkazom", nie tajomstvo –
-# preto smú byť v repozitári a nie v secrets.
+# Drive file id. Nie sú tajomstvo (sú to tie isté id ako v zdieľanom odkaze),
+# preto smú byť v repozitári – tajomstvom je až token vlastníka v secrete
+# GDRIVE_CREDENTIALS, ktorý dvíha limit sťahovania (viď `drive-auth.py`).
 TIF_ID = "1A4q6T-S8IZbODMDsowGr_DihzcQf22wI"
 OVR_ID = "1p07TFZwG6LzbdkWdK3gV_ccvOubd2Xqi"
 TIF_NAME = "dmr5_etrs89.tif"
@@ -137,14 +147,23 @@ BYTES_PER_PX = 3.8
 
 
 def load(name, path):
-    """workers/*.py sa kvôli pomlčke v mene nedajú `import`-núť normálne."""
+    """workers/*.py sa kvôli pomlčke v mene nedajú `import`-núť normálne.
+
+    Cez `sys.modules` preto, aby ten istý modul nevznikol dvakrát:
+    `drive-auth.py` si `drive-serve.py` vypýta tiež (berie si odtiaľ spojenia)
+    a dve kópie shimu by boli dva nezávislé bazény spojení.
+    """
+    if name in sys.modules:
+        return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, os.path.join(_HERE, path))
     mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
 drive = load("drive_serve", "drive-serve.py")
+auth = load("drive_auth", "drive-auth.py")       # kto sme na Drive
 raster = load("dmr5_raster", "dmr5-raster.py")   # Heartbeat, run_live, pomocníci
 
 LOG = []
@@ -395,15 +414,73 @@ def load_state(work):
         return json.load(f)
 
 
-def open_source(args):
-    """Shim nad Drive + otvorený raster. Vracia (src, env, info, native_m, stats).
+def credentials():
+    """Prihlásenie na Drive z prostredia, alebo None (= verejný odkaz).
 
-    Robia to fázy `plan` a `read`; `finish` už na sieť nesiaha vôbec, počíta
-    nad blokmi na disku – a práve preto je oddelená.
+    Chybu prekladá na `::error::` a pád: kto secret nastavil, čaká prihlásený
+    beh, a ticho spadnúť na verejný denný limit sa pozná až vtedy, keď Drive
+    po pol dni prestane púšťať. Rozpis vo `workers/drive-auth.py`.
+    """
+    try:
+        creds = auth.from_env()
+        if creds is None:
+            return None
+        # Token si vypýtaj HNEĎ: keď ho Drive nedá, povie sa to tu a nie po
+        # hodine čítania. Toto je tvrdá chyba – s pokazeným prihlásením sa
+        # nedá čítať a ticho prejsť na verejný limit je zakázané.
+        creds.token()
+    except auth.AuthError as exc:
+        raise SystemExit(f"::error::{exc}")
+    try:
+        auth.whoami(creds)
+    except auth.AuthError as exc:
+        # Toto je len na výpis „ktorým účtom čítame". Keď zlyhá práve táto
+        # jedna metadátová požiadavka, čítanie tým nekončí – token platí
+        # a bloky si prípadnú chybu ohlásia samy a presnejšie.
+        log(f"::warning::Účet sa nepodarilo zistiť ({exc}). Čítanie beží "
+            f"prihlásené, len sa v logu nebude vedieť ktorým účtom.")
+    return creds
+
+
+def serve_drive(port=0):
+    """Shim nad OBOMA súbormi DMR 5.0. Vracia (base, sizes, stats, creds).
+
+    Jediné miesto, kde je napísané, ktoré id sa podávajú a s akým prihlásením
+    – `open_source` aj `slope-chunks.py` si to volajú odtiaľto, nech sa zdroj
+    dá vymeniť na jednom mieste.
+    """
+    creds = credentials()
+    base, sizes, stats = drive.serve(
+        {TIF_NAME: TIF_ID, TIF_NAME + ".ovr": OVR_ID}, port, creds=creds)
+    return base, sizes, stats, creds
+
+
+def auth_check():
+    """Povedz, ktorým účtom sa bude čítať, a či na oba súbory vidí.
+
+    Vlastný krok workflowu preto, že je LACNÝ (token + dve metadátové
+    požiadavky) a odpovedá na to, čo sa inak zistí až vtedy, keď Drive
+    prestane dávať dáta: čítame ako vlastník s vysokým stropom, alebo
+    verejným odkazom s denným?
+    """
+    print("Prístup k DMR 5.0 na Google Drive:")
+    try:
+        return auth.do_check(argparse.Namespace(file=[TIF_ID, OVR_ID]))
+    except auth.AuthError as exc:
+        print(f"::error::{exc}")
+        return 2
+
+
+def open_source(args):
+    """Shim nad Drive + otvorený raster.
+
+    Vracia (src, env, info, native_m, stats, creds). Robia to fázy `plan`
+    a `read`; `finish` už na sieť nesiaha vôbec, počíta nad blokmi na disku –
+    a práve preto je oddelená.
     """
     log("Otváram DMR 5.0 (ETRS89) na Drive cez lokálny shim…")
-    base, sizes, stats = drive.serve(
-        {TIF_NAME: TIF_ID, TIF_NAME + ".ovr": OVR_ID}, args.port)
+    base, sizes, stats, creds = serve_drive(args.port)
+    log(f"  prístup: {auth.describe(creds)}")
     for name, size in sizes.items():
         log(f"  {name}: {size / 2**30:.2f} GiB")
     src = f"/vsicurl/{base}/{TIF_NAME}"
@@ -421,7 +498,7 @@ def open_source(args):
     if not ov:
         log("::warning::Pyramídy sa nenašli – hrubšie mriežky sa budú počítať "
             "z plného 1 m rastra a potrvá to násobne dlhšie.")
-    return src, env, info, abs(info["geoTransform"][1]), stats
+    return src, env, info, abs(info["geoTransform"][1]), stats, creds
 
 
 def drive_totals(state, stats):
@@ -449,7 +526,7 @@ def stage_plan(args):
     toho bude. Trojhodinový krok, ktorý spadne na timeout, je najhorší možný
     výsledok – minie celý rozpočet a nevyrobí nič.
     """
-    src, env, info, native_m, stats = open_source(args)
+    src, env, info, native_m, stats, creds = open_source(args)
     os.makedirs(args.out, exist_ok=True)
     os.makedirs(args.work, exist_ok=True)
     wkt_file = os.path.join(args.work, "src.wkt")
@@ -529,6 +606,11 @@ def stage_plan(args):
     state = {
         "area": args.area,
         "area_name": area_name,
+        # Ako sa k dátam pristupovalo, patrí do súhrnu – prepnutie na verejný
+        # odkaz (zmazaný secret) sa inak nemá kde ukázať a zistilo by sa až
+        # tým, že Drive prestane púšťať. Rovnaký dôvod ako `dem-source.txt`:
+        # nesie sa, čo sa NAOZAJ použilo.
+        "drive_auth": auth.describe(creds),
         "bbox": list(bbox) if bbox is not None else None,
         "box": list(box),
         "blocks": [list(p) for p in parts],
@@ -579,7 +661,8 @@ def stage_plan(args):
 
 def stage_read(args, state):
     """Bloky z Drive na disk. Jediná fáza, ktorá siaha na sieť – a tá dlhá."""
-    src, env, _info, _native, stats = open_source(args)
+    src, env, _info, _native, stats, creds = open_source(args)
+    state["drive_auth"] = auth.describe(creds)
     parts = [tuple(p) for p in state["blocks"]]
     log(f"  {len(parts)} blokov, {args.jobs} naraz, cieľová mriežka "
         f"{state['grid_m']:g} m")
@@ -650,6 +733,7 @@ def write_summary(path, state):
                 f"@ {state['native_m']:g} m, EPSG:{SRC_EPSG} |\n")
         f.write(f"| výšky | {'EGM2008 (≈ Bpv)' if state['geoid'] == 'egm2008' else 'elipsoidické ETRS89'} |\n")
         f.write(f"| z Drive | {got / 1e9:.2f} GB / {req:,} požiadaviek |\n")
+        f.write(f"| prístup | {state.get('drive_auth', '?')} |\n")
         f.write(f"| trvanie | {(time.time() - state['t_start']) / 60:.1f} min "
                 f"(odhad bol {state['est_min']:.0f} min) |\n")
         f.write(f"| výstup | {', '.join(f'`{m}`' for m in made[:12]) or '–'} |\n")
@@ -686,11 +770,17 @@ def main():
     ap.add_argument("--port", type=int, default=0)
     ap.add_argument("--probe-only", action="store_true",
                     help="len otvor zdroj a vypíš, čo v ňom je")
+    ap.add_argument("--auth-check", action="store_true",
+                    help="povedz, ktorým účtom sa bude z Drive čítať a či "
+                         "na oba súbory vidí; nič sa nečíta")
     ap.add_argument("--summary", default=None)
     args = ap.parse_args()
 
+    if args.auth_check:
+        return auth_check()
+
     if args.probe_only:
-        _src, _env, info, native_m, _stats = open_source(args)
+        _src, _env, info, native_m, _stats, _creds = open_source(args)
         log(f"  CRS: {(info.get('coordinateSystem') or {}).get('wkt', '')[:80]}…")
         log(f"  origin: {info['geoTransform'][0]}, {info['geoTransform'][3]}")
         for i, o in enumerate(info["bands"][0].get("overviews", [])):
