@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Stiahnutie celého priečinka z Google Drive – prihlásený, cez Drive API.
+Priečinok na Google Drive – čo v ňom je, stiahnuť z neho, nahrať doň.
+Všetko prihlásené, cez Drive API.
 
 PREČO TO EXISTUJE. Sonnyho dlaždice sa sťahovali `gdown --folder --no-cookies`,
 čiže NEPRIHLÁSENE. Verejný odkaz má denný strop sťahovania na súbor a ten
@@ -31,6 +32,12 @@ Odpoveď na „prihlásený, alebo nie" je JEDNA a je tu: `--mode`. Workflow sa
 pýta jej, neprepočítava si to z toho, či je nastavený secret – dve miesta,
 ktoré si tú istú vec počítajú samy, sa raz rozídu.
 
+OPAČNÝM SMEROM to vie tiež (`ensure_path`, `upload` na konci súboru): cache
+buildu (`drive-cache.py`) aj hotová mapa (`publish-map.py`) sa na Drive
+NAHRÁVAJÚ, a je to tá istá otázka z druhej strany. Nahráva sa „resumable"
+uploadom po blokoch, nech výpadok siete nezahodí gigabajt práce – to isté
+pravidlo ako `.part` súbory pri sťahovaní.
+
 Použitie:
     python3 workers/drive-folder.py --mode
     python3 workers/drive-folder.py --folder=<URL alebo id> --list
@@ -38,6 +45,7 @@ Použitie:
 """
 import argparse
 import importlib.util
+import json
 import os
 import re
 import sys
@@ -106,19 +114,25 @@ def folder_id(text):
                      f"https://drive.google.com/drive/folders/<id> alebo id.")
 
 
-def listing(creds, fid, depth=0, prefix=""):
+def listing(creds, fid, depth=0, prefix="", extra=""):
     """Súbory v priečinku (aj v podpriečinkoch), zoradené podľa mena.
 
-    Vracia zoznam dictov `{id, name, path, size, owned}`. Google-natívne
+    Vracia zoznam dictov `{id, name, path, size, owned, raw}`. Google-natívne
     dokumenty (tabuľky, prezentácie) sa preskakujú: `alt=media` ich nestiahne
     a v priečinku s dlaždicami nemajú čo hľadať.
+
+    `extra` sú polia navyše (napr. `createdTime`) – v `raw` ich potom nájde
+    volajúci. Je to tu preto, aby „vypíš priečinok na Drive" ostalo jedno
+    miesto: pýta sa ho aj cache (`drive-cache.py`, chce časy) aj DMR 5.0
+    (`dmr5-drive.py`, chce id súborov podľa mena).
     """
     out, skipped, token = [], [], ""
     while True:
         q = urllib.parse.quote(f"'{fid}' in parents and trashed = false")
         path = (f"/drive/v3/files?q={q}&pageSize=1000&orderBy=folder,name"
                 f"&supportsAllDrives=true&includeItemsFromAllDrives=true"
-                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe)")
+                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe"
+                + (f",{extra}" if extra else "") + ")")
         if token:
             path += "&pageToken=" + urllib.parse.quote(token)
         data = auth.api_get(creds, path)
@@ -129,7 +143,8 @@ def listing(creds, fid, depth=0, prefix=""):
                 if depth >= MAX_DEPTH:
                     skipped.append(f"{rel}/ (vnorené hlbšie než {MAX_DEPTH})")
                     continue
-                sub, sub_skipped = listing(creds, f["id"], depth + 1, rel + "/")
+                sub, sub_skipped = listing(creds, f["id"], depth + 1, rel + "/",
+                                           extra)
                 out += sub
                 skipped += sub_skipped
                 continue
@@ -137,7 +152,8 @@ def listing(creds, fid, depth=0, prefix=""):
                 skipped.append(f"{rel} ({f.get('mimeType', '?')})")
                 continue
             out.append({"id": f["id"], "name": name, "path": rel,
-                        "size": int(f["size"]), "owned": bool(f.get("ownedByMe"))})
+                        "size": int(f["size"]), "owned": bool(f.get("ownedByMe")),
+                        "raw": f})
         token = data.get("nextPageToken") or ""
         if not token:
             return out, skipped
@@ -212,6 +228,225 @@ def fetch(pool, item, dest, progress):
             progress.add(len(body), item["name"])
     os.replace(part, dest)
     return got
+
+
+# ---------- opačný smer: priečinky a nahrávanie ----------
+#
+# Ten istý súbor preto, že je to tá istá otázka z druhej strany: „čo je
+# v priečinku" a „daj to do priečinka". Cache buildu (`drive-cache.py`) aj
+# publikovanie hotovej mapy (`publish-map.py`) potrebujú oboje a druhá kópia
+# nahrávania by bola druhá pravda o tom, ako sa s Drive hovorí.
+
+# Nahrávanie po blokoch. Google žiada násobok 256 KiB; 32 MiB je kompromis
+# medzi réžiou požiadavky a tým, o koľko sa vráti prerušené nahrávanie.
+# Vlastné meno, nie `CHUNK`: to je o 150 riadkov vyššie a patrí SŤAHOVANIU –
+# dve konštanty s jedným menom v jednom súbore znamenajú, že tá druhá ticho
+# prepíše prvú.
+UPLOAD_CHUNK = 32 * 1024 * 1024
+
+UPLOAD_PATH = ("/upload/drive/v3/files?uploadType=resumable"
+               "&supportsAllDrives=true&fields=id,name,size")
+
+
+def find_folder(creds, parent, name):
+    """Id podpriečinka `name` v `parent`, alebo None."""
+    q = urllib.parse.quote(
+        f"'{parent}' in parents and trashed = false and "
+        f"mimeType = '{FOLDER_MIME}' and name = '{name}'")
+    data = auth.api_get(creds, f"/drive/v3/files?q={q}&pageSize=10"
+                               f"&supportsAllDrives=true"
+                               f"&includeItemsFromAllDrives=true"
+                               f"&fields=files(id,name)")
+    files = data.get("files") or []
+    return files[0]["id"] if files else None
+
+
+def ensure_folder(creds, parent, name):
+    """Podpriečinok `name` v `parent` – nájdi, alebo vyrob. Vracia id.
+
+    Drive dovolí dva priečinky s tým istým menom vedľa seba, takže sa najprv
+    HĽADÁ. Dva behy naraz môžu ten istý priečinok vyrobiť dvakrát; berie sa
+    potom ten prvý, čo Drive vráti, a druhý ostane prázdny – neškodné, ale
+    stojí za to o tom vedieť.
+    """
+    hit = find_folder(creds, parent, name)
+    if hit:
+        return hit
+    data = auth.api_call(creds, "POST",
+                         "/drive/v3/files?supportsAllDrives=true&fields=id,name",
+                         {"name": name, "mimeType": FOLDER_MIME,
+                          "parents": [parent]})
+    print(f"    priečinok „{name}“ vyrobený", flush=True)
+    return data["id"]
+
+
+def ensure_path(creds, root, parts):
+    """Cesta priečinkov pod `root` (vyrobí, čo chýba). Vracia id posledného."""
+    fid = root
+    for part in parts:
+        fid = ensure_folder(creds, fid, part)
+    return fid
+
+
+def folder_link(fid):
+    return f"https://drive.google.com/drive/folders/{fid}"
+
+
+def upload(creds, path, name, parent, description="", tries=4):
+    """Súbor na Drive cez „resumable upload". Vracia id.
+
+    PREČO RESUMABLE A NIE JEDNODUCHÝ POST. Nahráva sa cache buildu aj hotová
+    mapa – stovky MB až jednotky GB. Jednoduché nahranie je jedna požiadavka,
+    ktorá sa pri prvom výpadku siete celá zahodí; resumable sa Drive spýta
+    „koľko si toho dostal" a pokračuje odtiaľ. Tá istá logika ako `.part`
+    súbory inde v pipeline: hodina práce nesmie zmiznúť kvôli jednému
+    stratenému spojeniu.
+    """
+    size = os.path.getsize(path)
+    meta = json.dumps({"name": name, "parents": [parent],
+                       # Dlhý text nejde do `appProperties`: tie majú strop
+                       # 124 B na hodnotu a kľúče cache sú dlhšie.
+                       "description": description,
+                       "appProperties": {
+                           "repo": os.environ.get("GITHUB_REPOSITORY", ""),
+                           "run": os.environ.get("GITHUB_RUN_ID", "")}})
+
+    headers = _post_session(creds, meta, size)
+    loc = headers.get("Location")
+    if not loc:
+        raise RuntimeError("Drive nevrátil adresu nahrávania (Location)")
+    parts = urllib.parse.urlsplit(loc)
+    host = parts.netloc
+    upath = parts.path + (("?" + parts.query) if parts.query else "")
+
+    progress = Progress(size)
+    sent = 0
+    attempt = 0
+    with open(path, "rb") as f:
+        while sent < size:
+            f.seek(sent)
+            body = f.read(min(UPLOAD_CHUNK, size - sent))
+            end = sent + len(body) - 1
+            try:
+                status, headers, _ = _put_chunk(host, upath, body, sent, end,
+                                                size, creds)
+            except Exception as exc:                # noqa: BLE001
+                attempt += 1
+                if attempt >= tries:
+                    raise RuntimeError(
+                        f"Nahrávanie na Drive zlyhalo ani na {tries}. pokus "
+                        f"({exc}). Uložené je {human(sent)} z {human(size)}.")
+                time.sleep(min(2 ** attempt, 20))
+                # Koľko toho Drive naozaj má, vie len Drive – spýtaj sa ho,
+                # nedopočítavaj to. Keď neodpovie ani na to, skús ten istý
+                # blok znova: opakovaný blok Drive zahodí, chýbajúci nie.
+                try:
+                    sent = _uploaded(host, upath, size, creds)
+                except Exception as exc2:           # noqa: BLE001
+                    print(f"  (Drive nepovedal, koľko má: {exc2})", flush=True)
+                continue
+            if status in (200, 201):
+                progress.add(len(body), name)
+                return json.loads(headers["_telo"] or b"{}").get("id", "")
+            if status == 308:
+                sent = _resume_from(headers, sent + len(body))
+                progress.add(len(body), name)
+                attempt = 0
+                continue
+            if status in (401, 403) and attempt < tries:
+                # Vypršaný token vymeň a skús ten istý blok znova.
+                attempt += 1
+                creds.renew(None)
+                continue
+            raise RuntimeError(_upload_error(status, headers, parent))
+    raise RuntimeError("Drive nahrávanie neukončil – posledný blok nedostal "
+                       "odpoveď 200/201.")
+
+
+def _upload_error(status, headers, parent):
+    body = headers.get("_telo") or b""
+    reason = drive.api_error(body) or f"HTTP {status}"
+    if status == 403 and "insufficient" in str(reason).lower():
+        return auth.scope_hint(str(reason))
+    if status == 403:
+        return (f"Drive odmietol zápis ({reason}). Najčastejšie je to plný "
+                f"disk účtu alebo právo len na čítanie priečinka {parent}.")
+    return f"Drive vrátil HTTP {status} pri nahrávaní ({reason})"
+
+
+def _request(host, method, path, body, headers, timeout=300):
+    """Jedna požiadavka; telo odpovede vracia v hlavičkách pod `_telo`.
+
+    Vlastná a nie `urllib` z toho istého dôvodu ako inde: runner nemá nič
+    doinštalované a proxy s vlastným CA rieši `drive.connect`.
+    """
+    conn = drive.connect(host, timeout=timeout)
+    try:
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        raw = resp.read()
+        head = dict(resp.headers)
+        head["_telo"] = raw
+        return resp.status, head, raw
+    finally:
+        try:
+            conn.close()
+        except Exception:                           # noqa: BLE001
+            pass
+
+
+def _post_session(creds, meta, size):
+    """Otvor nahrávaciu reláciu. Vracia hlavičky odpovede (v nich `Location`).
+
+    Na 401 sa token raz vymení a skúsi znova – vypršať mohol práve teraz a
+    zahodiť kvôli tomu celé nahrávanie by bolo drahé.
+    """
+    for pokus in range(2):
+        status, head, _ = _request(
+            auth.API_HOST, "POST", UPLOAD_PATH, meta.encode("utf-8"),
+            {"Authorization": "Bearer " + creds.token(),
+             "Content-Type": "application/json; charset=UTF-8",
+             "X-Upload-Content-Type": "application/octet-stream",
+             "X-Upload-Content-Length": str(size),
+             "User-Agent": drive.UA})
+        if status in (200, 201):
+            return head
+        if status == 401 and pokus == 0:
+            creds.renew(None)
+            continue
+        raise RuntimeError(_upload_error(status, head, "?"))
+    raise RuntimeError("Drive nezačal nahrávanie")
+
+
+def _put_chunk(host, path, body, start, end, size, creds):
+    return _request(host, "PUT", path, body,
+                    {"Authorization": "Bearer " + creds.token(),
+                     "Content-Range": f"bytes {start}-{end}/{size}",
+                     "Content-Length": str(len(body)),
+                     "User-Agent": drive.UA})
+
+
+def _uploaded(host, path, size, creds):
+    """Koľko bajtov už Drive z tohto nahrávania má."""
+    status, head, _ = _request(host, "PUT", path, b"",
+                               {"Authorization": "Bearer " + creds.token(),
+                                "Content-Range": f"bytes */{size}",
+                                "Content-Length": "0",
+                                "User-Agent": drive.UA})
+    if status in (200, 201):
+        return size
+    return _resume_from(head, 0)
+
+
+def _resume_from(headers, default):
+    """`Range: bytes=0-<n>` z odpovede 308 → odkiaľ pokračovať."""
+    rng = headers.get("Range") or ""
+    if "-" in rng:
+        try:
+            return int(rng.rsplit("-", 1)[1]) + 1
+        except ValueError:
+            pass
+    return default
 
 
 def main():

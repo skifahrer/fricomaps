@@ -137,8 +137,8 @@ def quota_hint(authed):
             "denný strop na súbor a ten zdieľajú všetci, kto naň siahnu). "
             "Prihlás beh ako vlastníka dát – secret GDRIVE_CREDENTIALS, "
             "rozpis vo `workers/drive-auth.py --login` – vlastník má strop "
-            "oveľa vyšší. Inak počkaj pár hodín, alebo nahraj kópiu modelu na "
-            "iný účet a prepíš TIF_ID/OVR_ID vo workers/dmr5-drive.py. Beh "
+            "oveľa vyšší. Inak počkaj pár hodín, alebo nahraj kópiu modelu do "
+            "iného priečinka a prepíš FOLDER_ID vo workers/dmr5-drive.py. Beh "
             "medzitým prejde na hrubší model (sonny), keď je zapnutý "
             "ugkk_fallback.")
 
@@ -185,9 +185,9 @@ def hard_reason(reason, authed):
     if reason == "notFound":
         return ("Drive ten súbor nevidí (notFound). Prihlásený beh to hlási "
                 "vtedy, keď na súbor nevidí použitý účet – over "
-                "`python3 workers/dmr5-drive.py --auth-check`. Inak sa zmenilo "
-                "TIF_ID/OVR_ID vo workers/dmr5-drive.py alebo prestalo platiť "
-                "zdieľanie odkazom.")
+                "`python3 workers/dmr5-drive.py --auth-check`. Inak sa súbor "
+                "z priečinka `FOLDER_ID` (workers/dmr5-drive.py) presunul "
+                "alebo prestalo platiť zdieľanie.")
     if reason in ("forbidden", "insufficientFilePermissions", "cannotDownloadFile",
                   "insufficientPermissions", "appNotAuthorizedToFile",
                   "fileNotDownloadable", "cannotDownloadAbusiveFile"):

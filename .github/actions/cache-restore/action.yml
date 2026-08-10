@@ -1,0 +1,54 @@
+name: Obnov cache z Google Drive
+description: >-
+  Náhrada za actions/cache/restore. Záznamy ležia na Drive, nie v GitHube –
+  ten má na repozitár 10 GB a ticho vyhadzoval najstaršie.
+
+# Vstupy aj výstupy sú NAROVNAKO ako pri `actions/cache/restore`, aby sa
+# `if:` podmienky vo workflowoch nemuseli prepisovať a aby platilo to, čo je
+# pri nich napísané: `cache-hit` je `true` len pri presnej zhode kľúča,
+# `restore-keys` sú predpony a berie sa najnovší záznam, čo na ne sedí.
+#
+# PRIHLÁSENIE SA SEM NEPODÁVA VSTUPOM, berie sa z prostredia jobu
+# (GDRIVE_CREDENTIALS alebo trojica DRIVE_CLIENT/DRIVE_SECRET/DRIVE_REFRESH).
+# Composite akcia vidí `env:` volajúceho jobu, ale nie `secrets` – a keby sa
+# token podával ako vstup, stálo by pri každom z dvadsiatich volaní. Že ho job
+# naozaj má, stráži „Lint workflows".
+
+inputs:
+  path:
+    description: "Čo sa obnovuje – jedna cesta na riadok, ako pri actions/cache"
+    required: true
+  key:
+    description: "Kľúč záznamu"
+    required: true
+  restore-keys:
+    description: "Predpony, po ktorých sa hľadá, keď kľúč nesedí (po riadkoch)"
+    required: false
+    default: ""
+
+outputs:
+  cache-hit:
+    description: "`true` len pri PRESNEJ zhode kľúča"
+    value: ${{ steps.obnov.outputs.cache-hit }}
+  cache-primary-key:
+    description: "Kľúč, na ktorý sa hľadalo (na uloženie tým istým kľúčom)"
+    value: ${{ steps.obnov.outputs.cache-primary-key }}
+  cache-matched-key:
+    description: "Kľúč, ktorý sa naozaj našiel (pri zhode po predpone je iný)"
+    value: ${{ steps.obnov.outputs.cache-matched-key }}
+
+runs:
+  using: composite
+  steps:
+    - id: obnov
+      shell: bash
+      env:
+        CACHE_KEY: ${{ inputs.key }}
+        CACHE_PATH: ${{ inputs.path }}
+        CACHE_RESTORE_KEYS: ${{ inputs.restore-keys }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/workers/drive-cache.py" --restore \
+          --key="$CACHE_KEY" \
+          --path="$CACHE_PATH" \
+          --restore-keys="$CACHE_RESTORE_KEYS"

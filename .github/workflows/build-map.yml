@@ -171,6 +171,17 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # PRIHLÁSENIE NA DRIVE PRE CELÝ BUILD, a nie po jobe. Z Drive sa v ňom číta
+  # na štyroch miestach (DMR 5.0 vo výreze aj v dlaždiciach, Sonnyho priečinok,
+  # sklon pre skaly) a odteraz je na ňom aj CACHE – to je ďalších dvadsať
+  # krokov (`.github/actions/cache-restore` a `-save`, rozpis vo
+  # `workers/drive-cache.py`). Keby token stál pri každom jobe zvlášť, stačí na
+  # jeden zabudnúť a ten sa ticho vráti k počítaniu všetkého odznova. Stráži to
+  # „Lint workflows".
+  GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+  DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+  DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+  DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
   OSMFR_BASE: https://download.openstreetmap.fr/extracts
   # Glyfy (fonty) si hostíme sami – verejná služba fonts.openmaptiles.org je
   # jediný bod zlyhania, pri ktorom sa mapa vykreslí bez akýchkoľvek nápisov.
@@ -465,6 +476,9 @@ jobs:
     permissions:
       contents: write
     uses: ./.github/workflows/shading-rocks.yml
+    # Kvôli cache na Drive: bez tokenu by si tá podpipeline nemala ako otvoriť
+    # sklad stiahnutých dlaždíc a ťahala by gigabajty z freemap.sk odznova.
+    secrets: inherit
     with:
       # V testovacom režime ide dole rovno bbox testovacieho štvorca, nie meno
       # pohoria. Ten workflow by si síce vedel štvorec spočítať sám, ale
@@ -560,6 +574,7 @@ jobs:
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
+      opt_publish: ${{ steps.opts.outputs.opt_publish }}
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
@@ -668,13 +683,14 @@ jobs:
           mkdir -p steps-out
           : > steps-out/plan.tsv
 
-      # POZOR na restore/save: obyčajné `actions/cache` ukladá až v post-kroku
-      # a IBA keď job dobehne úspešne. Keď build spadne o hodinu neskôr, hodiny
-      # výpočtu sa zahodia. Preto restore hore a save hneď po tom, čo dáta
-      # vzniknú, s `if: always()`.
+      # POZOR na restore/save: `actions/cache` ukladalo až v post-kroku a IBA
+      # keď job dobehol úspešne. Keď build spadol o hodinu neskôr, hodiny
+      # výpočtu sa zahodili. Preto restore hore a save hneď po tom, čo dáta
+      # vzniknú, s `if: always()` – a preto to isté delenie ostalo aj po
+      # presťahovaní cache na Drive (`.github/actions/cache-restore` a `-save`).
       - name: Cache PBF regiónu (restore)
         id: pbf-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: data/region.osm.pbf
           # `v2`: kým rýchly test orezával región, ukladal orezané PBF pod
@@ -780,7 +796,7 @@ jobs:
       - name: Cache PBF regiónu (save)
         if: ${{ always() && steps.pbf-cache.outputs.cache-hit != 'true' && hashFiles('data/region.osm.pbf') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: data/region.osm.pbf
           key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
@@ -817,8 +833,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      # `actions: write` tu bolo na mazanie GitHub cache. Cache je na Drive,
+      # takže sa maže tokenom vlastníka z `env:` workflowu a GitHub na to
+      # žiadne právo nepotrebuje.
       contents: read
-      actions: write   # mazanie cache pri pregenerovaní
     outputs:
       contours: ${{ steps.keys.outputs.contours }}
       demtiles_contours: ${{ steps.keys.outputs.demtiles_contours }}
@@ -859,19 +877,23 @@ jobs:
           SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}
         run: workers/cache-keys.sh
 
+      # Kým starý záznam existuje, nový sa pod ten istý kľúč neuloží (na Drive
+      # platí to isté pravidlo ako v GitHube) – a beh, ktorý mal počítať
+      # nanovo, by o svoju prácu prišiel.
       - name: Pregenerovanie – zmaž staré cache
         if: ${{ needs.plan.outputs.opt_contours_rebuild == 'true' || needs.plan.outputs.opt_rocks_rebuild == 'true' || needs.plan.outputs.opt_terrain_rebuild == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -uo pipefail
           drop() { # $1 = kľúč cache
-            gh cache delete "$1" --repo "$GITHUB_REPOSITORY" \
-              && echo "zmazané: $1" \
-              || echo "nebolo v cache: $1"
+            python3 workers/drive-cache.py --delete --key="$1"
           }
           if [ '${{ needs.plan.outputs.opt_contours_rebuild }}' = 'true' ] || [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
             drop '${{ steps.keys.outputs.contours }}'
+            # Skaly majú ten istý kľúč s príponou `-rocks` (vlastný job,
+            # vlastný záznam). Kým sa mazal len ten prvý, pregenerovanie skál
+            # síce prepočítalo, ale uložiť sa už nemalo kam – a ďalší beh
+            # dostal z cache tie PÔVODNÉ skaly, ako keby sa nič nezmenilo.
+            drop '${{ steps.keys.outputs.contours }}-rocks'
           fi
           if [ '${{ needs.plan.outputs.opt_terrain_rebuild }}' = 'true' ]; then
             drop '${{ steps.keys.outputs.terrain }}'
@@ -916,7 +938,7 @@ jobs:
 
       - name: Cache Planetileru (restore)
         id: planetiler-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ needs.plan.outputs.day }}
@@ -951,7 +973,7 @@ jobs:
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_contours_rebuild != 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}
@@ -967,7 +989,7 @@ jobs:
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}
@@ -1036,7 +1058,7 @@ jobs:
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}
@@ -1054,7 +1076,7 @@ jobs:
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}
@@ -1153,7 +1175,7 @@ jobs:
 
       - name: Cache Planetileru (restore)
         id: planetiler-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ needs.plan.outputs.day }}
@@ -1163,7 +1185,7 @@ jobs:
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_contours_rebuild != 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}-rocks
@@ -1171,7 +1193,7 @@ jobs:
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}-rocks
@@ -1179,7 +1201,7 @@ jobs:
       - name: Cache častí sklonu (restore)
         id: slope-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: slope-chunks
           key: ${{ needs.keys.outputs.slope }}${{ github.run_id }}
@@ -1229,7 +1251,7 @@ jobs:
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}-rocks
@@ -1237,7 +1259,7 @@ jobs:
       - name: Cache častí sklonu (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.test_km2 == '0' && steps.slope-cache.outputs.cache-hit != 'true' && hashFiles('slope-chunks/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: slope-chunks
           key: ${{ needs.keys.outputs.slope }}${{ github.run_id }}
@@ -1245,7 +1267,7 @@ jobs:
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}-rocks
@@ -1339,7 +1361,7 @@ jobs:
       # s vrstevnicami nepomiešajú ani vtedy, keď si vyberú iný model.
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_terrain }}
@@ -1347,7 +1369,7 @@ jobs:
       - name: Cache výškových dlaždíc (restore)
         id: terrain-cache
         if: ${{ needs.plan.outputs.opt_terrain == 'true' && needs.plan.outputs.opt_terrain_rebuild != 'true' }}
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: terrain-out
           key: ${{ needs.keys.outputs.terrain }}
@@ -1367,7 +1389,7 @@ jobs:
       - name: Cache výškových dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain.outputs.fell_back != 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: terrain-out
           key: ${{ needs.keys.outputs.terrain }}
@@ -1379,7 +1401,7 @@ jobs:
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_terrain }}
@@ -1449,7 +1471,7 @@ jobs:
 
       - name: Cache Planetileru (restore)
         id: planetiler-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ needs.plan.outputs.day }}
@@ -1459,7 +1481,7 @@ jobs:
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
@@ -1543,7 +1565,7 @@ jobs:
 
       - name: Cache Planetileru (restore)
         id: planetiler-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ needs.plan.outputs.day }}
@@ -1553,7 +1575,7 @@ jobs:
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
@@ -1619,15 +1641,19 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Cache – zdrojové dáta Planetileru (water polygons, Natural Earth)
-        uses: actions/cache@v4
+      # Kým to bola cache v GitHube, stačil jeden krok (`actions/cache` uloží
+      # sám v post-kroku). Na Drive sú to dva – a je to tak lepšie: ukladá sa
+      # hneď po stiahnutí a nie až vtedy, keď job dobehne úspešne.
+      - name: Cache – zdrojové dáta Planetileru (restore)
+        id: sources-cache
+        uses: ./.github/actions/cache-restore
         with:
           path: data/sources
           key: planetiler-sources-v1
 
       - name: Cache Planetileru (restore)
         id: planetiler-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: planetiler.jar
           key: planetiler-latest-${{ needs.plan.outputs.day }}
@@ -1637,7 +1663,7 @@ jobs:
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
@@ -1652,6 +1678,16 @@ jobs:
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/tiles-build.sh
+
+      # Zdrojové dáta si Planetiler stiahol počas behu vyššie (water polygons
+      # majú ~700 MB) – odkladajú sa až teraz, keď existujú.
+      - name: Cache – zdrojové dáta Planetileru (save)
+        if: ${{ always() && steps.sources-cache.outputs.cache-hit != 'true' && hashFiles('data/sources/**') != '' }}
+        continue-on-error: true
+        uses: ./.github/actions/cache-save
+        with:
+          path: data/sources
+          key: ${{ steps.sources-cache.outputs.cache-primary-key }}
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
@@ -1692,7 +1728,7 @@ jobs:
 
       - name: Cache glyfov a spritov (restore)
         id: assets-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: |
             _site/fonts
@@ -1711,7 +1747,7 @@ jobs:
       - name: Cache glyfov a spritov (save)
         if: ${{ always() && steps.assets-cache.outputs.cache-hit != 'true' && hashFiles('_site/sprites/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: |
             _site/fonts
@@ -1860,6 +1896,7 @@ jobs:
         run: workers/build-site.sh
 
       - name: Skontroluj, že štýl odkazuje len na existujúce súbory
+        id: kontrola
         env:
           SPRITE: ${{ needs.assets.outputs.name }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
@@ -1885,6 +1922,48 @@ jobs:
           FEATURES: ${{ needs.features.outputs.enabled }}
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
         run: workers/smoke-test.sh
+
+      # ---------- hotová mapa na Drive ----------
+      # Celý `_site` ako jeden ZIP do priečinka `/krajina/kraj/výsek`, s menom,
+      # ktoré nesie výrez, zoom a KTORÉ vrstvy sú vnútri a z čoho (rozpis vo
+      # `workers/publish-map.py`). Vypína sa voľbou `publish=false`.
+      #
+      # Až ZA nasadením zámerne: mapa je vtedy na Pages už aj tak, takže keď
+      # Drive nepustí, nestratí sa nič – len to bude v logu červené a povie to
+      # aj súhrn behu, ktorý beží po tomto kroku (`if: always()`).
+      #
+      # PODMIENKA JE „PREŠLA KONTROLA", nie „všetko dobehlo". Publikuje sa
+      # každá mapa, ktorá prešla krokom vyššie (štýl odkazuje len na to, čo
+      # naozaj existuje) – aj keď potom zlyhalo nasadenie na Pages alebo smoke
+      # test, lebo tá mapa je v poriadku. Naopak mapa, ktorá kontrolou
+      # neprešla, sa na Drive nemá dostať vôbec: rozbitý ZIP v priečinku
+      # vyzerá presne ako dobrý.
+      #
+      # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
+      # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
+      # model by inak meno tvrdilo niečo iné, než v tej mape je.
+      - name: Publikuj mapu na Drive
+        if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
+        env:
+          AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
+          CONTOURS_SOURCE: ${{ needs.contours.outputs.dem_source }}
+          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CUSTOM_NAME: ${{ needs.plan.outputs.opt_custom_name }}
+          CUSTOM_PBF_URL: ${{ needs.plan.outputs.opt_custom_pbf_url }}
+          FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          ROCKS_ENABLED: ${{ needs.rocks.outputs.rocks_enabled || 'false' }}
+          ROCKS_SOURCE: ${{ needs.rocks.outputs.rock_source }}
+          TERRAIN_ENABLED: ${{ needs.terrain.outputs.enabled || 'false' }}
+          TERRAIN_SOURCE: ${{ needs.terrain.outputs.dem_source }}
+          TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
+          TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
+          TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+        run: |
+          set -euo pipefail
+          python3 workers/publish-map.py --site=_site \
+            --summary="$GITHUB_STEP_SUMMARY"
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
       # mieste v záložke Summary. Riadky si každý job odložil do svojho

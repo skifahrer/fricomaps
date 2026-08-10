@@ -765,12 +765,14 @@ Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
    súbežne (`jobs`, default 12). Výrez 5,2 × 5,6 km pri 1 m: **1,2 min,
    0,11 GB, 697 požiadaviek.**
 
-**Číta sa prihlásený ako vlastník dát.** Verejný odkaz („ktokoľvek s odkazom")
-má **denný limit sťahovania na súbor** a ten limit zdieľajú všetci, kto naň
-siahnu — nielen naše behy. Keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní
-vôbec, lebo je to jediná cesta k nemu. Token vlastníka v repository secrete
-**`GDRIVE_CREDENTIALS`** ten strop posúva rádovo vyššie: číta sa potom cez
-Drive API s `Authorization: Bearer` namiesto verejného odkazu.
+**Číta sa prihlásený ako vlastník dát, a inak sa nečíta vôbec.** Model leží
+v **priečinku** na Drive (`FOLDER_ID` vo [`workers/dmr5-drive.py`](workers/dmr5-drive.py))
+a súbory sa v ňom hľadajú podľa mena — presun modelu inam je tak zmena jedného
+čísla. Čo v priečinku je, ale povie len Drive API prihlásenému účtu, takže
+verejný odkaz (s denným limitom sťahovania, ktorý zdieľajú všetci, kto naň
+siahnu) tu už nie je náhradná cesta. Token vlastníka v repository secrete
+**`GDRIVE_CREDENTIALS`** má navyše ten limit rádovo vyšší; číta sa cez Drive
+API s `Authorization: Bearer`.
 
 Vyrobí sa raz, na vlastnom počítači:
 
@@ -780,8 +782,9 @@ python3 workers/drive-auth.py --login --client-id=… --client-secret=…
 python3 workers/dmr5-drive.py --auth-check      # ktorým účtom sa číta a či naň vidí
 ```
 
-Klient je typu *Desktop app* z Google Cloud Console, rozsah práv iba
-`drive.readonly` (pipeline z Drive len číta). **Publishing status appky musí
+Klient je typu *Desktop app* z Google Cloud Console, rozsah práv `drive` —
+pipeline z Drive nielen číta, ale aj ukladá cache buildu (viď nižšie), a na to
+`drive.readonly` nestačí. **Publishing status appky musí
 byť „In production"** — v „Testing" platí refresh token 7 dní a pipeline by
 raz do týždňa spadla; pri type *Internal* (Workspace) to neplatí.
 
@@ -793,9 +796,9 @@ Prihlásenie sa dá podať aj po troch secretoch (`DRIVE_CLIENT`, `DRIVE_SECRET`
 `DRIVE_REFRESH`), lebo `client_secret` Google druhýkrát neukáže; nekompletná
 trojica je chyba a `Lint workflows` ju zachytí.
 
-Bez secretu sa nemení nič, len sa v každom behu výslovne vypíše, že platí
-verejný limit. Podrobne (aj kam všade sa ten secret musí dostať, aj postup
-z telefónu) v [`docs/pipeline.md`](docs/pipeline.md#prihlásenie-ako-vlastník-dát-secret-gdrive_credentials).
+Bez secretu beh spadne hneď a s návodom — nie po pol dni na vyčerpanom
+limite. Podrobne (aj kam všade sa ten secret musí dostať, aj postup z telefónu)
+v [`docs/pipeline.md`](docs/pipeline.md#prihlásenie-ako-vlastník-dát-secret-gdrive_credentials).
 
 **Výšky sú elipsoidické, nie Bpv.** Maximum v súbore je 2 697,03 m, kým
 Gerlachovský štít má 2 654,4 m n. m. — tých **+42,6 m je geoidová undulácia**.
@@ -1141,14 +1144,69 @@ so zaškrtnutým inputom:
 | `rocks_rebuild` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
 | `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
 
-Prečo to musí najprv mazať: **cache sa v GitHube nedá prepísať.** Kľúč, ktorý
-raz existuje, si drží starý obsah, takže bez zmazania by sa prepočítaná verzia
-zahodila a ďalší build by dostal späť tú starú. Preto má build právo
-`actions: write` a každý `*_rebuild` začne tým, že príslušný záznam zmaže.
+Prečo to musí najprv mazať: **existujúci záznam cache sa nedá prepísať.**
+Kľúč, ktorý raz existuje, si drží starý obsah, takže bez zmazania by sa
+prepočítaná verzia zahodila a ďalší build by dostal späť tú starú. Preto každý
+`*_rebuild` začne tým, že príslušný záznam zmaže (aj jeho variant `-rocks`,
+lebo skaly majú vlastný job a tým aj vlastný záznam).
 
 Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
 dátum, alebo otlačok zdroja.
+
+### Cache leží na Google Drive
+
+GitHubová cache má na repozitár **10 GB** a keď sa naplní, nič nepovie — ticho
+vyhodí najstaršie záznamy. Jeden výrez do nej pritom ukladá desiatky GB (DEM
+dlaždice, sklad častí sklonu, vrstevnice, tieňovanie, dlaždice tieňovania),
+takže si záznamy vyhadzovali navzájom a hodinové výpočty sa rátali odznova bez
+toho, aby bolo na čom to vidieť — build je zelený, len trvá hodinu namiesto
+minút.
+
+Preto záznamy ležia na Google Drive, na tom istom účte, ktorý drží DMR 5.0.
+Kroky vo workflowoch vyzerajú rovnako ako predtým (`.github/actions/cache-restore`
+a `cache-save` namiesto `actions/cache/*`) a **sémantika je tá istá**:
+`cache-hit` len pri presnej zhode kľúča, `restore-keys` ako predpony, existujúci
+kľúč sa neprepisuje. Celý rozpis je vo
+[`workers/drive-cache.py`](workers/drive-cache.py).
+
+Dve veci, ktoré z toho plynú:
+
+- **Token na Drive musí vedieť zapisovať** (rozsah `drive`, nie
+  `drive.readonly`). `python3 workers/drive-cache.py --check` povie, či vie —
+  aj koľko miesta na účte ešte je.
+- **Nič sa nemaže samo.** GitHub staré záznamy vyhadzoval sám, Drive nie.
+  Preriedi ich workflow *Upratať cache*
+  ([`cleanup-cache.yml`](.github/workflows/cleanup-cache.yml)) — raz za týždeň,
+  alebo ručne. Ten istý workflow vyprázdni aj GitHub cache, ktorú už nikto
+  nehľadá.
+
+### Hotová mapa ide aj na Drive ako ZIP
+
+Okrem GitHub Pages sa každý build publikuje do priečinka na Google Drive: celý
+web (dlaždice, štýly, vrstevnice, skaly, tieňovanie, fonty, sprity) ako **jeden
+ZIP**. Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
+
+```
+<koreň>/slovensko/presovsky/vysoke_tatry/…zip
+         krajina  kraj      výsek   (úrovne, čo nedávajú zmysel, sa vynechajú)
+```
+
+**Meno nesie, čo v tej mape je** — do jedného priečinka padajú desiatky behov
+s rôznymi nastaveniami:
+
+```
+presovsky-vysoke_tatry-test2km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+```
+
+Teda výrez, rýchly test a jeho veľkosť, zoom dlaždíc, ktoré vrstvy sú vnútri
+a **z ktorého modelu sú spočítané** — a to podľa toho, čo build naozaj použil,
+nie čo bolo vo formulári. Vrstva, ktorá v mape nie je, sa píše tiež
+(`bez_skal`). Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa
+dva behy nikdy neprepíšu.
+
+Robí to [`workers/publish-map.py`](workers/publish-map.py) a vypnúť sa to dá
+voľbou `publish=false` v poli `options`.
 
 ### Súhrn buildu
 

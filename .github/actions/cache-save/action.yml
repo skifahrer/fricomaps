@@ -1,0 +1,34 @@
+name: Ulož cache na Google Drive
+description: >-
+  Náhrada za actions/cache/save. Ukladá sa hneď, ako dáta vzniknú, nie
+  v post-kroku – zrušený beh tak nezahodí hotovú prácu.
+
+# ROVNAKÁ SÉMANTIKA AKO V GITHUBE: existujúci kľúč sa NEPREPISUJE. Preto majú
+# kľúče, ktoré sa majú dať dopĺňať (sklad častí sklonu, dlaždice tieňovania),
+# v sebe `github.run_id` a hľadajú sa cez `restore-keys`.
+#
+# Keď uloženie zlyhá, krok SPADNE – volajúce miesta majú `continue-on-error`,
+# takže beh na tom neskončí, ale v logu je to červené. Cache, ktorá sa ticho
+# neuloží, stojí ďalší beh hodiny výpočtu a nikde inde to vidieť nie je.
+
+inputs:
+  path:
+    description: "Čo sa ukladá – jedna cesta na riadok, ako pri actions/cache"
+    required: true
+  key:
+    description: "Kľúč záznamu"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - id: uloz
+      shell: bash
+      env:
+        CACHE_KEY: ${{ inputs.key }}
+        CACHE_PATH: ${{ inputs.path }}
+      run: |
+        set -euo pipefail
+        python3 "$GITHUB_WORKSPACE/workers/drive-cache.py" --save \
+          --key="$CACHE_KEY" \
+          --path="$CACHE_PATH"

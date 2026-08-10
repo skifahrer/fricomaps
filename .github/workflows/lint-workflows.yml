@@ -11,9 +11,11 @@ on:
   push:
     paths:
       - ".github/workflows/**"
+      - "workers/**"
   pull_request:
     paths:
       - ".github/workflows/**"
+      - "workers/**"
   workflow_dispatch:
 
 permissions:
@@ -105,6 +107,36 @@ jobs:
                         f"(ostáva {LIMIT - n} B).")
               else:
                   print(f"{path}: {n} B ✓")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # Dlhý súbor sa nedá naraz prehliadnuť a platí preň to isté ako pre
+      # veľkosť workflowu vyššie: keď run: blok alebo skript prerastie
+      # rozumnú dĺžku, ďalšia zmena v ňom už nevidí, čo tam je, a pridáva
+      # vedľa namiesto toho, aby použila to, čo tam už je (pravidlo 1
+      # v CLAUDE.md). Dlhý krok/skript sa má rozdeliť na viac súborov alebo
+      # jobov (pravidlo 5), nie rásť donekonečna v jednom.
+      - name: Súbory pod 801 riadkov
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys
+          LIMIT = 800
+          bad = 0
+          for pattern in (".github/workflows/*.yml",
+                          "workers/*.py", "workers/*.sh", "workers/*.mjs"):
+              for path in sorted(glob.glob(pattern)):
+                  with open(path, encoding="utf-8") as f:
+                      n = sum(1 for _ in f)
+                  if n > LIMIT:
+                      print(f"::error file={path}::{n} riadkov, strop je "
+                            f"{LIMIT}. Rozdeľ na viac krokov/súborov "
+                            f"(pravidlo 5 v CLAUDE.md) – v jednom dlhom "
+                            f"súbore sa nedá rýchlo nájsť, čo sa zmenilo "
+                            f"alebo prečo to spadlo.")
+                      bad += 1
+                  else:
+                      print(f"{path}: {n} riadkov ✓")
           sys.exit(1 if bad else 0)
           PY
 
@@ -485,14 +517,21 @@ jobs:
           # ktoré tie isté mená spomínajú ako dáta.
           CMD = re.compile(r"^\s*(?:\w+=\$\()?(?:python3?|bash|sh|\./)\s+\S*"
                            r"(?:dmr5-drive|slope-chunks|contours-build"
-                           r"|drive-folder)"
+                           r"|drive-folder|drive-cache|publish-map)"
                            r"\.(?:py|sh)\b", re.M)
+          # Cache leží na Drive, takže KAŽDÝ krok s ňou je krok, ktorý sa musí
+          # vedieť prihlásiť. Bez tokenu sa nič nestratí, len sa nič nenájde
+          # a nič neuloží – build počíta hodiny odznova a nikde to vidieť nie
+          # je. Presne ten druh tichej chyby, na ktorý sú tieto kontroly.
+          CACHE = "./.github/actions/cache-"
           # Workflowy, ktoré samy z Drive čítajú, takže im volajúci MUSÍ
           # prihlásenie podať. `update-dem.yml` sem pribudol s Sonnym: jeho
           # dlaždice sú tiež na Drive a ťahali sa anonymne, kým bol token
-          # zapojený len do cesty k DMR 5.0.
+          # zapojený len do cesty k DMR 5.0. `shading-rocks.yml` s cache:
+          # gigabajty stiahnutých dlaždíc sú tiež na Drive.
           CALLED = ("./.github/workflows/dmr5-drive" + ".yml",
-                    "./.github/workflows/update-dem" + ".yml")
+                    "./.github/workflows/update-dem" + ".yml",
+                    "./.github/workflows/shading-rocks" + ".yml")
           bad = 0
 
           for path in sorted(glob.glob(".github/workflows/*.yml")):
@@ -516,16 +555,24 @@ jobs:
                   jenv = job.get("env") or {}
                   for step in job.get("steps") or []:
                       step = step or {}
-                      if not CMD.search(str(step.get("run") or "")):
+                      cache = str(step.get("uses") or "").startswith(CACHE)
+                      if not cache and not CMD.search(str(step.get("run") or "")):
                           continue
                       names = set(top) | set(jenv) | set(step.get("env") or {})
                       if authed(names):
                           continue
                       print(f"::error file={path}::krok "
-                            f"'{step.get('name', '?')}' v jobe '{name}' číta "
-                            f"z Drive, ale prihlásiť sa z toho nedá: "
-                            f"{why_not(names)}. Bežal by na verejnom dennom "
-                            f"limite – doplň to k tomu kroku alebo celému jobu.")
+                            f"'{step.get('name', '?')}' v jobe '{name}' "
+                            + ("pracuje s cache na Drive" if cache else
+                               "číta z Drive")
+                            + f", ale prihlásiť sa z toho nedá: "
+                            f"{why_not(names)}. "
+                            + ("Cache by sa nenašla ani neuložila a build by "
+                               "počítal všetko odznova"
+                               if cache else
+                               "Bežal by na verejnom dennom limite")
+                            + " – doplň to do `env:` toho kroku, jobu alebo "
+                              "celého workflowu.")
                       bad += 1
 
           # A druhá strana toho istého: volaný workflow to musí prijať.
@@ -539,6 +586,89 @@ jobs:
                         f"takže mu ho volajúci nemá ako podať.")
                   bad += 1
           print(f"prihlásenie na Drive: {bad} chýb")
+          sys.exit(1 if bad else 0)
+          PY
+
+      # CACHE PATRÍ NA DRIVE. GitHubová má na repozitár 10 GB a keď sa naplní,
+      # NIČ NEPOVIE – ticho vyhodí najstaršie záznamy. Jeden výrez do nej
+      # ukladal desiatky GB (DEM dlaždice, sklad častí sklonu, vrstevnice,
+      # tieňovanie, dlaždice tieňovania), takže si záznamy vyhadzovali
+      # navzájom a hodinové výpočty sa rátali odznova bez toho, aby bolo na
+      # čom to vidieť. Jedno vrátené `uses: actions/cache` by ten stav vrátilo
+      # a poznalo by sa to len na tom, že build zase trvá dlho.
+      - name: Cache je na Drive, nie v GitHube
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, os, sys, yaml
+
+          CACHE = "./.github/actions/cache-"
+          WORKER = "workers/drive-cache.py"
+          bad = 0
+
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              d = yaml.safe_load(open(path)) or {}
+              for name, job in (d.get("jobs") or {}).items():
+                  for st in (job or {}).get("steps") or []:
+                      uses = str((st or {}).get("uses") or "")
+                      if uses.split("@")[0] in ("actions/cache",
+                                                "actions/cache/restore",
+                                                "actions/cache/save"):
+                          print(f"::error file={path}::krok "
+                                f"'{st.get('name', '?')}' v jobe '{name}' "
+                                f"používa `{uses}`. GitHubová cache má na "
+                                f"repozitár 10 GB a pri naplnení ticho vyhadzuje "
+                                f"najstaršie záznamy – použi "
+                                f"`{CACHE}restore` / `{CACHE}save`.")
+                          bad += 1
+                      # Lokálna akcia, ktorá nemá súbor, je beh bez cache
+                      # a chybová hláška až na runneri.
+                      if uses.startswith("./") and not os.path.exists(
+                              os.path.join(uses[2:], "action.yml")):
+                          print(f"::error file={path}::krok "
+                                f"'{st.get('name', '?')}' v jobe '{name}' volá "
+                                f"`{uses}`, ale {uses[2:]}/action.yml "
+                                f"neexistuje.")
+                          bad += 1
+
+          # Mazanie GitHub cache sa už nemá čoho chytiť: pri pregenerovaní
+          # treba zmazať záznam na Drive, inak sa nový pod ten istý kľúč
+          # neuloží a ďalší beh dostane ten starý.
+          #
+          # Hľadaný príkaz sa SKLADÁ, nepíše: keby tu stál celý, našla by táto
+          # kontrola samu seba a hlásila by chybu navždy (tak ako pri `OPEN`
+          # nižšie).
+          NEEDLE = "gh cache" + " delete"
+          for path in sorted(glob.glob(".github/workflows/*.yml")):
+              txt = open(path).read()
+              if NEEDLE in txt:
+                  print(f"::error file={path}::`{NEEDLE}` maže GitHub "
+                        f"cache, ktorú už nikto nepoužíva. Zmaž záznam na "
+                        f"Drive: `python3 {WORKER} --delete --key=…`.")
+                  bad += 1
+
+          # A druhá strana toho istého: obe akcie musia existovať a volať
+          # tento worker – bez neho by boli prázdnym krokom, ktorý zazelená.
+          for smer in ("restore", "save"):
+              akcia = f".github/actions/cache-{smer}/action.yml"
+              if not os.path.exists(akcia):
+                  print(f"::error::chýba {akcia}")
+                  bad += 1
+                  continue
+              text = open(akcia).read()
+              if WORKER not in text:
+                  print(f"::error file={akcia}::nevolá {WORKER}")
+                  bad += 1
+              d = yaml.safe_load(text) or {}
+              if smer == "restore":
+                  # Bez týchto výstupov by `steps.<id>.outputs.cache-hit` bolo
+                  # ticho prázdne a všetko by sa počítalo znova.
+                  for out in ("cache-hit", "cache-primary-key"):
+                      if out not in (d.get("outputs") or {}):
+                          print(f"::error file={akcia}::nemá výstup `{out}`, "
+                                f"na ktorý sa workflowy odkazujú")
+                          bad += 1
+          print(f"cache na Drive: {bad} chýb")
           sys.exit(1 if bad else 0)
           PY
 

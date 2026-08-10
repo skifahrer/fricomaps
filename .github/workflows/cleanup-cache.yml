@@ -1,0 +1,107 @@
+name: Upratať cache
+
+# Vyprázdni GitHub cache a preriedi tú na Google Drive.
+#
+# PREČO: GitHubová cache má na repozitár strop 10 GB a keď sa naplní, nič
+# nepovie – ticho vyhodí najstaršie záznamy. Jeden výrez pritom uloží desiatky
+# GB (DEM dlaždice, sklad častí sklonu, vrstevnice, tieňovanie, dlaždice
+# tieňovania), takže si záznamy vyhadzovali navzájom a hodinové výpočty sa
+# rátali odznova bez toho, aby bolo na čom to vidieť.
+#
+# Preto sa cache presťahovala na Drive (`workers/drive-cache.py`) a to, čo
+# v GitHube ostalo, už nikto nehľadá – len zaberá miesto. Tento workflow to
+# zmaže, a keďže build tam nič nové neukladá, ostane to prázdne.
+#
+# DRUHÁ POLOVICA JE PRERIEĎOVANIE DRIVE. GitHub si staré záznamy vyhadzoval
+# sám (7 dní bez použitia, 10 GB na repozitár), Drive nie – bez toho by
+# priečinok rástol donekonečna a raz by zaplnil účet, ktorý drží aj DMR 5.0.
+#
+# Beží raz za týždeň a dá sa spustiť ručne. „Len vypísať" nemaže nič.
+
+on:
+  workflow_dispatch:
+    inputs:
+      co:
+        description: "Čo upratať"
+        required: false
+        default: oboje
+        type: choice
+        options:
+          - oboje
+          - github
+          - drive
+      dry_run:
+        description: "Len vypísať, čo by sa zmazalo (nič sa nemaže)"
+        required: false
+        default: false
+        type: boolean
+      keep_days:
+        description: "Na Drive nechať záznamy mladšie než toľkoto dní (0 = nemazať podľa veku)"
+        required: false
+        default: "30"
+        type: string
+      keep_gb:
+        description: "Strop priečinka cache na Drive v GB (0 = bez stropu)"
+        required: false
+        default: "100"
+        type: string
+  schedule:
+    # Nedeľa 03:20 UTC – mimo času, keď sa buildy spúšťajú ručne.
+    - cron: "20 3 * * 0"
+
+permissions:
+  actions: write    # mazanie cache
+  contents: read
+
+concurrency:
+  # Dva behy naraz by si navzájom mazali to isté a hádzali 404.
+  group: cleanup-cache
+  cancel-in-progress: false
+
+jobs:
+  upratat:
+    name: Upratať cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Prerieďovanie na Drive maže súbory, takže potrebuje token vlastníka
+      # – a s rozsahom na zápis. Readonly token to povie hneď a s návodom.
+      GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+      DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Lacná otázka na začiatok: vie tento beh na Drive vôbec zapisovať?
+      # Odpoveď sa inak dozvieme až tým, že mazanie vráti 403.
+      - name: Prístup k cache na Drive
+        if: ${{ inputs.co != 'github' }}
+        continue-on-error: true
+        run: python3 workers/drive-cache.py --check
+
+      # Pri behu z plánu je `inputs.co` prázdne, takže sa spravia obe polovice
+      # – presne to sa raz za týždeň chce.
+      - name: Zmaž GitHub cache
+        if: ${{ inputs.co != 'drive' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python3 workers/cleanup-cache.py
+
+      - name: Prerieď cache na Drive
+        if: ${{ inputs.co != 'github' }}
+        env:
+          KEEP_DAYS: ${{ inputs.keep_days }}
+          KEEP_GB: ${{ inputs.keep_gb }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${DRY_RUN:-false}" = "true" ]; then ARGS+=(--dry-run); fi
+          python3 workers/drive-cache.py --prune \
+            --keep-days="${KEEP_DAYS:-30}" \
+            --keep-gb="${KEEP_GB:-100}" \
+            "${ARGS[@]}" \
+            --summary="$GITHUB_STEP_SUMMARY"
