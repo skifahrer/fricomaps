@@ -198,8 +198,9 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → gdal_contour -i 10
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
                a `-simplify` zmaže schodíky po hranách buniek DEM
+               (tolerancia: polovica bunky)
   → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
-                      (Chaikin, 1 prechod)
+                      (Chaikin, 2 prechody)
   → planetiler generate-custom --schema=workers/contours.yml
   → {región}-contours.pmtiles
 ```
@@ -207,14 +208,35 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
 **Zubatosť nerobí raster, robí ju zjednodušenie – a to isté platí pri
 skalách.** Vrstevnica je izolínia nad rastrom, čiže chodí po hranách buniek:
 pri 1 m DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, takže
-tie schodíky vidno. `-simplify` ich zmaže (tolerancia je štvrtina bunky DEM,
-takže sa čiara neposunie o viac než štvrtinu toho, z čoho vznikla), po ňom ale
-ostanú **ostré rohy** – a tie zaobli Chaikinovo orezávanie rohov. Jeden
-prechod, nie dva ako pri skalách: na čiare bez výplne sa roh vidí menej a
-každý prechod zdvojnásobí počet bodov, kým vrstevníc je rádovo viac než skál.
-Ovláda to `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:` build-map.yml
-(`CONTOUR_SMOOTH: 0` = vypnuté, `CONTOUR_SIMPLIFY` v metroch, `-1` = štvrtina
-bunky, `0` = presná čiara).
+tie schodíky vidno. `-simplify` ich zmaže, po ňom ale ostanú **ostré rohy** –
+a tie zaobli Chaikinovo orezávanie rohov. Merané na schodíkovej vrstevnici nad
+rastrom (oblúk okolo žľabu, bunka = 1):
+
+| nastavenie | bodov | priemerný lom | lomov > 60° | odchýlka od skutočnej izolínie |
+|---|--:|--:|--:|--:|
+| surová izolínia (schodíky) | 388 | 46,9° | 52,1 % | 0,72 bunky |
+| 1/4 bunky, bez zaoblenia | 203 | 90,0° | 100 % | 0,72 bunky |
+| 1/4 bunky + 1× Chaikin | 406 | 44,8° | 17,8 % | 0,58 bunky |
+| **1/2 bunky + 2× Chaikin (default)** | **692** | **21,2°** | **0,7 %** | **0,58 bunky** |
+| 1/2 bunky + 3× Chaikin | 1384 | 10,6° | 0,2 % | 0,58 bunky |
+| 3/4 bunky + 2× Chaikin | 180 | 16,3° | 1,1 % | **1,29 bunky** ← odlieplo sa |
+
+Čítať sa to dá takto: **jeden prechod nestačil** – zmazal pravé uhly, ale
+priemerný lom nechal na 44,8° a každý šiesty bol nad 60°, čo na čiare pri max
+zoome vidno. Dva prechody s väčším zjednodušením dajú 21,2° a takmer žiadny
+ostrý roh, pričom bodov je len 1,7× oproti predchádzajúcemu nastaveniu – väčší
+`-simplify` ich vyváži späť. Tretí prechod je dvojnásobok bodov za rohy, ktoré
+už ostré nie sú. A viac než polovica bunky sa nedá: pri 3/4 sa čiara začne
+odliepať od terénu.
+
+Za povšimnutie stojí posledný stĺpec: zaoblená čiara sedí na terén **lepšie**
+než surová izolínia (0,58 oproti 0,72 bunky), lebo Chaikin reže práve tie
+schodíky, ktoré do terénu nepatria.
+
+Ovláda to `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:` build-map.yml:
+záporné číslo = koľko **štvrtín** bunky DEM (`-2` = polovica), `0` = presná
+čiara, kladné číslo = tolerancia v metroch; `CONTOUR_SMOOTH: 0` zaoblenie
+vypne.
 
 Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
 najvyššom zoome bez zjednodušovania geometrie
@@ -1171,7 +1193,8 @@ obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
 `ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
 (verzia algoritmu v mene uloženého assetu).
 
-V mape z toho sú **tmavosivé plochy** kreslené *pod* tieňovaním aj *pod*
+V mape z toho sú **tmavšie sivohnedé plochy** (#8a8578, farba papierovej
+horskej mapy) kreslené *pod* tieňovaním aj *pod*
 vrstevnicami. Poradie je zámerné a v tomto poradí: skala je tvar terénu, takže
 cez ňu musí prejsť tieňovanie (inak je práve stena v mape plochá škvrna bez
 reliéfu), a vrstevnica musí prejsť cez oboje (inak nie sú výšky tam, kde je
@@ -1567,6 +1590,29 @@ Typ mapy sa vyberá v paneli ⚙ (výber **Typ mapy**) a pamätá si ho prehliad
 Pipeline generuje `styles/{región}-{typ mapy}-{téma}.json` pre každú
 kombináciu – teda 5 × 4 = 20 štýlov, plus predvolený typ aj pod pôvodným
 menom `{región}-{téma}.json`, aby fungovali staršie odkazy.
+
+### Terénna trojica
+
+Tri farby, ktoré robia z mapy horskú mapu, sú v každej téme z tej istej rodiny –
+prevzatej z papierovej horskej mapy:
+
+| čo | farba | kde je v palete |
+|---|---|---|
+| podklad mapy (základná farba horského terénu) | **#d8d5ca** svetlo béžovosivá | `Pozadie mapy` |
+| skalnaté partie a sutiny | **#8a8578** tmavšia sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
+| vrstevnice | tenké sivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
+
+Každá téma má **veľmi jemne iný** odtieň tej istej trojice, nie kópiu jednej
+hodnoty: *Svetlá* je neutrálna, *Outdoor* o odtieň teplejšia a tmavšia (je to
+turistická mapa), *Retro* o odtieň svetlejšia a *Tmavá* má tú istú rodinu
+preloženú do tmy – teda neutrálne teplú, nie domodra ako predtým. Rozdiel je
+pár krokov: dosť na to, aby sa témy dali rozoznať, málo na to, aby niektorá
+vyzerala ako iná mapa.
+
+Suť z OSM (`Skaly / suť`) sa kreslí s krytím 0,8, takže sa s podkladom mieša –
+hodnota v palete je preto tmavšia než to, čo je v mape vidieť, a výsledok je
+o odtieň svetlejší než počítané skalné plochy. To je zámer: suť je sypká
+a svetlejšia než stena.
 
 **Tematické body.** Každý typ mapy má skupinu bodov, ktorá je preň tá hlavná –
 `poi-historic` (hrady, zrúcaniny, pamätníky, archeológia), `poi-mining`

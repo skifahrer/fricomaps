@@ -250,22 +250,28 @@ else
   # len s oblými schodmi.
   #
   # Tolerancia je vo VRSTVE, teda v stupňoch (vrstevnice sú EPSG:4326).
-  # `-1` = štvrtina bunky DEM: zmaže schodíky, ale čiaru neposunie o viac,
-  # než je štvrtina toho, z čoho vznikla. `0` = vypnuté. Kladné číslo sa
-  # berie v METROCH a prepočíta sa na stupne na šírke tohto výrezu – metre
-  # sú to, v čom sa o teréne rozmýšľa, stupne to, v čom je uložený.
-  C_SIMPLIFY="${CONTOUR_SIMPLIFY:--1}"
+  # ZÁPORNÉ ČÍSLO = KOĽKO ŠTVRTÍN BUNKY DEM, teda `-1` je štvrtina bunky
+  # a `-2` polovica. Jednotkou je štvrtina, lebo to bola prvá hodnota, ktorú
+  # sme merali, a číslo tak ostalo porovnateľné s tým, čo je v histórii.
+  # `0` = vypnuté. Kladné číslo sa berie v METROCH a prepočíta sa na stupne
+  # na šírke tohto výrezu – metre sú to, v čom sa o teréne rozmýšľa, stupne
+  # to, v čom je uložený.
+  C_SIMPLIFY="${CONTOUR_SIMPLIFY:--2}"
   # Vypíše dve čísla: toleranciu v stupňoch (tá ide do ogr2ogr) a tú istú
   # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
   # nepredstaví). Prepočet je na jednom mieste, nie dvakrát.
   set +e
-  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" "$S" "$N" <<'PY'
-import json, math, subprocess, sys
-want, s, n = float(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
-# Dĺžka stupňa zemepisnej dĺžky v strede výrezu. Berie sa on, nie stupeň
-# šírky: u nás je kratší, takže tolerancia nikdy nevyjde väčšia, než sa
-# žiadalo, nech je svah orientovaný akokoľvek.
-m_per_deg = 111320 * math.cos(math.radians((s + n) / 2))
+  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" <<'PY'
+import json, subprocess, sys
+want = float(sys.argv[1])
+# DLHŠÍ z dvoch stupňov – ten po ŠÍRKE (110 540 m). Stupeň po dĺžke má u nás
+# len ~73 000 m, takže je to on, kto rozhoduje o najhoršom prípade, a ten sa
+# tu musí použiť dvakrát:
+#   metre → stupne  … väčší deliteľ dá menšiu toleranciu, čiže na zemi nikdy
+#                     nebude väčšia, než sa žiadalo, nech ide svah akokoľvek
+#   stupne → metre  … do logu ide najväčšia možná, nie najmenšia; opačne by
+#                     riadok tvrdil menšiu toleranciu, než sa naozaj použila
+m_per_deg = 110540
 if want == 0:
     deg = 0.0
 elif want > 0:
@@ -275,7 +281,10 @@ else:
         ["gdalinfo", "-json", "work/clip.tif"],
         capture_output=True, text=True, check=True).stdout)
     gt = info["geoTransform"]
-    deg = min(abs(gt[1]), abs(gt[5])) / 4   # štvrtina bunky DEM
+    # -1 = štvrtina bunky, -2 = polovica, -4 = celá. Nad polovicou sa čiara
+    # začína odliepať od terénu (merané: pri 3/4 bunky vyskočí odchýlka od
+    # skutočnej izolínie zo 0,58 na 1,29 bunky), tak sa vyššie nechodí.
+    deg = min(abs(gt[1]), abs(gt[5])) * (-want) / 4
 print(f"{deg:.10f} {deg * m_per_deg:.2f}")
 PY
 )
@@ -309,11 +318,23 @@ PY
          ELSE 'minor' END AS level
        FROM contours WHERE ele IS NOT NULL"
 
-  # Zaoblenie. Jeden prechod, nie dva ako pri skalách: čiara nemá výplň,
-  # takže sa na nej roh vidí menej než na hrane plochy, a každý prechod
-  # zdvojnásobí počet bodov. Vrstevníc je rádovo viac než skál, takže je to
-  # aj rozdiel vo veľkosti dlaždíc. `contour_smooth=0` to vypne.
-  C_SMOOTH="${CONTOUR_SMOOTH:-1}"
+  # Zaoblenie – dva prechody, rovnako ako pri skalách. Jeden nestačil:
+  # zmazal síce pravé uhly, ale priemerný lom ostal na 44,8° a každý šiesty
+  # bol nad 60°, čo je na čiare pri max zoome stále vidieť. Merané na
+  # schodíkovej vrstevnici nad rastrom (oblúk okolo žľabu, bunka = 1):
+  #
+  #   surová izolínia (schodíky)      388 bodov, lom 46,9°, >60° 52,1 %
+  #   1/4 bunky + 1× Chaikin (doteraz) 406 bodov, lom 44,8°, >60° 17,8 %
+  #   1/2 bunky + 2× Chaikin (teraz)   692 bodov, lom 21,2°, >60°  0,7 %
+  #   1/2 bunky + 3× Chaikin          1384 bodov, lom 10,6°, >60°  0,2 %
+  #
+  # Tretí prechod je dvojnásobok bodov za rohy, ktoré už aj tak nie sú ostré
+  # (0,7 % → 0,2 %), tak sa nerobí. Väčšie zjednodušenie vyváži tie body
+  # späť: 1,7× oproti doterajšiemu nastaveniu, nie 4×. A čiara pritom sedí
+  # na terén LEPŠIE než surová – odchýlka od skutočnej izolínie 0,58 bunky
+  # oproti 0,72, lebo Chaikin reže schodíky, ktoré do terénu nepatria.
+  # `CONTOUR_SMOOTH=0` to vypne.
+  C_SMOOTH="${CONTOUR_SMOOTH:-2}"
   case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=1 ;; esac
   if [ "$C_SMOOTH" -gt 0 ]; then
     echo "Zaoblenie vrstevníc: ${C_SMOOTH}× orezanie rohov (Chaikin)"

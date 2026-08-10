@@ -211,15 +211,28 @@ env:
   # nich ostali. Opačné poradie by zaoblilo každý schodík zvlášť: viac bodov
   # a čiara stále schodíková, len s oblými schodmi.
   #
-  # -1 = štvrtina bunky DEM (tolerancia sa počíta z orezaného rastra, nie
-  # z konštanty – model má raz 1 m a raz 20 m). 0 = vypnuté, kladné číslo
-  # sa berie v metroch.
-  CONTOUR_SIMPLIFY: "-1"
-  # Koľkokrát zaobliť (Chaikin). JEDEN prechod, nie dva ako pri skalách:
-  # na čiare bez výplne sa roh vidí menej než na hrane plochy, každý prechod
-  # zdvojnásobí počet bodov a vrstevníc je rádovo viac než skál – takže je
-  # to aj rozdiel vo veľkosti dlaždíc. 0 = vypnuté.
-  CONTOUR_SMOOTH: "1"
+  # Záporné číslo = koľko ŠTVRTÍN bunky DEM (tolerancia sa počíta z orezaného
+  # rastra, nie z konštanty – model má raz 1 m a raz 20 m). 0 = vypnuté,
+  # kladné číslo sa berie v metroch.
+  #
+  # -2, teda polovica bunky. Nad polovicou sa čiara začína odliepať od
+  # terénu: pri 3/4 bunky vyskočí odchýlka od skutočnej izolínie zo 0,58 na
+  # 1,29 bunky.
+  CONTOUR_SIMPLIFY: "-2"
+  # Koľkokrát zaobliť (Chaikin). Dva prechody, rovnako ako pri skalách –
+  # jeden zmazal pravé uhly, ale priemerný lom nechal na 44,8° a každý šiesty
+  # bol nad 60°, čo na čiare pri max zoome vidno. Merané na schodíkovej
+  # vrstevnici nad rastrom (podrobne v contours-build.sh):
+  #
+  #   surová izolínia                  388 bodov, lom 46,9°, >60° 52,1 %
+  #   1/4 bunky + 1× Chaikin (doteraz)  406 bodov, lom 44,8°, >60° 17,8 %
+  #   1/2 bunky + 2× Chaikin (teraz)    692 bodov, lom 21,2°, >60°  0,7 %
+  #
+  # Bodov je 1,7× oproti doterajšiemu nastaveniu (nie 4×, lebo väčšie
+  # zjednodušenie ich vyváži) a čiara sedí na terén LEPŠIE než surová.
+  # Tretí prechod je dvojnásobok bodov za 0,7 % → 0,2 %, tak sa nerobí.
+  # 0 = vypnuté.
+  CONTOUR_SMOOTH: "2"
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
