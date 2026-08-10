@@ -328,6 +328,15 @@ env:
   # Stropy, ktoré ostali, sú timeout jobu (`rocks`, 180 min) a strop pamäte
   # (`ROCK_MAX_RSS_GB`); nad kladné číslo tu sa vypíše odhad a varovanie.
   ROCK_BUDGET_MIN: "0"
+  # Strana bloku pri vektorizácii obrysu. `gdal_contour -p` nad celou mozaikou
+  # naraz je superlineárny – čím viac rozpracovaných prstencov drží, tým
+  # drahšie je pridať ďalší. Beh 31418794845 (689 km², sklad 1 m) spadol
+  # z 2 %/min na 0,26 %/min a nedobehol vôbec. Po blokoch sa prstence
+  # poskladajú rýchlo, pamäť je zhora ohraničená a HOTOVÝ BLOK OSTÁVA NA
+  # DISKU, takže zrušený beh sa dá nadviazať. Plochu preseknutú hranicou
+  # bloku (aj dieru v nej) zlepí späť únia švov.
+  # 0 = jeden priechod nad celou mozaikou, teda staré správanie.
+  ROCK_BLOCK_PX: "4096"
   ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
   # Ako často má byť počuť, že sa počíta. Percentá idú nezávisle od toho, po
   # 2,5 % (`workers/lib/watch.py`), tep k nim dopĺňa pamäť, CPU, disk a rast výstupu.

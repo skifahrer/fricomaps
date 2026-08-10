@@ -242,7 +242,18 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
     if not area_m2:
         return RES_LADDER[3]  # nič sa netrafilo – nech to povie až chunk_plan
 
-    floor = max(1.0, round((dem_cell_m or 0) / 10.0, 1))
+    # PODLAHA MRIEŽKY SKLADU. Dva dôvody, oba o tom, čo je vidieť – nie o čase:
+    #   * desatina bunky zdrojového DEM: jemnejšie sa už len interpoluje medzi
+    #     tými istými výškami, nový detail terénu z toho nevznikne,
+    #   * pixel dlaždice pri z16, kam skaly idú (`VEC_FLOOR_M`, 1,57 m): obrys
+    #     z jemnejšieho skladu sa v mape nemá ako zobraziť.
+    #
+    # To druhé tu dlho nebolo a `auto` preto pri DMR 5.0 (bunka 1 m) siahalo na
+    # 1 m sklad. Na 689 km² z toho bolo 0,71 mld. buniek do jedného priechodu
+    # `gdal_contour -p` – beh 31418794845 sa na 27,5 % spomalil na 0,26 %/min
+    # a zrušili ho po 53 minútach. Pri 2 m je buniek štvrtina a detail v mape
+    # rovnaký, lebo pod pixel dlaždice sa aj tak nedostane.
+    floor = max(VEC_FLOOR_M, round((dem_cell_m or 0) / 10.0, 1))
     budget_s = budget_min * 60 if budget_min else float("inf")
 
     print("── Výber mriežky (rock_res=auto) ────────────────────")

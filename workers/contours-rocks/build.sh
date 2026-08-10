@@ -586,6 +586,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       --smooth="$ROCK_SMOOTH" \
       --stats=contours-out/rock-stats.txt \
       --budget-min="$ROCK_BUDGET_MIN" \
+      --block-px="${ROCK_BLOCK_PX:-4096}" \
       --max-rss-gb="$ROCK_MAX_RSS_GB" --heartbeat="$ROCK_HEARTBEAT_S" \
       --out=data/rock.gpkg
     RC=$?
