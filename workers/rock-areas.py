@@ -87,17 +87,31 @@ SCALE = 100
 # hodiny minú, nie po nich.
 # Slope: 170 častí / 23,1 mld. buniek za 75 min v behu 30948662582.
 SLOPE_CELLS_PER_S = 5.1e6    # gdalwarp + gdaldem slope + gdal_translate
-# Contour: ten istý beh mal po 105 min ešte nedokončených 23,1 mld., takže
-# rýchlosť je NAJVIAC 3,7 mil./s. Berieme 3,5 – odhad má radšej prestreliť.
+# Contour: cena `gdal_contour -p` NIE JE úmerná počtu buniek. Rastie s tým,
+# aký zrnitý je na danej mriežke sklon – z jemnej mriežky vypadnú z tých istých
+# buniek desaťtisíce drobných prstencov navyše. Preto to nie je konštanta, ale
+# funkcia mriežky, a namerané body sú dva:
 #
-# JE TO LEN RÁDOVÝ ODHAD A VIE SA MÝLIŤ AJ DESAŤNÁSOBNE. Cena `gdal_contour -p`
-# nie je daná počtom buniek, ale zložitosťou obrysu, ktorý z nich vyjde: na
-# hrubej mriežke je hranica prahu hladká, na 0,5 m je sklon zrnitý a z tých
-# istých buniek vypadnú desaťtisíce drobných prstencov. Beh 31334778253
-# (2 km², 0,5 m) šiel rýchlosťou ~45 tis. buniek/s, teda 78× pomalšie než
-# hovorí táto konštanta. Preto sa počas behu hlási odhad z NAMERANÝCH
-# percent (`watch.py`) a toto číslo slúži len na hrubý strážca rozpočtu.
-CONTOUR_CELLS_PER_S = 3.5e6  # gdal_contour -p nad hotovou mozaikou
+#   0,5 m    45 tis. buniek/s   beh 31334778253 (2 km², vtedajší strop 0,5 m)
+#   1 m     122 tis. buniek/s   beh 31357217326 (0,71 mld. buniek, 17 % za 16:30)
+#
+# Z tých dvoch vychádza mocnina 1,42 = log2(122/45). Dovtedy tu stálo
+# 3,5 mil./s – teda 29× vedľa – a keďže na tomto čísle stojí strážca rozpočtu,
+# prepustil beh, ktorý mieril na 1:40 h; zastavil ho až človek. Rovnaká chyba
+# ako pri 0,5 m predtým, len o rád tichšia.
+#
+# DVA BODY SÚ DVA BODY. Mimo rozsahu 0,5–2 m je to extrapolácia a cena závisí
+# aj od terénu (skalnaté Tatry vs. lesy). Presné číslo príde vždy až z percent
+# počas behu (`watch.py`); toto slúži na to, aby sa dalo povedať „toto potrvá
+# hodinu" PRED tým, než sa tá hodina minie. Keď sa beh s odhadom rozíde viac
+# než 3×, povie to na konci sám – a vtedy sa tieto dve čísla majú prepísať.
+CONTOUR_CELLS_PER_S_AT_1M = 1.22e5
+CONTOUR_RES_EXP = 1.42
+
+
+def contour_cells_per_s(res):
+    """Koľko buniek za sekundu zvládne `gdal_contour -p` na mriežke `res`."""
+    return CONTOUR_CELLS_PER_S_AT_1M * res ** CONTOUR_RES_EXP
 # Ten istý beh na OOM NEspadol, čiže pri 23,1 mld. buniek bol pod 16 GB.
 # Pamäť teda nie je to, o čo sa zadanie zabije – zabije sa o čas.
 CONTOUR_MB_PER_GCELL = 700   # špička pamäte gdal_contour na miliardu buniek
@@ -243,6 +257,33 @@ def intersects_bbox(cx0, cy0, cx1, cy1, bbox):
 # Polmetrová priečka tu bola a stála štvornásobok buniek za nič – viď pick_res.
 RES_LADDER = (1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 8.0, 10.0, 15.0, 20.0)
 
+# Podlaha mriežky, na ktorej sa VEKTORIZUJE. Pixel dlaždice má pri z16 – kam
+# skaly naozaj idú – 1,57 m, takže obrys trasovaný jemnejšie sa v mape nemá
+# ako zobraziť. Kým sa vektorizovalo na tej istej mriežke, na akej je uložený
+# sklon, platilo sa za ten neviditeľný detail plnou cenou: pri 1 m to bolo
+# 0,71 mld. buniek a ~1:40 h, pri 2 m je to 0,18 mld. a ~9 min. Nie je to
+# štvrtina práce, ale jedenástina – lebo na hrubšej mriežke je aj SAMA cena
+# bunky nižšia (viď `contour_cells_per_s`).
+VEC_FLOOR_M = 1.6
+
+
+def pick_vec_res(res, area_m2, budget_s=0.0, floor=VEC_FLOOR_M):
+    """Mriežka vektorizácie: najjemnejšia, ktorú je ešte vidieť a ktorá sa
+    zmestí do rozpočtu – ale nikdy jemnejšia než uložený sklon.
+
+    Sklon ostáva v sklade v plnom rozlíšení; toto je len POHĽAD naň pri
+    trasovaní. Preto sa hrubšou vektorizáciou nič nezahadzuje: keď sa raz bude
+    treba pozrieť jemnejšie, sklad je stále 1 m a prepočíta sa len ten lacný
+    priechod.
+    """
+    for r in RES_LADDER:
+        if r < res or r < floor:
+            continue
+        if budget_s and area_m2 / (r * r) / contour_cells_per_s(r) > budget_s:
+            continue
+        return r
+    return max(res, RES_LADDER[-1])
+
 
 def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
     """Najjemnejšia mriežka, ktorá sa ešte zmestí do rozpočtu času.
@@ -283,7 +324,6 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
         return RES_LADDER[3]  # nič sa netrafilo – nech to povie až chunk_plan
 
     floor = max(1.0, round((dem_cell_m or 0) / 10.0, 1))
-    per_s = 1.0 / (1.0 / SLOPE_CELLS_PER_S + 1.0 / CONTOUR_CELLS_PER_S)
     budget_s = budget_min * 60 if budget_min else float("inf")
 
     print("── Výber mriežky (rock_res=auto) ────────────────────")
@@ -293,14 +333,23 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
               f"{floor:g} m nemá zmysel")
     else:
         print(f"  bunka DEM       neznáma → dolný strop {floor:g} m")
+    # Dve polovice, dva riadky. Jedno číslo za obe tu bolo, kým sa obe počítali
+    # na tej istej mriežke – a skrývalo, že drahšia je tá druhá: pri 1 m stojí
+    # sklon 2 minúty a vektorizácia hodinu a pol. Kým to bolo zlepené, nedalo
+    # sa z tabuľky prísť na to, čo vlastne zdvojnásobenie mriežky ušetrí.
     chosen = None
     for res in RES_LADDER:
         if res < floor:
             continue
-        est = area_m2 / (res * res) / per_s
+        vec = pick_vec_res(res, area_m2)
+        cells = area_m2 / (res * res)
+        s_slope = cells / SLOPE_CELLS_PER_S
+        s_vec = area_m2 / (vec * vec) / contour_cells_per_s(vec)
+        est = s_slope + s_vec
         fits = est <= budget_s
-        print(f"  {res:>4g} m  {area_m2/(res*res)/1e9:6.2f} mld. buniek  "
-              f"~{hms(est)}  {'✓' if fits else '× nad rozpočet'}")
+        print(f"  {res:>4g} m  {cells/1e9:5.2f} mld.  sklon ~{hms(s_slope)}"
+              f"  + vektory ~{hms(s_vec)} (na {vec:g} m)"
+              f"  = ~{hms(est)}  {'✓' if fits else '× nad rozpočet'}")
         if fits and chosen is None:
             chosen = res
     if chosen is None:
@@ -339,8 +388,9 @@ def mosaic_info(vrt):
         return 0, 0, None, 0
 
 
-def clip_vrt(vrt, box, res, tmp):
-    """Mozaika orezaná presne na územie, ktoré si beh vypýtal.
+def clip_vrt(vrt, box, res, tmp, src_res=0.0):
+    """Mozaika orezaná presne na územie, ktoré si beh vypýtal – a keď treba,
+    rovno na hrubšej mriežke.
 
     PREČO TO NIE JE ZBYTOČNÉ. Sklad sklonu má ABSOLÚTNU mriežku častí – to je
     jeho zmysel, lebo tá istá zem tak padne vždy do tej istej časti a časti sa
@@ -356,15 +406,24 @@ def clip_vrt(vrt, box, res, tmp):
     takže to stojí milisekundy a časti v sklade ostávajú nedotknuté.
 
     Hranice sa prichytávajú na mriežku `res`, aby sa bunky neposunuli o zlomok
-    a `gdal_contour` nedostal inú mriežku, než na akej sa sklon počítal.
+    a `gdal_contour` nedostal mriežku posunutú o pol bunky.
+
+    ZHRUBNUTIE IDE TOU ISTOU CESTOU. Keď je `res` hrubšie než `src_res`
+    (mriežka skladu), VRT si rovno vypýta hrubšie bunky a priemeruje – takže
+    zhrubnutie NESTOJÍ ďalší priechod nad rastrom, je to ten istý zápis do XML.
+    Priemer, a nie najbližší sused: `average` je najbližšie tomu, ako by sklon
+    vyšiel, keby sa rovno počítal na hrubšej mriežke (hrubší DEM dáva miernejšie
+    sklony), kým `nearest` by z 1 m poľa vybral každú štvrtú bunku aj s jej
+    zrnom – čiže presne ten šum, kvôli ktorému je jemná mriežka drahá.
     """
     x0 = math.floor(box[0] / res) * res
     y0 = math.floor(box[1] / res) * res
     x1 = math.ceil(box[2] / res) * res
     y1 = math.ceil(box[3] / res) * res
     out = os.path.join(tmp, "slope-clip.vrt")
+    hrubsie = ["-r", "average"] if src_res and res > src_res else []
     run(["gdalbuildvrt", "-q", "-te", repr(x0), repr(y0), repr(x1), repr(y1),
-         "-tr", repr(res), repr(res), out, vrt])
+         "-tr", repr(res), repr(res)] + hrubsie + [out, vrt])
     return out
 
 
@@ -380,6 +439,9 @@ def main():
                     help="zdrojový DEM – len na výpis skutočného detailu")
     ap.add_argument("--bbox", required=True, help="west,south,east,north v stupňoch")
     ap.add_argument("--out", required=True, help="výstupný GeoPackage (vrstva rock)")
+    ap.add_argument("--vec-res", default="auto",
+                    help="mriežka vektorizácie v metroch, alebo `auto` "
+                         "(nikdy jemnejšia než --res)")
     ap.add_argument("--res", default="auto",
                     help="mriežka na sklon v metroch, alebo `auto` = "
                          "najjemnejšia, ktorá sa zmestí do rozpočtu času")
@@ -428,16 +490,31 @@ def main():
               "dostáva hotovú.")
         return 2
     res = float(args.res)
+
+    # Mriežka VEKTORIZÁCIE. Sklon ostáva v sklade taký, aký je – toto je len
+    # pohľad naň pri trasovaní, a nemusí byť rovnako jemný: pri z16 má pixel
+    # 1,57 m, takže obrys trasovaný na 1 m nesie detail, ktorý sa nemá ako
+    # zobraziť, a stojí jedenásťnásobok času (beh 31357217326: 0,71 mld. buniek
+    # a ~1:40 h). `--vec-res=<res>` vráti staré správanie.
+    box = to_metric(bbox)
+    plocha = (box[2] - box[0]) * (box[3] - box[1])
+    if str(args.vec_res).strip().lower() in ("auto", "", "0"):
+        vec_res = pick_vec_res(res, plocha, args.budget_min * 60)
+    else:
+        vec_res = max(res, float(args.vec_res))
     # Štvrtina bunky: zmaže schodíky po hranách buniek, ale obrys neposunie
     # o viac než štvrtinu mriežky. Namerané: bodov na obrys klesne 5,7×
     # (423 763 → 74 395) a počet plôch sa nezmení vôbec. Ostré rohy, ktoré
     # po ňom ostanú, zaobli `--smooth` na konci.
+    #
+    # Obe čísla idú z mriežky VEKTORIZÁCIE, nie zo skladu: geometria vzniká na
+    # nej, tak schodíky aj najmenšia zmysluplná plocha patria k nej.
     if args.simplify < 0:
-        args.simplify = res / 4.0
+        args.simplify = vec_res / 4.0
     # Najmenšia skala = jedna bunka mriežky. Pri `--res=auto` sa mriežka
     # vyberá až tu, takže sa to nedá spočítať v shelli pred spustením.
     if args.min_area < 0:
-        args.min_area = round(res * res, 2)
+        args.min_area = round(vec_res * vec_res, 2)
     if dem_dx:
         print(f"Zdrojový DEM má bunku ~{dem_dx:.0f}×{dem_dy:.0f} m – to je "
               f"strop skutočného detailu; mriežka {res:g} m len hladší obrys.")
@@ -463,16 +540,18 @@ def main():
         #
         # Reže sa PRED strážcom rozpočtu nižšie: ten má merať prácu, ktorá sa
         # naozaj spraví, nie tú, ktorú sme sa práve rozhodli nerobiť.
-        box = to_metric(bbox)
-        treba = (box[2] - box[0]) * (box[3] - box[1]) / (res * res)
-        if mbox and cells and treba and cells > treba * 1.05:
-            vrt = clip_vrt(vrt, box, res, tmp)
+        treba = plocha / (vec_res * vec_res)
+        if vec_res > res or (mbox and cells and treba and cells > treba * 1.05):
+            vrt = clip_vrt(vrt, box, vec_res, tmp, src_res=res)
             cw, ch, _, _ = mosaic_info(vrt)
             orezane = float(cw) * ch
-            print(f"Orez na územie: {mw}×{mh} → {cw}×{ch} px, "
+            preco = ("orez na územie" if vec_res == res else
+                     f"orez na územie a mriežka {res:g} → {vec_res:g} m")
+            print(f"Pohľad na sklad ({preco}): {mw}×{mh} → {cw}×{ch} px, "
                   f"{cells / 1e9:.2f} → {orezane / 1e9:.2f} mld. buniek "
                   f"({cells / max(orezane, 1):.1f}× menej práce). "
-                  f"Časti skladu ostávajú celé, reže sa len pohľad na ne.")
+                  f"Časti skladu ostávajú celé aj v plnom rozlíšení, "
+                  f"reže sa len pohľad na ne.")
             cells = orezane
         else:
             print(f"Mozaika už sedí na územie ({treba / 1e9:.2f} mld. buniek "
@@ -483,7 +562,7 @@ def main():
         # a zaplatený, takže sa tu meria len ten jeden priechod. Je to hrubé
         # sito – skutočný čas stráži `max_s` nižšie, na nameraných sekundách.
         if args.budget_min > 0 and cells:
-            odhad = cells / CONTOUR_CELLS_PER_S / 60
+            odhad = cells / contour_cells_per_s(vec_res) / 60
             if odhad > args.budget_min:
                 print(f"::error::Vektorizácia {cells / 1e9:.2f} mld. buniek by "
                       f"trvala ~{odhad:.0f} min, rozpočet je "
@@ -497,9 +576,9 @@ def main():
         # v jednotkách uloženého rastra (0,5° na krok).
         bands = os.path.join(tmp, "bands.gpkg")
         print(f"Vektorizujem sklon jedným priechodom nad celým územím "
-              f"({cells/1e9:.2f} mld. buniek, hrubý odhad "
-              f"{hms(cells / CONTOUR_CELLS_PER_S)} – presnejší príde z percent "
-              f"po pár minútach)…", flush=True)
+              f"({cells/1e9:.2f} mld. buniek na mriežke {vec_res:g} m, hrubý "
+              f"odhad {hms(cells / contour_cells_per_s(vec_res))} – presnejší "
+              f"príde z percent po pár minútach)…", flush=True)
         # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediná úroveň, teda
         # jediné pásmo „sklon nad prahom". Druhá úroveň (`cliff`) mala zmysel,
         # kým sa kreslila tmavšie – ležala v diere pásma `steep` a spolu
@@ -530,9 +609,11 @@ def main():
             print(f"::error::Vektorizácia bežala {hms(hotovo)} a rozpočet je "
                   f"{args.budget_min:.0f} min – zastavené. Sklon v sklade "
                   f"ostáva, takže sa nezahodil. Ďalej: hrubšia mriežka "
-                  f"(`rock_res`, teraz {res:g} m – každé zdvojnásobenie je "
-                  f"štvrtina práce), menší výrez (`area`), alebo vyšší "
-                  f"`rock_budget_min`, ak to naozaj má trvať dlhšie.")
+                  f"vektorizácie (`--vec-res`, teraz {vec_res:g} m – každé "
+                  f"zdvojnásobenie je rádovo desatina práce a sklad sa "
+                  f"nedotkne, takže sa nič neprepočítava), menší výrez "
+                  f"(`area`), alebo vyšší `rock_budget_min`, ak to naozaj má "
+                  f"trvať dlhšie.")
             return 2
 
         # Mozaika sa tu ZÁMERNE NEMAŽE, hoci je vyše gigabajtu: sú to časti
@@ -633,13 +714,15 @@ def main():
         # Odhady sa robia z konštánt hore a tie sa časom rozídu s realitou –
         # a keď sa rozídu, prestane platiť aj strážca rozpočtu, ktorý na nich
         # stojí. Nech to teda beh povie sám, nech sa nemusí hľadať.
-        if naozaj and CONTOUR_CELLS_PER_S / naozaj > 3:
-            print(f"::warning::Vektorizácia išla {naozaj/1e6:.2f} mil. buniek/s, "
-                  f"ale `CONTOUR_CELLS_PER_S` v rock-areas.py hovorí "
-                  f"{CONTOUR_CELLS_PER_S/1e6:.1f} – teda "
-                  f"{CONTOUR_CELLS_PER_S/naozaj:.0f}× vedľa. Odhady aj strážca "
-                  f"rozpočtu z nej vychádzajú; oprav ju podľa tohto behu "
-                  f"(mriežka {res:g} m).")
+        cakane = contour_cells_per_s(vec_res)
+        if naozaj and max(cakane / naozaj, naozaj / cakane) > 3:
+            print(f"::warning::Vektorizácia išla {naozaj/1e3:.0f} tis. buniek/s, "
+                  f"ale `contour_cells_per_s({vec_res:g})` v rock-areas.py "
+                  f"hovorí {cakane/1e3:.0f} tis. – teda "
+                  f"{max(cakane/naozaj, naozaj/cakane):.0f}× vedľa. Odhady aj "
+                  f"strážca rozpočtu z toho vychádzajú; prepíš "
+                  f"`CONTOUR_CELLS_PER_S_AT_1M` a `CONTOUR_RES_EXP` podľa tohto "
+                  f"behu (mriežka vektorizácie {vec_res:g} m, sklad {res:g} m).")
         if st:
             print(f"  spolu {st['total']/1e6:.2f} km², najväčšia "
                   f"{st['max']/10000:.1f} ha, najmenšia {st['min']:.0f} m², "
@@ -657,6 +740,7 @@ def main():
                 f.write("source=dem\n")
                 f.write(f"count={n}\n")
                 f.write(f"grid_m={res:g}\n")
+                f.write(f"vec_grid_m={vec_res:g}\n")
                 f.write(f"min_area_m2={args.min_area:g}\n")
                 f.write(f"slope_deg={lo}\ncliff_deg={hi}\n")
                 f.write(f"plne={int(bool(args.plne))}\n")

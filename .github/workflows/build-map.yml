@@ -204,6 +204,14 @@ env:
   # výrezmi: čo sa spočítalo pre vysoke_tatry, použijú aj tatry.
   SLOPE_RELEASE: dem-slope
   ROCK_RES: auto # záložná mriežka na sklon (m), keď voľba rock_res chýba
+  # Mriežka, na ktorej sa TRASUJE obrys. Nemusí byť tá, na ktorej je uložený
+  # sklon: pixel dlaždice má pri z16 – kam skaly idú – 1,57 m, takže obrys
+  # z 1 m nesie detail, ktorý sa v mape nemá ako zobraziť, a stojí jedenásť-
+  # násobok času (beh 31357217326: 0,71 mld. buniek, ~1:40 h; na 2 m je to
+  # 0,18 mld. a rádovo 9 min). `auto` = najjemnejšia, ktorú je ešte vidieť
+  # a ktorá sa zmestí do ROCK_BUDGET_MIN. Sklad sklonu sa tým nemení, takže
+  # zmena tohto čísla neznamená ani jedno čítanie z Drive navyše.
+  ROCK_VEC_RES: auto
   # Najmenšia skalná plocha sa dopočíta ako jedna bunka mriežky (pri 2 m teda
   # 4 m²) – menšie útvary sú už len zubaté artefakty jednej bunky, nie skala.
   # Zjednodušenie obrysu (m). -1 = štvrtina mriežky: zmaže schodíky po hranách

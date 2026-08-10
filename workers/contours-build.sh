@@ -398,7 +398,8 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     # ---- 4. vektorizácia jedným priechodom nad celou mozaikou ----
     set +e
     python3 workers/rock-areas.py --slope-vrt="$SLOPE_VRT" --bbox="$AREA_BBOX" \
-      --res="$RES" --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
+      --res="$RES" --vec-res="${ROCK_VEC_RES:-auto}" \
+      --slope="$ROCK_SLOPE" --cliff="$ROCK_CLIFF" \
       --dem="$ROCK_VRT" \
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
       --plne="${OPT_ROCK_PLNE:-1}" \
