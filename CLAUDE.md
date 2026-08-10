@@ -367,8 +367,11 @@ existenciu `needs.*.outputs.*` a `steps.*.outputs.*`, to, že každý
 `workers/<job>/*.sh` dostane env, ktoré číta, že cesta k DMR 5.0 ostane celá, že
 cache ostane na Drive (žiadne `actions/cache`, každý cache krok sa vie
 prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
-(`workers/lint/publishing.py`) a že **každá výplň v štýle nad vrstvou so
-zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`). **Keď
+(`workers/lint/publishing.py`), že **každá výplň v štýle nad vrstvou so
+zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že sa
+ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
+v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`
+by ticho vypol kontroly, ktoré cesty hľadajú vzorom). **Keď
 opravíš tichú chybu, pridaj naň kontrolu** – tak sú tam všetky ostatné.
 
 ## Commity a PR

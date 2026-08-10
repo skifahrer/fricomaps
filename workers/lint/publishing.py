@@ -193,8 +193,37 @@ def mena_hovoria_pravdu():
     return bad
 
 
+def sklady_sa_nerozidu():
+    """5. Ten istý `*_STORE` v dvoch workflowoch musí mať tú istú hodnotu.
+
+    Sklad má PISATEĽA a ČITATEĽA a sú to spravidla dva workflowy:
+    `shading-rocks.yml` do `ROCK_IMG_STORE` zapisuje, `build-map.yml` z neho
+    číta. Keby sa tie dve konštanty rozišli, nespadne nič – čitateľ sa pozrie
+    do skladu, do ktorého nikto nepíše, a povie „pre tento výrez tam nič nie
+    je". To je tichý omyl (pravidlo 8) a hľadá sa zle, lebo obe strany
+    vyzerajú samy o sebe správne (pravidlo 1).
+    """
+    kde = {}
+    for path in sorted(glob.glob(".github/workflows/*.yml")):
+        d = yaml.safe_load(open(path, encoding="utf-8")) or {}
+        for k, v in (d.get("env") or {}).items():
+            if k.endswith("_STORE") and isinstance(v, str) and "${" not in v:
+                kde.setdefault(k, {})[path] = v
+    bad = 0
+    for k, m in sorted(kde.items()):
+        if len(set(m.values())) > 1:
+            kde_co = ", ".join(f"{p}={v}" for p, v in sorted(m.items()))
+            print(f"::error::`{k}` má v rôznych workflowoch rôznu hodnotu "
+                  f"({kde_co}). Jeden sklad, jedno meno – inak sa do neho "
+                  f"zapisuje inde, než sa z neho číta, a beh povie len to, "
+                  f"že tam nič nie je.")
+            bad += 1
+    return bad
+
+
 def main():
-    bad = bez_releasov() + artefakt_zije_den() + mena_hovoria_pravdu()
+    bad = (bez_releasov() + artefakt_zije_den() + mena_hovoria_pravdu()
+           + sklady_sa_nerozidu())
     chyby, known = znama_mena()
     bad += chyby
     print(f"publikovanie len na Drive: {bad} chýb "
