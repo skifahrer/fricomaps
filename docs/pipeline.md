@@ -135,6 +135,44 @@ Dokopy je z **124 KiB súbor s 90 KiB** a v YAMLe ostal graf jobov: čo od čoho
 závisí, čo je podmienené a čo si čo podáva. Bash sa číta vedľa, v súboroch,
 ktoré sa dajú spustiť lokálne.
 
+#### Dlhé workery sú rozdelené na moduly
+
+`Lint workflows` má strop **800 riadkov na súbor** (pravidlo 5: v dlhšom sa nedá
+naraz prehliadnuť, čo tam je, a ďalšia zmena pridáva vedľa namiesto toho, aby to
+použila). Šesť súborov ho prekračovalo; päť sa rozdelilo tam, kde sa mení otázka:
+
+| bolo | je | rez |
+|---|---|---|
+| `shading-rocks.py` 2023 | 715 + [`shading-tiles.py`](../workers/shading-tiles.py) 435 + [`shading-raster.py`](../workers/shading-raster.py) 431 + [`shading-vector.py`](../workers/shading-vector.py) 626 | tri fázy, ktoré tam už boli vyznačené komentárom – a sú to tie isté tri, na ktoré sa delí `shading-rocks.yml` |
+| `drive-auth.py` 894 | 752 + [`drive-api.py`](../workers/drive-api.py) 238 | „kto sme" (Credentials, `from_env`, prihlásenie) × „volanie API a preklad odmietnutí" |
+| `dmr5-drive.py` 888 | 684 + [`dmr5-cut.py`](../workers/dmr5-cut.py) 270 | „ako sa k dátam dostať a čo to bude stáť" × „ktorý kus zeme a v akom tvare" |
+| `dmr5-raster.py` 853 | 419 + [`dmr5-remote.py`](../workers/dmr5-remote.py) 493 | „čo sa dá z archívu prečítať" × „ktorý kus vyrezať" |
+| `lint-workflows.yml` 1044 | 629 + štyri `workers/lint-*.py` | najväčšie heredocy do `workers/` (pravidlo 3) |
+
+**Rez ide NADOL, nie nabok.** `drive-api.py` o `Credentials` nevie nič – `creds`
+mu chodí ako parameter a stačí, že má `.token()`. Preto tam nie je kruhová
+závislosť a netreba lenivé importy. `drive-auth.py` potom mená vystavuje ďalej
+(`AuthError`, `api_get`, `scope_hint`…), takže ostatných šesť workerov, ktoré si
+ho berú, sa nemuselo prepisovať – a `auth.AuthError` je stále **jeden a ten
+istý objekt**, takže `except auth.AuthError` chytá aj to, čo vyhodí spodná
+vrstva.
+
+**Čo sa nesmie rozdvojiť:** `LOG` v `dmr5-cut.py` (dve kópie denníka = súhrn
+s polovicou riadkov), `CONTOUR_CELLS_PER_S` v `shading-tiles.py` (podľa neho
+vyberá `probe_zoom` zoom a podľa toho istého čísla beží contour) a mriežka
+`WEBMERC`/`R`/`TILE`. Všetko je na jednom mieste a ostatné moduly si to berú
+odtiaľ – pravidlo 1.
+
+`build-map.yml` ostal jediný nad stropom a **pod 800 riadkov sa dostať nedá**:
+z 2013 riadkov je 598 komentár a 197 vnútro `run:` blokov, takže holej YAML
+štruktúry je 1100 na 17 jobov – aj po zmazaní všetkých komentárov a všetkých
+`run:` blokov by ostalo 1218. Rozrezať by sa dal len na ďalšie `workflow_call`
+súbory, kde sa zoznam ~20 inputov na job píše dvakrát (v `inputs:` volaného aj
+v `with:` volajúceho): pridalo by to viac riadkov, než by ubralo, a zdvojilo by
+presne to, na čom sa už raz rozišla kontrola so sťahovaním. Pre workflowy je
+preto ten strop varovanie a tvrdý ostáva **128 KiB**, čo je to, čo GitHub naozaj
+odmietne.
+
 **Vytiahnutý blok potrebuje `env:`, a to je tichá chyba tohto presunu.**
 `${{ výraz }}` sa v skripte zmení na `$PREMENNÚ` a keď sa tá zabudne dopísať do
 `env:` kroku, skript nespadne – beží s prázdnym reťazcom a vyrobí prázdny bbox,

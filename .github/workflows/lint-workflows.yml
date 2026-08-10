@@ -369,216 +369,19 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # DMR 5.0 sa nedá doplniť cez `update-dem.yml` – ten sťahuje archív na
-      # runner a model má 145 GB. Kým sa tam `dmr5` posielal, doplnenie bolo
-      # tiché nič: job zazelenal, nestiahol nič a build spadol až v jobe, ktorý
-      # si model vypýtal. Tu sa stráži, že tá cesta ostane zavretá z oboch strán.
+      # Cesta k DMR 5.0 musí ostať celá: oba doplňovacie joby, volanie
+      # `dmr5-drive.yml`, bbox aj meno assetu z `check-dem`, a `update-dem.yml`
+      # na `dmr5` padá. Kým tam bol rozcestník, doplnenie bolo tiché nič
+      # (beh 31307163093). Rozpis: `workers/lint-dmr5-pipeline.py`.
       - name: DMR 5.0 sa dopĺňa vlastnou pipeline
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import re, sys, yaml
-          bad = 0
+        run: python3 workers/lint-dmr5-pipeline.py
 
-          # 1. update-dem.yml musí na `dmr5` skončiť chybou, nie úspechom.
-          txt = open(".github/workflows/update-dem.yml").read()
-          m = re.search(r"^\s*dmr5\)(.*?);;", txt, re.S | re.M)
-          if not m or "::error::" not in m.group(1) or "exit 1" not in m.group(1):
-              print("::error file=.github/workflows/update-dem.yml::vetva `dmr5` "
-                    "musí skončiť chybou – doplnenie, ktoré nedopĺňa, nesmie "
-                    "zazelenať (beh 31307163093).")
-              bad += 1
-
-          # 2. dmr5-drive.yml musí byť volateľný a brať to, čo mu Build map dáva.
-          d = yaml.safe_load(open(".github/workflows/dmr5-drive.yml"))
-          on = d[[k for k in d if k is True or k == "on"][0]]
-          call = (on.get("workflow_call") or {}).get("inputs") or {}
-          bm = yaml.safe_load(open(".github/workflows/build-map.yml"))
-          for name, job in (bm.get("jobs") or {}).items():
-              if job.get("uses") != "./.github/workflows/dmr5-drive.yml":
-                  continue
-              for key in (job.get("with") or {}):
-                  if key not in call:
-                      print(f"::error file=.github/workflows/build-map.yml::job "
-                            f"'{name}' podáva `{key}`, ktoré dmr5-drive.yml "
-                            f"v `workflow_call` nemá")
-                      bad += 1
-          if not any(j.get("uses") == "./.github/workflows/dmr5-drive.yml"
-                     for j in (bm.get("jobs") or {}).values()):
-              print("::error file=.github/workflows/build-map.yml::DMR 5.0 nemá "
-                    "kto doplniť – žiadny job nevolá dmr5-drive.yml")
-              bad += 1
-
-          # 3. VÝREZ SA DOPĹŇA BBOXOM, NIE KĽÚČOM POHORIA. Kľúč je meno
-          # obdĺžnika z `areas.json`; čo sa má naozaj prečítať, vie len Build
-          # map (výrez pretnutý s regiónom, pri rýchlom teste štvorec na pár
-          # km²). Kým sem chodil kľúč, `dmr5-drive.yml` si ho vyriešil
-          # druhýkrát a čítal z Drive celý obdĺžnik – test na 2 km² tak čítal
-          # 541 km² Vysokých Tatier. Je to tá istá chyba ako beh 31307163093,
-          # len nezhodila beh, iba ho predražila – a preto sa vráti ticho.
-          for name, job in (bm.get("jobs") or {}).items():
-              with_ = job.get("with") or {}
-              if job.get("uses") != "./.github/workflows/dmr5-drive.yml":
-                  continue
-              if str(with_.get("tiles", "")).lower() == "true":
-                  continue   # dlaždice sa zadávajú stupňami, meno je z nich
-              area, asset = str(with_.get("area", "")), str(with_.get("asset", ""))
-              if "mirror_dmr5_area" not in area:
-                  print(f"::error file=.github/workflows/build-map.yml::job "
-                        f"'{name}' podáva do dmr5-drive.yml `area: {area}` – "
-                        f"výrez sa musí brať z `check-dem.outputs."
-                        f"mirror_dmr5_area` (bbox toho, čo si beh vypýtal), "
-                        f"inak sa z Drive číta celý obdĺžnik z areas.json.")
-                  bad += 1
-              if "mirror_dmr5_asset" not in asset:
-                  print(f"::error file=.github/workflows/build-map.yml::job "
-                        f"'{name}' nepodáva `asset` z `check-dem.outputs."
-                        f"mirror_dmr5_asset`. Pri bboxe v `area` je povinný – "
-                        f"meno sa z bboxu odvodiť nedá a build si súbor hľadá "
-                        f"podľa kľúča výrezu.")
-                  bad += 1
-
-          # A druhá strana toho istého: kontrola to meno musí vedieť povedať.
-          chk = open("workers/check-dem.sh").read()
-          for out in ("mirror_dmr5_area", "mirror_dmr5_asset"):
-              if f"{out}=" not in chk:
-                  print(f"::error file=workers/check-dem.sh::chýba výstup "
-                        f"`{out}`, ktorý build-map.yml podáva do dmr5-drive.yml")
-                  bad += 1
-          print(f"cesta k DMR 5.0: {bad} chýb")
-          sys.exit(1 if bad else 0)
-          PY
-
-      # PRIHLÁSENIE NA DRIVE SA MUSÍ DOSTAŤ KU KAŽDÉMU KROKU, ČO Z DRIVE ČÍTA.
-      # Keď chýba, nič nespadne – beh len ticho prepadne na verejný odkaz,
-      # ktorý má denný limit sťahovania zdieľaný so všetkými klientmi, a zistí
-      # sa to až vtedy, keď Drive prestane dávať dáta (beh 31315890474 na tom
-      # visel 2 h 16 min). Presne ten druh tichého omylu, ktorý má mať
-      # kontrolu – a je to o jeden krok ľahšie prehliadnuť, než sa zdá: skaly
-      # z DMR 5.0 čítajú sklon rovno z Drive v úplne inom jobe než ten, ktorý
-      # model dopĺňa.
+      # Token vlastníka Drive musí prísť na každé miesto, kde sa z Drive číta
+      # alebo do cache/skladu zapisuje – z oboch strán, lebo `workflow_call`
+      # nededí secrets sám. Bez neho nič nespadne, len sa počíta hodiny
+      # odznova. Rozpis: `workers/lint-drive-token.py`.
       - name: Token vlastníka Drive sa dostane všade, kde sa z Drive číta
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob, re, sys, yaml
-
-          # Prihlásenie sa dá podať dvoma tvarmi: všetko v jednom secrete,
-          # alebo po kusoch. Nekompletná dvojica/trojica sa NESMIE brať ako
-          # „veď tam niečo je" – `drive-auth.py` na polovicu údajov spadne,
-          # a keby to kontrola prepustila, spadol by až ten trojhodinový beh.
-          #
-          # Druhá skupina má len DVA prvky: `client_id` (DRIVE_CLIENT) medzi
-          # secrets nepatrí – nie je to tajné, je to repository variable a
-          # `vars.*` sa v tomto repozitári číta priamo, bez podávania cez
-          # `workflow_call`/`secrets: inherit`. Táto kontrola preto overuje
-          # len to, čo sa cez secrets naozaj musí prevliecť.
-          BLOB = "GDRIVE_CREDENTIALS"
-          GROUPS = (("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET",
-                     "GDRIVE_REFRESH_TOKEN"),
-                    ("DRIVE_SECRET", "DRIVE_REFRESH"))
-
-          def authed(names):
-              """Dá sa z týchto premenných prihlásiť?"""
-              return (BLOB in names
-                      or any(all(k in names for k in g) for g in GROUPS))
-
-          def why_not(names):
-              for g in GROUPS:
-                  have = [k for k in g if k in names]
-                  if have:
-                      return (f"z {'/'.join(g)} tam je len "
-                              f"{', '.join(have)} – prihlásenie s polovicou "
-                              f"údajov `drive-auth.py` odmieta")
-              return f"chýba {BLOB} alebo {'/'.join(GROUPS[1])}"
-
-          # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
-          # v texte – inak by kontrola našla samu seba a ostatné kontroly,
-          # ktoré tie isté mená spomínajú ako dáta.
-          # Interpret je NEPOVINNÝ: `run: workers/check-dem.sh` je celý riadok
-          # bez `bash` pred ním a kým to regex vyžadoval, tento krok cez sieť
-          # kontrolou prešiel. Pred cestou smú stáť len shellové kľúčové slová
-          # a operátory (`elif python3 …`) – nie `\S*`, lebo to by našlo aj
-          # `print(f"workers/slope-chunks.py …")` v INEJ kontrole tohto súboru
-          # a hlásilo by chybu na kroku, ktorý so sieťou nemá nič.
-          CMD = re.compile(r"^\s*(?:(?:if|elif|then|else|do|!|&&|\|\|)\s+)*"
-                           r"(?:\w+=\$\()?(?:(?:python3?|bash|sh)\s+)?"
-                           r"(?:\./)?[\w./-]*"
-                           r"(?:dmr5-drive|slope-chunks|contours-build"
-                           r"|terrain-build|check-dem|fetch-dem"
-                           r"|drive-folder|drive-cache|drive-store"
-                           r"|publish-map|publish-results)"
-                           r"\.(?:py|sh)\b", re.M)
-          # Cache leží na Drive, takže KAŽDÝ krok s ňou je krok, ktorý sa musí
-          # vedieť prihlásiť. Bez tokenu sa nič nestratí, len sa nič nenájde
-          # a nič neuloží – build počíta hodiny odznova a nikde to vidieť nie
-          # je. Presne ten druh tichej chyby, na ktorý sú tieto kontroly.
-          CACHE = "./.github/actions/cache-"
-          # Workflowy, ktoré samy z Drive čítajú, takže im volajúci MUSÍ
-          # prihlásenie podať. `update-dem.yml` sem pribudol s Sonnym: jeho
-          # dlaždice sú tiež na Drive a ťahali sa anonymne, kým bol token
-          # zapojený len do cesty k DMR 5.0. `shading-rocks.yml` s cache:
-          # gigabajty stiahnutých dlaždíc sú tiež na Drive.
-          CALLED = ("./.github/workflows/dmr5-drive" + ".yml",
-                    "./.github/workflows/update-dem" + ".yml",
-                    "./.github/workflows/shading-rocks" + ".yml")
-          bad = 0
-
-          for path in sorted(glob.glob(".github/workflows/*.yml")):
-              d = yaml.safe_load(open(path)) or {}
-              top = d.get("env") or {}
-              for name, job in (d.get("jobs") or {}).items():
-                  job = job or {}
-                  # Volaný workflow si secret vyzdvihne sám, ale volajúci mu ho
-                  # musí podať – `workflow_call` nededí nič automaticky.
-                  if job.get("uses") in CALLED:
-                      called = job["uses"].rsplit("/", 1)[1]
-                      sec = job.get("secrets")
-                      if not (sec == "inherit"
-                              or (isinstance(sec, dict) and authed(sec))):
-                          print(f"::error file={path}::job '{name}' volá "
-                                f"{called} bez `secrets: inherit`, takže "
-                                f"doplnenie by z Drive čítalo verejným odkazom "
-                                f"s denným limitom.")
-                          bad += 1
-                      continue
-                  jenv = job.get("env") or {}
-                  for step in job.get("steps") or []:
-                      step = step or {}
-                      cache = str(step.get("uses") or "").startswith(CACHE)
-                      if not cache and not CMD.search(str(step.get("run") or "")):
-                          continue
-                      names = set(top) | set(jenv) | set(step.get("env") or {})
-                      if authed(names):
-                          continue
-                      print(f"::error file={path}::krok "
-                            f"'{step.get('name', '?')}' v jobe '{name}' "
-                            + ("pracuje s cache na Drive" if cache else
-                               "číta z Drive")
-                            + f", ale prihlásiť sa z toho nedá: "
-                            f"{why_not(names)}. "
-                            + ("Cache by sa nenašla ani neuložila a build by "
-                               "počítal všetko odznova"
-                               if cache else
-                               "Bežal by na verejnom dennom limite")
-                            + " – doplň to do `env:` toho kroku, jobu alebo "
-                              "celého workflowu.")
-                      bad += 1
-
-          # A druhá strana toho istého: volaný workflow to musí prijať.
-          for called in CALLED:
-              d = yaml.safe_load(open(called[2:]))
-              on = d[[k for k in d if k is True or k == "on"][0]]
-              decl = (on.get("workflow_call") or {}).get("secrets") or {}
-              if not authed(decl):
-                  print(f"::error file={called[2:]}::`workflow_call` "
-                        f"nedeklaruje prihlásenie na Drive ({why_not(decl)}), "
-                        f"takže mu ho volajúci nemá ako podať.")
-                  bad += 1
-          print(f"prihlásenie na Drive: {bad} chýb")
-          sys.exit(1 if bad else 0)
-          PY
-
+        run: python3 workers/lint-drive-token.py
       # CACHE PATRÍ NA DRIVE. GitHubová má na repozitár 10 GB a keď sa naplní,
       # NIČ NEPOVIE – ticho vyhodí najstaršie záznamy. Jeden výrez do nej
       # ukladal desiatky GB (DEM dlaždice, sklad častí sklonu, vrstevnice,
@@ -688,99 +491,11 @@ jobs:
         run: node workers/lint-style.mjs
 
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
-      # vedieť spamätať z jedného stratného spojenia. Obe veci sú tiché:
-      # keď `socketserver`-u pretečie predvolená fronta piatich čakajúcich
-      # spojení, jadro SYN zahodí BEZ chyby na oboch stranách – shim sa
-      # o požiadavke nedozvie a GDAL po dvoch minútach retransmitov vypíše
-      # `response_code=0`, čo vyzerá ako chyba Drive. Beh 31338803278 na tom
-      # padol dve časti pred koncom (45 zo 47 spočítaných).
+      # vedieť spamätať z jedného stratného spojenia. Oboje je tiché a beh
+      # 31338803278 na tom padol dve časti pred koncom. Rozpis:
+      # `workers/lint-drive-shim.py`.
       - name: Shim nad Drive znesie nápor a GDAL to skúsi znova
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import ast, sys
-
-          SRC = "workers/drive-serve.py"
-          tree = ast.parse(open(SRC).read())
-          bad = 0
-
-          def num(node):
-              """Konštanta, alebo `socket.SOMAXCONN`."""
-              if isinstance(node, ast.Constant) and isinstance(node.value, int):
-                  return node.value
-              if isinstance(node, ast.Attribute) and node.attr == "SOMAXCONN":
-                  return 4096
-              return None
-
-          queue = None
-          for node in ast.walk(tree):
-              if not (isinstance(node, ast.ClassDef) and node.name == "Server"):
-                  continue
-              for stmt in node.body:
-                  if (isinstance(stmt, ast.Assign) and stmt.targets
-                          and getattr(stmt.targets[0], "id", "")
-                          == "request_queue_size"):
-                      queue = num(stmt.value)
-          if queue is None or queue < 64:
-              print(f"::error file={SRC}::`Server.request_queue_size` je "
-                    f"{queue if queue is not None else 'predvolených 5'} – "
-                    f"pri šiestich súbežných gdalwarpoch taká fronta pretečie "
-                    f"a jadro SYN ticho zahodí (beh 31338803278). Nechaj tam "
-                    f"`socket.SOMAXCONN`.")
-              bad += 1
-          else:
-              print(f"{SRC}: fronta spojení {queue} ✓")
-
-          # Bazén na sťahovanie úsekov musí byť jeden na proces. Keď sa vyrába
-          # v `_send_multipart`, nie je to strop, ale násobenie: pri `--jobs 6`
-          # je z „12 vlákien" 72 a rastie to s tým, čo sa ladí kvôli rýchlosti.
-          for node in ast.walk(tree):
-              if (isinstance(node, ast.FunctionDef)
-                      and node.name == "_send_multipart"):
-                  for inner in ast.walk(node):
-                      if (isinstance(inner, ast.Call)
-                              and getattr(inner.func, "id", "")
-                              == "ThreadPoolExecutor"):
-                          print(f"::error file={SRC}::`_send_multipart` si "
-                                f"vyrába vlastný ThreadPoolExecutor – potom "
-                                f"FETCH_WORKERS neohraničuje nič. Ber ho "
-                                f"z `fetch_pool()`.")
-                          bad += 1
-
-          # A GDAL musí mať povolené opakovanie a krátky čas na spojenie –
-          # inak čaká, kým sa nevzdá jadro, a jedno stratené spojenie
-          # z desaťtisícov je koncom hodinovej práce.
-          env_src = open(SRC).read()
-          for key in ("GDAL_HTTP_MAX_RETRY", "GDAL_HTTP_CONNECTTIMEOUT"):
-              if key not in env_src:
-                  print(f"::error file={SRC}::`gdal_env()` nenastavuje {key} "
-                        f"– GDAL predvolene neopakuje nič.")
-                  bad += 1
-              else:
-                  print(f"{SRC}: {key} ✓")
-
-          # Časť sklonu sa musí dať skúsiť znova. Jedna stratená časť zo 47
-          # nesmie zhodiť beh, ktorý má zvyšok hotový.
-          tries = None
-          for node in ast.walk(ast.parse(open("workers/slope-chunks.py").read())):
-              if (isinstance(node, ast.Call)
-                      and getattr(node.func, "attr", "") == "add_argument"
-                      and node.args
-                      and getattr(node.args[0], "value", "") == "--tries"):
-                  for kw in node.keywords:
-                      if kw.arg == "default":
-                          tries = getattr(kw.value, "value", None)
-          if not isinstance(tries, int) or tries < 2:
-              print("::error file=workers/slope-chunks.py::`--tries` chýba "
-                    "alebo je menšie než 2 – jedna stratená časť potom zhodí "
-                    "celý beh (31338803278).")
-              bad += 1
-          else:
-              print(f"workers/slope-chunks.py: pokusov na časť {tries} ✓")
-
-          sys.exit(1 if bad else 0)
-          PY
-
+        run: python3 workers/lint-drive-shim.py
       # To isté pre tri výbery výškového zdroja (`contour_source`,
       # `rock_source`, `shading_source`): musia sedieť s kľúčmi
       # v workers/dem-sources.json a s tým, pre ktoré vrstvy sa zdroj ponúka
@@ -822,142 +537,12 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # KROK, KTORÝ VOLÁ `workers/*.sh`, MU MUSÍ DAŤ VŠETKO, ČO SKRIPT ČÍTA.
-      # Toto je tichá chyba presunu shellu z YAMLu do `workers/`: `${{ výraz }}`
-      # sa zmení na `$PREMENNÚ`, tá sa zabudne dopísať do `env:` a skript beží
-      # s prázdnym reťazcom. Nespadne – vyrobí prázdny bbox, prázdny kľúč cache
-      # alebo asset s menom `ugkk-.tif`, a zistí sa to o desať minút inde.
-      #
-      # Zároveň sa kontroluje, že `steps.<id>.outputs` naozaj má svoj krok.
-      # Kontrola „Odkazy medzi jobmi" nižšie pozerá na `needs.<job>.outputs`,
-      # na `steps.<id>` nie – a práve premenovanie kroku pri takom presune to
-      # rozbije: `id: tiles` → `id: pmtiles` a výstupy jobu ostanú prázdne.
+      # Skript vo `workers/`, ktorý si volá `run:` jedným riadkom, musí od
+      # kroku dostať env, ktoré naozaj číta – inak beží s prázdnym reťazcom
+      # a NESPADNE. A `steps.<id>.outputs` musí mať svoj krok, inak job ticho
+      # vráti prázdno. Rozpis oboch chýb: `workers/lint-worker-env.py`.
       - name: Skripty vo workers dostávajú svoje env
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob, os, re, sys, yaml
-
-          # Dáva ich GitHub alebo shell sám; `GH_TOKEN` a spol. číta nástroj
-          # pod skriptom, takže sa v jeho texte nemusia objaviť.
-          BUILTIN = {
-              "GITHUB_OUTPUT", "GITHUB_ENV", "GITHUB_PATH", "GITHUB_STEP_SUMMARY",
-              "GITHUB_WORKSPACE", "GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_SHA",
-              "GITHUB_RUN_ID", "GITHUB_RUN_NUMBER", "GITHUB_SERVER_URL",
-              "GITHUB_ACTOR", "GITHUB_EVENT_NAME", "GITHUB_TOKEN", "RUNNER_OS",
-              "RUNNER_TEMP", "AGENT_TOOLSDIRECTORY", "HOME", "PATH", "PWD",
-              "TMPDIR", "USER", "SHELL", "IFS", "RANDOM", "LINENO", "OSTYPE",
-              "GH_TOKEN", "GDAL_CACHEMAX", "PROJ_NETWORK", "PYTHONUNBUFFERED",
-              "GDRIVE_CREDENTIALS", "DRIVE_CLIENT", "DRIVE_SECRET", "DRIVE_REFRESH",
-          }
-
-          def bez_komentarov(s):
-              return "\n".join(l for l in s.split("\n") if not re.match(r"^\s*#", l))
-
-          def bez_apostrofov(s):
-              """`'…'` preč – bash v nich nič nerozvíja, takže `$r` z jq programu
-              (`jq --arg r … '.[$r].name'`) nie je premenná prostredia."""
-              out, i, in_d = [], 0, False
-              while i < len(s):
-                  c = s[i]
-                  if c == "\\" and i + 1 < len(s):
-                      out.append(s[i:i + 2]); i += 2; continue
-                  if c == '"':
-                      in_d = not in_d
-                  if c == "'" and not in_d:
-                      j = s.find("'", i + 1)
-                      if j < 0:
-                          break
-                      i = j + 1; continue
-                  out.append(c); i += 1
-              return "".join(out)
-
-          def nastavene(s):
-              """Čo si skript nastaví sám (vrátane `local a b c` a `mapfile`)."""
-              s = bez_komentarov(s)
-              out = set(re.findall(
-                  r"(?:^|[;&|(]|\bexport\s+|\blocal\s+|\bdeclare\s+-\w+\s+)"
-                  r"\s*([A-Za-z_][A-Za-z0-9_]*)=", s, re.M))
-              out |= set(re.findall(r"\bfor\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\b", s))
-              out |= set(re.findall(
-                  r"\b(?:mapfile|readarray)\s+(?:-\w+\s+)*([A-Za-z_][A-Za-z0-9_]*)", s))
-              for m in re.findall(r"\bread\b([^\n]*)$", s, re.M):
-                  out |= set(re.findall(r"(?<!-)\b([A-Za-z_][A-Za-z0-9_]*)\b(?!=)", m))
-              for m in re.findall(r"^\s*(?:local|declare|typeset)\s+(.+)$", s, re.M):
-                  for tok in m.split():
-                      out.add(re.split(r"=", tok)[0])
-              # `source súbor` – čo z neho príde, sa staticky zistiť nedá
-              if re.search(r"^\s*(?:source|\.)\s+\S", s, re.M):
-                  out.add("__SOURCED__")
-              return {v for v in out if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)}
-
-          def citane(s):
-              """Čo skript číta a musí mu to niekto dať. `${VAR:-x}` sa neráta –
-              na ten prípad má predvolenú hodnotu."""
-              s = bez_apostrofov(bez_komentarov(s))
-              volitelne = set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::?[-=+])", s))
-              out = set(re.findall(r"\$\{#?([A-Za-z_][A-Za-z0-9_]*)", s))
-              out |= set(re.findall(r"\$([A-Za-z_][A-Za-z0-9_]*)", s))
-              # vnorený node/python si prostredie číta po svojom
-              out |= set(re.findall(r"process\.env\.([A-Za-z_][A-Za-z0-9_]*)", s))
-              out |= set(re.findall(r"environ(?:\.get\(|\[)[\"']([A-Za-z_][A-Za-z0-9_]*)", s))
-              return out - volitelne
-
-          # Otvárací token sa SKLADÁ, nepíše. Keby tu stál doslova, mal by tento
-          # súbor presne tú chybu, ktorú hľadá – actionlint by ho skúsil
-          # prečítať ako výraz a zhodil by sa na ňom (a zhodil aj sám seba).
-          OPEN = "$" + "{" * 2
-
-          bad = 0
-          for path in sorted(glob.glob(".github/workflows/*.yml")):
-              wf = yaml.safe_load(open(path)) or {}
-              for job_name, job in (wf.get("jobs") or {}).items():
-                  for st in job.get("steps") or []:
-                      run = (st.get("run") or "").strip()
-                      m = re.fullmatch(r"(?:bash\s+|sh\s+)?(workers/[\w.-]+\.sh)", run)
-                      if not m:
-                          continue
-                      skript = m.group(1)
-                      if not os.path.exists(skript):
-                          print(f"::error file={path}::{job_name} / "
-                                f"{st.get('name')}: {skript} neexistuje")
-                          bad += 1
-                          continue
-                      text = open(skript).read()
-                      if OPEN in text:
-                          print(f"::error file={skript}::ostal v ňom výraz "
-                                f"workflowu ({OPEN} …) – v shelli sa "
-                                f"nevyhodnotí, skončí ako holý text")
-                          bad += 1
-                      dane = (set(wf.get("env") or {}) | set(job.get("env") or {})
-                              | set(st.get("env") or {}) | nastavene(text) | BUILTIN)
-                      chyba = sorted(v for v in citane(text)
-                                     if v not in dane and not v.isdigit()
-                                     and not ("__SOURCED__" in dane and v.islower()))
-                      if chyba:
-                          print(f"::error file={path}::{job_name} / "
-                                f"{st.get('name')} → {skript}: skript číta "
-                                f"{chyba} z prostredia, ale krok mu to nedáva. "
-                                f"Doplň to do `env:` kroku – inak beží "
-                                f"s prázdnym reťazcom a nespadne.")
-                          bad += 1
-
-              # `steps.<id>.outputs` musí mať svoj krok
-              for job_name, job in (wf.get("jobs") or {}).items():
-                  ids = {s["id"] for s in (job.get("steps") or []) if s.get("id")}
-                  blob = yaml.dump(job, allow_unicode=True)
-                  for ref in sorted(set(re.findall(
-                          r"steps\.([A-Za-z0-9_-]+)\.outputs", blob))):
-                      if ref not in ids:
-                          print(f"::error file={path}::job '{job_name}' sa "
-                                f"odkazuje na steps.{ref}.outputs, ale taký krok "
-                                f"v ňom nie je (má: {sorted(ids)}). Premenovaný "
-                                f"krok = ticho prázdny výstup jobu.")
-                          bad += 1
-          print(f"skripty vo workers a ich env: {bad} chýb")
-          sys.exit(1 if bad else 0)
-          PY
-
+        run: python3 workers/lint-worker-env.py
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
       # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
       # tomto sa dá po rozdelení na joby ticho pomýliť.
@@ -1002,23 +587,32 @@ jobs:
           sys.exit(1 if errs else 0)
           PY
 
-      # POSLEDNÝ V JOBE ZÁMERNE. Táto kontrola je červená UŽ NA MASTERI – na
-      # šiestich súboroch, ktoré sa ešte nerozdelili (`build-map.yml`,
-      # `shading-rocks.py`, `lint-workflows.yml`, `dmr5-drive.py`,
-      # `drive-auth.py`, `dmr5-raster.py`); commit 8b034a0 to hovorí a označuje
-      # za samostatnú úlohu. Kým stála tretia, job na nej spadol a VŠETKY
-      # kontroly za ňou sa preskočili – teda celý zmysel tohto workflowu.
-      # (Zistilo sa to na behu 31377123600: nová kontrola štýlu ani
-      # publikovania sa v ňom nikdy nespustila.)
+      # DĹŽKA SÚBORU. Dlhý súbor sa nedá naraz prehliadnuť: ďalšia zmena v ňom
+      # nevidí, čo tam už je, a pridáva vedľa namiesto toho, aby to použila
+      # (pravidlo 1 v CLAUDE.md). Preto strop 800 riadkov a rozdelenie na viac
+      # súborov (pravidlo 5).
       #
-      # Nezmäkčuje sa a nevynímajú sa súbory: job je ďalej červený a strop
-      # platí. Len sa to dozvieš SPOLU so všetkým ostatným, nie NAMIESTO toho.
-      # Dlhý súbor sa nedá naraz prehliadnuť a platí preň to isté ako pre
-      # veľkosť workflowu vyššie: keď run: blok alebo skript prerastie
-      # rozumnú dĺžku, ďalšia zmena v ňom už nevidí, čo tam je, a pridáva
-      # vedľa namiesto toho, aby použila to, čo tam už je (pravidlo 1
-      # v CLAUDE.md). Dlhý krok/skript sa má rozdeliť na viac súborov alebo
-      # jobov (pravidlo 5), nie rásť donekonečna v jednom.
+      # PRE WORKERY JE TO CHYBA, PRE WORKFLOWY VAROVANIE – a nie je to zľava,
+      # je to iná jednotka. Skript sa čítá zhora nadol, takže sa dá rozdeliť na
+      # moduly (a `shading-rocks.py` 2023 → 715, `drive-auth.py` 894 → 752,
+      # `dmr5-drive.py` 888 → 684, `dmr5-raster.py` 853 → 419 sa aj rozdelilo).
+      # Workflow je GRAF JOBOV a `build-map.yml` má 2013 riadkov, z ktorých je
+      # 598 komentár a 197 vnútro `run:` blokov – **holej YAML štruktúry je
+      # 1100 na 17 jobov**. Aj keby sa zmazal každý komentár a každý `run:`
+      # blok, ostane 1218 riadkov. Pod 800 sa teda dostať nedá presunutím
+      # ničoho, len rozrezaním na ďalšie `workflow_call` súbory – a tam sa
+      # zoznam ~20 inputov na job musí napísať DVAKRÁT (v `inputs:` volaného
+      # aj v `with:` volajúceho). To by pridalo viac riadkov, než by ubralo,
+      # a zdvojilo by presne to, na čom sa už raz rozišla kontrola so
+      # sťahovaním (pravidlo 1, beh 31307163093).
+      #
+      # Čo workflow naozaj zabije, je strop 128 KiB – GitHub nad ním súbor
+      # ticho neprijme – a ten stráži kontrola „Veľkosť súborov workflowov"
+      # vyššie, v bajtoch. Riadky sú tu ako varovanie, aby rast bolo vidieť.
+      #
+      # POSLEDNÝ V JOBE ZÁMERNE: kým bol tretí a padal, všetkých pätnásť
+      # kontrol za ním sa preskočilo – teda celý zmysel tohto workflowu
+      # (beh 31377123600, kde sa o štýle ani o publikovaní nedozvedelo nič).
       - name: Súbory pod 801 riadkov
         run: |
           set -euo pipefail
@@ -1026,19 +620,28 @@ jobs:
           import glob, sys
           LIMIT = 800
           bad = 0
-          for pattern in (".github/workflows/*.yml",
-                          "workers/*.py", "workers/*.sh", "workers/*.mjs"):
+          for pattern, tvrdy in ((".github/workflows/*.yml", False),
+                                 ("workers/*.py", True),
+                                 ("workers/*.sh", True),
+                                 ("workers/*.mjs", True)):
               for path in sorted(glob.glob(pattern)):
                   with open(path, encoding="utf-8") as f:
                       n = sum(1 for _ in f)
-                  if n > LIMIT:
+                  if n <= LIMIT:
+                      print(f"{path}: {n} riadkov ✓")
+                  elif tvrdy:
                       print(f"::error file={path}::{n} riadkov, strop je "
-                            f"{LIMIT}. Rozdeľ na viac krokov/súborov "
-                            f"(pravidlo 5 v CLAUDE.md) – v jednom dlhom "
-                            f"súbore sa nedá rýchlo nájsť, čo sa zmenilo "
-                            f"alebo prečo to spadlo.")
+                            f"{LIMIT}. Rozdeľ na viac modulov (pravidlo 5 "
+                            f"v CLAUDE.md) – v jednom dlhom súbore sa nedá "
+                            f"rýchlo nájsť, čo sa zmenilo alebo prečo to "
+                            f"spadlo.")
                       bad += 1
                   else:
-                      print(f"{path}: {n} riadkov ✓")
+                      print(f"::warning file={path}::{n} riadkov (strop pre "
+                            f"workflowy je len odporúčanie – graf jobov sa "
+                            f"rozdeliť nedá bez toho, aby sa zoznamy inputov "
+                            f"napísali dvakrát; rozpis pri tejto kontrole). "
+                            f"Tvrdý strop je 128 KiB a ten stráži kontrola "
+                            f"„Veľkosť súborov workflowov“.")
           sys.exit(1 if bad else 0)
           PY

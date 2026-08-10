@@ -78,10 +78,25 @@ nedá odlíšiť od zaseknutého behu. Pred drahou časťou vypíš **plán s od
 počas nej **postup** – `[7/12] … zostáva ~5 min` – a na konci namerané čísla
 oproti odhadu. Odhady rob z merania a to meranie napíš do komentára.
 
-**5. Rozdeľuj joby a kroky.** Strop času platí na job, takže dlhé fázy majú byť
-každá vo svojom. V rámci jobu radšej viac malých krokov než jeden veľký: z mena
-kroku, ktorý spadol, má byť hneď vidieť, či nesedelo zadanie, zlyhala sieť, došlo
-miesto na disku alebo upload.
+**5. Rozdeľuj joby, kroky a súbory.** Strop času platí na job, takže dlhé fázy
+majú byť každá vo svojom. V rámci jobu radšej viac malých krokov než jeden
+veľký: z mena kroku, ktorý spadol, má byť hneď vidieť, či nesedelo zadanie,
+zlyhala sieť, došlo miesto na disku alebo upload.
+
+To isté platí na dĺžku súboru: **`workers/*` majú strop 800 riadkov** a je to
+tvrdá chyba. V dlhšom sa nedá naraz prehliadnuť, čo tam je, a ďalšia zmena
+pridáva vedľa namiesto toho, aby to použila – teda pravidlo 1 z druhej strany.
+Rezať sa má tam, kde sa mení otázka; `shading-rocks.py` sa preto delí na
+sťahovanie dlaždíc, raster tmavosti a vektorizáciu (tie isté tri fázy ako tri
+joby v `shading-rocks.yml`) a `drive-auth.py` na „kto sme" a „volanie API".
+
+**Pri workflowoch je ten istý strop len varovanie**, a nie je to zľava:
+`build-map.yml` je GRAF JOBOV, kde je z 2013 riadkov 598 komentár a 197 vnútro
+`run:` blokov – holej YAML štruktúry je 1100 na 17 jobov. Pod 800 sa nedá dostať
+presunutím ničoho, len rozrezaním na ďalšie `workflow_call` súbory, a tam sa
+zoznam ~20 inputov na job musí napísať dvakrát (v `inputs:` volaného aj v
+`with:` volajúceho). Čo workflow naozaj zabije, je **strop 128 KiB** – ten je
+chyba a stráži sa v bajtoch.
 
 **6. Drahý medzivýsledok sa ukladá hneď, ako vznikne.** `actions/cache` ukladá
 až v post-kroku a len keď job dobehne úspešne – takže sa používa `cache/restore`
@@ -281,6 +296,11 @@ wc -c .github/workflows/*.yml
 
 # bash vo workers (shellcheck nie je v CI, actionlint ho volá len na `run:`)
 for f in workers/*.sh; do bash -n "$f" || echo "CHYBA $f"; done
+
+# python vo workers – `py_compile` chytí len syntax, `pyflakes` aj nedefinované
+# meno a nepoužitý import. Pri rozdeľovaní súboru na moduly je to to jediné,
+# čo spoľahlivo povie, na čo sa zabudlo naviazať (a v CI to nie je).
+python3 -m pyflakes workers/*.py    # pip install pyflakes
 
 # kontroly z Lint workflows sa dajú spustiť aj lokálne (bez sťahovania actionlintu)
 python3 - <<'PY'
