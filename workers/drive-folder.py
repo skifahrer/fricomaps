@@ -462,7 +462,7 @@ def main():
                     help="vypíš, čo v priečinku je, a nesťahuj nič")
     args = ap.parse_args()
 
-    # Neúplná trojica secretov je CHYBA a `from_env` na nej padne – zámerne:
+    # Neúplný pár secretov je CHYBA a `from_env` na ňom padne – zámerne:
     # kto nastavil polovicu, čaká prihlásený beh, a ticho prepadnúť na verejný
     # denný limit je presne ten omyl, čo sa nájde až o pol dňa.
     creds = auth.from_env()
@@ -474,7 +474,7 @@ def main():
     if creds is None:
         print("::error::Priečinok z Drive sa dá vypísať len prihlásene "
               "(Drive API neobsluhuje anonymné požiadavky), ale v prostredí "
-              "nie je token vlastníka. Doplň secrety DRIVE_CLIENT / "
+              "nie je token vlastníka. Doplň premennú DRIVE_CLIENT a secrety "
               "DRIVE_SECRET / DRIVE_REFRESH – vyrobí ich workflow "
               "„Prihlásenie na Drive (jednorazové)“ (.github/workflows/"
               "drive-login.yml), z počítača `python3 workers/drive-auth.py "

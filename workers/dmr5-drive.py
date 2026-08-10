@@ -479,10 +479,10 @@ def resolve_ids(creds):
             "::error::DMR 5.0 leží v priečinku na Drive "
             f"({FOLDER_ID}) a jeho obsah vie vypísať len prihlásený beh – "
             "Drive API anonymné požiadavky neobsluhuje. Doplň secret "
-            "GDRIVE_CREDENTIALS (alebo trojicu DRIVE_CLIENT / DRIVE_SECRET / "
-            "DRIVE_REFRESH): vyrobí ich workflow „Prihlásenie na Drive "
-            "(jednorazové)“, z počítača `python3 workers/drive-auth.py "
-            "--login`.")
+            "GDRIVE_CREDENTIALS (alebo premennú DRIVE_CLIENT a secrety "
+            "DRIVE_SECRET / DRIVE_REFRESH): vyrobí ich workflow „Prihlásenie "
+            "na Drive (jednorazové)“, z počítača `python3 workers/"
+            "drive-auth.py --login`.")
     files, _skipped = folder.listing(creds, FOLDER_ID)
     tifs = [f for f in files if f["name"].lower().endswith(".tif")]
     ovrs = [f for f in files if f["name"].lower().endswith(".ovr")]

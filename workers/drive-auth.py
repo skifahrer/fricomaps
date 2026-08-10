@@ -45,8 +45,9 @@ tom istom stroji, takže na telefóne nepobeží. Na to je workflow
 telefón, shell je runner**. Token sa v ňom nikde nevypíše – v public
 repozitári vidí log behu ktokoľvek – ide z `--exchange` do súboru s právami
 600 a z neho rovno do secretu. Celý postup je v hlavičke toho workflowu.
-Secrety sa tam volajú `DRIVE_CLIENT` / `DRIVE_SECRET` / `DRIVE_REFRESH`, čiže
-druhá trojica z `TRIOS` nižšie.
+Volajú sa tam `DRIVE_CLIENT` / `DRIVE_SECRET` / `DRIVE_REFRESH` – prvé ako
+repository VARIABLE (nie je to tajné, je to `client_id`), druhé dve ako
+secrety – čiže druhá trojica z `TRIOS` nižšie.
 
 Do secretov patria údaje TOHO klienta, ktorým bol token vyrobený: refresh
 token platí len pre pár, ktorý ho vydal.
@@ -528,9 +529,10 @@ def client_from_env(env=None):
                 break
     if not all(pair):
         raise AuthError(
-            f"Chýba client_id alebo client_secret ({source}). Vlož ich do "
-            f"secrets ako {TRIOS[1][0]} a {TRIOS[1][1]} – vyrobia sa v Google "
-            "Cloud Console → Credentials → OAuth client ID.")
+            f"Chýba client_id alebo client_secret ({source}). Vlož client_id "
+            f"do repository variable {TRIOS[1][0]} (nie secret – nie je to "
+            f"tajné) a client_secret do secretu {TRIOS[1][1]} – vyrobia sa "
+            "v Google Cloud Console → Credentials → OAuth client ID.")
     return pair[0], pair[1], source
 
 

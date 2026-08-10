@@ -179,7 +179,7 @@ env:
   # jeden zabudnúť a ten sa ticho vráti k počítaniu všetkého odznova. Stráži to
   # „Lint workflows".
   GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-  DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+  DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
   DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
   DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
   OSMFR_BASE: https://download.openstreetmap.fr/extracts
@@ -1048,7 +1048,7 @@ jobs:
           # --drive`), takže token vlastníka potrebujú aj tu – inak by tá
           # vetva jediná ostala na verejnom dennom limite.
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-          DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+          DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
           DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
           DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
         run: bash workers/contours-build.sh
@@ -1243,7 +1243,7 @@ jobs:
           # ide po častiach rovno zo 145 GB rastra. Bez tokenu vlastníka by
           # bežal na verejnom dennom limite.
           GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-          DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+          DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
           DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
           DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
         run: bash workers/contours-build.sh
