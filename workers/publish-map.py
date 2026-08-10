@@ -25,7 +25,7 @@ nikdy neprepíšu.
 
 TESTOVACÍ BEH TO MUSÍ POVEDAŤ. Rýchly test počíta terén len na pár km² zo
 stredu výrezu; mapa z neho vyzerá ako každá iná, len jej väčšina chýba. V mene
-je preto `test2km2` – to isté pravidlo ako pri assetoch výškového modelu
+je preto `test4km2` – to isté pravidlo ako pri assetoch výškového modelu
 (meno je sľub o rozsahu, viď `docs/pipeline.md`).
 
 Použitie (hodnoty berie z prostredia, tak ako ostatné workery):
@@ -89,7 +89,7 @@ def safe(text):
 
 
 def bez_testu(key):
-    """`presovsky_test2` → `presovsky`.
+    """`presovsky_test4` → `presovsky`.
 
     Kľúč výrezu aj regiónu nesie pri rýchlom teste príponu `_test<N>`, aby si
     testovací výsledok nesadol na miesto ostrého. Do CESTY ale patrí to

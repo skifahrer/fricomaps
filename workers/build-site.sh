@@ -93,7 +93,7 @@ jq -n \
       # Rýchly test (switch `test`): mapa je celý región, ale
       # vrstevnice, skaly a tieňovanie sú len na tomto štvorci.
       # Viewer sa naň otvorí a napíše to do panelu – bez toho by
-      # sa 2 km² skál v kraji hľadali očami.
+      # sa pár km² skál v kraji hľadalo očami.
       + (if $testkm2 > 0 and $testbbox != "" then {
         test_km2: $testkm2,
         test_bbox: ($testbbox | split(",") | map(tonumber))

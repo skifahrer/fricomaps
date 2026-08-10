@@ -54,7 +54,7 @@ pozná, **podaj si ju**, neprepočítavaj.
 je tu" a `ugkk-vysoke_tatry.tif` „celé Vysoké Tatry sú tu". Keby pod tým menom
 ležal len prienik s bboxom, ďalší beh by kontrolou prešiel („je tam") a mapa by
 ticho skončila v polovici. Keď rozsah nie je celý, **musí sa zmeniť meno** –
-preto má testovací výrez v kľúči príponu `_test2`.
+preto má testovací výrez v kľúči príponu `_test4`.
 
 **3. Veľký `run:` blok patrí do `workers/`, nie do YAMLu.** Súbor s workflowom
 má strop 128 KiB a **GitHub nad ním workflow ticho neprijme** – po pushi
@@ -278,7 +278,7 @@ v jednom ZIPe (`workers/publish-map.py`, vypína to voľba `publish=false`):
 vrstvy v mape sú a Z ČOHO sú spočítané – a to podľa toho, čo joby NAOZAJ
 použili, nie čo bolo vo formulári. Vrstva, ktorá tam nie je, sa píše tiež
 (`bez_skal`), lebo mlčanie sa dá čítať aj ako „zabudlo sa to dopísať". Rýchly
-test má v mene `test2km2`, inak by mapa z 2 km² vyzerala ako celá.
+test má v mene `test4km2`, inak by mapa zo 4 km² vyzerala ako celá.
 
 Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa dva behy
 nikdy neprepíšu. Publikuje sa len mapa, ktorá prešla kontrolou pred nasadením;

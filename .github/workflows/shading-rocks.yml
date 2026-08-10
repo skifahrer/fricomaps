@@ -92,6 +92,7 @@ on:
           - nie
           - "1"
           - "2"
+          - "4"
           - "5"
           - "10"
       dark:
@@ -279,7 +280,7 @@ jobs:
         run: python3 -m pip install --quiet numpy pillow
 
       # `test` nie je iný algoritmus, len menší bbox – celý testovací režim je
-      # tu. Kľúč dostane príponu `_test2`, takže si testovací beh nesadne do
+      # tu. Kľúč dostane príponu `_test<km²>`, takže si testovací beh nesadne do
       # tej istej cache ani na ten istý asset ako ostrý.
       - name: Výrez → bbox
         id: area
@@ -636,7 +637,7 @@ jobs:
               echo "### Ďalej"
               echo
               echo "1. Stiahni artefakt \`nahlad-…\` (odložil ho job *Obrysy po blokoch*) a pozri \`preview.png\` – vľavo mozaika tieňovania, vpravo to isté s červenou maskou. Podľa toho doladiť \`dark\` / \`dark_always\` / \`rel\`."
-              echo "2. Ladenie zrýchli výber \`test\` – na 2 km² sú to minúty a beh rovno ukáže, kde ten štvorec leží."
+              echo "2. Ladenie zrýchli výber \`test\` – na 4 km² sú to minúty a beh rovno ukáže, kde ten štvorec leží."
               echo "3. Keď to sedí, spusti **Build map** s výberom \`rock_source: tienovanie\` a rovnakým \`area\` – vezme si najnovší asset pre tento výrez namiesto počítania skál z DEM."
             } >> "$GITHUB_STEP_SUMMARY"
           else

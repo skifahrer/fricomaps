@@ -12,9 +12,9 @@ nie sú ani dáta, ani mapa.
 
 TESTOVACÍ REŽIM (`--test-km2`): z výrezu sa vyreže malý štvorec okolo jeho
 stredu. Zmysel je jediný – rýchlosť ladenia. Skaly, vrstevnice aj tieňovanie
-na celom pohorí sú desiatky minút, na 2 km² sú to sekundy až jednotky minút,
+na celom pohorí sú desiatky minút, na 4 km² sú to jednotky minút,
 takže sa dá prah alebo interval otestovať za jeden beh a nie za jeden obed.
-Kľúč dostane príponu `_test2`, aby si testovací výsledok nikdy nesadol do
+Kľúč dostane príponu `_test4`, aby si testovací výsledok nikdy nesadol do
 tej istej cache ani na ten istý asset ako ostrý.
 
 Použitie:
@@ -141,7 +141,7 @@ def main():
         # z 1 m modelu to, čo ostrý počíta z 5 m dlaždíc, a nepreveril by
         # presne tú cestu, kvôli ktorej sa spúšťa. Kolízia tu nehrozí:
         # dlaždice sú pomenované podľa stupňov a kľúč regiónu (z ktorého sa
-        # robia mená cache a assetov) príponu `_test2` nesie tak či tak.
+        # robia mená cache a assetov) príponu `_test4` nesie tak či tak.
         if key != "cely":
             key = f"{key}_test{args.test_km2:g}"
             if args.test_at.strip():

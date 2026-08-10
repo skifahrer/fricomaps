@@ -654,7 +654,7 @@ Dáta si joby podávajú cache: dlaždice pod vlastným kľúčom, rozrobené po
 druhým (takže sa gigabajty JPEGov neukladajú dvakrát). Zvolený zoom ide
 z prvého jobu ďalej ako výstup, takže sa pri `auto` nehádá trikrát.
 
-**Testovací režim** (switch `test`) vyreže zo stredu výrezu štvorec s 2 km²
+**Testovací režim** (switch `test`) vyreže zo stredu výrezu štvorec so 4 km²
 a počíta na ňom terén — vrstevnice, skaly a tieňovanie; mapa okolo ostáva
 celá podľa nastavení regiónu. Ladenie prahov je potom minúty namiesto hodín
 — a beh do súhrnu vypíše obrázok s okolím (červený štvorec = testované
@@ -694,7 +694,7 @@ doladenie prahov.
 
 ### Rýchly test: pár km² namiesto celého pohoria
 
-Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec s 2 km²**
+Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec so 4 km²**
 a na ňom spočíta to drahé — vrstevnice, skaly a tieňovanie. Z desiatok minút
 sú minúty, čiže sa dá prah alebo interval overiť za jeden beh a nie za jeden
 obed.
@@ -718,15 +718,15 @@ je z nej tiež voľba (`options: rock_res=1`).
 
 **Mapa sa otvorí rovno na tom štvorci.** Manifest nesie pri regióne okrem
 `bbox` (celý kraj) aj `test_bbox` (štvorec) a viewer sa pri štarte nastaví na
-ten druhý — inak by sa 2 km² skál hľadali očami v štyroch tisícoch km².
+ten druhý — inak by sa tie štyri km² skál hľadali očami v štyroch tisícoch km².
 Posúvať sa dá kamkoľvek, mapa je celá. Polohu z adresy (`#map=…`) viewer
 zahodí, len keď mieri mimo nasadeného regiónu, aby `F5` ani starý odkaz
 neotvorili mapu nad cudzím krajom. V paneli je napísané, že vrstevnice, skaly
-a tieňovanie sú len na tých 2 km² — nech kraj bez skál nevyzerá ako pokazený
+a tieňovanie sú len na tých 4 km² — nech kraj bez skál nevyzerá ako pokazený
 build. Tieňovanie má navyše v štýle `bounds` toho štvorca, takže sa jeho
 dlaždice mimo neho ani nepýtajú.
 
-Kľúč dostane príponu `_test2`, takže si testovací beh **nesadne do tej istej
+Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
 **Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
@@ -1380,7 +1380,7 @@ ZIP**. Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
 s rôznymi nastaveniami:
 
 ```
-presovsky-vysoke_tatry-test2km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+presovsky-vysoke_tatry-test4km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
 ```
 
 Teda výrez, rýchly test a jeho veľkosť, zoom dlaždíc, ktoré vrstvy sú vnútri
@@ -2014,7 +2014,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`vysoke_tatry`**) |
-   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 2 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
+   | `test` | **switch** | **rýchly test**: spraviť všetko len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
@@ -2024,7 +2024,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
    **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké
-   Tatry, rýchly test na 2 km². Formulár *Run workflow* sa totiž po každom
+   Tatry, rýchly test na 4 km². Formulár *Run workflow* sa totiž po každom
    otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
    pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
    prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než
