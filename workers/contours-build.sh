@@ -342,11 +342,13 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     echo "::group::Skaly z modelu $ROCK_DEM_USED – $AREA_NAME, sklon ≥ ${ROCK_SLOPE}° (steny od ${ROCK_CLIFF}°), mriežka ${RR}, zaoblenie ${ROCK_SMOOTH}×"
     # Skaly sú bonus nad vrstevnicami: keby ich výpočet zlyhal (alebo
     # v rovine nič nenašiel), nemá to zhodiť hodinový build.
-    # Exit 2 = „toto sa nedá spočítať" (plán nad stropom alebo
-    # pamäť). To nie je bonus, ktorý sa dá preskočiť – je to zlé
-    # zadanie a build sa má zastaviť hneď, nie nasadiť mapu bez
-    # skál po hodine práce. Iný nenulový kód je skutočné zlyhanie
-    # výpočtu a tam prázdna vrstva stačí.
+    # Exit 2 = „toto sa nedá spočítať" (nezmestí sa to do pamäte,
+    # alebo je zlé zadanie – priveľa častí, chýbajúca mozaika). To
+    # nie je bonus, ktorý sa dá preskočiť – build sa má zastaviť
+    # hneď, nie nasadiť mapu bez skál po hodine práce. Iný nenulový
+    # kód je skutočné zlyhanie výpočtu a tam prázdna vrstva stačí.
+    # ČAS MEDZI TÝMI DÔVODMI NIE JE: keď je vektorizácia nad
+    # rozpočtom, povie to a beží ďalej (viď workers/rock-areas.py).
     # ---- 1. odkiaľ sa číta výška ----
     # `dmr5` ide priamo z Drive po častiach; ostatné modely sú lokálne
     # dlaždice, ktoré už stiahol `fetch_dem`.
@@ -409,7 +411,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     set -e
     if [ "$RC" -eq 2 ]; then
       echo "::endgroup::"
-      echo "::error::Výpočet skál sa nezačal – zadanie je nad možnosti runnera (viď hlášky vyššie). Uprav rock_res alebo area a spusti znova."
+      echo "::error::Výpočet skál sa nedal dokončiť – zadanie je nad možnosti runnera (viď hlášky vyššie: pamäť alebo počet častí). Uprav rock_res alebo area a spusti znova."
       exit 1
     fi
     if [ "$RC" -eq 0 ]; then

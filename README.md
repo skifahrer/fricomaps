@@ -1009,8 +1009,8 @@ polhodinu počítal prázdno.
 
 #### Koľko to bude trvať sa povie dopredu
 
-Skaly sa **nezačnú počítať**, kým sa nevypíše plán a neoverí, že sa zmestí do
-rozpočtu (`ROCK_BUDGET_MIN`, default 100 min):
+Skaly sa **nezačnú počítať, kým sa nevypíše plán**: čo sa ide robiť, nad čím,
+za koľko a s akými stropmi (`ROCK_BUDGET_MIN`, default 30 min):
 
 ```
 ── Plán výpočtu skál ────────────────────────────────
@@ -1020,22 +1020,29 @@ rozpočtu (`ROCK_BUDGET_MIN`, default 100 min):
   častí           144 z 170 (26 mimo územia sa preskočí), po 12.2×11.1 km
   odhad sklon     1:04:02
   odhad obrysy    1:33:19
-  odhad SPOLU     2:37:21  (rozpočet 1:40:00)
+  odhad SPOLU     2:37:21  (rozpočet 0:30:00)
   mozaika na disk ~1.0 GB
   špička pamäte   ~13.4 GB
 ─────────────────────────────────────────────────────
-::error::Skaly by trvali 2:37:21 …
-::error::Zmestí sa: (1) rock_res aspoň 1.3 m na tomto území, alebo
-(2) rock_area na výrez s ~64 % plochy – napr. vysoke_tatry, tatry, …
+::warning::Vektorizácia … potrvá odhadom ~1:33:19, čo je nad rozpočet
+30 min – NEZASTAVUJEM ju, nechávam dobehnúť. Keď to má byť rýchlejšie:
+hrubší sklad (rock_res) alebo menší výrez (area).
 ```
 
-Presne z tohto odhadu vyberá aj `rock_res: auto` – len ho použije **dopredu**
-a zoberie najjemnejšiu mriežku so ✓ (zdola stropenú desatinou bunky DEM),
-namiesto toho, aby beh po hodine odmietol.
+**Rozpočet je odhad, nie vypínač.** Nad ním sa to povie a počíta sa ďalej –
+zastaviť vektorizáciu nemá čo zachrániť: je to jeden nedeliteľný priechod nad
+celou mozaikou (kvôli dieram), takže zabitý `gdal_contour` nenechá ani
+neúplný výstup. Zastavenie znamenalo to isté ako timeout jobu, len skôr, a
+k tomu bez šance, že by beh dobehol. Stropy, ktoré platia, sú timeout jobu
+`rocks` (3 h) a pamäť.
+
+Presne z toho istého odhadu ale vyberá `rock_res: auto` mriežku – zoberie
+najjemnejšiu so ✓ (zdola stropenú desatinou bunky DEM), takže cesta, ako sa
+do rozpočtu zmestiť, je tá automatická.
 
 | územie | `rock_res` | buniek | odhad | |
 |---|--:|--:|--:|---|
-| Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 | ✗ odmietne |
+| Prešovský kraj | 1 m | 19,60 mld. | 2:37:21 | ✗ auto ho nezvolí |
 | Prešovský kraj | **2 m (auto pri Sonnym)** | 5,27 mld. | 0:42:18 | ✓ |
 | Prešovský kraj | 3 m | 2,57 mld. | 0:20:38 | ✓ |
 | Tatry | 1 m | 1,34 mld. | 0:10:46 | ✓ |
@@ -1043,26 +1050,46 @@ namiesto toho, aby beh po hodine odmietol.
 | Belianske Tatry | 1 m | 0,23 mld. | 0:01:49 | ✓ |
 
 Konštanty odhadu sú **namerané na runneri**, nie odhadnuté: sklon
-5,1 mil. buniek/s, obrysy 3,5 mil./s.
-
-Trojhodinový beh, ktorý spadne na timeout jobu, minie celý rozpočet
-a nevyrobí nič. Toto to zastaví za pár sekúnd a povie, čo zmenšiť.
+5,1 mil. buniek/s, obrysy 121 tis. zdrojových buniek/s. Keď sa beh s tou
+druhou rozíde viac než 3×, povie to na konci sám – vtedy sa má prepísať.
 
 #### Počas výpočtu je vidieť, čo sa deje
 
 ```
-  [12/144] sklon – 0:07:41 za sebou, zostáva ~0:84:26, mozaika 96 MB
-  … sklon: beží 0:07:52, na disku 0.1 GB
-Vektorizujem sklon jedným priechodom nad celým územím (5.27 mld. buniek, odhad 0:25:05)…
-  … gdal_contour: 30 % (beží 0:07:14)
-  … gdal_contour: beží 0:07:30, pamäť 2.4 GB, na disku 1.1 GB
+  [12/144] sklon – 0:07:41 za sebou, zostáva ~0:24:26, mozaika 96 MB
+── Vektorizácia sklonu (gdal_contour -p) ────────────
+  vstup           slope-chunks/slope-r2.vrt
+  číta sa         5.27 mld. buniek skladu (2 m) – toto rozhoduje o čase
+  trasuje sa      3.37 mld. buniek na 2 m
+  prahy           sklon ≥ 50° (raster je v stotinách stupňa)
+  odhad           ~0:25:05 pri 121 tis. buniek/s (rozpočet 30 min)
+  stropy          pamäť 12 GB; čas NEOBMEDZENÝ – jeden priechod sa nedá
+                  prerušiť a nadviazať, tak beží, kým nie je hotový
+  postup          percentá po 2,5 % + tep každých 30 s
+─────────────────────────────────────────────────────
+▶ gdal_contour: gdal_contour -p -fl 5000.0 -amin smin -amax smax -f GPKG …
+… gdal_contour: 30 % (beží 0:07:14, tempo 4.1 %/min, zostáva ~0:16:53 (koniec ~14:23))
+… gdal_contour: beží 0:07:30, 32.5 %, zostáva ~0:15:35 (koniec ~14:23),
+  pamäť 2.4 GB (špička 2.4 GB, strop 12.0 GB), CPU 99 % (priemer 97 %),
+  disk 4210/640 MB (+8.1/+1.2 MB/s), výstup 1129 MB (+2.1 MB/s)
+✔ gdal_contour: hotovo za 0:24:29, výstup 612 MB, špička pamäte 2.4 GB,
+  CPU 0:23:51 (97 %), disk 4210 MB čítania / 640 MB zápisu
 ```
 
-Pri sklone ide riadok po každej časti s odpracovaným časom a odhadom zvyšku,
-`gdal_contour` hlási percentá a nezávisle od oboch beží **tep** každých 30 s
-(`ROCK_HEARTBEAT_S`) s časom, pamäťou procesu a miestom na disku. Keď pamäť
-prekročí `ROCK_MAX_RSS_GB` (12 GB), tep výpočet zastaví s hláškou – to je
-lepšie než tiché zabitie runnera na OOM, po ktorom v logu nie je nič.
+Pri sklone ide riadok po každej časti s odpracovaným časom a odhadom zvyšku.
+`gdal_contour` hlási percentá **po 2,5 %** (bodky medzi desiatkami sú tri,
+takže pri hodinovom behu je to správa každé tri minúty namiesto každých
+dvanástich) a nezávisle od oboch beží **tep** každých 30 s
+(`ROCK_HEARTBEAT_S`): kde to je, kedy skončí, pamäť aj jej špička, CPU teraz
+aj v priemere, koľko číta a zapisuje a ako rastie výstup. `CPU 99 %` znamená
+„počíta, pomôže len menej práce", `CPU 0 %` znamená, že problém je inde.
+Riadok `✔` na konci nesie namerané čísla – z nich, a nie z odhadu, sa opravujú
+konštanty.
+
+Keď pamäť prekročí `ROCK_MAX_RSS_GB` (12 GB), tep výpočet zastaví s hláškou –
+to je lepšie než tiché zabitie runnera na OOM, po ktorom v logu nie je nič.
+**Čas takú poistku nemá** a je to zámer: strop času by zahodil hodiny práce
+a nenechal ani neúplný výsledok.
 
 **Časti mimo územia sa preskočia.** EPSG:3035 je pootočená voči poludníkom,
 takže obdĺžnik opísaný bboxu je v metroch väčší než región – pri Prešovskom
