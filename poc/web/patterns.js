@@ -79,6 +79,30 @@ export const PATTERNS = [
     ]
   },
   {
+    // Skalné pole – rozsypané kamene, nie pravidelné šrafovanie. Kamene sú
+    // PÄŤ RÔZNYCH: každý inak veľký a inak natočený, žiadne dva rovnaké.
+    // Rovnaký tvar v pravidelnom rastri prestane byť suťou a začne byť
+    // bodkovaná mriežka – vidno to hneď, ako sa vzor poskladá do plochy,
+    // a nie na jednej dlaždici.
+    //
+    // Ležia celé vnútri dlaždice, takže na jej hrane nie je nič preseknuté;
+    // dojem nepravidelnosti robí ich rozloženie a veľkosť, nie presah.
+    id: "rocks",
+    label: "Kamienky (skalné pole)",
+    shapes: [
+      ...poly([[0.06, 0.34], [0.19, 0.13], [0.38, 0.20], [0.40, 0.38],
+               [0.24, 0.47], [0.09, 0.44], [0.06, 0.34]]),
+      ...poly([[0.60, 0.58], [0.78, 0.50], [0.93, 0.66], [0.80, 0.82],
+               [0.62, 0.75], [0.60, 0.58]]),
+      ...poly([[0.63, 0.10], [0.79, 0.05], [0.88, 0.20], [0.72, 0.28],
+               [0.63, 0.10]]),
+      ...poly([[0.17, 0.66], [0.33, 0.62], [0.40, 0.78], [0.24, 0.86],
+               [0.17, 0.66]]),
+      ...poly([[0.46, 0.36], [0.55, 0.33], [0.57, 0.44], [0.47, 0.46],
+               [0.46, 0.36]])
+    ]
+  },
+  {
     id: "scales",
     label: "Šupiny (skaly)",
     shapes: [
@@ -173,6 +197,20 @@ export function patternSpec(spec = {}) {
     color: /^#[0-9a-f]{6}$/i.test(spec.color || "") ? spec.color.toLowerCase() : "#000000",
     size: Math.min(64, Math.max(4, Math.round(Number(spec.size) || 16))),
     weight: Math.min(8, Math.max(0.5, Math.round((Number(spec.weight) || 1) * 10) / 10))
+  };
+}
+
+/**
+ * Celý predpis vzoru vrátane krytia – to, čo drží štýl (`frico:pattern`) aj
+ * úprava vrstvy z developer módu. `patternSpec` sám krytie nerieši, lebo to
+ * nie je vlastnosť obrázka, ale vrstvy, ktorá ho kreslí; jedna funkcia to má
+ * ale dopĺňať pre oba prípady, inak sa raz rozídu v tom, čo je predvolené.
+ */
+export function patternDef(spec = {}) {
+  const opacity = Number(spec?.opacity);
+  return {
+    ...patternSpec(spec),
+    opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
   };
 }
 

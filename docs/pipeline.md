@@ -1477,6 +1477,15 @@ obrázka** (`pat:trees:2f5a28:22:12`). Web si ich dokreslí sám cez
 [`workers/add-sprite-patterns.mjs`](../workers/add-sprite-patterns.mjs) preto
 prejde hotové štýly, pozbiera použité názvy a dopečie ich do atlasu.
 
+Zbiera ich z **hotových** štýlov, a preto sa tento krok nemusí meniť ani vtedy,
+keď vzor nepridá developer mode, ale samotný štýl: skalné plochy majú kamienky
+(`pat:rocks:…`) zabudované v téme, a keďže je to obyčajný `fill-pattern`
+v hotovom `style.json`, na iOS sa dostane tou istou cestou. Vzor je vždy
+**vlastná vrstva** nad predlohou (`rock-area__pattern`) – MapLibre nevie
+kresliť výplň a vzor v jednej – a profil typu mapy ju vypína spolu s ňou:
+pravidlá typu mapy sa na odvodenú vrstvu pýtajú id jej predlohy, inak by na
+cestnej mape ostali kamienky visieť nad vypnutými skalami.
+
 ### `deploy` – manifest a viewer
 
 `tiles/manifest.json` je to jediné, čo si web načíta na začiatku: kde sú

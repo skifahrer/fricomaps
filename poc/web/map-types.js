@@ -228,7 +228,15 @@ export function normalizeMapType(id) {
   return MAP_TYPE_IDS.includes(id) ? id : DEFAULT_MAP_TYPE;
 }
 
-/** Sedí vrstva na `match` pravidla? Prázdny match sedí na všetko. */
+/**
+ * Sedí vrstva na `match` pravidla? Prázdny match sedí na všetko.
+ *
+ * ODVODENÁ VRSTVA SA PÝTA ZA SVOJU PREDLOHU. Vzor nad plochou je vlastná
+ * vrstva s vlastným id (`rock-area__pattern`), takže pravidlo `id: ROCKS`
+ * by ju minulo – a na cestnej mape, kde sú skaly vypnuté, by ostali kamienky
+ * bez skál: vzor visiaci nad prázdnym podkladom. Tichý omyl v čistej podobe,
+ * lebo štýl je platný a MapLibre nepovie nič.
+ */
 function matchesLayer(layer, match = {}) {
   const meta = layer.metadata || {};
   const has = (value, want) => {
@@ -238,7 +246,7 @@ function matchesLayer(layer, match = {}) {
     return want === value;
   };
   return (
-    has(layer.id, match.id) &&
+    has(meta["frico:derived"] || layer.id, match.id) &&
     has(meta["frico:group"], match.group) &&
     has(meta["frico:kind"], match.kind)
   );

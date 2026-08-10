@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * Kontrola štýlu: `fill` vrstva nad zmiešanou geometriou musí mať stráž.
- * Volá ju `Lint workflows`.
+ * Kontroly hotového štýlu. Volá ich `Lint workflows`.
+ *
+ * DVE VECI, OBE TICHÉ:
+ *   1. `fill` vrstva nad zmiešanou geometriou musí mať stráž (rozpis nižšie),
+ *   2. odvodená vrstva (vzor, okraj) musí byť vidieť práve vtedy, keď je
+ *      vidieť jej predloha.
  *
  * ČO STRÁŽI A PREČO. MapLibre `fill` vrstve NEPRESKOČÍ čiary. Prvok pustí do
  * výplne bez ohľadu na typ geometrie a otvorenú lomenú čiaru pošle earcutu,
@@ -28,7 +32,7 @@
  *   node workers/lint-style.mjs
  */
 import { THEMES, buildStyle } from "../poc/web/themes.js";
-import { MAP_TYPE_IDS } from "../poc/web/map-types.js";
+import { MAP_TYPE_IDS, MAP_TYPES, applyMapType } from "../poc/web/map-types.js";
 
 /**
  * Vrstvy dlaždíc, v ktorých NIE JE len jeden typ geometrie – a čím to je.
@@ -73,8 +77,82 @@ function styles() {
 
 let bad = 0;
 let checked = 0;
+let derived = 0;
 const videne = new Set();
 
+// ---------- 2. odvodená vrstva drží s predlohou ----------
+// Vzor nad plochou je VLASTNÁ vrstva (`rock-area__pattern`) – MapLibre nevie
+// kresliť výplň a vzor v jednej. Pravidlá typu mapy sa ale trafia podľa `id`,
+// takže kým sa odvodená vrstva nepýtala za svoju predlohu, ostal vzor visieť
+// nad vypnutou plochou: štýl platný, MapLibre ticho, v mape kresba bez toho,
+// čo mala textúrovať.
+//
+// SKÚŠA SA TO NA VYROBENEJ DVOJICI, nie na tom, čo v štýle práve je. Dnešné
+// pravidlo na skaly (`/^rock-/`) totiž odvodenú vrstvu chytí aj bez opravy –
+// je to predpona. Kontrola postavená na dnešnom stave vrstiev by teda bola
+// zelená aj nad pokazeným kódom a strážila by len samu seba. Preto sa berie
+// prvé pravidlo, ktoré vypína vrstvy VYMENOVANÍM ID (tam predpona nepomôže),
+// a overí sa, že vypne aj vrstvu od nich odvodenú.
+for (const type of MAP_TYPES) {
+  const rule = (type.rules || []).find(
+    (r) => r.visible === false && Array.isArray(r.match?.id) && r.match.id.length
+  );
+  if (!rule) continue;
+  const parentId = rule.match.id[0];
+  const probe = {
+    layers: [
+      { id: parentId, type: "line", layout: {}, metadata: {} },
+      {
+        id: `${parentId}__pattern`,
+        type: "fill",
+        layout: {},
+        metadata: { "frico:derived": parentId }
+      }
+    ]
+  };
+  applyMapType(probe, type.id);
+  const hidden = (l) => (l.layout || {}).visibility === "none";
+  derived += 1;
+  if (hidden(probe.layers[0]) && !hidden(probe.layers[1])) {
+    console.log(
+      `::error file=poc/web/map-types.js::typ mapy \`${type.id}\` vypína ` +
+      `\`${parentId}\`, ale vrstvu \`${parentId}__pattern\` odvodenú od nej ` +
+      `nechal zapnutú. Vzor bez svojej plochy visí nad prázdnym podkladom ` +
+      `a nikto to nepovie – \`matchesLayer\` sa musí na odvodenú vrstvu pýtať ` +
+      `id jej predlohy (\`frico:derived\`).`
+    );
+    bad += 1;
+  }
+}
+
+// A k tomu to isté nad hotovými štýlmi: odvodená vrstva musí mať predlohu
+// a byť vidieť práve vtedy, keď je vidieť ona.
+for (const { kde, style } of styles()) {
+  const podla = new Map(style.layers.map((l) => [l.id, l]));
+  for (const layer of style.layers) {
+    const parentId = (layer.metadata || {})["frico:derived"];
+    if (!parentId) continue;
+    derived += 1;
+    const parent = podla.get(parentId);
+    const vis = (l) => ((l.layout || {}).visibility === "none" ? "vypnutá" : "zapnutá");
+    if (!parent) {
+      console.log(
+        `::error file=poc/web/themes.js::odvodená vrstva \`${layer.id}\` ` +
+        `(${kde}) sa odkazuje na predlohu \`${parentId}\`, ktorá v štýle nie je.`
+      );
+      bad += 1;
+    } else if (vis(parent) !== vis(layer)) {
+      console.log(
+        `::error file=poc/web/map-types.js::odvodená vrstva \`${layer.id}\` ` +
+        `je ${vis(layer)}, ale jej predloha \`${parentId}\` je ${vis(parent)} ` +
+        `(${kde}).`
+      );
+      bad += 1;
+    }
+  }
+}
+
+// ---------- 1. výplň nad zmiešanou geometriou ----------
 for (const { kde, style } of styles()) {
   for (const layer of style.layers) {
     const src = layer["source-layer"];
@@ -97,6 +175,7 @@ for (const { kde, style } of styles()) {
 
 console.log(
   `štýl: ${bad} chýb (${checked} výplní nad zmiešanou geometriou, ` +
+  `${derived} skúšok odvodených vrstiev, ` +
   `${Object.keys(THEMES).length} tém × ${MAP_TYPE_IDS.length} typov mapy)`
 );
 process.exit(bad ? 1 : 0);
