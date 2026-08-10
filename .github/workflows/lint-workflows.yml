@@ -464,27 +464,33 @@ jobs:
           import glob, re, sys, yaml
 
           # Prihlásenie sa dá podať dvoma tvarmi: všetko v jednom secrete,
-          # alebo po troch. Nekompletná trojica sa NESMIE brať ako „veď tam
-          # niečo je" – `drive-auth.py` na polovicu údajov spadne, a keby to
-          # kontrola prepustila, spadol by až ten trojhodinový beh.
+          # alebo po kusoch. Nekompletná dvojica/trojica sa NESMIE brať ako
+          # „veď tam niečo je" – `drive-auth.py` na polovicu údajov spadne,
+          # a keby to kontrola prepustila, spadol by až ten trojhodinový beh.
+          #
+          # Druhá skupina má len DVA prvky: `client_id` (DRIVE_CLIENT) medzi
+          # secrets nepatrí – nie je to tajné, je to repository variable a
+          # `vars.*` sa v tomto repozitári číta priamo, bez podávania cez
+          # `workflow_call`/`secrets: inherit`. Táto kontrola preto overuje
+          # len to, čo sa cez secrets naozaj musí prevliecť.
           BLOB = "GDRIVE_CREDENTIALS"
-          TRIOS = (("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET",
-                    "GDRIVE_REFRESH_TOKEN"),
-                   ("DRIVE_CLIENT", "DRIVE_SECRET", "DRIVE_REFRESH"))
+          GROUPS = (("GDRIVE_CLIENT_ID", "GDRIVE_CLIENT_SECRET",
+                     "GDRIVE_REFRESH_TOKEN"),
+                    ("DRIVE_SECRET", "DRIVE_REFRESH"))
 
           def authed(names):
               """Dá sa z týchto premenných prihlásiť?"""
               return (BLOB in names
-                      or any(all(k in names for k in t) for t in TRIOS))
+                      or any(all(k in names for k in g) for g in GROUPS))
 
           def why_not(names):
-              for t in TRIOS:
-                  have = [k for k in t if k in names]
+              for g in GROUPS:
+                  have = [k for k in g if k in names]
                   if have:
-                      return (f"z {'/'.join(t)} tam je len "
+                      return (f"z {'/'.join(g)} tam je len "
                               f"{', '.join(have)} – prihlásenie s polovicou "
                               f"údajov `drive-auth.py` odmieta")
-              return f"chýba {BLOB} alebo trojica {'/'.join(TRIOS[1])}"
+              return f"chýba {BLOB} alebo {'/'.join(GROUPS[1])}"
 
           # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
           # v texte – inak by kontrola našla samu seba a ostatné kontroly,

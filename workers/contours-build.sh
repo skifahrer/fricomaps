@@ -18,8 +18,8 @@
 #   OPT_ROCK_IMG_ASSET OPT_ROCKS_REBUILD
 #   OPT_SIZE_LIMIT_MB OPT_UGKK_FALLBACK
 # a k tomu `env:` celého workflowu (ROCK_*, *_STORE, BUDGET_CONTOURS_PCT,
-# BUDGET_ROCKS_PCT) plus prihlásenie na Drive (GDRIVE_CREDENTIALS alebo
-# trojica DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH).
+# BUDGET_ROCKS_PCT) plus prihlásenie na Drive: GDRIVE_CREDENTIALS, alebo
+# premenná DRIVE_CLIENT so secretmi DRIVE_SECRET / DRIVE_REFRESH.
 
 set -euo pipefail
 sudo apt-get update -qq

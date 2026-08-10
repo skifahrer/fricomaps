@@ -198,11 +198,11 @@ on:
     # (`secrets: inherit`) a tento workflow prijať. Bez nich by sa cache na
     # Drive nemala ako otvoriť a gigabajty dlaždíc by sa ťahali z freemap.sk
     # pri každom behu. Dva tvary toho istého: všetko v jednom secrete, alebo
-    # po troch – rozpis vo `workers/drive-auth.py`.
+    # po dvoch – rozpis vo `workers/drive-auth.py`. `client_id` (DRIVE_CLIENT)
+    # medzi secrets nie je: je to repository variable, nie tajný údaj, a
+    # `vars.DRIVE_CLIENT` sa v tomto istom repozitári číta priamo nižšie.
     secrets:
       GDRIVE_CREDENTIALS:
-        required: false
-      DRIVE_CLIENT:
         required: false
       DRIVE_SECRET:
         required: false
@@ -226,7 +226,7 @@ env:
   # vyhadzovali všetko ostatné. Preto sem musí prísť token vlastníka; keď sa
   # tento workflow volá z „Build map", podáva sa cez `secrets: inherit`.
   GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-  DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+  DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
   DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
   DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
   # Vysoké rozlíšenie tieňovania (LiDAR) z freemap.sk. Je to XYZ šablóna,

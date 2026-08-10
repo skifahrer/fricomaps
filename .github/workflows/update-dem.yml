@@ -122,12 +122,12 @@ on:
     # Prihlásenie na Drive – `workflow_call` nededí secrets automaticky, takže
     # bez tejto deklarácie by ich volajúci nemal ako podať a Sonny by sa ťahal
     # anonymne. Dva tvary toho istého: všetko v jednom (GDRIVE_CREDENTIALS),
-    # alebo po troch. Nič nie je povinné – bez tokenu sa nemení nič, len sa
-    # výslovne vypíše, že platí verejný limit.
+    # alebo po dvoch. Nič nie je povinné – bez tokenu sa nemení nič, len sa
+    # výslovne vypíše, že platí verejný limit. `client_id` (DRIVE_CLIENT) tu
+    # nie je: je to repository variable, nie secret, a `vars.DRIVE_CLIENT` sa
+    # v tomto istom repozitári číta priamo nižšie bez podávania cez `workflow_call`.
     secrets:
       GDRIVE_CREDENTIALS:
-        required: false
-      DRIVE_CLIENT:
         required: false
       DRIVE_SECRET:
         required: false
@@ -153,7 +153,7 @@ jobs:
       # čítať cez Drive API, ktoré odmietnutie povie rovno, namiesto HTML
       # stránky s HTTP 200. Rozpis vo `workers/drive-folder.py`.
       GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     timeout-minutes: 90
@@ -270,7 +270,7 @@ jobs:
               # nesmie to byť tiché. Verejný odkaz má denný strop sťahovania
               # na súbor a ten zdieľajú všetci, kto naň siahnu; keď sa vyčerpá,
               # Drive vráti HTTP 200 a HTML stránku namiesto dát.
-              echo "::warning::Sťahujem z Google Drive NEPRIHLÁSENE – platí verejný denný limit sťahovania, zdieľaný so všetkými klientmi. Doplň secrety DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH (workflow „Prihlásenie na Drive (jednorazové)“) a pôjde to cez Drive API."
+              echo "::warning::Sťahujem z Google Drive NEPRIHLÁSENE – platí verejný denný limit sťahovania, zdieľaný so všetkými klientmi. Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH (workflow „Prihlásenie na Drive (jednorazové)“) a pôjde to cez Drive API."
               # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
               # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
               # neexistuje (a limit tiež nie), takže sa pridáva len ak ho daná
@@ -278,7 +278,7 @@ jobs:
               REMAINING=""
               gdown --help 2>&1 | grep -q -- --remaining-ok && REMAINING="--remaining-ok"
               gdown --folder $REMAINING --no-cookies -O dl "$FOLDER" || {
-                echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí sa prihlás (secrety DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH), skús o pár hodín neskôr, alebo vyplň custom_url odkazom na mirror."
+                echo "::error::Stiahnutie z Google Drive zlyhalo. Priečinok musí byť zdieľaný odkazom; pri hláške o limite stiahnutí sa prihlás (premenná DRIVE_CLIENT, secrety DRIVE_SECRET / DRIVE_REFRESH), skús o pár hodín neskôr, alebo vyplň custom_url odkazom na mirror."
                 exit 1
               }
             fi

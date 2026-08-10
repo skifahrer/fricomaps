@@ -39,8 +39,9 @@
 #   <adresár>/tiles/N49E019.tif …   stiahnuté dlaždice
 #   <adresár>/all.vrt               mozaika na čítanie
 #
-# Očakáva v prostredí prihlásenie na Drive (GDRIVE_CREDENTIALS alebo trojicu
-# DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH) – stráži to `Lint workflows`.
+# Očakáva v prostredí prihlásenie na Drive: GDRIVE_CREDENTIALS, alebo premennú
+# DRIVE_CLIENT so secretmi DRIVE_SECRET / DRIVE_REFRESH (`client_id` tajný nie
+# je, je to repository variable). Stráži to `Lint workflows`.
 set -euo pipefail
 
 BBOX="$1"

@@ -1713,13 +1713,15 @@ od prihlásenia, takže starý readonly token treba vymeniť za nový: DMR 5.0 p
 ním číta ďalej, len sa nič neuloží. Povie to `python3 workers/drive-cache.py
 --check`, aj krok *Prístup k cache na Drive* v „Upratať cache".
 
-Prihlásenie sa dá podať aj **po troch secretoch** namiesto jedného –
-`GDRIVE_CLIENT_ID`/`GDRIVE_CLIENT_SECRET`/`GDRIVE_REFRESH_TOKEN`, alebo
-kratšie `DRIVE_CLIENT`/`DRIVE_SECRET`/`DRIVE_REFRESH`. Nie je to rozmar:
-`client_secret` Google po zatvorení dialógu **druhýkrát neukáže**, takže keď
-už raz v secrets leží, nemá sa prepisovať len preto, aby sa zlepil do jedného
-JSONu. Nekompletná trojica je **chyba** (nie „tak teda verejne") a `Lint
-workflows` ju zachytí staticky.
+Prihlásenie sa dá podať aj **po kusoch** namiesto jedného JSONu – kratšie
+`DRIVE_CLIENT`/`DRIVE_SECRET`/`DRIVE_REFRESH` (dlhší tvar
+`GDRIVE_CLIENT_ID`/`GDRIVE_CLIENT_SECRET`/`GDRIVE_REFRESH_TOKEN` platí tiež).
+`DRIVE_CLIENT` (`client_id`) je pritom repository **variable**, nie secret –
+nie je to tajné, chodí v každej adrese prihlásenia. `DRIVE_SECRET`
+a `DRIVE_REFRESH` sú secrety: `client_secret` Google po zatvorení dialógu
+**druhýkrát neukáže**, takže keď už raz v secrets leží, nemá sa prepisovať
+len preto, aby sa zlepil do jedného JSONu. Nekompletný pár secretov je
+**chyba** (nie „tak teda verejne") a `Lint workflows` ju zachytí staticky.
 
 ### Bez počítača: workflow „Prihlásenie na Drive (jednorazové)"
 

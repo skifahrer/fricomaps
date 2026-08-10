@@ -125,7 +125,8 @@ je zmena jedného čísla namiesto dvoch id na štyroch miestach v hláškach.
 v priečinku, povie len Drive API a to anonymné požiadavky neobsluhuje –
 verejný odkaz (denný limit na súbor, zdieľaný so všetkými, kto naň siahnu) už
 k DMR 5.0 nevedie. Token vlastníka je v secrete `GDRIVE_CREDENTIALS` (alebo po
-troch: `DRIVE_CLIENT`/`DRIVE_SECRET`/`DRIVE_REFRESH`), drží ho
+kusoch: premenná `DRIVE_CLIENT` a secrety `DRIVE_SECRET`/`DRIVE_REFRESH` –
+`client_id` tajný nie je, chodí v každej adrese prihlásenia), drží ho
 `workers/drive-auth.py` (`--login` z počítača, `drive-login.yml` z telefónu –
 tam sa token nikde nevypíše, lebo log public repozitára vidí ktokoľvek;
 `dmr5-drive.py --auth-check` overí). Bez secretu beh spadne hneď a s návodom.
@@ -159,8 +160,9 @@ Odkedy je na Drive aj cache, je tých miest priveľa na to, aby stáli pri každ
 jobe – preto je prihlásenie v `env:` celého workflowu.
 
 `Lint workflows` to stráži staticky, z oboch strán, a hlási aj nekompletnú
-trojicu secretov (polovica údajov nie je „veď tam niečo je" – `drive-auth.py`
-na nej padne).
+dvojicu secretov `DRIVE_SECRET`/`DRIVE_REFRESH` (polovica údajov nie je „veď
+tam niečo je" – `drive-auth.py` na nej padne). `DRIVE_CLIENT` medzi nimi nie
+je: `vars.*` sa v tom istom repozitári čítajú priamo, bez `secrets: inherit`.
 
 **Keď Drive nepustí, DMR 5.0 sa v tom behu nedoplní** – a nesmie to byť tiché:
 `drive-serve.py` vráti 502 s vysvetlením, beh spadne v sekundách a so zapnutým

@@ -271,9 +271,9 @@ def main():
         raise SystemExit(
             "::error::Publikovanie mapy na Drive potrebuje token vlastníka, "
             "ale v prostredí nie je. Doplň secret GDRIVE_CREDENTIALS (alebo "
-            "trojicu DRIVE_CLIENT / DRIVE_SECRET / DRIVE_REFRESH) a podaj ho "
-            "jobu cez `env:` – vyrobí ich workflow „Prihlásenie na Drive "
-            "(jednorazové)“.")
+            "premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH) "
+            "a podaj ho jobu cez `env:` – vyrobí ich workflow „Prihlásenie "
+            "na Drive (jednorazové)“.")
     # Rozsah PRED balením: readonly token nič nenahrá, tak nech sa kvôli nemu
     # nebalí gigabajt. Tá istá lacná otázka ako pri cache.
     if auth.can_write(creds) is False:

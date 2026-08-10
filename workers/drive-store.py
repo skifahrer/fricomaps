@@ -143,8 +143,9 @@ def creds_or_die(what):
         raise SystemExit(
             f"::error::Sklad na Drive potrebuje prihlásenie ({what}), ale "
             "v prostredí nie je token vlastníka. Doplň secret "
-            "GDRIVE_CREDENTIALS (alebo trojicu DRIVE_CLIENT / DRIVE_SECRET / "
-            "DRIVE_REFRESH) a podaj ho jobu cez `env:` – vyrobí ich workflow "
+            "GDRIVE_CREDENTIALS (alebo premennú DRIVE_CLIENT a secrety "
+            "DRIVE_SECRET / DRIVE_REFRESH) a podaj ho jobu cez `env:` – "
+            "vyrobí ich workflow "
             "„Prihlásenie na Drive (jednorazové)“.")
     return creds
 

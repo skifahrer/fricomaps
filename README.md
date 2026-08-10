@@ -794,9 +794,10 @@ raz do týždňa spadla; pri type *Internal* (Workspace) to neplatí.
 ([`drive-login.yml`](.github/workflows/drive-login.yml)): prehliadač je
 telefón, shell je runner. Token sa v ňom **nikde nevypíše** — log public
 repozitára vidí ktokoľvek — ide zo súboru rovno do secretu `DRIVE_REFRESH`.
-Prihlásenie sa dá podať aj po troch secretoch (`DRIVE_CLIENT`, `DRIVE_SECRET`,
-`DRIVE_REFRESH`), lebo `client_secret` Google druhýkrát neukáže; nekompletná
-trojica je chyba a `Lint workflows` ju zachytí.
+Prihlásenie sa dá podať aj po kusoch — `client_id` ako repository **variable**
+`DRIVE_CLIENT` (nie je to tajné) a secrety `DRIVE_SECRET`, `DRIVE_REFRESH`,
+lebo `client_secret` Google druhýkrát neukáže; nekompletná dvojica secretov
+je chyba a `Lint workflows` ju zachytí.
 
 Bez secretu beh spadne hneď a s návodom — nie po pol dni na vyčerpanom
 limite. Podrobne (aj kam všade sa ten secret musí dostať, aj postup z telefónu)
