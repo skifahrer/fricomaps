@@ -2,8 +2,8 @@
 """
 DMR 5.0 (ETRS89) z Google Drive → výškový model do releasu.
 
-ČO JE ZDROJ. Dva súbory na Drive, oba čítané cez HTTP Range, nič sa nesťahuje
-celé:
+ČO JE ZDROJ. Dva súbory v jednom priečinku na Drive (`FOLDER_ID` nižšie), oba
+čítané cez HTTP Range, nič sa nesťahuje celé:
 
     dmr5_etrs89.tif       145,39 GiB   423 518 × 207 589 px, mriežka 1 m
     dmr5_etrs89.tif.ovr    43,35 GiB   pyramídy: 2, 4, 8, 16, 32, 64, 128, 256 m
@@ -24,13 +24,14 @@ vlastnú kompresiu a Range funguje na ľubovoľnom offsete (overené na 20 GB aj
 neplatí vzdialenosťou od začiatku súboru, ale počtom dlaždíc, ktoré ho
 pretínajú.
 
-ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK, keď je čím. Verejný odkaz („ktokoľvek
-s odkazom") má denný limit sťahovania na súbor a ten zdieľajú všetci, kto naň
-siahnu – keď sa vyčerpá, DMR 5.0 sa v tom behu nedoplní vôbec, lebo je to
-jediná cesta k nemu (beh 31315890474). Token vlastníka zo secretu
-`GDRIVE_CREDENTIALS` ten strop posúva rádovo vyššie; drží ho
-`workers/drive-auth.py` a `--auth-check` povie, ktorým účtom beh číta. Bez
-secretu sa nič nemení, len sa výslovne vypíše, že platí verejný limit.
+ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK, a inak sa nečíta vôbec. Kým tu stáli pevné
+file id, dal sa model ťahať aj verejným odkazom – s denným limitom sťahovania,
+ktorý zdieľajú všetci, kto naň siahnu (beh 31315890474). Odkedy je zdrojom
+PRIEČINOK, tá cesta neexistuje: čo v priečinku je, povie len Drive API a to
+anonymné požiadavky neobsluhuje. Token vlastníka zo secretu
+`GDRIVE_CREDENTIALS` (alebo trojice `DRIVE_*`) drží `workers/drive-auth.py`
+a `--auth-check` povie, ktorým účtom beh číta a či na súbory vidí. Bez neho
+beh spadne hneď a s návodom – nie po hodine na tom, že Drive prestal púšťať.
 
 TRI VECI, KTORÉ TENTO SÚBOR RIEŠI:
 
@@ -116,12 +117,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Drive file id. Nie sú tajomstvo (sú to tie isté id ako v zdieľanom odkaze),
-# preto smú byť v repozitári – tajomstvom je až token vlastníka v secrete
-# GDRIVE_CREDENTIALS, ktorý dvíha limit sťahovania (viď `drive-auth.py`).
-TIF_ID = "1A4q6T-S8IZbODMDsowGr_DihzcQf22wI"
-OVR_ID = "1p07TFZwG6LzbdkWdK3gV_ccvOubd2Xqi"
+# KDE DMR 5.0 LEŽÍ – jedno číslo, a je ním PRIEČINOK, nie dva súbory.
+#
+# Kým tu stáli pevné file id, presun modelu na iný účet alebo do iného
+# priečinka znamenal prepísať dve id na štyroch miestach v hláškach a dúfať,
+# že sa na žiadne nezabudlo. Priečinok je pritom to, čo človek naozaj presúva
+# a zdieľa; súbory v ňom sa hľadajú podľa mena (a keď sa aj to zmení, podľa
+# veľkosti – najväčší `.tif` v priečinku JE model).
+#
+# Tajomstvo to nie je: id priečinka chodí v zdieľanom odkaze. Tajomstvom je
+# token vlastníka v secrete GDRIVE_CREDENTIALS (viď `drive-auth.py`).
+FOLDER_ID = "1H62op_LMUYDqKeFf-_sXS-46PLEmxDyd"
 TIF_NAME = "dmr5_etrs89.tif"
+OVR_NAME = TIF_NAME + ".ovr"
 
 SRC_EPSG = 3046           # ETRS89 / TM zone N34, priamo z GeoTIFF tagov
 # Elipsoidické výšky nad GRS80 (ETRS89) → ortometrické (EGM2008 ≈ Bpv).
@@ -164,6 +172,7 @@ def load(name, path):
 
 drive = load("drive_serve", "drive-serve.py")
 auth = load("drive_auth", "drive-auth.py")       # kto sme na Drive
+folder = load("drive_folder", "drive-folder.py")  # čo je v priečinku
 raster = load("dmr5_raster", "dmr5-raster.py")   # Heartbeat, run_live, pomocníci
 
 LOG = []
@@ -415,7 +424,8 @@ def load_state(work):
 
 
 def credentials():
-    """Prihlásenie na Drive z prostredia, alebo None (= verejný odkaz).
+    """Prihlásenie na Drive z prostredia, alebo None (a to už ďaleko nedôjde:
+    `resolve_ids` bez neho priečinok nevypíše).
 
     Chybu prekladá na `::error::` a pád: kto secret nastavil, čaká prihlásený
     beh, a ticho spadnúť na verejný denný limit sa pozná až vtedy, keď Drive
@@ -442,30 +452,98 @@ def credentials():
     return creds
 
 
+# Raz vyriešené id sa v procese nehľadajú druhýkrát: fázy `plan` a `read`
+# otvárajú zdroj každá raz, ale `slope-chunks.py` si shim pýta v tom istom
+# procese pri každom pokuse o časť.
+_IDS = None
+
+
+def resolve_ids(creds):
+    """Priečinok na Drive → (id modelu, id pyramíd). Vypíše, čo našiel.
+
+    HĽADÁ SA PODĽA MENA, NIE PODĽA PORADIA. `dmr5_etrs89.tif` je meno, ktoré
+    má model dnes; keby sa premenoval, berie sa najväčší `.tif` v priečinku –
+    145 GiB raster sa s ničím iným pomýliť nedá. Pyramídy sú `<meno>.ovr`
+    vedľa neho.
+
+    BEZ PRIHLÁSENIA TO NEJDE a nemá zmysel to zakrývať: obsah priečinka
+    povie len Drive API a to anonymné požiadavky neobsluhuje. Kým tu stáli
+    pevné file id, dal sa model čítať aj verejným odkazom (s denným limitom);
+    priečinok, v ktorom teraz leží, verejný nie je.
+    """
+    global _IDS
+    if _IDS is not None:
+        return _IDS
+    if creds is None:
+        raise SystemExit(
+            "::error::DMR 5.0 leží v priečinku na Drive "
+            f"({FOLDER_ID}) a jeho obsah vie vypísať len prihlásený beh – "
+            "Drive API anonymné požiadavky neobsluhuje. Doplň secret "
+            "GDRIVE_CREDENTIALS (alebo trojicu DRIVE_CLIENT / DRIVE_SECRET / "
+            "DRIVE_REFRESH): vyrobí ich workflow „Prihlásenie na Drive "
+            "(jednorazové)“, z počítača `python3 workers/drive-auth.py "
+            "--login`.")
+    files, _skipped = folder.listing(creds, FOLDER_ID)
+    tifs = [f for f in files if f["name"].lower().endswith(".tif")]
+    ovrs = [f for f in files if f["name"].lower().endswith(".ovr")]
+    if not tifs:
+        raise SystemExit(
+            f"::error::V priečinku {FOLDER_ID} na Drive nie je ani jeden "
+            f".tif (videl som: "
+            + (", ".join(f["name"] for f in files[:8]) or "nič")
+            + "). Vidí naň prihlásený účet a je v ňom DMR 5.0?")
+    tif = next((f for f in tifs if f["name"] == TIF_NAME),
+               max(tifs, key=lambda f: f["size"]))
+    ovr = next((f for f in ovrs if f["name"] == tif["name"] + ".ovr"),
+               max(ovrs, key=lambda f: f["size"]) if ovrs else None)
+    log(f"  priečinok {FOLDER_ID}: {len(files)} súborov")
+    for f in (tif, ovr):
+        if f is not None:
+            log(f"    {f['name']}  {f['size'] / 2**30:.2f} GiB"
+                + ("" if f["owned"] else "  (tento účet ho NEVLASTNÍ – platí "
+                                         "naň denný limit sťahovania)"))
+    if ovr is None:
+        # Nie je to chyba, ale je to drahé: bez pyramíd sa hrubšie mriežky
+        # počítajú z plného 1 m rastra.
+        log(f"::warning::V priečinku nie je `{OVR_NAME}` (pyramídy). Hrubšie "
+            f"mriežky sa budú čítať z plného 1 m rastra a potrvá to násobne "
+            f"dlhšie.")
+    _IDS = (tif["id"], ovr["id"] if ovr else None)
+    return _IDS
+
+
 def serve_drive(port=0):
     """Shim nad OBOMA súbormi DMR 5.0. Vracia (base, sizes, stats, creds).
 
-    Jediné miesto, kde je napísané, ktoré id sa podávajú a s akým prihlásením
+    Jediné miesto, kde je napísané, odkiaľ sa berú dáta a s akým prihlásením
     – `open_source` aj `slope-chunks.py` si to volajú odtiaľto, nech sa zdroj
     dá vymeniť na jednom mieste.
+
+    Shim ich podáva pod KANONICKÝMI menami (`dmr5_etrs89.tif` a `.tif.ovr`) aj
+    vtedy, keď sa na Drive volajú inak: GDAL si pyramídy hľadá ako sidecar
+    podľa mena vedľa hlavného súboru a to meno musí sedieť.
     """
     creds = credentials()
-    base, sizes, stats = drive.serve(
-        {TIF_NAME: TIF_ID, TIF_NAME + ".ovr": OVR_ID}, port, creds=creds)
+    tif_id, ovr_id = resolve_ids(creds)
+    ids = {TIF_NAME: tif_id}
+    if ovr_id:
+        ids[OVR_NAME] = ovr_id
+    base, sizes, stats = drive.serve(ids, port, creds=creds)
     return base, sizes, stats, creds
 
 
 def auth_check():
     """Povedz, ktorým účtom sa bude čítať, a či na oba súbory vidí.
 
-    Vlastný krok workflowu preto, že je LACNÝ (token + dve metadátové
-    požiadavky) a odpovedá na to, čo sa inak zistí až vtedy, keď Drive
-    prestane dávať dáta: čítame ako vlastník s vysokým stropom, alebo
-    verejným odkazom s denným?
+    Vlastný krok workflowu preto, že je LACNÝ (token + výpis priečinka)
+    a odpovedá na to, čo sa inak zistí až vtedy, keď Drive prestane dávať
+    dáta: vidí ten účet na priečinok s modelom, a vlastní ho?
     """
     print("Prístup k DMR 5.0 na Google Drive:")
     try:
-        return auth.do_check(argparse.Namespace(file=[TIF_ID, OVR_ID]))
+        creds = auth.from_env()
+        ids = [i for i in resolve_ids(creds) if i]
+        return auth.do_check(argparse.Namespace(file=ids))
     except auth.AuthError as exc:
         print(f"::error::{exc}")
         return 2
