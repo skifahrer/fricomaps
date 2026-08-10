@@ -481,13 +481,17 @@ jobs:
       - name: Publikuje sa len na Drive, nie do releasov a artefaktov
         run: python3 workers/lint-publishing.py
 
-      # `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že chce
-      # len plochy. MapLibre jej čiaru nepreskočí – earcutom z nej vyrobí
-      # sebaprekrývajúci sa mnohouholník, mapa sa načíta a nikto nič nepovie.
-      # Presne tak vznikli tie „prerezané" útvary od zoomu 13 (pedestrian-area
-      # nad `transportation`, kde sú chodníky čiary). Rozpis a zoznam
-      # zmiešaných vrstiev je vo `workers/lint-style.mjs`.
-      - name: Výplne v štýle chcú len plochy
+      # Dve tiché veci v hotovom štýle naraz (rozpis vo `workers/lint-style.mjs`):
+      #
+      # 1. `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že
+      #    chce len plochy. MapLibre jej čiaru nepreskočí – earcutom z nej
+      #    vyrobí sebaprekrývajúci sa mnohouholník, mapa sa načíta a nikto nič
+      #    nepovie. Presne tak vznikli tie „prerezané" útvary od zoomu 13
+      #    (pedestrian-area nad `transportation`, kde sú chodníky čiary).
+      # 2. Vzor nad plochou je VLASTNÁ vrstva (`rock-area__pattern`), takže ju
+      #    profil typu mapy musí vypnúť spolu s predlohou. Inak ostane vzor
+      #    visieť nad prázdnym podkladom – zase bez jediného slova.
+      - name: "Štýl: výplne chcú plochy, vzory držia s predlohou"
         run: node workers/lint-style.mjs
 
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí

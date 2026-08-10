@@ -1640,13 +1640,29 @@ prevzatej z papierovej horskej mapy:
 
 | čo | farba | kde je v palete |
 |---|---|---|
-| podklad mapy (základná farba horského terénu) | **#dedcd1** svetlo béžovosivá s jemným zeleným nádychom | `Pozadie mapy` |
+| podklad mapy (základná farba horského terénu) | **#f0efeb** bielosivá | `Pozadie mapy` |
 | skalnaté partie a sutiny | **#9c9286** teplá stredná sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
+| kamienky v skalnej ploche | **#6b6154** tmavšia sivohnedá, vzor s krytím 0,6 | `Kamienky v skalnej ploche (vzor)` |
 | vrstevnice | **#8b8676** tenké olivovosivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
 
-Nie sú to neutrálne sivé: celá trojica má ten istý teplý zemitý nádych (odtieň
-okolo 45°, sýtosť do 10 %). Neutrálna sivá vedľa béžového podkladu vyzerá
-domodra a mapa z toho vyjde studená.
+**Podklad je bielosivý, nie zelenkastý – a je to rozhodnutie o tom, čo v mape
+znamená zelená.** Nad hranicou lesa je hola, kameň a sneh; kým mal podklad
+zelený nádych, vyzeralo to celé ako riedka vegetácia a les sa od neho odlíšil
+len o odtieň. **Zelená je vyhradená lesu** (`Les`) – je to jediná sýta zelená
+v mape. Lúka, kosodrevina, záhrada aj ihrisko sú odstupňované do olivovo-khaki:
+vegetácia áno, les nie. Otvorená lúka je pritom skoro na farbe podkladu, čo je
+zámer: v horskej mape je „nič zvláštne" podklad a farba patrí tomu, čo treba
+rozoznať.
+
+Sivá pritom nie je neutrálna: má ten istý teplý zemitý nádych ako skaly
+a vrstevnice (odtieň okolo 45°, sýtosť do 6 %). Neutrálna sivá vedľa zemitých
+hnedých vyzerá domodra a mapa z toho vyjde studená.
+
+**Chodníky pre peších sú tmavosivé, nie hnedé** (`Turistické chodníky`,
+`Chodníky, priechody a nástupištia`). Hnedá je na mape farba zeme – poľná
+a lesná cesta ju má ďalej – a keď ju mal aj chodník, splývali. Tmavá sivá je
+navyše čitateľná nad všetkým: nad bielosivým podkladom, nad zeleným lesom aj
+nad skalnou plochou.
 
 Každá téma má **veľmi jemne iný** odtieň tej istej trojice, nie kópiu jednej
 hodnoty: *Svetlá* je neutrálna, *Outdoor* o odtieň teplejšia a tmavšia (je to
@@ -1755,10 +1771,17 @@ hrúbka a krytie čiary. Malý chodník sa teda spraví bodkovaný a náučný
 chodník čiarka-bodka-bodka jedným výberom – a keďže úprava vie ísť len do
 jednej mapy, môže to platiť napríklad iba na turistickej.
 
-**Štýl plochy** (plochy a 3D): krytie výplne + opakujúci sa **vzor** (18
-predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, tehly,
-krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
+**Štýl plochy** (plochy a 3D): krytie výplne + opakujúci sa **vzor** (19
+predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, **kamienky**,
+tehly, krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
 ťahu a krytím.
+
+**Vzor môže mať plocha aj priamo zo štýlu**, nie len z naklikanej úpravy –
+skalné plochy majú predvolene kamienky (`rocks`). Developer mode vtedy
+neukazuje „žiadny", ale ten vzor, ktorý je naozaj v mape: dá sa doladiť
+(farba, veľkosť, hrúbka, krytie), vymeniť za iný alebo **vypnúť** – vypnutie
+sa uloží ako `pattern: null`, teda „vzor zo štýlu preč", nie ako „nič som
+nezmenil". Zvýraznenie *zmenené* svieti len vtedy, keď úprava naozaj existuje.
 
 **Okraj** je pri ploche obrysová čiara, pri čiare širší obrys pod ňou
 (casing) – oboje s farbou, šírkou, druhom čiary (tá istá ponuka s náhľadom)

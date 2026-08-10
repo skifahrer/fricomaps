@@ -618,8 +618,11 @@ export function initDevMode({
    * Vychádza sa zo zlúčenej úpravy, takže doladenie vzoru v jednej mape
    * prevezme, čo je nastavené spoločne, a nezačne od nuly.
    */
-  function patchSub(id, key, patch) {
-    const cur = { ...((layerOverride(id) || {})[key] || {}) };
+  function patchSub(id, key, patch, base) {
+    // `base` je to, čo má vrstva zabudované v štýle (napr. kamienky v skalnej
+    // ploche). Bez neho by prvá zmena farby vzoru zahodila jeho veľkosť
+    // a hrúbku – úprava by vznikla z prázdna, nie z toho, čo je vidieť.
+    const cur = { ...(base || {}), ...((layerOverride(id) || {})[key] || {}) };
     setLayerOverride(id, { [key]: { ...cur, ...patch } });
   }
 
@@ -1543,7 +1546,19 @@ export function initDevMode({
     }
 
     // ---- opakujúci sa vzor ----
-    const pat = o.pattern;
+    // Vzor môže mať vrstva ZABUDOVANÝ V ŠTÝLE (`frico:pattern` – kamienky
+    // v skalnej ploche). Ovládanie preto pracuje s ÚČINNÝM vzorom, nie
+    // s úpravou: bez toho by rozbaľovačka nad skalami tvrdila „žiadny",
+    // hoci v mape vzor je, a prvá zmena veľkosti by ho vyrobila odznova
+    // s inou farbou.
+    //
+    // Tri stavy, ktoré sa musia dať rozlíšiť:
+    //   kľúč chýba  … platí to, čo je v štýle
+    //   `null`      … vzor zo štýlu je VYPNUTÝ (nie „nič nezmenené")
+    //   predpis     … vlastný vzor
+    const builtinPattern = (layer.metadata || {})["frico:pattern"] || null;
+    const patChanged = "pattern" in o;
+    const pat = patChanged ? o.pattern : builtinPattern;
     const patternRow = [
       selectField({
         label: "Vzor",
@@ -1553,19 +1568,27 @@ export function initDevMode({
           setLayerOverride(layer.id, {
             pattern: v
               ? { ...(pat || { size: 16, weight: 1, opacity: 1, color: darken(primaryColor(layer)) }), id: v }
-              : undefined
+              // „Žiadny" nad vrstvou so vzorom zo štýlu musí vzor vypnúť,
+              // nie len zahodiť úpravu – tá by ho vrátila späť.
+              : builtinPattern ? null : undefined
           });
           apply({ immediate: true });
         }
       })
     ];
     if (pat) {
+      // Doladenie vychádza z ÚČINNÉHO vzoru (`pat`), nie z prázdna – inak by
+      // posun veľkosti nad skalnou plochou zabudol jej farbu aj krytie.
+      const patch = (p) => {
+        patchSub(layer.id, "pattern", p, pat);
+        apply({ immediate: true });
+      };
       patternRow.push(
         colorControl({
           value: pat.color,
-          changed: true,
+          changed: patChanged,
           onInput: (v) => {
-            patchSub(layer.id, "pattern", { color: v });
+            patchSub(layer.id, "pattern", { color: v }, pat);
             apply({ rerender: false });
           }
         }),
@@ -1575,10 +1598,7 @@ export function initDevMode({
           min: 4,
           max: 64,
           step: 1,
-          onChange: (v) => {
-            patchSub(layer.id, "pattern", { size: v ?? 16 });
-            apply({ immediate: true });
-          }
+          onChange: (v) => patch({ size: v ?? 16 })
         }),
         numberField({
           label: "hrúbka",
@@ -1586,10 +1606,7 @@ export function initDevMode({
           min: 0.5,
           max: 8,
           step: 0.5,
-          onChange: (v) => {
-            patchSub(layer.id, "pattern", { weight: v ?? 1 });
-            apply({ immediate: true });
-          }
+          onChange: (v) => patch({ weight: v ?? 1 })
         }),
         numberField({
           label: "krytie",
@@ -1597,14 +1614,13 @@ export function initDevMode({
           min: 0,
           max: 1,
           step: 0.1,
-          onChange: (v) => {
-            patchSub(layer.id, "pattern", { opacity: v ?? 1 });
-            apply({ immediate: true });
-          }
+          onChange: (v) => patch({ opacity: v ?? 1 })
         })
       );
     }
-    parts.push(el("div", { class: `dev-sub${pat ? " changed" : ""}` }, patternRow));
+    // „Zmenené" je úprava vzoru, nie vzor samotný: kamienky zo štýlu sú
+    // predvolený stav mapy, nie niečo, čo v tejto relácii niekto naklikal.
+    parts.push(el("div", { class: `dev-sub${patChanged ? " changed" : ""}` }, patternRow));
 
     // ---- okraj ----
     const out = o.outline;

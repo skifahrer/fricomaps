@@ -30,7 +30,7 @@ import {
   PATTERN_IDS,
   DASH_IDS,
   dashArray,
-  patternSpec,
+  patternDef,
   patternImageName
 } from "./patterns.js";
 import {
@@ -118,13 +118,20 @@ export const DEFAULT_DEM_SOURCE = "sonny";
  * TERÉNNA TROJICA – odkiaľ sa berú `background`, `rock` / `rockArea`
  * a `contour*`. Sú to farby papierovej horskej mapy, nie ozdoba:
  *
- *   podklad     #dedcd1   svetlo béžovosivá s jemným zeleným nádychom
+ *   podklad     #f0efeb   bielosivá – holý terén nad lesom, sneh, kamenie
  *   skaly a suť #9c9286   teplá stredná sivohnedá – skalnaté partie, sutiny
  *   vrstevnice  #8b8676   tenké olivovosivé línie s popiskom výšky
  *
- * Nie sú to neutrálne sivé: v horskej mape má celá trojica ten istý teplý
- * zemitý nádych (odtieň okolo 45°, sýtosť do 10 %). Neutrálna sivá vedľa
- * béžového podkladu vyzerá domodra a mapa z toho vyjde studená.
+ * PODKLAD JE BIELOSIVÝ, NIE ZELENKASTÝ – a je to rozhodnutie o tom, čo v mape
+ * znamená zelená. V horách je nad hranicou lesa hola, kameň a sneh; keď mal
+ * podklad zelený nádych, vyzeralo to celé ako riedka vegetácia a les sa od
+ * neho odlíšil len o odtieň. **Zelená je odteraz vyhradená lesu** (`forest`)
+ * – jediná sýta zelená v mape. Lúka, kosodrevina, záhrada či ihrisko sú
+ * odstupňované do olivovo-khaki: vegetácia áno, les nie.
+ *
+ * Sivá pritom nie je neutrálna: má ten istý teplý zemitý nádych ako skaly
+ * a vrstevnice (odtieň okolo 45°, sýtosť do 6 %). Neutrálna sivá vedľa
+ * zemitých hnedých vyzerá domodra a mapa z toho vyjde studená.
  *
  * KAŽDÁ TÉMA MÁ SVOJ ODTIEŇ, LEN VEĽMI JEMNE INÝ. Nie sú to štyri kópie
  * jednej hodnoty: „Svetlá" je tá neutrálna, „Outdoor" o odtieň teplejšia
@@ -142,13 +149,13 @@ export const DEFAULT_DEM_SOURCE = "sonny";
 export const THEMES = {
   svetla: {
     label: "Svetlá",
-    background: "#dedcd1",
+    background: "#f0efeb",
     water: "#a4c8e8",
     waterOutline: "#88b0d8",
     river: "#a4c8e8",
-    forest: "#c2dcb2",
-    grass: "#d8e8c8",
-    park: "#c9e8b8",
+    forest: "#b7d69f",
+    grass: "#e4e6d2",
+    park: "#d9e6c8",
     parkOutline: "#a8cf90",
     sand: "#f0e6c8",
     ice: "#eef6fa",
@@ -161,8 +168,8 @@ export const THEMES = {
     school: "#f0e8d8",
     military: "#eee0d8",
     quarry: "#ddd6cc",
-    pitch: "#cfe6bd",
-    garden: "#d4ecc0",
+    pitch: "#dbe4c4",
+    garden: "#dfe6c6",
     playground: "#dff0d8",
     building: "#d9cfc5",
     buildingOutline: "#c4b8ac",
@@ -178,8 +185,8 @@ export const THEMES = {
     service: "#ffffff",
     pedestrian: "#f2efe9",
     roadCasing: "#c8bda8",
-    path: "#b08858",
-    footway: "#c08858",
+    path: "#55534d",
+    footway: "#6d6a63",
     cycleway: "#6a8fd0",
     steps: "#c05a3a",
     track: "#b09060",
@@ -214,12 +221,13 @@ export const THEMES = {
     contourMajor: "#77725f",
     contourText: "#6a6555",
     rockArea: "#9c9286",
+    rockPattern: "#6b6154",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#7a6a58",
     ridgeLine: "#a89880",
-    scrub: "#cfe0b4",
+    scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
     parking: "#e8e4f0",
     farmyard: "#eee4d2",
@@ -261,13 +269,13 @@ export const THEMES = {
   },
   tmava: {
     label: "Tmavá",
-    background: "#1b1a16",
+    background: "#1b1b19",
     water: "#16213e",
     waterOutline: "#1d2b52",
     river: "#16213e",
     forest: "#17251a",
-    grass: "#1a281c",
-    park: "#1b2e1e",
+    grass: "#232219",
+    park: "#202a20",
     parkOutline: "#2a4030",
     sand: "#2a2820",
     ice: "#1e2630",
@@ -280,8 +288,8 @@ export const THEMES = {
     school: "#242015",
     military: "#2a1f1f",
     quarry: "#242028",
-    pitch: "#1c2a1d",
-    garden: "#1b2c1c",
+    pitch: "#26281d",
+    garden: "#26261c",
     playground: "#1e2a20",
     building: "#262433",
     buildingOutline: "#33304a",
@@ -297,8 +305,8 @@ export const THEMES = {
     service: "#2b2836",
     pedestrian: "#22222e",
     roadCasing: "#0e0e16",
-    path: "#5a4a3a",
-    footway: "#6a5540",
+    path: "#8b8880",
+    footway: "#75726a",
     cycleway: "#41618f",
     steps: "#7a4030",
     track: "#5a4a35",
@@ -331,12 +339,13 @@ export const THEMES = {
     contourMajor: "#6f6a5c",
     contourText: "#8e8a7c",
     rockArea: "#403c33",
+    rockPattern: "#6a6152",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#8a7a64",
     ridgeLine: "#6a6050",
-    scrub: "#1d2a1b",
+    scrub: "#272a1e",
     roadConstruction: "#6a5628",
     parking: "#23202e",
     farmyard: "#2a2419",
@@ -377,13 +386,13 @@ export const THEMES = {
   },
   outdoor: {
     label: "Outdoor / Turistická",
-    background: "#dbd8cb",
+    background: "#edece8",
     water: "#8ec4dd",
     waterOutline: "#6faac6",
     river: "#7ab8d4",
-    forest: "#a8cc8e",
-    grass: "#cbe0aa",
-    park: "#b8d898",
+    forest: "#9ecb84",
+    grass: "#dcdec2",
+    park: "#cfdcb4",
     parkOutline: "#88b070",
     sand: "#ecdfb5",
     ice: "#ffffff",
@@ -396,8 +405,8 @@ export const THEMES = {
     school: "#e6dcc0",
     military: "#e2cfc4",
     quarry: "#cfc7b4",
-    pitch: "#b9dd9a",
-    garden: "#c4e2a8",
+    pitch: "#d0dab2",
+    garden: "#d5dcb8",
     playground: "#d2e8b8",
     building: "#c8b8a0",
     buildingOutline: "#a89880",
@@ -413,8 +422,8 @@ export const THEMES = {
     service: "#fdfaf2",
     pedestrian: "#efe9da",
     roadCasing: "#a89878",
-    path: "#c04030",
-    footway: "#b03828",
+    path: "#4c4b45",
+    footway: "#63615a",
     cycleway: "#3060b0",
     steps: "#a02818",
     track: "#96703c",
@@ -447,12 +456,13 @@ export const THEMES = {
     contourMajor: "#746f5c",
     contourText: "#676152",
     rockArea: "#988e82",
+    rockPattern: "#675e51",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#6f5a44",
     ridgeLine: "#9a8468",
-    scrub: "#bcd79a",
+    scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
     parking: "#e6e2ee",
     farmyard: "#e8dcc2",
@@ -492,13 +502,13 @@ export const THEMES = {
   },
   retro: {
     label: "Retro / Pastel",
-    background: "#e1dfd5",
+    background: "#f2f0ea",
     water: "#b5d5c5",
     waterOutline: "#95bfa9",
     river: "#a5cbb8",
-    forest: "#d5e3c0",
-    grass: "#e5ecd0",
-    park: "#dbe8c5",
+    forest: "#c7dfa8",
+    grass: "#eae9d4",
+    park: "#e2e6cc",
     parkOutline: "#c0d8a8",
     sand: "#f5e8cc",
     ice: "#f2f5f0",
@@ -511,8 +521,8 @@ export const THEMES = {
     school: "#f5ead5",
     military: "#f0dcd4",
     quarry: "#e2d8cc",
-    pitch: "#dcecc4",
-    garden: "#e2eec8",
+    pitch: "#e2e6c8",
+    garden: "#e6e6cc",
     playground: "#e8f0d4",
     building: "#e8c8b8",
     buildingOutline: "#d0a890",
@@ -528,8 +538,8 @@ export const THEMES = {
     service: "#fffdf8",
     pedestrian: "#f8f2e8",
     roadCasing: "#d5bfa5",
-    path: "#b07858",
-    footway: "#b07858",
+    path: "#5f5c54",
+    footway: "#736f66",
     cycleway: "#7a9fb8",
     steps: "#b06048",
     track: "#b58e6a",
@@ -562,12 +572,13 @@ export const THEMES = {
     contourMajor: "#7b7663",
     contourText: "#6e6959",
     rockArea: "#a0968a",
+    rockPattern: "#70665a",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#96745c",
     ridgeLine: "#c0a488",
-    scrub: "#dbe6c4",
+    scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
     parking: "#efe8f0",
     farmyard: "#f2e6d2",
@@ -751,6 +762,7 @@ export const PALETTE_GROUPS = [
       ["contourMajor", "Hlavná vrstevnica"],
       ["contourText", "Popisok výšky"],
       ["rockArea", "Skalné plochy (plná výplň)"],
+      ["rockPattern", "Kamienky v skalnej ploche (vzor)"],
       // Bralná hrana a hrebeň sú `natural=cliff/ridge/arete` – v dlaždiciach
       // sú ako LÍNIE vo vrstve `mountain_peak`, nie ako skalná plocha z DEM.
       ["cliffLine", "Bralná hrana (z OSM)"],
@@ -1236,18 +1248,18 @@ function cleanLayers(rawLayers, target, problems, where) {
     }
 
     // ---- opakujúci sa vzor ----
-    if (def.pattern) {
+    // `null` NIE JE to isté ako „nič": vzor, ktorý má vrstva zabudovaný
+    // v štýle (`frico:pattern`, napr. kamienky v skalnej ploche), sa musí dať
+    // výslovne vypnúť. Chýbajúci kľúč znamená „nechaj, čo je v štýle".
+    if (def.pattern === null) {
+      clean.pattern = null;
+    } else if (def.pattern) {
       if (!PATTERN_IDS.includes(def.pattern.id)) {
         problems.push(`${where}Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
       } else if (!isColor(def.pattern.color)) {
         problems.push(`${where}Vrstva "${id}": farba vzoru nie je hex (${def.pattern.color}).`);
       } else {
-        const spec = patternSpec(def.pattern);
-        const opacity = Number(def.pattern.opacity);
-        clean.pattern = {
-          ...spec,
-          opacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 1
-        };
+        clean.pattern = patternDef(def.pattern);
       }
     }
 
@@ -1379,6 +1391,16 @@ function derived(layer, suffix, label) {
   return out;
 }
 
+/**
+ * Je to vrstva so vzorom odvodená od inej? Vracia id predlohy alebo `null`.
+ * Pýtajú sa na to dve miesta (skladanie úprav a profil typu mapy), takže
+ * prípona `__pattern` je napísaná RAZ – v `derived` a tu.
+ */
+export function patternLayerFor(layer) {
+  const parent = (layer?.metadata || {})["frico:derived"];
+  return parent && layer.id === `${parent}__pattern` ? parent : null;
+}
+
 /** Vrstva s opakujúcim sa vzorom nad plochou / pozdĺž čiary. */
 function patternLayer(layer, pattern) {
   const name = patternImageName(pattern);
@@ -1454,9 +1476,20 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
   const out = [];
 
   for (const layer of style.layers) {
+    // Vzor zabudovaný v štýle už jednu vrstvu má (pridal ju `add`). Zahodí sa
+    // a poskladá znova z ÚČINNÉHO predpisu – inak by úprava vzoru vyrobila
+    // druhú vrstvu s tým istým id a poistka proti duplicite by nechala tú
+    // pôvodnú, čiže by sa v mape ticho nezmenilo nič.
+    if (patternLayerFor(layer)) continue;
+
     const o = layerOverrides[layer.id];
+    // Chýbajúci kľúč = „nechaj vzor zo štýlu", `null` = „vypni ho".
+    const builtin = (layer.metadata || {})["frico:pattern"] || null;
+    const pat = o && "pattern" in o ? o.pattern : builtin;
+
     if (!o) {
       out.push(layer);
+      if (pat) out.push(patternLayer(layer, pat));
       continue;
     }
 
@@ -1488,7 +1521,7 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     if (outline && layer.type === "line") out.push(outline);
     out.push(layer);
     if (outline && layer.type !== "line") out.push(outline);
-    const pattern = o.pattern ? patternLayer(layer, o.pattern) : null;
+    const pattern = pat ? patternLayer(layer, pat) : null;
     if (pattern) out.push(pattern);
   }
 
@@ -1727,14 +1760,23 @@ export function buildStyle({
    * je v `paint` obyčajným hexom, takže by ju developer mode v riadku vrstvy
    * nenašiel – odtiaľ sa potom ladí cez paletu.
    *
+   * `pattern` je vzor ZABUDOVANÝ V ŠTÝLE – teda taký, ktorý má vrstva aj
+   * bez toho, aby ho niekto naklikal v developer móde (kamienky v skalnej
+   * ploche). Vzor sa v MapLibre nedá nakresliť do tej istej vrstvy ako
+   * výplň, takže z neho vzniká vrstva navyše hneď nad predlohou; predpis
+   * ostáva v metadátach, aby ho developer mode vedel ukázať, doladiť
+   * a vypnúť (`pattern: null` v úprave vrstvy).
+   *
    * @param {object} layer  vrstva podľa MapLibre style-spec
-   * @param {[string,string,string,object?,string[]?]} meta
-   *        [skupina, popis, druh, {paintProp: kľúč palety}, [kľúče palety vo výrazoch]]
+   * @param {[string,string,string,object?,string[]?,object?]} meta
+   *        [skupina, popis, druh, {paintProp: kľúč palety},
+   *         [kľúče palety vo výrazoch], {id,color,size,weight,opacity}]
    */
   const add = (layer, meta) => {
-    const [group, label, kind, palette, paletteExtra] = meta;
+    const [group, label, kind, palette, paletteExtra, pattern] = meta;
     const l = { ...layer };
     if (l.type !== "background" && !l.source) l.source = "omt";
+    const pat = pattern ? patternDef(pattern) : null;
     l.metadata = {
       "frico:group": group,
       "frico:label": label,
@@ -1742,9 +1784,14 @@ export function buildStyle({
       "frico:palette": palette || {},
       ...(paletteExtra && paletteExtra.length
         ? { "frico:palette-extra": paletteExtra }
-        : {})
+        : {}),
+      ...(pat ? { "frico:pattern": pat } : {})
     };
     L.push(l);
+    if (pat) {
+      const p = patternLayer(l, pat);
+      if (p) L.push(p);
+    }
   };
 
   add(
@@ -1948,7 +1995,23 @@ export function buildStyle({
           "fill-antialias": true
         }
       },
-      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }]
+      // KAMIENKY V PLOCHE. Plná sivá povie, KDE je skala, ale nie ČO to je –
+      // stena, balvanisko a sutinové pole vyzerajú rovnako. Vzor drobných
+      // kameňov je to, čím papierová horská mapa skalné pole odlišuje, a keďže
+      // je to `fill-pattern` nad tou istou geometriou, nestojí to ani nový
+      // zdroj, ani nový výpočet – len jednu odvodenú vrstvu.
+      //
+      // Krytie 0,6: vzor má plochu textúrovať, nie ju prekresliť. Pri plnom
+      // krytí zmizne pod kamienkami tieňovanie, kvôli ktorému skaly ležia
+      // práve tu (viď rozpis nad vrstvou), a stena je zase plochá škvrna.
+      // Pod 0,5 zase vzor v mierke 1:1 zmizne – vyskúšané na hotovej výplni,
+      // nie odhadnuté; farba `rockPattern` je preto aj o poriadny kus tmavšia
+      // než samotná plocha (v tmavej téme naopak svetlejšia).
+      //
+      // Dlaždica 26 px je pri z16 (1,57 m na pixel) kameň veľký asi tri metre.
+      // Menšia sa zlieva do sivej kaše, väčšia vyzerá ako dlažba.
+      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }, null,
+        { id: "rocks", color: c.rockPattern, size: 26, weight: 1.2, opacity: 0.6 }]
     );
   }
 
