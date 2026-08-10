@@ -197,9 +197,24 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
                sekundách ho vie zapnúť, 2 = pôvodné hladenie)
   → gdal_contour -i 10
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
+               a `-simplify` zmaže schodíky po hranách buniek DEM
+  → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
+                      (Chaikin, 1 prechod)
   → planetiler generate-custom --schema=workers/contours.yml
   → {región}-contours.pmtiles
 ```
+
+**Zubatosť nerobí raster, robí ju zjednodušenie – a to isté platí pri
+skalách.** Vrstevnica je izolínia nad rastrom, čiže chodí po hranách buniek:
+pri 1 m DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, takže
+tie schodíky vidno. `-simplify` ich zmaže (tolerancia je štvrtina bunky DEM,
+takže sa čiara neposunie o viac než štvrtinu toho, z čoho vznikla), po ňom ale
+ostanú **ostré rohy** – a tie zaobli Chaikinovo orezávanie rohov. Jeden
+prechod, nie dva ako pri skalách: na čiare bez výplne sa roh vidí menej a
+každý prechod zdvojnásobí počet bodov, kým vrstevníc je rádovo viac než skál.
+Ovláda to `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:` build-map.yml
+(`CONTOUR_SMOOTH: 0` = vypnuté, `CONTOUR_SIMPLIFY` v metroch, `-1` = štvrtina
+bunky, `0` = presná čiara).
 
 Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
 najvyššom zoome bez zjednodušovania geometrie
@@ -208,8 +223,11 @@ najvyššom zoome bez zjednodušovania geometrie
 v jamách teda ostávajú. Nižšie zoomy si Planetiler zjednodušuje sám, inak by
 z vrstevníc bola čierna plocha.
 
-`level` riadi, čo je vidieť kedy: hlavné vrstevnice od z10, polovičné od z12,
-základné od z13, popisky výšky pozdĺž hlavných od z13. Výsledok je
+`level` riadi, čo je vidieť kedy: hlavné vrstevnice od **z1**, polovičné od
+z12, základné od z13, popisky výšky pozdĺž hlavných od z13. To je celé to
+„zjednodušene na malých mierkach": pod z12 je v mape len hlavná vrstevnica,
+a Planetiler ju má na každom zoome zjednodušenú podľa veľkosti pixela, takže
+z1–z9 je v súbore stotinou toho, čo zaberá jeden detailný zoom. Výsledok je
 nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia len od
 územia, takže sa pri ďalšom builde mapy nepočítajú znova.
 
@@ -222,16 +240,33 @@ prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 ### Tieňovanie reliéfu a 3D terén
 
 MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc, kde je
-výška zakódovaná do farby (*terrarium*). Robia sa z toho istého Sonny DEM ako
-vrstevnice ([workers/build-terrain.py](workers/build-terrain.py)), takže 3D
-reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
+výška zakódovaná do farby (*terrarium*). Robia sa z výškového modelu, ktorý
+vyberá **`shading_source`** ([workers/build-terrain.py](workers/build-terrain.py)),
+takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
 
+- **Áno, dá sa aj z DMR 5.0** – `shading_source: dmr5`. Tieňovanie sa robí
+  vždy na celý región, takže `dmr5` tu vyjde na svoju **5 m** dlaždicovú
+  podobu (metrová existuje len na výrez, viď „jeden zdroj, dve podoby").
 - **Každý zoom sa prevzorkuje z DEM nanovo** (`-r average`), nezmenšujú sa
   hotové dlaždice: priemerovať sa musí *výška*, nie zakódovaná farba.
-- **Zoom končí na 13** (`terrain_maxzoom`) – jemnejšie 20 m DEM neunesie.
-- **Ukladajú sa do releasu `dem-terrain`** ako jeden `.tar.zst` na región
-  a maxzoom. Ďalší build ich už len stiahne; `terrain_rebuild: áno` ich
-  vynúti prepočítať nanovo.
+- **Zoom je `auto`** (`terrain_maxzoom`): najnižší, na ktorom je pixel
+  dlaždice jemnejší než bunka modelu – Sonny (20 m) → **z13**, DMR 3.5 (10 m)
+  → **z14**, DMR 5.0 (5 m) → **z15**. Pevná trinástka tu bola dovtedy, kým bol
+  Sonny jediný zdroj, a znamenala, že si síce vyberieš DMR 5.0, ale reliéf
+  vyzerá ako zo Sonnyho: pixel z13 má 12,5 m, takže sa 5 m model nemá ako
+  prejaviť.
+- **Každý zoom navyše je štvornásobok dlaždíc**, takže z13 → z15 je
+  šestnásťnásobok. Preto má tieňovanie svoj podiel rozpočtu stránky
+  (`BUDGET_TERRAIN_PCT`, 12 %) a `build-terrain.py` sa do neho zmestí sám:
+  vypíše plán, počíta zoomy odspodu a ten, ktorý by rozpočet prekročil, ani
+  nezačne – povie to warningom a čo s tým (menšie územie, vyšší
+  `size_limit_mb`). Jemný reliéf celého kraja sa teda nedá dostať zadarmo,
+  ale výrez alebo rýchly test ho majú.
+- **Ukladajú sa do skladu `dem-terrain`** ako jeden `.tar.zst` na región,
+  model a maxzoom. Meno nesie **skutočne vyrobený** maxzoom, nie želaný –
+  a ďalší build si zo skladu vezme najvyšší uložený zoom, ktorý nie je vyšší
+  než ten želaný, takže sa to isté nepočíta druhýkrát. `terrain_rebuild: áno`
+  ich vynúti prepočítať nanovo.
 - Keď sa nevyrobia, štýl padá späť na AWS Terrain Tiles.
 
 ### Skaly (najstrmšie úseky terénu)
@@ -258,8 +293,9 @@ DEM
   → ST_BuildArea(ST_ExteriorRing) PLNÉ plochy – von ide len vonkajší prstenec
   → filter najmenšej plochy
   → -simplify                     preč so schodíkmi po hranách buniek
-  → smooth-polygons.py            zaoblenie rohov, ktoré po zjednodušení
-                                  ostali ostré (Chaikin, 2 prechody)
+  → smooth-shapes.py              zaoblenie rohov, ktoré po zjednodušení
+                                  ostali ostré (Chaikin, 2 prechody); ten istý
+                                  skript zaobľuje aj vrstevnice
   → vrstva `rock` v {región}-rocks.pmtiles  – VLASTNÉ dlaždice, vlastný maxzoom
 ```
 
@@ -274,7 +310,7 @@ státisíce bodov zredukuje (28,5°). Preto sa po zjednodušení rohy ešte zaob
 Chaikinovým orezávaním: dva prechody dajú 7,7°, čo je hladšie než pôvodný
 raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
 neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
-v `workers/smooth-polygons.py`.
+v `workers/smooth-shapes.py`.
 
 **Jedna trieda, jedna sivá.** Skala je v mape jedna plocha v jednej sivej bez
 priehľadnosti — žiadna plocha vnútri inej. Priehľadnosť by totiž znamenala,
@@ -321,10 +357,11 @@ jedným priechodom nad celou mozaikou. Výsledok potom nezávisí od toho, na
 koľko častí sa počítalo – overené pri 1, 12 aj 60 častiach je zhodný do
 posledného m².
 
-**Skaly sú vidieť všade, kde sú** – vrstva ide do dlaždíc od **z9** a štýl ich
-kreslí od z9 (obrys od z11). Drobné plochy pritom nižšie zoomy nezaťažia:
-Planetiler sám zahodí všetko menšie než pixel, takže z prehľadu ostanú len
-veľké steny a s približovaním pribúdajú detaily.
+**Skaly sú vidieť všade, kde sú** – vrstva ide do dlaždíc od **z1** a štýl ich
+odtiaľ aj kreslí. Nízke zoomy pritom nič nestoja: Planetiler na každom zoome
+zjednoduší obrys podľa veľkosti pixela a zahodí všetko menšie než pixel, takže
+z prehľadu ostane len tvar veľkých stien – a dlaždíc je tam rádovo menej (z1
+je jedna na celý región, z10 ich je tisíc). S približovaním pribúdajú detaily.
 
 #### Aký je to detail
 
@@ -376,7 +413,7 @@ XYZ dlaždice sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
                                          s dierami – ten istý nástroj aj tá
                                          istá sémantika ako u skál z DEM
   → -explodecollections + filter plôch a dier
-  → -simplify + smooth-polygons.py       rovnaké zaoblenie ako pri DEM
+  → -simplify + smooth-shapes.py       rovnaké zaoblenie ako pri DEM
   → rock.gpkg  ─► sklad `dem-rocks-img`  +  sklad `vysledky` (na pozretie)
 ```
 
@@ -1107,11 +1144,12 @@ obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
 `ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
 (verzia algoritmu v mene uloženého assetu).
 
-V mape z toho sú **tmavosivé plochy** s tenkým obrysom, kreslené *pod*
-vrstevnicami, takže ohraničujú strmé úseky a vrstevnice nad nimi zostávajú
-čitateľné. Strmý svah je svetlejší, výrazná stena tmavšia – farby `Skalná
-plocha` a `Skalná stena` sú v palete v skupine **Vrstevnice a skaly**, takže
-sa dajú v developer móde doladiť ako čokoľvek iné.
+V mape z toho sú **tmavosivé plochy** kreslené *pod* tieňovaním aj *pod*
+vrstevnicami. Poradie je zámerné a v tomto poradí: skala je tvar terénu, takže
+cez ňu musí prejsť tieňovanie (inak je práve stena v mape plochá škvrna bez
+reliéfu), a vrstevnica musí prejsť cez oboje (inak nie sú výšky tam, kde je
+terén najstrmší). Farba `Skalné plochy (plná výplň)` je v palete v skupine
+**Vrstevnice a skaly**, takže sa dá v developer móde doladiť ako čokoľvek iné.
 
 **Hotové skaly sa neprepočítavajú.** Uložia sa do releasu `dem-rocks` pod
 menom, ktoré nesie región aj nastavenia

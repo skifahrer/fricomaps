@@ -704,7 +704,7 @@ def main():
         if args.smooth > 0:
             smoothed = os.path.join(tmp, "rock-smooth.gpkg")
             script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  "smooth-polygons.py")
+                                  "smooth-shapes.py")
             try:
                 out = run([sys.executable, script, f"--in={final_metric}",
                            f"--out={smoothed}", "--layer=rock",

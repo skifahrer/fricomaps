@@ -139,14 +139,47 @@ def main():
     ap.add_argument("--maxzoom", type=int, default=12)
     ap.add_argument("--minzoom", type=int, default=0)
     ap.add_argument("--out", required=True, help="adresár s dlaždicami {z}/{x}/{y}.png")
+    ap.add_argument("--budget-mb", type=float, default=0,
+                    help="koľko MB smú dlaždice zabrať (0 = bez stropu)")
     args = ap.parse_args()
 
     w, s, e, n = (float(v) for v in args.bbox.split(","))
     total_bytes = 0
     total_tiles = 0
+    made = args.minzoom - 1
+
+    # ---------- plán ----------
+    # Každý zoom navyše je ŠTVORNÁSOBOK dlaždíc, takže rozdiel medzi z13
+    # a z15 nie je „o kúsok viac", ale šestnásťnásobok. Bez tohto výpisu to
+    # bolo vidieť až podľa toho, že job bežal hodinu a stránka sa nezmestila
+    # do rozpočtu – teda po celej práci.
+    plan = []
+    for z in range(args.minzoom, args.maxzoom + 1):
+        x0, x1, y0, y1 = tile_range(z, w, s, e, n)
+        plan.append((z, (x1 - x0 + 1) * (y1 - y0 + 1)))
+    print("Plán: " + ", ".join(f"z{z} {k} dl." for z, k in plan)
+          + f"  (spolu {sum(k for _, k in plan)} dlaždíc)"
+          + (f", strop {args.budget_mb:.0f} MB" if args.budget_mb else ""),
+          flush=True)
 
     for z in range(args.minzoom, args.maxzoom + 1):
         x0, x1, y0, y1 = tile_range(z, w, s, e, n)
+        # ---------- strop veľkosti ----------
+        # Odhad na ďalší zoom sa NEBERIE z konštanty, ale z toho, čo práve
+        # vyšlo o zoom nižšie: dlaždica z toho istého územia a modelu má na
+        # každom zoome podobnú veľkosť. Zoom, ktorý by sa nezmestil, sa preto
+        # ani nezačne počítať – inak by sa hodina práce vyhodila.
+        if args.budget_mb and total_tiles:
+            per_tile = total_bytes / total_tiles
+            want = (x1 - x0 + 1) * (y1 - y0 + 1) * per_tile
+            if (total_bytes + want) / 1048576 > args.budget_mb:
+                print(f"::warning::Výškové dlaždice končia na z{made}: z{z} by "
+                      f"pridal ~{want / 1048576:.0f} MB a rozpočet na "
+                      f"tieňovanie je {args.budget_mb:.0f} MB. Pre jemnejší "
+                      f"reliéf zmenši územie (input `area`, voľba "
+                      f"`crop_bbox`), alebo zdvihni `size_limit_mb` "
+                      f"či podiel BUDGET_TERRAIN_PCT.")
+                break
         size = 2 * ORIGIN / (2**z)
         nx, ny = x1 - x0 + 1, y1 - y0 + 1
 
@@ -184,9 +217,20 @@ def main():
                     zbytes += len(data)
                     total_tiles += 1
         total_bytes += zbytes
+        made = z
         print(f"z{z}: {nx}×{ny} dlaždíc, {zbytes / 1048576:.1f} MB", flush=True)
 
-    print(f"Spolu: {total_tiles} dlaždíc, {total_bytes / 1048576:.1f} MB")
+    if made < args.minzoom:
+        print("::error::Nevznikla ani jedna dlaždica tieňovania.",
+              file=sys.stderr)
+        return 1
+    # Skutočne vyrobený maxzoom, nie ten želaný. Píše ho ten, kto dlaždice
+    # naozaj vyrobil – meno assetu v sklade aj štýl si ho odtiaľto berú, takže
+    # sa nemá ako stať, že mapa pýta z15 a na Pages je z13.
+    with open(os.path.join(args.out, "maxzoom.txt"), "w") as f:
+        f.write(f"{made}\n")
+    print(f"Spolu: {total_tiles} dlaždíc, {total_bytes / 1048576:.1f} MB, "
+          f"maxzoom z{made}")
     return 0
 
 

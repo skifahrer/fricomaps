@@ -237,14 +237,98 @@ else
   MAJOR=$(( INTERVAL * 10 ))
   MID=$(( INTERVAL * 5 ))
   echo "Vrstevnice: interval ${INTERVAL} m z modelu $CONTOUR_DEM, zvýraznená každá ${MAJOR} m (major) a ${MID} m (mid)"
+
+  # ---------- zjednodušenie a zaoblenie ----------
+  # Presne tá istá dvojica ako pri skalách (viď ROCK_SIMPLIFY / ROCK_SMOOTH)
+  # a z toho istého dôvodu: vrstevnica je izolínia nad rastrom, čiže chodí
+  # po hranách buniek. Pri 1 m DEM je jeden schodík meter a pixel dlaždice
+  # má pri z16 1,57 m – takže tie schodíky sú v mape vidieť ako zúbky.
+  #
+  # PORADIE JE PODSTATNÉ: najprv sa zmažú schodíky (`-simplify`), až potom
+  # sa zaoblia rohy, ktoré po nich ostali. Opačne by Chaikin zaoblil každý
+  # schodík zvlášť, počet bodov by narástol a čiara by bola stále schodíková,
+  # len s oblými schodmi.
+  #
+  # Tolerancia je vo VRSTVE, teda v stupňoch (vrstevnice sú EPSG:4326).
+  # `-1` = štvrtina bunky DEM: zmaže schodíky, ale čiaru neposunie o viac,
+  # než je štvrtina toho, z čoho vznikla. `0` = vypnuté. Kladné číslo sa
+  # berie v METROCH a prepočíta sa na stupne na šírke tohto výrezu – metre
+  # sú to, v čom sa o teréne rozmýšľa, stupne to, v čom je uložený.
+  C_SIMPLIFY="${CONTOUR_SIMPLIFY:--1}"
+  # Vypíše dve čísla: toleranciu v stupňoch (tá ide do ogr2ogr) a tú istú
+  # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
+  # nepredstaví). Prepočet je na jednom mieste, nie dvakrát.
+  set +e
+  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" "$S" "$N" <<'PY'
+import json, math, subprocess, sys
+want, s, n = float(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3])
+# Dĺžka stupňa zemepisnej dĺžky v strede výrezu. Berie sa on, nie stupeň
+# šírky: u nás je kratší, takže tolerancia nikdy nevyjde väčšia, než sa
+# žiadalo, nech je svah orientovaný akokoľvek.
+m_per_deg = 111320 * math.cos(math.radians((s + n) / 2))
+if want == 0:
+    deg = 0.0
+elif want > 0:
+    deg = want / m_per_deg          # zadané v metroch
+else:
+    info = json.loads(subprocess.run(
+        ["gdalinfo", "-json", "work/clip.tif"],
+        capture_output=True, text=True, check=True).stdout)
+    gt = info["geoTransform"]
+    deg = min(abs(gt[1]), abs(gt[5])) / 4   # štvrtina bunky DEM
+print(f"{deg:.10f} {deg * m_per_deg:.2f}")
+PY
+)
+  SIMPL_RC=$?
+  set -e
+  SIMPL_ARGS=()
+  if [ "$SIMPL_RC" -ne 0 ] || [ -z "$SIMPL_OUT" ]; then
+    # Tolerancia sa nedá zistiť (napr. gdalinfo nad orezom zlyhal). Vrstevnice
+    # sú spočítané, tak sa kvôli kozmetike nezhadzuje beh – ale musí byť
+    # počuť, prečo ostali schodíkové.
+    echo "::warning::Tolerancia zjednodušenia vrstevníc sa nedá spočítať – idú bez neho (schodíky po hranách buniek ostanú)."
+  else
+    read -r SIMPL_DEG SIMPL_M <<< "$SIMPL_OUT"
+    # Nula sa píše `0.0000000000` (formát je pevný, `%.10f`) – porovnáva sa
+    # teda reťazec, nie číslo, a je to zámerné: bash desatinné čísla nevie.
+    if [ "$SIMPL_DEG" = "0.0000000000" ]; then
+      echo "Zjednodušenie vrstevníc: vypnuté (CONTOUR_SIMPLIFY=0)."
+    else
+      SIMPL_ARGS=(-simplify "$SIMPL_DEG")
+      echo "Zjednodušenie vrstevníc: ${SIMPL_DEG}° (~${SIMPL_M} m)"
+    fi
+  fi
+
   python3 workers/watch.py --label="triedenie vrstevníc" \
-    --watch-file=data/contours.gpkg \
-    -- ogr2ogr -f GPKG data/contours.gpkg work/raw.gpkg -nln contours \
+    --watch-file=work/level.gpkg \
+    -- ogr2ogr -f GPKG work/level.gpkg work/raw.gpkg -nln contours \
+    "${SIMPL_ARGS[@]}" \
     -dialect SQLITE -sql "SELECT *, CASE
          WHEN CAST(ele AS INTEGER) % $MAJOR = 0 THEN 'major'
          WHEN CAST(ele AS INTEGER) % $MID  = 0 THEN 'mid'
          ELSE 'minor' END AS level
        FROM contours WHERE ele IS NOT NULL"
+
+  # Zaoblenie. Jeden prechod, nie dva ako pri skalách: čiara nemá výplň,
+  # takže sa na nej roh vidí menej než na hrane plochy, a každý prechod
+  # zdvojnásobí počet bodov. Vrstevníc je rádovo viac než skál, takže je to
+  # aj rozdiel vo veľkosti dlaždíc. `contour_smooth=0` to vypne.
+  C_SMOOTH="${CONTOUR_SMOOTH:-1}"
+  case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=1 ;; esac
+  if [ "$C_SMOOTH" -gt 0 ]; then
+    echo "Zaoblenie vrstevníc: ${C_SMOOTH}× orezanie rohov (Chaikin)"
+    if ! python3 workers/smooth-shapes.py --in=work/level.gpkg \
+           --out=data/contours.gpkg --layer=contours --passes="$C_SMOOTH"; then
+      # Zaoblenie je kozmetika nad hotovými vrstevnicami – keby zlyhalo,
+      # nemá to zhodiť beh, ktorý ich už má spočítané. Ale MUSÍ to byť
+      # počuť, inak by sa „prečo sú zase zubaté" hľadalo v štýle.
+      echo "::warning::Zaoblenie vrstevníc zlyhalo – idú zubaté, tak ako predtým."
+      cp work/level.gpkg data/contours.gpkg
+    fi
+  else
+    echo "Zaoblenie vrstevníc: vypnuté (contour_smooth=0)."
+    cp work/level.gpkg data/contours.gpkg
+  fi
   ls -lh data/contours.gpkg
   printf '%s\t%s\t%s\t%s\n' "30" "Vrstevnice (gdal_contour)" "$(( $(date +%s) - T_CONT ))" \
     "interval ${INTERVAL} m z $CONTOUR_DEM, $(du -h data/contours.gpkg | cut -f1)" \

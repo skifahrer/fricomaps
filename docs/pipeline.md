@@ -219,6 +219,17 @@ a stačí, že ju nájde jeden; inak by presun kontrolu ticho umlčal.
   dlaždiciam). Podiely sú s rezervou
   nad namerané hodnoty (vrstevnice 187 MB = 21 %, terén 96 MB = 11 % z 900 MB)
   a `deploy` na konci aj tak overí, že súčet naozaj sedí.
+
+  Podiel ale musí platiť **v tom jobe, ktorý dáta vyrába** – inak sa o ňom
+  dozvieš až v kontrole pred nasadením, teda po celej práci. Dlaždice mapy
+  aj vrstevnice si preto samy znižujú maxzoom (`pmtiles_do_rozpoctu`)
+  a `build-terrain.py` počíta zoomy odspodu a ten, ktorý by rozpočet
+  prekročil, ani nezačne: odhad naň si berie z toho, čo práve vyšlo o zoom
+  nižšie (dlaždica toho istého územia a modelu má na každom zoome podobnú
+  veľkosť), takže tam nie je žiadna konštanta, ktorá by sa časom rozišla
+  s realitou. Pri tieňovaní to začalo mať váhu, keď `terrain_maxzoom`
+  prestal byť pevných 13: každý zoom navyše je **štvornásobok** dlaždíc,
+  čiže z13 → z15 je šestnásťnásobok.
 - **Meranie krokov.** Každý job si píše riadky do `steps-out/<job>.tsv`
   a odloží ich artefaktom; `deploy` ich zlepí a zoradí podľa **poradového
   čísla**, nie podľa času – joby bežia súbežne, takže čas by hovoril len
@@ -437,6 +448,16 @@ Pri rovnakom modeli sa druhé volanie `fetch-dem.sh` netrafí do siete vôbec.
 dlaždice na 5 m. Je to ten istý LiDAR; pri 1 m má jedna 1°×1° dlaždica ~48 GB
 a strop assetu je 2 GB, takže celý región v metri sa nemá kam uložiť.
 
+**Tieňovanie sa preto z `dmr5` robí vždy na 5 m** – beží na celý región, takže
+kľúč výrezu nedostane. To je v poriadku (5 m je stále štvornásobne jemnejšie
+než Sonny), ale dovtedy z toho nebolo nič vidieť: `terrain_maxzoom` bol pevných
+13 a pixel dlaždice má na z13 **12,5 m**. Model s 5 m mriežkou sa teda nemal
+ako prejaviť a tieňovanie z DMR 5.0 vyzeralo ako zo Sonnyho. Odvtedy je
+`terrain_maxzoom: auto`: najnižší zoom, na ktorom je pixel jemnejší než bunka
+modelu – Sonny (20 m) → z13, DMR 3.5 (10 m) → z14, DMR 5.0 (5 m) → z15.
+Vyberá sa v `parse-options.py`, teda na jednom mieste, lebo to isté číslo
+potrebuje kľúč cache, meno assetu v sklade aj štýl.
+
 Boli to dva zdroje, `dmr5` a `ugkk`. Rozdiel medzi nimi nebol v modeli, len
 v tom, ako je uložený – a jediné, čo z toho v praxi plynulo, bolo, že sa dalo
 zadať `ugkk` bez výrezu (a beh spadol na strážcovi) alebo `dmr5` na pohorie
@@ -486,7 +507,10 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   ├─ vrstevnice ─────────────────────────────────────────────
   │    gdalwarp       … oreže na bbox (voliteľne zjemní, viď nižšie)
   │    gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
-  │    ogr2ogr        … dopočíta atribút `level`
+  │    ogr2ogr        … dopočíta atribút `level`, `-simplify` zmaže
+  │                     schodíky po hranách buniek DEM
+  │    smooth-shapes.py … zaoblí rohy, čo po zjednodušení ostali ostré
+  │                     (Chaikin, 1 prechod)
   │
   ├─ skaly ──────────────────────────────────────────────────
   │    workers/slope-chunks.py
@@ -503,11 +527,15 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │      -explodecollections       … samostatné skaly
   │      filter najmenšej plochy   … + `class`, `slope`, `area`
   │      -simplify                 … preč so schodíkmi po hranách buniek
-  │      smooth-polygons.py        … zaoblenie rohov, čo po zjednodušení
-  │                                  ostali ostré (Chaikin, 2 prechody)
+  │      smooth-shapes.py          … zaoblenie rohov, čo po zjednodušení
+  │                                  ostali ostré (Chaikin, 2 prechody);
+  │                                  ten istý skript hladí aj vrstevnice
   │
   └─ tieňovanie a 3D ────────────────────────────────────────
-       workers/build-terrain.py … terrarium PNG dlaždice
+       workers/build-terrain.py … terrarium PNG dlaždice z modelu podľa
+                                 `shading_source` (aj `dmr5`, na celý región
+                                 teda jeho 5 m podoba), maxzoom `auto` podľa
+                                 mriežky modelu a stropu veľkosti
                                  → terrain/{z}/{x}/{y}.png
                                  → sklad `dem-terrain` (.tar.zst)
   │
@@ -596,6 +624,42 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
 - **`level`** rozdelí vrstevnice na `major` (po 100 m), `mid` (50 m) a
   `minor` (10 m). Vďaka tomu ich štýl vie zapínať postupne podľa zoomu a
   kresliť rôzne hrubo – inak by na malých mierkach splynuli do plochy.
+
+  A práve to je „zobrazovanie zjednodušene na malých mierkach": pod z12 je
+  v mape LEN `major`, od z12 pribudne `mid`, od z13 `minor`. `major` ide
+  pritom až do **z1** (schéma aj štýl) – tvar pohoria je čitateľný aj
+  z prehľadu a stojí to skoro nič, lebo Planetiler zjednodušuje geometriu na
+  každom zoome podľa veľkosti pixela a dlaždíc je tam rádovo menej (z1 je
+  JEDNA dlaždica na celý región, z10 ich je tisíc). Nižšie triedy sa nižšie
+  nepúšťajú – tam by to už bola tmavá šmuha.
+- **Zubatosť nerobí raster, robí ju zjednodušenie – rovnako ako pri skalách.**
+  Vrstevnica je izolínia nad rastrom, teda chodí po hranách buniek: pri 1 m
+  DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, takže tie
+  schodíky vidno. Postup je preto ten istý ako pri obryse skaly a v tomto
+  poradí:
+
+  1. `-simplify` s toleranciou **štvrtiny bunky DEM** (`CONTOUR_SIMPLIFY: -1`)
+     – zmaže schodíky, ale čiaru neposunie o viac než štvrtinu toho, z čoho
+     vznikla. `0` to vypne, kladné číslo je tolerancia v metroch (prepočíta
+     sa na stupne na šírke výrezu, lebo vrstva je v EPSG:4326).
+  2. **1× Chaikin** (`CONTOUR_SMOOTH: 1`, `workers/smooth-shapes.py`) na rohy,
+     ktoré po zjednodušení ostali ostré.
+
+  Opačné poradie nefunguje: Chaikin by zaoblil každý schodík zvlášť, bodov by
+  pribudlo a čiara by bola stále schodíková, len s oblými schodmi.
+
+  **Jeden prechod, nie dva ako pri skalách.** Na čiare bez výplne sa roh vidí
+  menej než na hrane plochy, každý prechod zdvojnásobí počet bodov a vrstevníc
+  je rádovo viac než skál – takže druhý prechod je hlavne veľkosť dlaždíc.
+  Konce otvorenej čiary sa **neorezávajú**: sú to konce, nie rohy, a keby sa
+  orezali, dva kusy tej istej vrstevnice by na hranici dlaždice prestali na
+  seba sadnúť. Uzavretá vrstevnica (vrchol, kotlina) sa pozná podľa toho, že
+  prvý bod je posledný, a ide cez prstencovú vetvu, kde je orezanie každého
+  rohu naopak správne.
+
+  `workers/contours-build.sh` je preto v otlačku `SCHEMA_HASH` (kľúč cache):
+  bez toho by sa dala zmeniť tolerancia a beh by vrátil z cache staré, zubaté
+  vrstevnice – zelený a tichý.
 - **Zjemnenie (`contour_smoothing`, default 0 = vypnuté).** DEM je v 1″
   (~30 m). Priemerovanie na hrubšiu mriežku (`gdalwarp -tr … -r average`)
   vyhladí šum a vrstevnice sú „krajšie", ale zároveň zje detail terénu.
@@ -662,7 +726,7 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   schodíky po hranách buniek, ale čiaru neposunie o viac než štvrtinu mriežky:
   bodov na obrys klesne 5,7× (423 763 → 74 395) a **počet plôch sa nezmení
   vôbec**. `0` to vypne.
-- **…a potom sa rohy zaoblia** (`ROCK_SMOOTH: 2`, `workers/smooth-polygons.py`).
+- **…a potom sa rohy zaoblia** (`ROCK_SMOOTH: 2`, `workers/smooth-shapes.py`).
   Zjednodušenie má vedľajší účinok, ktorý bolo vidieť pri max zoome: schodíky
   zmizli, ale to, čo po nich ostalo, sú **ostré rohy**. Zubatosť teda nerobil
   raster, ale práve to zjednodušenie. Namerané na jednom území (326 plôch,
@@ -871,12 +935,21 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   teda 4 m²) – menší útvar už nie je tvar terénu, ale rohy jedinej bunky.
   Presné čísla za konkrétny beh píše `rock-areas.py` do
   `contours-out/rock-stats.txt` a build ich vypíše v [súhrne](#súhrn-buildu).
-- **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z9**
-  (predtým z13) a štýl ich kreslí od z9, obrys od z11. Nižšie zoomy to
-  nezaťaží: Planetiler na nich zahadzuje prvky menšie než pixel, takže
-  z prehľadu ostanú len veľké steny a detaily pribúdajú s priblížením. Na
-  najvyššom zoome je ten filter zámerne vypnutý
+- **Skaly sú vidieť všade, kde sú.** Vrstva `rock` ide do dlaždíc od **z1**
+  (postupne z13 → z9 → z1) a štýl ich odtiaľ aj kreslí. Nižšie zoomy to
+  nezaťaží: Planetiler na nich zahadzuje prvky menšie než pixel a obrys si na
+  každom zoome zjednoduší podľa jeho veľkosti, takže z prehľadu ostane len
+  tvar veľkých stien – a dlaždíc je tam rádovo menej (z1 je JEDNA na celý
+  región, z10 ich je tisíc). Detaily pribúdajú s priblížením. Na najvyššom
+  zoome je ten filter zámerne vypnutý
   (`--min_feature_size_at_max_zoom=0`), aby neodpadli ani tie najmenšie.
+
+  **Zoom skál je jedno číslo na jednom mieste, a to je `themes.js`.** Typy máp
+  (`map-types.js`) mali pravidlo `{ ROCKS, minzoom: 8 }`, ktoré vzniklo ako
+  „terén nech je vidieť skôr než na základnej mape". Po znížení štýlu na z1
+  by to isté pravidlo zoom **zdvíhalo** – pravidlo, ktoré kedysi niečo
+  povoľovalo, by ticho zakazovalo. Preto je preč a typy máp o skalách hovoria
+  už len tam, kde ich naozaj nechcú (cestná mapa: `visible: false`).
 - **Prečo `gdal_contour -p`, a nie polygonizácia rastra.** Polygonizácia by
   obkreslila pixely, teda schodíky; izolínia sklonu má body interpolované
   medzi bunkami, takže je okraj hladký a bodov výrazne menej.
@@ -1994,7 +2067,7 @@ job „Skaly z tieňovania" (strop 1 h)
 ───────────────────────────────────────────────────────────────────────
 zlepenie blokov do jedného prúdu
    ▼
-filter plôch (diery sa nekreslia) → -simplify → smooth-polygons.py
+filter plôch (diery sa nekreslia) → -simplify → smooth-shapes.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
    ├─► sklad `dem-rocks-img`     pre Build map (výber `rock_source: tienovanie`)

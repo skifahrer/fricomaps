@@ -39,15 +39,18 @@ sources:
     projection: EPSG:4326
 
 layers:
-  # min_zoom 9, nie 13: skaly majú byť vidieť všade, kde sú – veľká stena je
-  # čitateľná aj z prehľadového zoomu. Malé plochy sa nižšími zoomami netreba
-  # báť, Planetiler zahodí všetko pod pixel sám (min_feature_size platí na
-  # každom zoome okrem najvyššieho, kde ho zámerne vypíname).
+  # min_zoom 1, nie 9 a už vôbec nie 13: skaly majú byť vidieť všade, kde sú –
+  # veľká stena je čitateľná aj z prehľadového zoomu a na malých mierkach je
+  # sivá škvrna v hrebeni presne tá informácia, kvôli ktorej sa mapa otvára.
+  # Malé plochy sa nižšími zoomami netreba báť, Planetiler zahodí všetko pod
+  # pixel sám (min_feature_size platí na každom zoome okrem najvyššieho, kde
+  # ho zámerne vypíname) a obrys si na každom zoome zjednoduší podľa veľkosti
+  # pixela. Zoomy 1–8 sú preto pár dlaždíc s hrubým obrysom, nie kópia z16.
   - id: rock
     features:
       - source: rock
         geometry: polygon
-        min_zoom: 9
+        min_zoom: 1
         attributes:
           - key: class
           # sklon v stupňoch – len pri skalách z DEM

@@ -31,10 +31,19 @@ sources:
 layers:
   - id: contour
     features:
-      # hlavné vrstevnice (100 m) – viditeľné už z diaľky
+      # Hlavné vrstevnice (100 m) – viditeľné už z diaľky, a to až od z1.
+      #
+      # PREČO AŽ OD z1, KEĎ SA TO NA PREHĽADE NEDÁ ČÍTAŤ: nedá sa čítať
+      # KAŽDÁ, ale tvar pohoria áno – a stojí to skoro nič. Planetiler
+      # zjednodušuje geometriu na každom zoome zvlášť podľa veľkosti pixela,
+      # takže čím nižší zoom, tým menej bodov na čiaru, a dlaždíc je tam
+      # rádovo menej (z1 je JEDNA dlaždica na celý región, z10 ich je tisíc).
+      # Zoomy 1–9 sú preto v súbore stotinou toho, čo zaberá jeden detailný.
+      # Nižšie triedy (`mid`, `minor`) sa nižšie NEPÚŠŤAJÚ – tam by to už
+      # skutočne bola len tmavá šmuha, viď ich `min_zoom`.
       - source: contours
         geometry: line
-        min_zoom: 10
+        min_zoom: 1
         include_when:
           level: major
         attributes:

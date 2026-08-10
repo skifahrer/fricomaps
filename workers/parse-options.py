@@ -35,6 +35,7 @@ Použitie:
 """
 import argparse
 import json
+import math
 import os
 import shlex
 import sys
@@ -79,7 +80,14 @@ DEFAULTS = {
     "rock_res": ("auto", "mriežka na obrys skál v metroch, alebo `auto`"),
     "contour_smoothing": ("0", "zjemnenie DEM v oblúkových sekundách"),
     "trails_maxzoom": ("14", "max zoom dlaždíc so značenými trasami"),
-    "terrain_maxzoom": ("13", "max zoom výškových dlaždíc (jemnejšie 20 m DEM neunesie)"),
+    # `auto` = podľa mriežky vybraného modelu: najnižší zoom, na ktorom je
+    # pixel dlaždice jemnejší než bunka modelu. Sonny (20 m) → z13 (to bola
+    # doterajšia pevná hodnota), DMR 3.5 (10 m) → z14, DMR 5.0 (5 m) → z15.
+    # Pevná trinástka znamenala, že si síce vyberieš DMR 5.0, ale tieňovanie
+    # z neho vyzerá ako zo Sonnyho – pixel z13 má 12,5 m, takže sa 5 m model
+    # nemal ako prejaviť. Každý zoom navyše je ale ŠTVORNÁSOBOK dlaždíc, tak
+    # `terrain-build.sh` výsledok ešte zreže na rozpočet stránky.
+    "terrain_maxzoom": ("auto", "max zoom výškových dlaždíc (auto = podľa mriežky modelu)"),
     # Značené trasy sú jediná vrstva bez výberu zdroja – berú sa z toho istého
     # PBF ako mapa, takže niet z čoho vyberať. Zapínač je preto tu a nie
     # štvrtý výber vo formulári, na ktorý už aj tak nie je miesto.
@@ -156,11 +164,38 @@ REBUILD = {
 
 
 def dem_sources(path=None):
-    """Zdroje z workers/dem-sources.json → {kľúč: [pre ktoré vrstvy]}."""
+    """Zdroje z workers/dem-sources.json → {kľúč: celý zápis zdroja}.
+
+    Vracia sa celý zápis, nie len `for`: okrem toho, kde sa zdroj ponúka,
+    z neho treba aj `cell_m` (mriežka modelu) na `terrain_maxzoom: auto`.
+    Druhé čítanie toho istého súboru vedľa tohto by bolo presne to, čo sa
+    raz rozíde.
+    """
     path = path or os.path.join(_HERE, "dem-sources.json")
     with open(path) as f:
         raw = json.load(f)
-    return {k: v.get("for", []) for k, v in raw.items() if not k.startswith("_")}
+    return {k: v for k, v in raw.items() if not k.startswith("_")}
+
+
+# Rozlíšenie dlaždice v metroch na pixel na 49° s. š. (stred Slovenska).
+# 156543,03 m/px je zoom 0 na rovníku, `cos(49°)` ho skráti na našu šírku
+# a 2^z na daný zoom. Číslo je tu raz, nech sa výber zoomu a to, čo o ňom
+# hovorí log, nemôžu rozísť.
+def tile_m_per_px(z):
+    return 156543.03 * math.cos(math.radians(49.0)) / (2 ** z)
+
+
+def terrain_zoom_for(cell_m, lo=8, hi=16):
+    """Najnižší zoom, na ktorom je pixel dlaždice jemnejší než bunka modelu.
+
+    Vyššie už dlaždice nesú detail, ktorý v modeli nie je – len štvornásobok
+    súborov na každý ďalší zoom. Sonny (20 m) → z13, DMR 3.5 (10 m) → z14,
+    DMR 5.0 (5 m) → z15.
+    """
+    for z in range(lo, hi + 1):
+        if tile_m_per_px(z) <= cell_m:
+            return z
+    return hi
 
 
 def pick_source(what, value, allowed):
@@ -253,19 +288,40 @@ def main():
     srcs = dem_sources(args.dem_sources or None)
     contour_src = pick_source(
         "vrstevnice (contour_source)", args.contour_source,
-        [NONE] + [k for k, f in srcs.items() if "contours" in f])
+        [NONE] + [k for k, v in srcs.items() if "contours" in v.get("for", [])])
     rock_src = pick_source(
         "skaly (rock_source)", args.rock_source,
-        [NONE, ROCK_FROM_SHADING] + [k for k, f in srcs.items() if "rocks" in f])
+        [NONE, ROCK_FROM_SHADING]
+        + [k for k, v in srcs.items() if "rocks" in v.get("for", [])])
     shading_src = pick_source(
         "tieňovanie (shading_source)", args.shading_source,
-        [NONE] + [k for k, f in srcs.items() if "shading" in f])
+        [NONE] + [k for k, v in srcs.items() if "shading" in v.get("for", [])])
     if contour_src is None or rock_src is None or shading_src is None:
         return 1
 
     values["contour_source"] = contour_src
     values["rock_source"] = rock_src
     values["shading_source"] = shading_src
+
+    # `terrain_maxzoom: auto` sa rozhodne TU a nikde inde. Vie sa to len tu:
+    # závisí to od vybraného modelu, a číslo potom potrebuje kľúč cache, meno
+    # assetu v sklade aj atribúcia v štýle. Keby si ho každé z tých miest
+    # počítalo samo, raz by sa rozišli a beh by hľadal v sklade dlaždice pod
+    # menom, pod ktorým ich druhá strana neuložila.
+    tz = values["terrain_maxzoom"].strip().lower()
+    if tz == "auto":
+        cell = float(srcs.get(shading_src, {}).get("cell_m") or 20)
+        values["terrain_maxzoom"] = str(terrain_zoom_for(cell))
+        if shading_src != NONE:
+            print(f"Výškové dlaždice: model {shading_src} má mriežku "
+                  f"{cell:g} m → maxzoom "
+                  f"z{values['terrain_maxzoom']} (pixel "
+                  f"{tile_m_per_px(int(values['terrain_maxzoom'])):.1f} m). "
+                  f"Pevný zoom sa dá vynútiť voľbou `terrain_maxzoom=13`.")
+    elif not tz.isdigit():
+        print(f"::error::Voľba „terrain_maxzoom“ musí byť číslo alebo "
+              f"`auto`, nie „{values['terrain_maxzoom']}“.", file=sys.stderr)
+        return 1
     # Zdroj skál, ktorý je výškový model – teda ten, z ktorého sa má počítať
     # sklon. Pri `tienovanie` a `ziadne` je prázdny a nikto nesmie sťahovať DEM.
     values["rock_dem"] = rock_src if rock_src in srcs else ""

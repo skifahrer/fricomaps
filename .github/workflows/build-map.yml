@@ -202,6 +202,24 @@ env:
   DMR5_STORE: dem-dmr5
   # Výrez DMR 5.0 v plnom 1 m rozlíšení, jeden COG na pohorie.
   UGKK_STORE: dem-ugkk
+  # Vrstevnice: rovnaká dvojica ako pri skalách nižšie a z rovnakého dôvodu.
+  # Vrstevnica je izolínia nad rastrom, takže chodí po hranách buniek – pri
+  # 1 m DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, čiže
+  # tie schodíky sú v mape vidieť ako zúbky na čiare.
+  #
+  # Najprv sa schodíky zmažú (`-simplify`), až potom sa zaoblia rohy, čo po
+  # nich ostali. Opačné poradie by zaoblilo každý schodík zvlášť: viac bodov
+  # a čiara stále schodíková, len s oblými schodmi.
+  #
+  # -1 = štvrtina bunky DEM (tolerancia sa počíta z orezaného rastra, nie
+  # z konštanty – model má raz 1 m a raz 20 m). 0 = vypnuté, kladné číslo
+  # sa berie v metroch.
+  CONTOUR_SIMPLIFY: "-1"
+  # Koľkokrát zaobliť (Chaikin). JEDEN prechod, nie dva ako pri skalách:
+  # na čiare bez výplne sa roh vidí menej než na hrane plochy, každý prechod
+  # zdvojnásobí počet bodov a vrstevníc je rádovo viac než skál – takže je
+  # to aj rozdiel vo veľkosti dlaždíc. 0 = vypnuté.
+  CONTOUR_SMOOTH: "1"
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
@@ -238,7 +256,7 @@ env:
   # schodíky, ale to, čo po ňom ostane, sú ostré rohy – priemerný lom medzi
   # segmentmi vyskočí zo 4,6° na 28,5° a presne tak vyzerá skala pri max
   # zoome zubatá. Dva prechody dajú 7,7° pri 43 % menej bodov, než má
-  # nezjednodušený originál. Podrobnosti a čísla vo workers/smooth-polygons.py.
+  # nezjednodušený originál. Podrobnosti a čísla vo workers/smooth-shapes.py.
   ROCK_SMOOTH: "2"
   # Verzia algoritmu v mene uloženého assetu. Zmena algoritmu = iné skaly,
   # takže sa nesmú použiť tie staré uložené. v3 = zaoblený obrys + auto mriežka.
@@ -886,7 +904,11 @@ jobs:
           OPT_SHADING_SOURCE: ${{ needs.plan.outputs.opt_shading_source }}
           OPT_TERRAIN_MAXZOOM: ${{ needs.plan.outputs.opt_terrain_maxzoom }}
           ROCK_SLOPE: ${{ inputs.rock_slope }}
-          SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-polygons.py') }}
+          # `contours-build.sh` je v otlačku tiež: je to on, kto vrstevnice
+          # zjednodušuje a zaobľuje, takže jeho zmena mení obsah dlaždíc.
+          # Kým v ňom nebol, dala sa zmeniť tolerancia a beh vrátil z cache
+          # staré, zubaté vrstevnice – zelený a tichý (pravidlo 8).
+          SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-shapes.py', 'workers/contours-build.sh') }}
         run: workers/cache-keys.sh
 
       # Kým starý záznam existuje, nový sa pod ten istý kľúč neuloží (na Drive
@@ -1394,6 +1416,10 @@ jobs:
           SHADING_SOURCE: ${{ needs.plan.outputs.opt_shading_source }}
           TERRAIN_MAXZOOM: ${{ needs.plan.outputs.opt_terrain_maxzoom }}
           TERRAIN_REBUILD: ${{ needs.plan.outputs.opt_terrain_rebuild }}
+          # Rozpočet na tieňovanie – aby sa strop veľkosti riešil pri
+          # počítaní dlaždíc a nie až v kontrole pred nasadením, po hodine
+          # práce. Podiel (BUDGET_TERRAIN_PCT) je v `env:` workflowu.
+          SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           GH_TOKEN: ${{ github.token }}
           OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
         run: workers/terrain-build.sh
