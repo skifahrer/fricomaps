@@ -49,7 +49,10 @@ AREA_KEY="$AREA_KEY_IN"
 AREA_NAME="$AREA_NAME_IN"
 AREA_BBOX="$AREA_BBOX_IN"
 if [ "$AREA_KEY" != "cely" ]; then
-  echo "::warning::Vrstevnice AJ skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX, ${AREA_KM2} km²). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región nechaj input „area“ prázdny."
+  # „Nechaj input `area` prázdny" tu stálo dovtedy, kým bol `area` textové
+  # pole. Dnes je to `choice` a prázdna hodnota sa v ňom vybrať NEDÁ, takže
+  # rada viedla do slepej uličky – celý región je voľba `cely_region`.
+  echo "::warning::Vrstevnice aj skaly sa počítajú LEN na výreze „$AREA_NAME“ ($AREA_BBOX, ${AREA_KM2} km²). Vo zvyšku regiónu nebude v mape ani jedno – toto je beh na testovanie, nie na nasadenie. Pre celý región zvoľ v inpute „area“ hodnotu „cely_region“."
   # Vrstevnice sa ďalej trasujú z výrezu, nie z celého regiónu.
   IFS=, read -r W S E N <<< "$AREA_BBOX"
 fi
@@ -745,6 +748,17 @@ else
   echo "off" > contours-out/rock-source.txt
 fi
 ls -lh contours-out/
+# Do merania ide LEN tá polovica, ktorú tento job počítal. Kým sa tu `du`
+# púšťalo na oba súbory, job „Skaly" meral aj `contours.pmtiles`, ktorý
+# zámerne nevyrobil – v súhrne z toho bolo „vrstevnice z14 ()“, teda riadok
+# o vrstve, ktorá v tom jobe vôbec nebežala.
+MERANIE=""
+if [ "$ONLY" != 'rocks' ]; then
+  MERANIE="vrstevnice z$CZ ($(du -h contours-out/contours.pmtiles | cut -f1))"
+fi
+if [ "$ONLY" != 'contours' ]; then
+  [ -n "$MERANIE" ] && MERANIE="$MERANIE, "
+  MERANIE="${MERANIE}skaly z$RZ ($(du -h contours-out/rocks.pmtiles | cut -f1))"
+fi
 printf '%s\t%s\t%s\t%s\n' "50" "Vrstevnice a skaly → PMTiles" "$(( $(date +%s) - T_PM ))" \
-  "vrstevnice z$CZ ($(du -h contours-out/contours.pmtiles | cut -f1)), skaly z$RZ ($(du -h contours-out/rocks.pmtiles | cut -f1))" \
-  >> steps-out/contours.tsv
+  "$MERANIE" >> steps-out/contours.tsv

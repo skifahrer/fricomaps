@@ -84,7 +84,7 @@ jobs:
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Lacná otázka na začiatok: vie tento beh na Drive vôbec zapisovať?
       # Odpoveď sa inak dozvieme až tým, že mazanie vráti 403.

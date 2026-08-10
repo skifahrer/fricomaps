@@ -274,7 +274,7 @@ jobs:
       zoom: ${{ steps.dl.outputs.zoom }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: python3 -m pip install --quiet numpy pillow
@@ -386,7 +386,7 @@ jobs:
     timeout-minutes: 180
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: |
@@ -483,7 +483,7 @@ jobs:
       count: ${{ steps.rocks.outputs.count }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: |

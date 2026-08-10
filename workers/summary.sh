@@ -157,8 +157,8 @@ elif [ -s steps-out/rock-stats.txt ]; then
       echo
       echo "> ⚠️ **Vrstevnice aj skaly sú len na výreze „${area_name}“.**"
       echo "> Vo zvyšku regiónu nebude v mape ani jedno – toto je beh"
-      echo "> na testovanie, nie na nasadenie. Pre celý región nechaj"
-      echo "> input \`area\` prázdny."
+      echo "> na testovanie, nie na nasadenie. Pre celý región zvoľ"
+      echo "> v inpute \`area\` hodnotu \`cely_region\`."
     fi
     echo
     echo "> Mriežka ${grid_m:-?} m hovorí, ako jemne je obrys odkrokovaný;"

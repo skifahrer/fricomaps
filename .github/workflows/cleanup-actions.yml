@@ -70,7 +70,7 @@ jobs:
       # Checkout je tu kvôli jedinej veci: skript sa pozerá, či súbor
       # workflowu ešte existuje. Bez neho by mu všetky vyšli ako zrušené.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Upratať
         env:

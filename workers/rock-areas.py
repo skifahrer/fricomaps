@@ -281,7 +281,11 @@ def pick_vec_res(res, floor=VEC_FLOOR_M):
 
 
 def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
-    """Najjemnejšia mriežka, ktorá sa ešte zmestí do rozpočtu času.
+    """Najjemnejšia mriežka, ktorá má ešte zmysel (a zmestí sa do rozpočtu).
+
+    Rozpočet je predvolene ŽIADNY (`budget_min=0`), takže rozhodujú len
+    dva stropy zdola nižšie. Kladné číslo z neho spraví aj strop času –
+    vtedy sa z rebríka vyberie prvá mriežka, ktorá sa doň zmestí.
 
     „Čo najpodrobnejšie" nie je jedno číslo: pre jedno pohorie sa zmestí
     polmetrová mriežka, pre celý kraj ani dvojmetrová. Namiesto toho, aby
@@ -323,6 +327,10 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
 
     print("── Výber mriežky (rock_res=auto) ────────────────────")
     print(f"  plocha územia   {area_m2/1e6:.0f} km²")
+    print("  rozpočet        " + ("bez stropu – berie sa najjemnejšia, "
+                                  "ktorá má zmysel"
+                                  if budget_s == float("inf")
+                                  else f"{budget_min:g} min"))
     if dem_cell_m:
         print(f"  bunka DEM       {dem_cell_m:.0f} m → jemnejšie než "
               f"{floor:g} m nemá zmysel")
@@ -344,9 +352,13 @@ def pick_res(x0, y0, x1, y1, chunk_cells, bbox, budget_min, dem_cell_m):
         s_vec = cells / CONTOUR_SRC_CELLS_PER_S
         est = s_slope + s_vec
         fits = est <= budget_s
+        # Bez rozpočtu sa nič „nezmestí ani nezmestí" – vtedy je stĺpec len
+        # odhad času, nie súd nad ním.
+        znak = "" if budget_s == float("inf") else (
+            "  ✓" if fits else "  × nad rozpočet")
         print(f"  {res:>4g} m  {cells/1e9:5.2f} mld.  sklon ~{hms(s_slope)}"
               f"  + vektory ~{hms(s_vec)} (trasuje sa na {vec:g} m)"
-              f"  = ~{hms(est)}  {'✓' if fits else '× nad rozpočet'}")
+              f"  = ~{hms(est)}{znak}")
         if fits and chosen is None:
             chosen = res
     if chosen is None:
@@ -463,7 +475,9 @@ def main():
                          "0 = vypnuté, 2 = odporúčané")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
-    ap.add_argument("--budget-min", type=float, default=30.0,
+    # 0 = bez rozpočtu, a to je predvolené: „koľko som ochotný čakať" je
+    # voľba behu (`rock_res` vo formulári), nie konštanta pre všetkých.
+    ap.add_argument("--budget-min", type=float, default=0.0,
                     help="koľko minút MÁ výpočet trvať: podľa toho sa vyberá "
                          "mriežka (`--res=auto`) a nad tým sa povie, čo "
                          "zmenšiť – výpočet to ale NEZASTAVÍ (0 = neriešiť)")

@@ -85,7 +85,7 @@ jobs:
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # PRVÝ BEH SKONČÍ TU. Odkaz sa skladá z `client_id` v secrete, aby sa
       # nič neprepisovalo ručne.

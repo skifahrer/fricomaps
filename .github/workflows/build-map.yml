@@ -307,27 +307,27 @@ env:
   # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
   # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
-  # Koľko minút MAJÚ skaly trvať: podľa toho vyberá `rock_res: auto` mriežku
-  # a nad tým build v prvých sekundách povie, čo zmenšiť.
+  # Koľko minút MAJÚ skaly trvať. `0` = NEOBMEDZENE, a to je predvolené.
   #
-  # ZASTAVIŤ TO UŽ NEZASTAVÍ – ani pred spustením, ani počas neho. Vektorizácia
-  # je jeden nedeliteľný priechod nad celou mozaikou, takže zabitý
+  # Zastaviť to nezastavovalo už predtým – ani pred spustením, ani počas neho.
+  # Vektorizácia je jeden nedeliteľný priechod nad celou mozaikou, takže zabitý
   # `gdal_contour` nenechá ani neúplný výsledok: zastavenie znamenalo presne to
   # isté ako timeout jobu, len skôr, a k tomu bez šance, že by beh dobehol.
-  # Strop, ktorý ostal, je timeout jobu (`rocks`, 180 min) a strop pamäte.
+  # Ostávalo z toho jediné: `rock_res: auto` podľa tohto čísla vyberal mriežku.
   #
-  # BOLO TO 100 A NIKDY TO NEZNAMENALO STO MINÚT. Odhad, proti ktorému sa to
-  # porovnávalo, bol 20× optimistický, takže „100" v skutočnosti prepúšťalo
-  # rádovo tridsaťhodinové zadania. Odkedy je odhad meraný
-  # (`CONTOUR_SRC_CELLS_PER_S`), znamená to číslo presne to, čo je na ňom
-  # napísané – a stotinúcová práca na skalách je viac, než na čo sa čaká: behy
-  # 31357217326 a 31360120952 zrušil človek po 22 a 30 minútach.
+  # A PRÁVE TO BOLO ZLE. „Koľko som ochotný čakať" je odpoveď, ktorú číslo
+  # v env nepozná – kto spúšťa build na Vysoké Tatry, chce skaly z DMR 5.0
+  # v tom rozlíšení, aké model má, nie hrubšie preto, že sa nezmestili do
+  # tridsiatich minút. Pri `30` vychádzal pre Vysoké Tatry sklad na 2 m
+  # (~24 min) a 1 m sa vôbec neponúkol (1:38), hoci job má 180 minút a v pohode
+  # by dobehol. Odteraz `auto` berie najjemnejšiu mriežku, ktorá má zmysel –
+  # teda desatinu bunky zdrojového DEM, najviac 1 m (viď `pick_res`).
   #
-  # 30 minút znamená pre Vysoké Tatry sklad na 2 m (~24 min); na 1 m by to bolo
-  # 1:38 a auto ho preto neponúkne. Kto chce 1 m, zadá `rock_res=1` alebo si
-  # toto číslo zdvihne – je to voľba „koľko som ochotný čakať", nie technický
-  # strop. Pri `rock_res` natvrdo je to už len odhad a varovanie.
-  ROCK_BUDGET_MIN: "30"
+  # Kto sa ponáhľa, zadá mriežku natvrdo (`rock_res=2`); to je tá istá voľba,
+  # len na správnom mieste – vo formulári behu, nie v konštante pre všetkých.
+  # Stropy, ktoré ostali, sú timeout jobu (`rocks`, 180 min) a strop pamäte
+  # (`ROCK_MAX_RSS_GB`); nad kladné číslo tu sa vypíše odhad a varovanie.
+  ROCK_BUDGET_MIN: "0"
   ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
   # Ako často má byť počuť, že sa počíta. Percentá idú nezávisle od toho, po
   # 2,5 % (`workers/watch.py`), tep k nim dopĺňa pamäť, CPU, disk a rast výstupu.
@@ -390,7 +390,7 @@ jobs:
       demkey_terrain: ${{ steps.check.outputs.demkey_terrain }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Rozhodovanie je vo `workers/check-dem.sh`: build-map.yml je blízko
       # k stropu, nad ktorým ho GitHub neprijme, a hlavne – to isté
@@ -656,7 +656,7 @@ jobs:
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Na stránke má byť MAPA, nie README – a to je vlastnosť jedného
       # nastavenia repozitára: `build_type`.
@@ -862,7 +862,7 @@ jobs:
 
       - name: Odlož obrázok testovacieho výrezu
         if: ${{ always() && hashFiles('_site/kde-to-je.png') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-plan
           path: _site
@@ -880,7 +880,7 @@ jobs:
       # PBF potrebuje už len job s dlaždicami. Ide artefaktom, nie cache:
       # v rámci behu je to isté, cache by sa mohla minúť s iným behom.
       - name: Odlož PBF pre job s dlaždicami
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pbf
           path: data/region.osm.pbf
@@ -889,7 +889,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-plan
           path: steps-out
@@ -921,7 +921,7 @@ jobs:
       slope: ${{ steps.keys.outputs.slope }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Kľúč potrebuje restore, save aj mazanie pri pregenerovaní. Keby bol
       # napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho
@@ -1007,7 +1007,7 @@ jobs:
       size_mb: ${{ steps.contours.outputs.size_mb }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
       # nevidí, takže by sa artefakt nikdy neodložil.
       - name: Priprav priečinok na meranie
@@ -1015,7 +1015,7 @@ jobs:
 
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -1172,6 +1172,7 @@ jobs:
         id: contours
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
         env:
+          ONLY: contours
           CACHE_HIT: ${{ steps.contours-cache.outputs.cache-hit }}
           OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
           OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
@@ -1198,7 +1199,7 @@ jobs:
       # aj .png sú už komprimované, balenie by len ukradlo minúty.
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-contours
           path: _site
@@ -1214,7 +1215,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-contours
           path: steps-out
@@ -1246,12 +1247,12 @@ jobs:
       size_mb: ${{ steps.contours.outputs.size_mb }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Priprav priečinok na meranie
         run: mkdir -p steps-out
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -1362,6 +1363,7 @@ jobs:
         id: contours
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
         env:
+          ONLY: rocks
           CACHE_HIT: ${{ steps.contours-cache.outputs.cache-hit }}
           OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
           OPT_CONTOUR_MAXZOOM: ${{ needs.plan.outputs.opt_contour_maxzoom }}
@@ -1385,7 +1387,7 @@ jobs:
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-rocks
           path: _site
@@ -1399,7 +1401,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-rocks
           path: steps-out
@@ -1421,7 +1423,7 @@ jobs:
       dem_source: ${{ steps.terrain.outputs.dem_source }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
       # nevidí, takže by sa artefakt nikdy neodložil.
       - name: Priprav priečinok na meranie
@@ -1497,7 +1499,7 @@ jobs:
       # aj .png sú už komprimované, balenie by len ukradlo minúty.
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-terrain
           path: _site
@@ -1507,7 +1509,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-terrain
           path: steps-out
@@ -1537,20 +1539,20 @@ jobs:
       size_mb: ${{ steps.trails.outputs.size_mb }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
       # nevidí, takže by sa artefakt nikdy neodložil.
       - name: Priprav priečinok na meranie
         run: mkdir -p steps-out
 
       - name: Stiahni PBF z prípravy
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pbf
           path: data
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -1594,7 +1596,7 @@ jobs:
       # je už komprimované, balenie by len ukradlo minúty.
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-trails
           path: _site
@@ -1604,7 +1606,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-trails
           path: steps-out
@@ -1629,18 +1631,18 @@ jobs:
       size_mb: ${{ steps.features.outputs.size_mb }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Priprav priečinok na meranie
         run: mkdir -p steps-out
 
       - name: Stiahni PBF z prípravy
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pbf
           path: data
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -1673,7 +1675,7 @@ jobs:
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-features
           path: _site
@@ -1683,7 +1685,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-features
           path: steps-out
@@ -1704,21 +1706,21 @@ jobs:
       size_mb: ${{ steps.tiles.outputs.size_mb }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
       # nevidí, takže by sa artefakt nikdy neodložil.
       - name: Priprav priečinok na meranie
         run: mkdir -p steps-out
 
       - name: Stiahni PBF z prípravy
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: pbf
           path: data
 
 
       - name: Setup Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -1773,7 +1775,7 @@ jobs:
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-tiles
           path: _site
@@ -1783,7 +1785,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-tiles
           path: steps-out
@@ -1801,7 +1803,7 @@ jobs:
       available: ${{ steps.sprite.outputs.available }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Meranie krokov musí byť v pracovnom priečinku – `hashFiles` inam
       # nevidí, takže by sa artefakt nikdy neodložil.
       - name: Priprav priečinok na meranie
@@ -1841,7 +1843,7 @@ jobs:
       # aj .png sú už komprimované, balenie by len ukradlo minúty.
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: site-assets
           path: _site
@@ -1851,7 +1853,7 @@ jobs:
 
       - name: Odlož meranie krokov
         if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: steps-assets
           path: steps-out
@@ -1879,13 +1881,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       # Každý job odložil svoj kus `_site` (dlaždice, vrstevnice, terén,
       # ikonky). `merge-multiple` ich rozbalí do jedného stromu presne tam,
       # odkiaľ pochádzali. Vzor `site-*`, nie mená: keď je nejaký job vypnutý
       # alebo spadol, jeho artefakt jednoducho nie je a nič sa nedeje.
       - name: Pozbieraj kusy stránky
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: site-*
           path: _site
@@ -1893,7 +1895,7 @@ jobs:
 
       - name: Stiahni meranie krokov od ostatných jobov
         if: ${{ always() }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: steps-*
           path: steps-out
@@ -1909,7 +1911,7 @@ jobs:
 
       - name: Setup Pages
         id: pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@v6
 
       - name: Vygeneruj statické style.json (web + iOS)
         run: |
@@ -1985,13 +1987,13 @@ jobs:
           LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/check-site.sh
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
       - name: Deploy na GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
 
       - name: Smoke test nasadenej mapy
         env:
