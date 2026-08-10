@@ -118,9 +118,13 @@ export const DEFAULT_DEM_SOURCE = "sonny";
  * TERÉNNA TROJICA – odkiaľ sa berú `background`, `rock` / `rockArea`
  * a `contour*`. Sú to farby papierovej horskej mapy, nie ozdoba:
  *
- *   podklad     #d8d5ca   svetlo béžovosivá – základná farba horského terénu
- *   skaly a suť #8a8578   tmavšia sivohnedá – skalnaté partie, sutiny
- *   vrstevnice  tenké sivé línie s popiskom výšky
+ *   podklad     #dedcd1   svetlo béžovosivá s jemným zeleným nádychom
+ *   skaly a suť #9c9286   teplá stredná sivohnedá – skalnaté partie, sutiny
+ *   vrstevnice  #8b8676   tenké olivovosivé línie s popiskom výšky
+ *
+ * Nie sú to neutrálne sivé: v horskej mape má celá trojica ten istý teplý
+ * zemitý nádych (odtieň okolo 45°, sýtosť do 10 %). Neutrálna sivá vedľa
+ * béžového podkladu vyzerá domodra a mapa z toho vyjde studená.
  *
  * KAŽDÁ TÉMA MÁ SVOJ ODTIEŇ, LEN VEĽMI JEMNE INÝ. Nie sú to štyri kópie
  * jednej hodnoty: „Svetlá" je tá neutrálna, „Outdoor" o odtieň teplejšia
@@ -138,7 +142,7 @@ export const DEFAULT_DEM_SOURCE = "sonny";
 export const THEMES = {
   svetla: {
     label: "Svetlá",
-    background: "#d9d6cc",
+    background: "#dedcd1",
     water: "#a4c8e8",
     waterOutline: "#88b0d8",
     river: "#a4c8e8",
@@ -149,7 +153,7 @@ export const THEMES = {
     sand: "#f0e6c8",
     ice: "#eef6fa",
     wetland: "#d6e3d0",
-    rock: "#807b6d",
+    rock: "#968a7b",
     residential: "#eae6e1",
     industrial: "#e4dce8",
     cemetery: "#d3e0d0",
@@ -206,10 +210,10 @@ export const THEMES = {
     skiPoi: "#0f7ea0",
     servicePoi: "#3a6ea5",
     winterSports: "#e0eef6",
-    contour: "#9c988c",
-    contourMajor: "#827d70",
-    contourText: "#6e6a5d",
-    rockArea: "#8b8679",
+    contour: "#8b8676",
+    contourMajor: "#77725f",
+    contourText: "#6a6555",
+    rockArea: "#9c9286",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -257,7 +261,7 @@ export const THEMES = {
   },
   tmava: {
     label: "Tmavá",
-    background: "#1a1916",
+    background: "#1b1a16",
     water: "#16213e",
     waterOutline: "#1d2b52",
     river: "#16213e",
@@ -268,7 +272,7 @@ export const THEMES = {
     sand: "#2a2820",
     ice: "#1e2630",
     wetland: "#18241d",
-    rock: "#2e2c26",
+    rock: "#34312a",
     residential: "#1b1b28",
     industrial: "#201b28",
     cemetery: "#1a231c",
@@ -323,10 +327,10 @@ export const THEMES = {
     skiPoi: "#5ad0e8",
     servicePoi: "#7aa4ff",
     winterSports: "#1a2430",
-    contour: "#4c493f",
-    contourMajor: "#6c675a",
-    contourText: "#8b8678",
-    rockArea: "#3b382f",
+    contour: "#4f4b40",
+    contourMajor: "#6f6a5c",
+    contourText: "#8e8a7c",
+    rockArea: "#403c33",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -373,7 +377,7 @@ export const THEMES = {
   },
   outdoor: {
     label: "Outdoor / Turistická",
-    background: "#d6d3c6",
+    background: "#dbd8cb",
     water: "#8ec4dd",
     waterOutline: "#6faac6",
     river: "#7ab8d4",
@@ -384,7 +388,7 @@ export const THEMES = {
     sand: "#ecdfb5",
     ice: "#ffffff",
     wetland: "#bcd8c0",
-    rock: "#7d786a",
+    rock: "#928678",
     residential: "#e8e2d0",
     industrial: "#ddd6c4",
     cemetery: "#c5d4b5",
@@ -439,10 +443,10 @@ export const THEMES = {
     skiPoi: "#0894b8",
     servicePoi: "#2a5f9a",
     winterSports: "#dceef6",
-    contour: "#9a968a",
-    contourMajor: "#7f7a6d",
-    contourText: "#6b665a",
-    rockArea: "#888378",
+    contour: "#888372",
+    contourMajor: "#746f5c",
+    contourText: "#676152",
+    rockArea: "#988e82",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -488,7 +492,7 @@ export const THEMES = {
   },
   retro: {
     label: "Retro / Pastel",
-    background: "#dcd9cf",
+    background: "#e1dfd5",
     water: "#b5d5c5",
     waterOutline: "#95bfa9",
     river: "#a5cbb8",
@@ -499,7 +503,7 @@ export const THEMES = {
     sand: "#f5e8cc",
     ice: "#f2f5f0",
     wetland: "#cfe0d5",
-    rock: "#837e70",
+    rock: "#9a8e7f",
     residential: "#f7ecdd",
     industrial: "#efe2dc",
     cemetery: "#e0e5d2",
@@ -554,10 +558,10 @@ export const THEMES = {
     skiPoi: "#7ab8c0",
     servicePoi: "#6a8fb8",
     winterSports: "#e8f0f2",
-    contour: "#a09c90",
-    contourMajor: "#868174",
-    contourText: "#726d61",
-    rockArea: "#8e897c",
+    contour: "#8f8a7a",
+    contourMajor: "#7b7663",
+    contourText: "#6e6959",
+    rockArea: "#a0968a",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
