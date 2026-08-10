@@ -727,11 +727,12 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
 - **Koľko to bude trvať, sa povie dopredu.** Skript ešte pred prvým
   `gdalwarp`om vypíše plán – rozmer územia, počet buniek, koľko častí sa
   preskočí, odhad času sklonu aj obrysov, veľkosť mozaiky a špičku pamäte –
-  a keď je odhad nad rozpočtom (`ROCK_BUDGET_MIN`, default 100 min), **vôbec
-  sa nezačne** a povie, čo zmenšiť. Trojhodinový beh, ktorý spadne na timeout
-  jobu, minie celý rozpočet a nevyrobí nič; toto to zastaví za pár sekúnd.
-  Konštanty sú namerané na runneri: sklon 5,1 mil. buniek/s, obrysy podľa
-  mriežky (viď nižšie).
+  a keď je odhad nad rozpočtom (`ROCK_BUDGET_MIN`, default 30 min), povie to
+  ako `::warning::` aj s tým, čo zmenšiť. **Výpočet to nezastaví** (viď
+  „Rozpočet je odhad, nie vypínač" nižšie); z toho istého odhadu ale vyberá
+  mriežku `rock_res: auto`, takže cesta, ako sa do rozpočtu zmestiť, je tá
+  automatická. Konštanty sú namerané na runneri: sklon 5,1 mil. buniek/s,
+  obrysy podľa mriežky (viď nižšie).
 
   **Odhad obrysov bol dvakrát zle a druhý raz to stálo celý beh.** Najprv tu
   stála konštanta 3,5 mil. buniek/s (29× vedľa). Potom model, ktorý cenu viazal
@@ -777,25 +778,44 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   `rock_budget_min` sa dá zdvihnúť, alebo sa dá zadať `rock_res` natvrdo.
 
 - **Počas výpočtu je vidieť, čo sa deje.** Pri počítaní sklonu ide po každej
-  časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky;
-  `gdal_contour` hlási percentá a nezávisle od neho beží *tep* každých 30 s
+  časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky; pred
+  vektorizáciou sa vypíše, čo presne sa spúšťa a nad čím, `gdal_contour` hlási
+  percentá **po 2,5 %** a nezávisle od neho beží *tep* každých 30 s
   (`ROCK_HEARTBEAT_S`). Ten hovorí, **prečo** to trvá, nie len že to trvá:
 
   ```
-  … gdal_contour: beží 0:05:30, pamäť 0.2 GB, CPU 99 %, disk +0/+12 MB,
-    výstup 0 MB, podľa 20 % skončí o ~0:22:00
+  ▶ gdal_contour: gdal_contour -p -fl 5000.0 -amin smin -amax smax -f GPKG …
+    gdal_contour: pamäť do 12 GB, bez stropu času (dobehne, aj keď to potrvá
+    dlhšie, než sa čakalo), tep každých 30 s
+  … gdal_contour: 22.5 % (beží 0:05:30, tempo 4.1 %/min, zostáva ~0:18:56
+    (koniec ~14:23))
+  … gdal_contour: beží 0:05:30, 22.5 %, zostáva ~0:18:56 (koniec ~14:23),
+    pamäť 205 MB (špička 210 MB, strop 12.0 GB), CPU 99 % (priemer 97 %),
+    disk 12/3 MB (+0.4/+0.1 MB/s), výstup 128 MB (+2.1 MB/s)
+  ✔ gdal_contour: hotovo za 0:24:29, výstup 612 MB, špička pamäte 1.9 GB,
+    CPU 0:23:51 (97 %), disk 4210 MB čítania / 640 MB zápisu
   ```
 
   `CPU %` rozlíši „počíta" od „visí na I/O" – pri 99 % pomôže len menej práce,
-  pri 0 % je problém inde. `disk +čítané/+zapísané` ukáže, či sa vôbec hýbe.
-  A **odhad konca je z nameraných percent**, nie z konštanty: tá sa pri
-  `gdal_contour` mýlila aj 78× a odhad „0:00:19" pred behom, ktorý trval
-  štvrť hodiny, je horší než žiadny.
-- **Rozpočet sa stráži aj na nameranom čase.** `ROCK_BUDGET_MIN` (default
-  100 min) sa dovtedy kontroloval len ako odhad *pred* spustením – a keďže
-  odhad stojí na tej istej rozbitej konštante, prepustil čokoľvek. Teraz sa
-  zvyšok rozpočtu podáva tepu ako `max_s`, takže beh, ktorý sa doňho nezmestí,
-  zastaví sám seba s hláškou, čo zmenšiť. Sklon v sklade pritom ostáva.
+  pri 0 % je problém inde; priemer za celý beh k tomu povie, či je to fáza
+  alebo stav. `disk` ukáže, či sa vôbec hýbe. **Odhad konca je z nameraných
+  percent**, nie z konštanty: tá sa pri `gdal_contour` mýlila aj 78× a odhad
+  „0:00:19" pred behom, ktorý trval štvrť hodiny, je horší než žiadny. Bodky
+  medzi desiatkami sú 2,5 %, čiže pri hodinovom behu správa každé tri minúty
+  namiesto každých dvanástich; krátky príkaz ich zahustiť nemá čím, tak sa
+  medzikroky vypisujú, len keď je medzi nimi aspoň desať sekúnd ticha.
+  Namerané čísla na konci (`✔`) sú to jediné, z čoho sa dajú opraviť odhady.
+- **Rozpočet je odhad, nie vypínač.** `ROCK_BUDGET_MIN` skaly **nezastaví** –
+  ani pred spustením, ani počas neho. Boli tam obe zastavenia (`return 2` nad
+  odhadom a `max_s` podaný tepu) a ani jedno nič nezachránilo: vektorizácia je
+  JEDEN nedeliteľný priechod nad celou mozaikou (kvôli dieram, viď nižšie),
+  takže zabitý `gdal_contour` nenechá ani neúplný výstup. Zastavenie teda
+  znamenalo presne to isté ako timeout jobu, len skôr – a k tomu bez šance, že
+  by to dobehlo. K tomu odhad stojí na `CONTOUR_SRC_CELLS_PER_S`, ktorá bola
+  už dvakrát rádovo vedľa (29× a 78×), takže vypínač zavesený na nej zháňal aj
+  zadania, ktoré by v pohode dobehli. Čo z rozpočtu ostalo: **výber mriežky**
+  (`rock_res: auto`) a **varovanie** s tým, čo zmenšiť. Stropy, ktoré platia,
+  sú timeout jobu `rocks` (180 min) a pamäť.
 - **Mozaika sa pred vektorizáciou oreže na územie.** Sklad má **absolútnu**
   mriežku častí – to je jeho zmysel, lebo tá istá zem tak padne vždy do tej
   istej časti a časti sa dajú znovu použiť. Mozaika je potom ale zjednotenie
@@ -817,8 +837,8 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   mriežku vybrať `rock-areas.py`: zoberie najjemnejšiu z rebríčka
   1 / 1,5 / 2 / 3 / 4 / 5 / 8 / 10 / 15 / 20 m, ktorá naraz
 
-  1. **sa zmestí do rozpočtu času** (`ROCK_BUDGET_MIN`, default 100 min) – to
-     je ten istý odhad, ktorý inak beh zastaví, len použitý dopredu, a
+  1. **sa zmestí do rozpočtu času** (`ROCK_BUDGET_MIN`, default 30 min) – je
+     to jediné miesto, kde rozpočet niečo naozaj rozhodne, a
   2. **má pri danom DEM ešte zmysel** – dolný strop je desatina bunky
      zdrojového modelu, najmenej 1 m.
 

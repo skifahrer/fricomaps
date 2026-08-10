@@ -250,9 +250,14 @@ env:
   # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
   # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
-  # Koľko minút smú skaly trvať. Nad odhad sa výpočet vôbec nezačne – build to
-  # povie v prvých sekundách aj s tým, čo zmenšiť, namiesto trojhodinového behu
-  # do prázdna.
+  # Koľko minút MAJÚ skaly trvať: podľa toho vyberá `rock_res: auto` mriežku
+  # a nad tým build v prvých sekundách povie, čo zmenšiť.
+  #
+  # ZASTAVIŤ TO UŽ NEZASTAVÍ – ani pred spustením, ani počas neho. Vektorizácia
+  # je jeden nedeliteľný priechod nad celou mozaikou, takže zabitý
+  # `gdal_contour` nenechá ani neúplný výsledok: zastavenie znamenalo presne to
+  # isté ako timeout jobu, len skôr, a k tomu bez šance, že by beh dobehol.
+  # Strop, ktorý ostal, je timeout jobu (`rocks`, 180 min) a strop pamäte.
   #
   # BOLO TO 100 A NIKDY TO NEZNAMENALO STO MINÚT. Odhad, proti ktorému sa to
   # porovnávalo, bol 20× optimistický, takže „100" v skutočnosti prepúšťalo
@@ -264,10 +269,12 @@ env:
   # 30 minút znamená pre Vysoké Tatry sklad na 2 m (~24 min); na 1 m by to bolo
   # 1:38 a auto ho preto neponúkne. Kto chce 1 m, zadá `rock_res=1` alebo si
   # toto číslo zdvihne – je to voľba „koľko som ochotný čakať", nie technický
-  # strop.
+  # strop. Pri `rock_res` natvrdo je to už len odhad a varovanie.
   ROCK_BUDGET_MIN: "30"
   ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
-  ROCK_HEARTBEAT_S: "30" # ako často hlásiť, že sa stále počíta
+  # Ako často má byť počuť, že sa počíta. Percentá idú nezávisle od toho, po
+  # 2,5 % (`workers/watch.py`), tep k nim dopĺňa pamäť, CPU, disk a rast výstupu.
+  ROCK_HEARTBEAT_S: "30"
   # Rozpočet stránky si joby delia podielom, nie „čo zvýšilo" – bežia
   # súbežne, takže v čase, keď Planetiler rozhoduje o zoome, ešte nikto
   # nevie, aké veľké budú vrstevnice. Podiely sú s rezervou nad namerané

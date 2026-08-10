@@ -65,12 +65,10 @@ import argparse
 import json
 import math
 import os
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 import time
 
 METRIC = "EPSG:3035"  # LAEA Európa – pre naše šírky skresľuje plochy minimálne
@@ -466,8 +464,9 @@ def main():
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
     ap.add_argument("--budget-min", type=float, default=30.0,
-                    help="koľko minút smie výpočet trvať; nad odhad sa "
-                         "nezačne počítať a povie sa, čo zmenšiť (0 = bez stropu)")
+                    help="koľko minút MÁ výpočet trvať: podľa toho sa vyberá "
+                         "mriežka (`--res=auto`) a nad tým sa povie, čo "
+                         "zmenšiť – výpočet to ale NEZASTAVÍ (0 = neriešiť)")
     ap.add_argument("--max-rss-gb", type=float, default=12.0,
                     help="strop pamäte pre gdal_contour (0 = bez stropu)")
     ap.add_argument("--heartbeat", type=float, default=30.0,
@@ -566,32 +565,49 @@ def main():
         # číta (okno po oreze), nie z bboxu.
         src_cells = cells * (vec_res / res) ** 2
 
-        # Strážca ešte pred vektorizáciou: trojhodinový beh, ktorý spadne na
-        # timeout, je horší než beh, ktorý sa vôbec nezačne. Sklon je už hotový
-        # a zaplatený, takže sa tu meria len ten jeden priechod. Je to hrubé
-        # sito – skutočný čas stráži `max_s` nižšie, na nameraných sekundách.
-        if args.budget_min > 0 and src_cells:
-            odhad = src_cells / CONTOUR_SRC_CELLS_PER_S / 60
-            if odhad > args.budget_min:
-                print(f"::error::Vektorizácia prečíta {src_cells / 1e9:.2f} mld. "
-                      f"buniek skladu a trvala by ~{odhad:.0f} min, rozpočet je "
-                      f"{args.budget_min:.0f}. Pomôže HRUBŠÍ SKLAD (`rock_res`, "
-                      f"teraz {res:g} m – zdvojnásobenie je štvrtina čítania) "
-                      f"alebo menší výrez (`area`); hrubšie trasovanie "
-                      f"(`rock_vec_res`) na tomto nezmení nič. Sklon v sklade "
-                      f"ostáva, takže sa nezahodí.")
-                return 2
+        # ROZPOČET JE ODHAD, NIE VYPÍNAČ. Nad ním sa POVIE, že to potrvá
+        # dlhšie, a počíta sa ďalej. Zastavovanie tu bolo dvakrát – pred
+        # spustením (`return 2`) aj počas behu (`max_s` podaný tepu) – a ani
+        # raz nič nezachránilo: vektorizácia je JEDEN nedeliteľný priechod nad
+        # celou mozaikou (viď zápis o dierach hore), takže zabitý
+        # `gdal_contour` nenechá ani neúplný výsledok. Zastavenie znamenalo
+        # presne to isté ako timeout jobu, len skôr – a bez šance, že by to
+        # dobehlo. Odhad pritom stojí na `CONTOUR_SRC_CELLS_PER_S`, ktorá bola
+        # už dvakrát rádovo vedľa (29× a 78×), takže vypínač na nej zavesený
+        # zháňal aj zadania, čo by v pohode dobehli. Ostáva strop PAMÄTE (OOM
+        # zabije runner a v logu nie je nič) a timeout jobu vo workflowe.
+        odhad_s = src_cells / CONTOUR_SRC_CELLS_PER_S if src_cells else 0.0
+        if args.budget_min > 0 and odhad_s > args.budget_min * 60:
+            print(f"::warning::Vektorizácia prečíta {src_cells / 1e9:.2f} mld. "
+                  f"buniek skladu a potrvá odhadom ~{hms(odhad_s)}, čo je nad "
+                  f"rozpočet {args.budget_min:.0f} min – NEZASTAVUJEM ju, "
+                  f"nechávam dobehnúť (zastaví ju až timeout jobu). Keď to má "
+                  f"byť rýchlejšie: HRUBŠÍ SKLAD (`rock_res`, teraz {res:g} m – "
+                  f"zdvojnásobenie je štvrtina čítania) alebo menší výrez "
+                  f"(`area`); hrubšie trasovanie (`rock_vec_res`) na tomto "
+                  f"nezmení nič. Sklon v sklade ostáva tak či tak.")
 
         # ---------- 3. vektorizácia NARAZ nad celou mozaikou ----------
         # Jediný priechod = žiadne švy a diery ostanú dierami. Prahy sú
         # v jednotkách uloženého rastra (0,5° na krok).
+        # Plán PRED spustením: bez neho je v logu hodina ticha a spätne sa
+        # nedá povedať ani to, čo do toho išlo.
         bands = os.path.join(tmp, "bands.gpkg")
-        print(f"Vektorizujem sklon jedným priechodom nad celým územím "
-              f"(trasuje sa {cells/1e9:.2f} mld. buniek na mriežke "
-              f"{vec_res:g} m, číta sa {src_cells/1e9:.2f} mld. zo skladu – "
-              f"a rozhoduje to druhé číslo). Hrubý odhad "
-              f"{hms(src_cells / CONTOUR_SRC_CELLS_PER_S)}; presnejší príde "
-              f"z percent po pár minútach…", flush=True)
+        print("── Vektorizácia sklonu (gdal_contour -p) ────────────")
+        print(f"  vstup           {vrt}")
+        print(f"  číta sa         {src_cells / 1e9:.2f} mld. buniek skladu "
+              f"({res:g} m) – toto rozhoduje o čase")
+        print(f"  trasuje sa      {cells / 1e9:.2f} mld. buniek na {vec_res:g} m")
+        print(f"  prahy           sklon ≥ {args.slope:g}°"
+              + ("" if args.plne else f", steny ≥ {args.cliff:g}°"))
+        print(f"  odhad           ~{hms(odhad_s)} pri "
+              f"{CONTOUR_SRC_CELLS_PER_S / 1e3:.0f} tis. buniek/s"
+              + (f", rozpočet {args.budget_min:.0f} min"
+                 if args.budget_min > 0 else "") + "; presný príde z percent")
+        print(f"  stropy          pamäť {args.max_rss_gb:g} GB; čas NEOBMEDZENÝ "
+              f"– priechod sa nedá prerušiť a nadviazať, tak beží, kým nie je "
+              f"hotový (percentá po 2,5 %, tep každých {args.heartbeat:g} s)")
+        print("─────────────────────────────────────────────────────", flush=True)
         # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediná úroveň, teda
         # jediné pásmo „sklon nad prahom". Druhá úroveň (`cliff`) mala zmysel,
         # kým sa kreslila tmavšie – ležala v diere pásma `steep` a spolu
@@ -600,33 +616,18 @@ def main():
         urovne = ([repr(args.slope * SCALE)] if args.plne else
                   [repr(args.slope * SCALE), repr(args.cliff * SCALE)])
         try:
-            # ROZPOČET SA STRÁŽI NA NAMERANOM ČASE, nie len na odhade pred
-            # spustením. Odhad stojí na `CONTOUR_CELLS_PER_S` a tá sa vie
-            # mýliť aj osemdesiatnásobne, takže strážca, ktorý sa pýta len
-            # jej, prepustí čokoľvek – beh 31334778253 tak bežal štvrť hodiny
-            # na 2 km² a zastavil ho až človek. `watch.py` ten strop vie,
-            # len mu ho dovtedy nikto nepodal.
-            zvysok_s = max(60.0, args.budget_min * 60 - (time.time() - t_start))
+            # ŽIADNY `max_s`: strop času tu nemá čo zachrániť (viď rozvahu
+            # nad odhadom vyššie). Tep dostane `--heartbeat`, aby sa dalo
+            # zhora nastaviť, ako často má byť počuť – dovtedy sa ten input
+            # bral a ticho zahadzoval.
             run_watched(["gdal_contour", "-p", "-fl"] + urovne +
                         ["-amin", "smin", "-amax", "smax",
                          "-f", "GPKG", "-nln", "band", vrt, bands],
-                        "gdal_contour", tmp=tmp,
-                        max_rss_mb=args.max_rss_gb * 1024,
-                        max_s=zvysok_s if args.budget_min > 0 else 0)
+                        "gdal_contour", tmp=tmp, every=args.heartbeat,
+                        max_rss_mb=args.max_rss_gb * 1024)
         except MemoryError:
             print("::error::Vektorizácia sa nezmestila do pamäte. Zmenši "
                   "územie cez rock_area alebo zvoľ hrubšiu mriežku rock_res.")
-            return 2
-        except TimeoutError:
-            hotovo = time.time() - t_start
-            print(f"::error::Vektorizácia bežala {hms(hotovo)} a rozpočet je "
-                  f"{args.budget_min:.0f} min – zastavené. Sklon v sklade "
-                  f"ostáva, takže sa nezahodil. Ďalej: hrubšia mriežka "
-                  f"vektorizácie (`--vec-res`, teraz {vec_res:g} m – každé "
-                  f"zdvojnásobenie je rádovo desatina práce a sklad sa "
-                  f"nedotkne, takže sa nič neprepočítava), menší výrez "
-                  f"(`area`), alebo vyšší `rock_budget_min`, ak to naozaj má "
-                  f"trvať dlhšie.")
             return 2
 
         # Mozaika sa tu ZÁMERNE NEMAŽE, hoci je vyše gigabajtu: sú to časti
@@ -726,10 +727,10 @@ def main():
               f"{naozaj/1e3:.0f} tis. buniek/s; trasovalo sa "
               f"{cells/1e9:.2f} mld. na {vec_res:g} m)")
         # Odhady sa robia z konštánt hore a tie sa časom rozídu s realitou –
-        # a keď sa rozídu, prestane platiť aj strážca rozpočtu, ktorý na nich
-        # stojí. Nech to teda beh povie sám, nech sa nemusí hľadať. Obe strany:
-        # model, ktorý prestreľuje, blokuje platné zadania rovnako spoľahlivo,
-        # ako ten podstreľujúci prepustí neplatné.
+        # a keď sa rozídu, prestane platiť aj výber mriežky (`--res=auto`),
+        # ktorý na nich stojí. Nech to teda beh povie sám, nech sa nemusí
+        # hľadať. Obe strany: model, ktorý prestreľuje, zbytočne zhrubne
+        # mriežku, ten podstreľujúci zase sľúbi štvrťhodinu a beží hodinu.
         if naozaj and max(CONTOUR_SRC_CELLS_PER_S / naozaj,
                           naozaj / CONTOUR_SRC_CELLS_PER_S) > 3:
             print(f"::warning::Vektorizácia prečítala {naozaj/1e3:.0f} tis. "
