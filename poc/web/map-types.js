@@ -64,7 +64,7 @@ const ALL_TRAILS = /^trail-/;
 const TOPIC_LAYERS = ["poi-historic", "poi-mining", "poi-ski", "poi-road"];
 /** Skalné plochy z vrstevnicových dlaždíc. */
 const ROCKS = /^rock-/;
-/** Zjazdovky a bežky z vlastných dlaždíc (workers/features.yml). */
+/** Zjazdovky a bežky z vlastných dlaždíc (workers/features/features.yml). */
 const PISTES = /^piste-/;
 /** Prekážky: múry, ploty, živé ploty, zábradlia. */
 const BARRIERS = /^feature-(wall|fence|hedge)$/;

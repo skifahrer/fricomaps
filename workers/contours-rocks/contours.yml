@@ -1,0 +1,72 @@
+# Planetiler custom schema – VRSTEVNICE z digitálneho modelu terénu.
+#
+# OpenStreetMap výškové dáta neobsahuje (okrem bodového tagu `ele` na
+# vrcholoch, prameňoch a pod.) a vrstevnice sa doň zámerne nenahrávajú.
+# Terén preto ide z externého DEM: Sonny's LiDAR DTM (presnejší, bez stromov
+# a budov) alebo Copernicus GLO-30 (celosvetový).
+#
+# Vstup vyrába workflow build-map.yml:
+#   gdal_contour → ogr2ogr (dopočíta `level`)        → data/contours.gpkg
+#
+# SKALY TU UŽ NIE SÚ – majú vlastný .pmtiles a vlastnú schému
+# (workers/contours-rocks/rocks.yml). Dôvod je jeden a jednoduchý: každý .pmtiles má jeden
+# maxzoom a tie dve vrstvy ho chcú úplne iný. Vrstevnice sú čiary cez celý
+# kraj a rozpočet stránky minú okolo z14; skaly sú plochy len tam, kde je
+# terén strmý, a do vyššieho zoomu sa zmestia. Kým boli spolu, museli sa obe
+# uskromniť na to nižšie.
+#
+# `level` rozdeľuje vrstevnice na tri triedy, aby sa dali zapínať postupne
+# podľa zoomu a hlavné vrstevnice sa dali kresliť hrubšie:
+#   major = násobky 100 m, mid = násobky 50 m, minor = ostatné
+schema_name: FricoMaps vrstevnice
+schema_description: Vrstevnice a nadmorská výška z DEM
+attribution: <a href="https://sonny.4lima.de/">Sonny's LiDAR DTM</a> / <a href="https://spacedata.copernicus.eu/">Copernicus DEM</a>
+
+sources:
+  contours:
+    type: geopackage
+    local_path: data/contours.gpkg
+    projection: EPSG:4326
+
+layers:
+  - id: contour
+    features:
+      # Hlavné vrstevnice (100 m) – viditeľné už z diaľky, a to až od z1.
+      #
+      # PREČO AŽ OD z1, KEĎ SA TO NA PREHĽADE NEDÁ ČÍTAŤ: nedá sa čítať
+      # KAŽDÁ, ale tvar pohoria áno – a stojí to skoro nič. Planetiler
+      # zjednodušuje geometriu na každom zoome zvlášť podľa veľkosti pixela,
+      # takže čím nižší zoom, tým menej bodov na čiaru, a dlaždíc je tam
+      # rádovo menej (z1 je JEDNA dlaždica na celý región, z10 ich je tisíc).
+      # Zoomy 1–9 sú preto v súbore stotinou toho, čo zaberá jeden detailný.
+      # Nižšie triedy (`mid`, `minor`) sa nižšie NEPÚŠŤAJÚ – tam by to už
+      # skutočne bola len tmavá šmuha, viď ich `min_zoom`.
+      - source: contours
+        geometry: line
+        min_zoom: 1
+        include_when:
+          level: major
+        attributes:
+          - key: ele
+            type: integer
+          - key: level
+      # polovičné (50 m)
+      - source: contours
+        geometry: line
+        min_zoom: 12
+        include_when:
+          level: mid
+        attributes:
+          - key: ele
+            type: integer
+          - key: level
+      # základný interval – až na detailnom zoome, inak by mapa zčernela
+      - source: contours
+        geometry: line
+        min_zoom: 13
+        include_when:
+          level: minor
+        attributes:
+          - key: ele
+            type: integer
+          - key: level

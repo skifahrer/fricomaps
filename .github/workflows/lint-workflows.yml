@@ -13,7 +13,7 @@ on:
       - ".github/workflows/**"
       - "workers/**"
       # Aj štýl: `fill` vrstva nad zmiešanou geometriou je tichý omyl, ktorý
-      # sa inak nájde až v hotovej mape (viď `workers/lint-style.mjs`).
+      # sa inak nájde až v hotovej mape (viď `workers/lint/style.mjs`).
       - "poc/web/**"
   pull_request:
     paths:
@@ -29,10 +29,9 @@ jobs:
   lint:
     name: actionlint
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: actionlint
         env:
@@ -217,7 +216,7 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # Výber pohorí vo formulári musí sedieť s workers/areas.json. Choice
+      # Výber pohorí vo formulári musí sedieť s workers/data/areas.json. Choice
       # options musia byť v YAML doslovne, takže sa to nedá generovať – ale
       # dá sa to strážiť, aby zoznam nezostarol.
       - name: Výber pohorí sedí s areas.json
@@ -228,11 +227,11 @@ jobs:
           d = yaml.safe_load(open(".github/workflows/build-map.yml"))
           on = d[[k for k in d if k is True or k == "on"][0]]
           opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
-          areas = [k for k in json.load(open("workers/areas.json"))
+          areas = [k for k in json.load(open("workers/data/areas.json"))
                    if not k.startswith("_")]
           want = ["cely_region"] + areas
           if opts != want:
-              print("::error::Výber `area` vo workflowe nesedí s workers/areas.json")
+              print("::error::Výber `area` vo workflowe nesedí s workers/data/areas.json")
               print(f"  vo workflowe: {opts}")
               print(f"  malo by byť:  {want}")
               sys.exit(1)
@@ -248,7 +247,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, sys, yaml
-          areas = [k for k in json.load(open("workers/areas.json"))
+          areas = [k for k in json.load(open("workers/data/areas.json"))
                    if not k.startswith("_")]
           want = ["cele_slovensko"] + areas
           bad = 0
@@ -257,7 +256,7 @@ jobs:
               on = d[[k for k in d if k is True or k == "on"][0]]
               opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
               if opts != want:
-                  print(f"::error file={path}::Výber `area` nesedí s workers/areas.json")
+                  print(f"::error file={path}::Výber `area` nesedí s workers/data/areas.json")
                   print(f"  vo workflowe: {opts}")
                   print(f"  malo by byť:  {want}")
                   bad += 1
@@ -279,10 +278,10 @@ jobs:
           d = yaml.safe_load(open(".github/workflows/shading-rocks.yml"))
           on = d[[k for k in d if k is True or k == "on"][0]]
           opts = on["workflow_dispatch"]["inputs"]["area"]["options"]
-          want = [k for k in json.load(open("workers/areas.json"))
+          want = [k for k in json.load(open("workers/data/areas.json"))
                   if not k.startswith("_")]
           if opts != want:
-              print("::error::Výber `area` v shading-rocks.yml nesedí s workers/areas.json")
+              print("::error::Výber `area` v shading-rocks.yml nesedí s workers/data/areas.json")
               print(f"  vo workflowe: {opts}")
               print(f"  malo by byť:  {want}")
               sys.exit(1)
@@ -295,7 +294,7 @@ jobs:
       #
       # `dmr5` má dve podoby a prepína medzi nimi kľúč výrezu, ktorý vrstva
       # podá do `fetch-dem.sh`: s kľúčom výrez z `dem-ugkk`, bez neho dlaždice
-      # z `dem-dmr5`. Kontrola v `workers/check-dem.sh` musí o každej vrstve
+      # z `dem-dmr5`. Kontrola v `workers/dem/check.sh` musí o každej vrstve
       # predpokladať presne to, čo tá vrstva naozaj robí – inak build kontroluje
       # jeden release a sťahuje z druhého.
       #
@@ -308,21 +307,21 @@ jobs:
           python3 - <<'PY'
           import os, re, sys
           # Kde je volanie a ktorej vrstve patrí. Keď pribudne ďalšie, pridaj
-          # ho sem aj do `layer_area_key` v workers/check-dem.sh.
+          # ho sem aj do `layer_area_key` v workers/dem/check.sh.
           # Cesta sa mení, keď sa `run:` blok presunie do workers/ (a to sa
           # deje – build-map.yml má strop 128 KiB). Preto sa každá vrstva
           # hľadá vo VIACERÝCH kandidátoch a stačí, že ju nájde jeden;
           # keby sa hľadalo len na jednom mieste, presun by kontrolu umlčal.
           CALLS = {
-              ("workers/contours-build.sh",): ("contours", "rocks"),
-              ("workers/terrain-build.sh",
+              ("workers/contours-rocks/build.sh",): ("contours", "rocks"),
+              ("workers/terrain/build.sh",
                ".github/workflows/build-map.yml"): ("terrain",),
           }
           # Vrstvy, o ktorých check-dem.sh tvrdí, že kľúč NEpodávajú.
-          src = open("workers/check-dem.sh").read()
+          src = open("workers/dem/check.sh").read()
           m = re.search(r"layer_area_key\(\)\s*\{(.*?)\n\}", src, re.S)
           if not m:
-              print("::error file=workers/check-dem.sh::`layer_area_key` sa nenašla")
+              print("::error file=workers/dem/check.sh::`layer_area_key` sa nenašla")
               sys.exit(1)
           bez_kluca = set(re.findall(r"^\s*([a-z|]+]?)\)\s*echo cely\s*;;",
                                      m.group(1), re.M))
@@ -339,12 +338,12 @@ jobs:
                   txt = re.sub(r"^[ \t]*#.*$", "", open(cand).read(), flags=re.M)
                   # Riadok s volaním aj s prípadným pokračovaním cez `\`.
                   found = [c for c in re.findall(
-                      r"workers/fetch-dem\.sh((?:[^\n\\]|\\\n)*)", txt) if c.strip()]
+                      r"workers/dem/fetch\.sh((?:[^\n\\]|\\\n)*)", txt) if c.strip()]
                   if found:
                       calls, path = found, cand
                       break
               if not calls:
-                  print(f"::error file={paths[0]}::volanie fetch-dem.sh sa "
+                  print(f"::error file={paths[0]}::volanie dem/fetch.sh sa "
                         f"nenašlo ani v jednom z {list(paths)} – vrstva "
                         f"{layers} si DEM nesťahuje, alebo sa presunula inam "
                         f"a treba ju dopísať do CALLS.")
@@ -357,9 +356,9 @@ jobs:
                       caka = layer not in bez_kluca
                       if poda != caka:
                           print(f"::error file={path}::vrstva `{layer}` volá "
-                                f"fetch-dem.sh s {nargs} argumentmi (kľúč výrezu "
+                                f"dem/fetch.sh s {nargs} argumentmi (kľúč výrezu "
                                 f"{'podáva' if poda else 'nepodáva'}), ale "
-                                f"workers/check-dem.sh o nej predpokladá, že ho "
+                                f"workers/dem/check.sh o nej predpokladá, že ho "
                                 f"{'podáva' if caka else 'nepodáva'}. Zosúlaď to – "
                                 f"inak build kontroluje jeden release a sťahuje "
                                 f"z druhého (beh 31307163093).")
@@ -372,16 +371,16 @@ jobs:
       # Cesta k DMR 5.0 musí ostať celá: oba doplňovacie joby, volanie
       # `dmr5-drive.yml`, bbox aj meno assetu z `check-dem`, a `update-dem.yml`
       # na `dmr5` padá. Kým tam bol rozcestník, doplnenie bolo tiché nič
-      # (beh 31307163093). Rozpis: `workers/lint-dmr5-pipeline.py`.
+      # (beh 31307163093). Rozpis: `workers/lint/dmr5-pipeline.py`.
       - name: DMR 5.0 sa dopĺňa vlastnou pipeline
-        run: python3 workers/lint-dmr5-pipeline.py
+        run: python3 workers/lint/dmr5-pipeline.py
 
       # Token vlastníka Drive musí prísť na každé miesto, kde sa z Drive číta
       # alebo do cache/skladu zapisuje – z oboch strán, lebo `workflow_call`
       # nededí secrets sám. Bez neho nič nespadne, len sa počíta hodiny
-      # odznova. Rozpis: `workers/lint-drive-token.py`.
+      # odznova. Rozpis: `workers/lint/drive-token.py`.
       - name: Token vlastníka Drive sa dostane všade, kde sa z Drive číta
-        run: python3 workers/lint-drive-token.py
+        run: python3 workers/lint/drive-token.py
       # CACHE PATRÍ NA DRIVE. GitHubová má na repozitár 10 GB a keď sa naplní,
       # NIČ NEPOVIE – ticho vyhodí najstaršie záznamy. Jeden výrez do nej
       # ukladal desiatky GB (DEM dlaždice, sklad častí sklonu, vrstevnice,
@@ -396,7 +395,7 @@ jobs:
           import glob, os, sys, yaml
 
           CACHE = "./.github/actions/cache-"
-          WORKER = "workers/drive-cache.py"
+          WORKER = "workers/drive/cache.py"
           bad = 0
 
           for path in sorted(glob.glob(".github/workflows/*.yml")):
@@ -466,7 +465,7 @@ jobs:
           PY
 
       # PUBLIKUJE SA LEN NA DRIVE. Do GitHubu nesmie ísť ani release, ani
-      # artefakt, ktorý má prežiť beh – celý sklad je vo `workers/drive-store.py`.
+      # artefakt, ktorý má prežiť beh – celý sklad je vo `workers/drive/store.py`.
       #
       # Prečo kontrola a nie len dohoda: `gh release upload` je jeden riadok
       # a keby sa vrátil, poznalo by sa to len tým, že v Releases pribúdajú
@@ -474,14 +473,14 @@ jobs:
       # (pravidlo 1). Rovnako `retention-days: 90` – artefakt s ním je uložený
       # výsledok, nie prepravka medzi jobmi jedného behu.
       #
-      # Rozpis je vo `workers/lint-publishing.py`, nie tu: tento súbor je nad
+      # Rozpis je vo `workers/lint/publishing.py`, nie tu: tento súbor je nad
       # stropom 800 riadkov, ktorý si sám kontroluje o pár krokov vyššie, a
       # ďalší storiadkový heredoc doň nepatrí (pravidlo 3). Skript sa dá
-      # spustiť aj lokálne: `python3 workers/lint-publishing.py`.
+      # spustiť aj lokálne: `python3 workers/lint/publishing.py`.
       - name: Publikuje sa len na Drive, nie do releasov a artefaktov
-        run: python3 workers/lint-publishing.py
+        run: python3 workers/lint/publishing.py
 
-      # Dve tiché veci v hotovom štýle naraz (rozpis vo `workers/lint-style.mjs`):
+      # Dve tiché veci v hotovom štýle naraz (rozpis vo `workers/lint/style.mjs`):
       #
       # 1. `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že
       #    chce len plochy. MapLibre jej čiaru nepreskočí – earcutom z nej
@@ -492,17 +491,17 @@ jobs:
       #    profil typu mapy musí vypnúť spolu s predlohou. Inak ostane vzor
       #    visieť nad prázdnym podkladom – zase bez jediného slova.
       - name: "Štýl: výplne chcú plochy, vzory držia s predlohou"
-        run: node workers/lint-style.mjs
+        run: node workers/lint/style.mjs
 
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
       # vedieť spamätať z jedného stratného spojenia. Oboje je tiché a beh
       # 31338803278 na tom padol dve časti pred koncom. Rozpis:
-      # `workers/lint-drive-shim.py`.
+      # `workers/lint/drive-shim.py`.
       - name: Shim nad Drive znesie nápor a GDAL to skúsi znova
-        run: python3 workers/lint-drive-shim.py
+        run: python3 workers/lint/drive-shim.py
       # To isté pre tri výbery výškového zdroja (`contour_source`,
       # `rock_source`, `shading_source`): musia sedieť s kľúčmi
-      # v workers/dem-sources.json a s tým, pre ktoré vrstvy sa zdroj ponúka
+      # v workers/data/dem-sources.json a s tým, pre ktoré vrstvy sa zdroj ponúka
       # (kľúč `for`). Bez toho sa dá pridať zdroj do JSONu a zabudnúť naň vo
       # formulári (alebo naopak) – a zistí sa to až tým, že build vezme
       # nesprávny release. Alebo sa `ugkk` objaví v tieňovaní, kde 1 m LiDAR
@@ -516,7 +515,7 @@ jobs:
           on = d[[k for k in d if k is True or k == "on"][0]]
           inputs = on["workflow_dispatch"]["inputs"]
           srcs = {k: v.get("for", [])
-                  for k, v in json.load(open("workers/dem-sources.json")).items()
+                  for k, v in json.load(open("workers/data/dem-sources.json")).items()
                   if not k.startswith("_")}
           # (input, ktoré vrstvy, čo je vo výbere navyše k modelom)
           want = {
@@ -530,7 +529,7 @@ jobs:
               opts = inputs[name]["options"]
               expect = [k for k, f in srcs.items() if layer in f] + extra + ["ziadne"]
               if sorted(opts) != sorted(expect):
-                  print(f"::error::Výber `{name}` nesedí s workers/dem-sources.json")
+                  print(f"::error::Výber `{name}` nesedí s workers/data/dem-sources.json")
                   print(f"  vo workflowe: {opts}")
                   print(f"  malo by byť:  {expect}")
                   bad += 1
@@ -544,9 +543,18 @@ jobs:
       # Skript vo `workers/`, ktorý si volá `run:` jedným riadkom, musí od
       # kroku dostať env, ktoré naozaj číta – inak beží s prázdnym reťazcom
       # a NESPADNE. A `steps.<id>.outputs` musí mať svoj krok, inak job ticho
-      # vráti prázdno. Rozpis oboch chýb: `workers/lint-worker-env.py`.
+      # vráti prázdno. Rozpis oboch chýb: `workers/lint/worker-env.py`.
       - name: Skripty vo workers dostávajú svoje env
-        run: python3 workers/lint-worker-env.py
+        run: python3 workers/lint/worker-env.py
+
+      # PRIEČINOK JE JOB, SÚBOR JE KROK. Ide to pred ostatné kontroly ciest
+      # zámerne: keď sa `workers/` presúvalo z plochého zoznamu do priečinkov,
+      # vzory `workers/*.sh` a `workers/[\w.-]+\.sh` prestali chytať čokoľvek
+      # (ani jeden nepozná lomku) a kontroly zozelenali nad prázdnym zoznamom.
+      # Táto stráži, že sa plochá štruktúra nevráti a nevypne ich znova.
+      # Rozpis: `workers/lint/layout.py`.
+      - name: Workery ležia v priečinku podľa jobu
+        run: python3 workers/lint/layout.py
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
       # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
       # tomto sa dá po rozdelení na joby ticho pomýliť.
@@ -625,10 +633,10 @@ jobs:
           LIMIT = 800
           bad = 0
           for pattern, tvrdy in ((".github/workflows/*.yml", False),
-                                 ("workers/*.py", True),
-                                 ("workers/*.sh", True),
-                                 ("workers/*.mjs", True)):
-              for path in sorted(glob.glob(pattern)):
+                                 ("workers/**/*.py", True),
+                                 ("workers/**/*.sh", True),
+                                 ("workers/**/*.mjs", True)):
+              for path in sorted(glob.glob(pattern, recursive=True)):
                   with open(path, encoding="utf-8") as f:
                       n = sum(1 for _ in f)
                   if n <= LIMIT:

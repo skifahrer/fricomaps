@@ -3,12 +3,12 @@ name: Stiahnuť výškové dáta
 # JEDINÁ sťahovacia pipeline. Vyber v `source` model a ona ho zoženie,
 # preveďí na dlaždice a uloží do skladu na Drive, z ktorého si ho berie
 # „Build map". (Do GitHub releasov sa nepublikuje nič – celý formát skladu má
-# `workers/drive-store.py`.)
+# `workers/drive/store.py`.)
 #
 # Do augusta 2026 to boli tri workflowy (Sonny, ÚGKK 1 m, ÚGKK otvorené dáta)
 # a jeden diagnostický. Robili to isté – stiahni, preveď, ulož –
 # len z iného URL, takže sa opravy museli robiť trikrát. Teraz je to jeden
-# workflow s výberom zdroja; URL nesie workers/dem-sources.json a dá sa
+# workflow s výberom zdroja; URL nesie workers/data/dem-sources.json a dá sa
 # prebiť poľom `url`.
 #
 # | source  | čo to je                    | sklad        | mriežka |
@@ -50,7 +50,7 @@ name: Stiahnuť výškové dáta
 # roztrhá na kopu falošných úlomkov (namerané vo Vysokých Tatrách: 5 293
 # plôch z 1 m dát vs 2 138 z 0,1 m, pri rovnakej celkovej ploche skál).
 #
-# Rezanie na dlaždice robí workers/dem-tiles.py – 20m model môže byť jeden
+# Rezanie na dlaždice robí workers/dem/tiles.py – 20m model môže byť jeden
 # GeoTIFF na celú krajinu a v metrickej projekcii, kým build mapy potrebuje
 # dlaždice 1°×1° vo WGS84. Súbory .hgt sú už samé o sebe 1° dlaždice, len
 # bez hlavičky, takže tie sa prevádzajú priamo.
@@ -85,7 +85,7 @@ on:
         default: ""
         type: string
       area:
-        description: "Len pre ugkk: pohorie z workers/areas.json alebo bbox W,S,E,N"
+        description: "Len pre ugkk: pohorie z workers/data/areas.json alebo bbox W,S,E,N"
         required: false
         default: vysoke_tatry
         type: string
@@ -151,15 +151,14 @@ jobs:
       # denný strop sťahovania rádovo; na cudzí zdieľaný priečinok (Sonny) nie
       # – tam z anonymnej požiadavky spraví aspoň pomenovanú a hlavne dovolí
       # čítať cez Drive API, ktoré odmietnutie povie rovno, namiesto HTML
-      # stránky s HTTP 200. Rozpis vo `workers/drive-folder.py`.
+      # stránky s HTTP 200. Rozpis vo `workers/drive/folder.py`.
       GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
       DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
-    timeout-minutes: 90
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nainštaluj GDAL a gdown
         run: |
@@ -260,10 +259,10 @@ jobs:
             # neho by neúplná trojica secretov (na ktorej `--mode` padne)
             # vyšla ako prázdny reťazec a beh by ticho prepadol do vetvy
             # s verejným limitom – čiže presne to, čomu sa vyhýbame.
-            MODE=$(python3 workers/drive-folder.py --mode) || exit 1
+            MODE=$(python3 workers/drive/folder.py --mode) || exit 1
             if [ "$MODE" = "auth" ]; then
               DRIVE_MODE="Drive API, prihlásený ako vlastník tokenu"
-              python3 workers/drive-folder.py --folder="$FOLDER" --out=dl || exit 1
+              python3 workers/drive/folder.py --folder="$FOLDER" --out=dl || exit 1
             else
               DRIVE_MODE="**verejný odkaz (neprihlásene)** – platí denný limit"
               # Bez tokenu sa nemení nič oproti stavu spred prihlásenia – ale
@@ -350,7 +349,7 @@ jobs:
           mapfile -t geotiffs < <(find unpacked dl -type f \( -iname '*.tif' -o -iname '*.tiff' \) 2>/dev/null | sort)
           if [ ${#geotiffs[@]} -gt 0 ]; then
             echo "GeoTIFFov na spracovanie: ${#geotiffs[@]}"
-            python3 workers/dem-tiles.py --out tiles "${geotiffs[@]}" \
+            python3 workers/dem/tiles.py --out tiles "${geotiffs[@]}" \
               || echo "::warning::GeoTIFFy sa nepodarilo narezať na dlaždice"
           fi
 
@@ -389,7 +388,7 @@ jobs:
           ls tiles
 
       # DO SKLADU NA DRIVE, nie do releasu – do releasov sa nepublikuje nič.
-      # Formát skladu, „clobber" aj prihlásenie má `workers/drive-store.py`.
+      # Formát skladu, „clobber" aj prihlásenie má `workers/drive/store.py`.
       - name: Publikuj dlaždice do skladu
         if: ${{ steps.src.outputs.key == 'sonny' }}
         env:
@@ -401,8 +400,8 @@ jobs:
           # dlaždice, ktoré sa už nesťahujú, a tvárili by sa ako súčasť
           # tohto výsledku.
           if [ '${{ inputs.force }}' = 'true' ]; then
-            BOLO=$(python3 workers/drive-store.py --names --store="$STORE" | tr '\n' ' ')
-            [ -n "${BOLO// /}" ] && python3 workers/drive-store.py --rm \
+            BOLO=$(python3 workers/drive/store.py --names --store="$STORE" | tr '\n' ' ')
+            [ -n "${BOLO// /}" ] && python3 workers/drive/store.py --rm \
               --store="$STORE" --name="$BOLO" || true
           fi
 
@@ -416,7 +415,7 @@ jobs:
             > tiles/meta.json
           cat tiles/meta.json
 
-          python3 workers/drive-store.py --put --store="$STORE" \
+          python3 workers/drive/store.py --put --store="$STORE" \
             --file="$(find tiles -maxdepth 1 -name '*.tif' -printf '%p ')" \
             --file=tiles/meta.json \
             --note="Dlaždice 1°×1° výškového modelu (GeoTIFF, meno = juhozápadný roh). Zdroj: Sonny's LiDAR DTM (https://sonny.4lima.de/), CC BY 4.0."
@@ -424,7 +423,7 @@ jobs:
 
       # ---------- ÚGKK DMR 3.5 (otvorené dáta, jeden ZIP) ----------
       # Ten istý výsledok ako Sonny – 1°×1° dlaždice `N49E019.tif` – takže
-      # `workers/fetch-dem.sh` sa pri čítaní vôbec nevetví a rozhoduje len
+      # `workers/dem/fetch.sh` sa pri čítaní vôbec nevetví a rozhoduje len
       # meno skladu.
       - name: Sú dlaždice DMR 3.5 už v sklade?
         id: have35
@@ -433,7 +432,7 @@ jobs:
           STORE: ${{ steps.src.outputs.store }}
         run: |
           set -uo pipefail
-          N=$(python3 workers/drive-store.py --names --store="$STORE" 2>/dev/null | grep -c . || echo 0)
+          N=$(python3 workers/drive/store.py --names --store="$STORE" 2>/dev/null | grep -c . || echo 0)
           if [ '${{ inputs.force }}' = 'true' ]; then
             echo "force=áno – sťahujem nanovo (v sklade je ${N:-0} dlaždíc)."
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -454,7 +453,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p tiles
-          python3 workers/fetch-dem-open.py \
+          python3 workers/dem/fetch-open.py \
             --url='${{ steps.src.outputs.url }}' \
             --out=tiles --stats=open-stats.txt
 
@@ -466,7 +465,7 @@ jobs:
           set -euo pipefail
           COUNT=$(find tiles -maxdepth 1 -name '*.tif' | wc -l)
           [ "$COUNT" -gt 0 ] || { echo "::warning::Žiadne dlaždice."; exit 0; }
-          python3 workers/drive-store.py --put --store="$STORE" \
+          python3 workers/drive/store.py --put --store="$STORE" \
             --file="$(find tiles -maxdepth 1 -name '*.tif' -printf '%p ')" \
             --note="Dlaždice 1°×1° z https://opendata.skgeodesy.sk. Zdroj: ÚGKK SR – DMR 3.5."
           echo "Nahraných $COUNT dlaždíc do skladu $STORE ✓"
@@ -479,7 +478,7 @@ jobs:
         if: ${{ steps.src.outputs.key == 'ugkk' }}
         run: |
           set -euo pipefail
-          python3 workers/resolve-area.py \
+          python3 workers/plan/area.py \
             --region-bbox='16.815,47.71,22.585,49.635' \
             --area='${{ inputs.area }}' --out="$GITHUB_OUTPUT"
 
@@ -495,7 +494,7 @@ jobs:
           if [ '${{ inputs.force }}' = 'true' ]; then
             echo "force=áno – sťahujem nanovo."
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif python3 workers/drive-store.py --names --store="$STORE" \
+          elif python3 workers/drive/store.py --names --store="$STORE" \
                  2>/dev/null | grep -qx "$ASSET"; then
             echo "V sklade už je $ASSET – nesťahujem."
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -513,7 +512,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Výrez: ${{ steps.area.outputs.name }} (${{ steps.area.outputs.bbox }}), ${{ steps.area.outputs.km2 }} km²"
-          python3 workers/fetch-dem-ugkk.py \
+          python3 workers/dem/fetch-ugkk.py \
             --bbox='${{ steps.area.outputs.bbox }}' \
             --out='${{ steps.haveu.outputs.asset }}' \
             --direct-urls='${{ steps.src.outputs.url }}'
@@ -534,8 +533,8 @@ jobs:
           if [ "$SZ" -gt $((4 * 1024 * 1024 * 1024)) ]; then
             echo "::warning::$ASSET má $(( SZ / 1048576 )) MB. Nahrá sa, ale každý build ho bude celý sťahovať – ak to nie je zámer, zvoľ menší výrez."
           fi
-          python3 workers/drive-store.py --put --store="$STORE" --file="$ASSET" \
-            --note="Jeden COG na výrez; meno je kľúč z workers/areas.json. Zdroj: ÚGKK SR – DMR 5.0."
+          python3 workers/drive/store.py --put --store="$STORE" --file="$ASSET" \
+            --note="Jeden COG na výrez; meno je kľúč z workers/data/areas.json. Zdroj: ÚGKK SR – DMR 5.0."
           echo "Uložené: $STORE / $ASSET"
 
       - name: Súhrn

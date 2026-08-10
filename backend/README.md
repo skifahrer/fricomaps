@@ -9,7 +9,7 @@ miesta, vyhľadávanie, push notifikácie…). Mapové dlaždice a štýly backe
 | Metóda | Cesta | Popis |
 |---|---|---|
 | GET | `/api/health` | health check |
-| GET | `/api/regions` | zoznam regiónov (zdroj: `workers/regions.json`) |
+| GET | `/api/regions` | zoznam regiónov (zdroj: `workers/data/regions.json`) |
 | GET | `/api/regions/:key` | detail regiónu (`slovensko`, `zilinsky`, …) |
 
 ## Spustenie

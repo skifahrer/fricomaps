@@ -3,12 +3,12 @@ name: Prihlásenie na Drive (jednorazové)
 # Vyrobí refresh token vlastníka dát na Google Drive a ULOŽÍ HO PRIAMO DO
 # SECRETU. Spúšťa sa raz – potom už len keby účet prístup odvolal.
 #
-# PREČO EXISTUJE: `workers/drive-auth.py --login` potrebuje prehliadač
+# PREČO EXISTUJE: `workers/drive/auth.py --login` potrebuje prehliadač
 # a loopback server na tom istom stroji, čiže z telefónu sa spustiť nedá.
 # Tento workflow tú rolu rozdelí: prehliadač je telefón, shell je runner.
 #
 # ROZSAH PRÁV JE ODTERAZ AJ ZÁPIS (`drive`, nie `drive.readonly`). Nie je to
-# rozmar: cache buildu leží na Drive (`workers/drive-cache.py` – tá GitHubová
+# rozmar: cache buildu leží na Drive (`workers/drive/cache.py` – tá GitHubová
 # má 10 GB na repozitár a ticho vyhadzovala najstaršie záznamy), takže sa tam
 # musí dať ukladať a prerieďovať. Starý readonly token ostáva platný na
 # čítanie DMR 5.0, len pod ním cache nič neuloží – posledný krok tohto
@@ -79,13 +79,12 @@ jobs:
   login:
     name: Refresh token vlastníka Drive
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     env:
       DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # PRVÝ BEH SKONČÍ TU. Odkaz sa skladá z `client_id` v secrete, aby sa
       # nič neprepisovalo ručne.
@@ -100,7 +99,7 @@ jobs:
         if: ${{ inputs.code == '' }}
         run: |
           set -euo pipefail
-          URL=$(python3 workers/drive-auth.py --auth-url)
+          URL=$(python3 workers/drive/auth.py --auth-url)
           echo
           echo "Otvor v prehliadači tento odkaz (celý jeden riadok):"
           echo
@@ -147,7 +146,7 @@ jobs:
           CODE: ${{ inputs.code }}
         run: |
           set -euo pipefail
-          python3 workers/drive-auth.py --exchange \
+          python3 workers/drive/auth.py --exchange \
             --code="$CODE" --out=refresh-token.txt
 
       - name: Zapíš ho do secretu
@@ -173,7 +172,7 @@ jobs:
         run: |
           set -euo pipefail
           DRIVE_REFRESH="$(cat refresh-token.txt)" \
-            python3 workers/dmr5-drive.py --auth-check
+            python3 workers/drive/dmr5.py --auth-check
 
       # A druhá polovica: cache buildu sa na Drive UKLADÁ, takže tam token
       # musí vedieť aj zapisovať. Readonly token vyzerá úplne rovnako a rozdiel
@@ -186,7 +185,7 @@ jobs:
         run: |
           set -euo pipefail
           DRIVE_REFRESH="$(cat refresh-token.txt)" \
-            python3 workers/drive-cache.py --check
+            python3 workers/drive/cache.py --check
 
       - name: Ukliď a povedz, čo ešte
         if: ${{ always() && inputs.code != '' }}

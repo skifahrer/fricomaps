@@ -10,7 +10,7 @@ export interface RegionDef {
 }
 
 /**
- * Zdroj pravdy o regiónoch je workers/regions.json (ten istý súbor
+ * Zdroj pravdy o regiónoch je workers/data/regions.json (ten istý súbor
  * používa pipeline). Backend ho servíruje mobilným klientom, aby appka
  * nemusela mať zoznam regiónov zabudovaný napevno.
  */

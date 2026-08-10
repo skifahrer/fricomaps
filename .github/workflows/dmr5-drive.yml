@@ -18,7 +18,7 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # workflowom, nie dve pipeline.
 #
 # SKLADY SÚ PRIEČINKY NA DRIVE, nie GitHub releasy – do releasov sa nepublikuje
-# nič. Celý formát skladu je vo `workers/drive-store.py`; mená súborov ostali
+# nič. Celý formát skladu je vo `workers/drive/store.py`; mená súborov ostali
 # tie isté, aké mali assety, lebo meno je sľub o rozsahu.
 #
 # PREČO UŽ NIE JE ZÁLOHA. Ten istý model sa dal brať aj z archívu ÚGKK
@@ -30,9 +30,9 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # spoľahlivo, tá druhá cesta sa neoplácala udržiavať a bola zrušená.
 #
 # ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK DÁT, a inak sa nečíta vôbec. Model leží
-# v PRIEČINKU na Drive (`FOLDER_ID` vo `workers/dmr5-drive.py`) a čo v ňom je,
+# v PRIEČINKU na Drive (`FOLDER_ID` vo `workers/drive/dmr5.py`) a čo v ňom je,
 # povie len Drive API – to anonymné požiadavky neobsluhuje. Token vlastníka zo
-# secretu `GDRIVE_CREDENTIALS` vyrobí `workers/drive-auth.py --login` a krok
+# secretu `GDRIVE_CREDENTIALS` vyrobí `workers/drive/auth.py --login` a krok
 # „Prihlásenie na Drive" v každom behu vypíše, ktorým účtom sa čítalo a či na
 # súbory vidí. Bez neho beh spadne hneď a s návodom.
 #
@@ -41,7 +41,7 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # v sekundách; so zapnutým `ugkk_fallback` prejde na hrubší model (sonny)
 # a atribúcia to povie. Prvá vec, čo s tým: prihlásiť sa ako vlastník
 # (`GDRIVE_CREDENTIALS`). Až potom nahrať kópiu modelu do iného priečinka
-# a prepísať `FOLDER_ID` vo `workers/dmr5-drive.py`.
+# a prepísať `FOLDER_ID` vo `workers/drive/dmr5.py`.
 #
 # ZDROJ (namerané, nie odhad):
 #   dmr5_etrs89.tif      145,39 GiB  423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
@@ -222,7 +222,6 @@ jobs:
   model:
     name: Výškový model z Drive
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     # ROZDELENÉ NA KROKY, KTORÝCH JE ČO NAJVIAC. Kým to boli tri („Nastavenia",
     # „Vyrež model", „Nahraj do releasu"), bol z hodinového behu v Actions
     # jeden riadok bez konca a z padnutého behu sa nedalo povedať, či nesedelo
@@ -250,14 +249,14 @@ jobs:
       # Dva tvary: všetko v jednom, alebo po troch (`client_secret` Google
       # druhýkrát neukáže, tak sa raz uložené nemá prepisovať). `client_id`
       # (DRIVE_CLIENT) je repository variable, nie secret – nie je to tajné.
-      # Bez oboch sa číta verejným odkazom. Viď workers/drive-auth.py.
+      # Bez oboch sa číta verejným odkazom. Viď workers/drive/auth.py.
       GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
       DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nainštaluj GDAL
         run: |
@@ -377,14 +376,14 @@ jobs:
       # Vlastný krok preto, že padnutý krok s týmto menom je sám o sebe
       # diagnóza: nesedí secret, nie dáta ani sieť.
       - name: Prihlásenie na Drive (vlastník dát)
-        run: python3 workers/dmr5-drive.py --auth-check
+        run: python3 workers/drive/dmr5.py --auth-check
 
       # Otvorenie zdroja stojí 8 s, 9 požiadaviek a 0,3 MB, tak sa robí VŽDY
       # a nie len v režime sondy: keď Drive zmení odkaz alebo shim prestane
       # opravovať `content-length`, má sa to povedať tu a nie po hodine
       # čítania. `mode: len sonda` je potom už len „a tu skonči".
       - name: Sonda – čo je v zdroji na Drive
-        run: python3 workers/dmr5-drive.py --probe-only
+        run: python3 workers/drive/dmr5.py --probe-only
 
       # Lacný krok, ktorý odpovie na jedinú otázku, čo pred hodinovým čítaním
       # zaujíma: koľko toho bude. Trojhodinový krok, ktorý spadne na timeout,
@@ -403,7 +402,7 @@ jobs:
           else
             ARGS+=(--asset="${{ steps.cfg.outputs.asset }}")
           fi
-          python3 workers/dmr5-drive.py --stage=plan \
+          python3 workers/drive/dmr5.py --stage=plan \
             --area='${{ inputs.area }}' \
             --grid-m='${{ steps.cfg.outputs.grid }}' \
             --geoid='${{ steps.cfg.outputs.geoid }}' \
@@ -418,7 +417,7 @@ jobs:
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
         run: |
           set -euo pipefail
-          python3 workers/dmr5-drive.py --stage=read \
+          python3 workers/drive/dmr5.py --stage=read \
             --geoid='${{ steps.cfg.outputs.geoid }}' \
             --jobs='${{ inputs.jobs }}' \
             --out=out --work=drive-work
@@ -430,7 +429,7 @@ jobs:
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
         run: |
           set -euo pipefail
-          python3 workers/dmr5-drive.py --stage=finish \
+          python3 workers/drive/dmr5.py --stage=finish \
             --geoid='${{ steps.cfg.outputs.geoid }}' \
             --out=out --work=drive-work \
             --summary=model-summary.md
@@ -494,7 +493,7 @@ jobs:
           shopt -s nullglob
           FILES=(out/*.tif)
           echo "Nahrávam ${#FILES[@]} súborov do skladu $STORE…"
-          python3 workers/drive-store.py --put --store="$STORE" \
+          python3 workers/drive/store.py --put --store="$STORE" \
             --file="${FILES[*]}" --file="out/${{ steps.meta.outputs.meta }}" \
             --note="Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
           echo "V sklade $STORE: ${#FILES[@]} súborov ✓"

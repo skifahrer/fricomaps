@@ -10,7 +10,7 @@ name: Skaly z tieňovaných dlaždíc
 #                                        ▼
 #   Build map  s  výberom  rock_source: tienovanie    ─►  vrstva `rock` v mape
 #
-# Celý výpočet je vo workers/shading-rocks.py – tam je aj vysvetlené, ako sa
+# Celý výpočet je vo workers/rocks-shading/build.py – tam je aj vysvetlené, ako sa
 # rozhoduje, čo je tmavé, a prečo sa vektorizuje po blokoch.
 #
 # Sú tu TRI joby: `dlazdice` stiahne obrázky, `vektor` z nich spraví obrysy
@@ -47,7 +47,7 @@ on:
   workflow_dispatch:
     inputs:
       area:
-        description: "Pohorie, na ktorom sa skaly hľadajú (bbox je vo workers/areas.json)"
+        description: "Pohorie, na ktorom sa skaly hľadajú (bbox je vo workers/data/areas.json)"
         required: true
         default: vysoke_tatry
         type: choice
@@ -131,12 +131,12 @@ on:
       #   zapln_diery=1    zaplniť diery (zožerie detail – viď hlavičku)
       #   zlepit=1         zlepiť plochy na hraniciach blokov
       #   log_every=1      riadok na každú dlaždicu
-      #   budget_min=150   viac času na obrysy
+      #   budget_min=150   zastaviť obrysy po 150 min (0 = bez stropu, predvolené)
       #   fresh=1          nepokračovať v rozrobenom
       #   block_tiles=3    menšie bloky pri obrysoch
-      # Celý zoznam je vo workers/shading-rocks.py; neznámy kľúč je chyba.
+      # Celý zoznam je vo workers/rocks-shading/build.py; neznámy kľúč je chyba.
       options:
-        description: "Zriedka menené prepínače ako kľúč=hodnota (viď workers/shading-rocks.py)"
+        description: "Zriedka menené prepínače ako kľúč=hodnota (viď workers/rocks-shading/build.py)"
         required: false
         default: ""
         type: string
@@ -199,7 +199,7 @@ on:
     # (`secrets: inherit`) a tento workflow prijať. Bez nich by sa cache na
     # Drive nemala ako otvoriť a gigabajty dlaždíc by sa ťahali z freemap.sk
     # pri každom behu. Dva tvary toho istého: všetko v jednom secrete, alebo
-    # po dvoch – rozpis vo `workers/drive-auth.py`. `client_id` (DRIVE_CLIENT)
+    # po dvoch – rozpis vo `workers/drive/auth.py`. `client_id` (DRIVE_CLIENT)
     # medzi secrets nie je: je to repository variable, nie tajný údaj, a
     # `vars.DRIVE_CLIENT` sa v tomto istom repozitári číta priamo nižšie.
     secrets:
@@ -222,7 +222,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Cache tejto podpipeline leží na Google Drive (`workers/drive-cache.py`) –
+  # Cache tejto podpipeline leží na Google Drive (`workers/drive/cache.py`) –
   # sú to gigabajty JPG dlaždíc a v GitHubovej cache s 10 GB na repozitár
   # vyhadzovali všetko ostatné. Preto sem musí prísť token vlastníka; keď sa
   # tento workflow volá z „Build map", podáva sa cez `secrets: inherit`.
@@ -263,7 +263,6 @@ jobs:
   dlazdice:
     name: Stiahnuť dlaždice
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     outputs:
       key: ${{ steps.area.outputs.key }}
       name: ${{ steps.area.outputs.name }}
@@ -274,7 +273,7 @@ jobs:
       zoom: ${{ steps.dl.outputs.zoom }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: python3 -m pip install --quiet numpy pillow
@@ -288,7 +287,7 @@ jobs:
           set -euo pipefail
           TEST='${{ inputs.test }}'
           if [ "$TEST" = 'nie' ] || [ -z "$TEST" ]; then TEST=0; fi
-          python3 workers/resolve-area.py \
+          python3 workers/plan/area.py \
             --region-bbox="$SK_BBOX" \
             --area='${{ inputs.area }}' \
             --test-km2="$TEST" \
@@ -302,7 +301,7 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
-          python3 workers/test-locator.py \
+          python3 workers/plan/test-map.py \
             --bbox='${{ steps.area.outputs.bbox }}' \
             --full-bbox='${{ steps.area.outputs.full_bbox }}' \
             --name='${{ steps.area.outputs.name }}' \
@@ -312,7 +311,7 @@ jobs:
 
       # Do skladu `vysledky` na Drive, nie ako artefakt behu: do GitHubu sa
       # nepublikuje nič. Balenie, pomenovanie a hlásenie robí jeden skript –
-      # `workers/publish-results.sh`.
+      # `workers/deploy/publish-results.sh`.
       - name: Odlož obrázok testovacieho výrezu
         if: ${{ always() && hashFiles('out/kde-to-je.png') != '' }}
         continue-on-error: true
@@ -320,7 +319,7 @@ jobs:
           NAZOV: kde-to-je-${{ steps.area.outputs.key }}
           SUBORY: out/kde-to-je.png
           POPIS: Kde v regióne leží testovací výrez (skaly z tieňovania)
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
       # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
@@ -341,7 +340,7 @@ jobs:
         id: dl
         run: |
           set -euo pipefail
-          python3 workers/shading-rocks.py \
+          python3 workers/rocks-shading/build.py \
             --bbox='${{ steps.area.outputs.bbox }}' \
             --url="$SHADING_URL" \
             --zoom='${{ inputs.zoom }}' \
@@ -372,7 +371,7 @@ jobs:
         run: |
           set -uo pipefail
           mv tiles-cache/_rozrobene "$RUNNER_TEMP/_rozrobene" 2>/dev/null || true
-          SUBORY=tiles-cache workers/publish-results.sh
+          SUBORY=tiles-cache workers/deploy/publish-results.sh
           mv "$RUNNER_TEMP/_rozrobene" tiles-cache/_rozrobene 2>/dev/null || true
 
   # ---------- 2. obrysy po blokoch ----------
@@ -383,10 +382,9 @@ jobs:
     name: Obrysy po blokoch
     needs: dlazdice
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: |
@@ -427,7 +425,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p data out
-          python3 workers/shading-rocks.py \
+          python3 workers/rocks-shading/build.py \
             --bbox='${{ needs.dlazdice.outputs.bbox }}' \
             --url="$SHADING_URL" \
             --phase=vektor \
@@ -466,7 +464,7 @@ jobs:
           NAZOV: nahlad-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
           SUBORY: out/preview.png
           POPIS: Raster tmavosti ako náhľad – podľa neho sa ladia prahy
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
   # ---------- 3. spojenie, filter, výstup ----------
   # Minúty, nie hodiny: bloky sa zlepia, plochy rozseknuté hranicou bloku sa
@@ -477,13 +475,12 @@ jobs:
     name: Skaly z tieňovania
     needs: [dlazdice, vektor]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     outputs:
       asset: ${{ steps.rocks.outputs.asset }}
       count: ${{ steps.rocks.outputs.count }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Nástroje
         run: |
@@ -514,7 +511,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p data out
-          python3 workers/shading-rocks.py \
+          python3 workers/rocks-shading/build.py \
             --bbox='${{ needs.dlazdice.outputs.bbox }}' \
             --url="$SHADING_URL" \
             --phase=spojit \
@@ -576,7 +573,7 @@ jobs:
             data/rock.gpkg
             out/rock.geojson
           POPIS: Skalné polygóny z tieňovania – GPKG aj GeoJSON
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       # Dlaždice odložil job `dlazdice` a náhľad job `vektor` – oboje hneď,
       # ako vzniknú, teda aj vtedy, keď to, čo je za nimi, nedobehne.
@@ -587,7 +584,7 @@ jobs:
           NAZOV: cisla-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
           SUBORY: out/rock-img-stats.txt
           POPIS: Čísla behu – koľko plôch, aké prahy, koľko dlaždíc
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       # Aby si ich vedel vypýtať build mapy. Artefakt behu sa z iného
       # workflowu dostáva ťažko (treba číslo behu), súbor v sklade ľahko –
@@ -600,7 +597,7 @@ jobs:
           ASSET='${{ steps.rocks.outputs.asset }}'
           zstd -q -19 -T0 -f -o "/tmp/$ASSET" data/rock.gpkg
           ls -lh "/tmp/$ASSET"
-          python3 workers/drive-store.py --put --store="$ROCK_IMG_STORE" \
+          python3 workers/drive/store.py --put --store="$ROCK_IMG_STORE" \
             --file="/tmp/$ASSET" \
             --note="Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno nesie výrez, zoom a všetky prahy; Build map si ich vypýta výberom rock_source: tienovanie."
           echo "Uložené do skladu $ROCK_IMG_STORE ako $ASSET"

@@ -1,7 +1,7 @@
 /**
  * Farebné témy a generátor MapLibre štýlu pre OpenMapTiles schému
  * (výstup Planetileru). Zdieľané medzi webom (prehliadač) a pipeline
- * (workers/build-styles.mjs generuje statické style.json aj pre iOS).
+ * (workers/styles/build.mjs generuje statické style.json aj pre iOS).
  *
  * Filozofia detailu:
  *   - do zoomu DETAIL_Z (14) sa mapa postupne "oreže" – nižšie zoomy
@@ -71,7 +71,7 @@ export const DEFAULT_DEM_MAXZOOM = 15;
 
 /**
  * Zdroje výšok, z ktorých pipeline počíta vrstevnice, skalné plochy
- * a tieňovanie. Kľúče sú tie isté ako vo `workers/dem-sources.json` a ako
+ * a tieňovanie. Kľúče sú tie isté ako vo `workers/data/dem-sources.json` a ako
  * v troch výberoch vo formulári „Build map" (`contour_source`, `rock_source`,
  * `shading_source`) – každá vrstva môže mať iný model.
  * Licencia každého z nich vyžaduje uvedenie zdroja, preto ide atribúcia
@@ -223,7 +223,7 @@ export const THEMES = {
     rockArea: "#9c9286",
     rockPattern: "#6b6154",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
-    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // workers/features/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#7a6a58",
     ridgeLine: "#a89880",
@@ -341,7 +341,7 @@ export const THEMES = {
     rockArea: "#403c33",
     rockPattern: "#6a6152",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
-    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // workers/features/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#8a7a64",
     ridgeLine: "#6a6050",
@@ -458,7 +458,7 @@ export const THEMES = {
     rockArea: "#988e82",
     rockPattern: "#675e51",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
-    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // workers/features/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#6f5a44",
     ridgeLine: "#9a8468",
@@ -574,7 +574,7 @@ export const THEMES = {
     rockArea: "#a0968a",
     rockPattern: "#70665a",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
-    // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
+    // workers/features/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
     cliffLine: "#96745c",
     ridgeLine: "#c0a488",
@@ -858,7 +858,7 @@ export const LAYER_GROUPS = [
   { id: "chodniky", label: "Chodníky a cestičky" },
   { id: "trasy", label: "Značené trasy" },
   // Vlastné dlaždice s tým, čo schéma OpenMapTiles nemá – násypy, múry,
-  // ploty, vedenia, pramene, zjazdovky (workers/features.yml).
+  // ploty, vedenia, pramene, zjazdovky (workers/features/features.yml).
   { id: "prvky", label: "Krajinné prvky (mimo schémy)" },
   { id: "doprava", label: "Železnica a ostatná doprava" },
   { id: "hranice", label: "Hranice" },
@@ -951,7 +951,7 @@ const num = (prop, fallback) => ["coalesce", ["get", prop], fallback];
  * a vrstevníc). Vinníkom bola `pedestrian-area`: `fill` nad vrstvou
  * `transportation` s `class in [pedestrian, path]` a `minzoom: 13`. Vo vrstve
  * `transportation` sú chodníky ČIARY a Planetiler ich pri
- * `--transportation_z13_paths=true` (workers/tiles-build.sh) púšťa do dlaždíc
+ * `--transportation_z13_paths=true` (workers/tiles/build.sh) púšťa do dlaždíc
  * práve od z13 – teda presne odtiaľ, odkiaľ tie útvary pribúdali. A prečo bolo
  * „vnútri len podklad": farba `pedestrian` je od `background` na nerozoznanie
  * (svetlá téma #f2efe9 vs #f8f4f0), takže z toho bola plocha v barve podkladu,
@@ -986,7 +986,7 @@ const PEAK_LINE_CLASSES = ["ridge", "arete", "cliff"];
 const GEO_PLACE_CLASSES = ["island", "archipelago", "peninsula", "region", "sea", "bay"];
 
 /**
- * Farby značiek, ako ich nesú dlaždice (workers/trail-routes.py normalizuje
+ * Farby značiek, ako ich nesú dlaždice (workers/trails/routes.py normalizuje
  * `osmc:symbol` a `colour` na tieto mená) → kľúče palety. Meno vo dvojici je
  * to, čo je v dátach; odtieň dáva až téma.
  */
@@ -1712,7 +1712,7 @@ export function buildStyle({
   // múry, ploty, vedenia, prieseky, pramene, jaskyne, rozhľadne, parkoviská
   // a zjazdovky. V celom `planetiler-openmaptiles` sa `embankment` ani raz
   // nevyskytuje, takže sa tieto veci ťahajú z toho istého PBF druhýkrát
-  // vlastnou schémou (workers/features.yml) do vlastného .pmtiles.
+  // vlastnou schémou (workers/features/features.yml) do vlastného .pmtiles.
   if (featuresUrl) {
     style.sources.features = {
       type: "vector",
@@ -1723,7 +1723,7 @@ export function buildStyle({
     };
   }
   // Raster DEM pre tieňovanie reliéfu a 3D terén (funguje na webe aj iOS).
-  // Vlastné dlaždice (workers/build-terrain.py) majú vo formulári vlastný
+  // Vlastné dlaždice (workers/terrain/tiles.py) majú vo formulári vlastný
   // výber modelu, takže atribúcia ide podľa `demTilesSource` – a nie podľa
   // vrstevníc, ktoré môžu byť z iného. Keď ich pipeline nevyrobila, padá sa
   // na verejné AWS Terrain Tiles.
@@ -1931,7 +1931,7 @@ export function buildStyle({
     // toho, k čomu vedú. Plocha aj os sú tá istá vrstva – uzavretá cesta
     // vyjde ako plocha aj ako čiara, takže dostane výplň s obrysom.
     //
-    // A práve preto tu MUSÍ byť `polygonOnly`: `workers/features.yml` púšťa do
+    // A práve preto tu MUSÍ byť `polygonOnly`: `workers/features/features.yml` púšťa do
     // vrstvy `piste` zámerne oba tvary, takže by táto výplň dostala aj os
     // zjazdovky – otvorenú čiaru, z ktorej MapLibre earcutom vyrobí nezmysel
     // (rozpis pri `POLYGON_ONLY`). Os kreslí `piste-line` o kus nižšie.
@@ -2681,7 +2681,7 @@ export function buildStyle({
   }
 
   // ================= krajinné prvky (línie) =================
-  // Vlastný .pmtiles (workers/features.yml). Kreslia sa nad cestami, lebo
+  // Vlastný .pmtiles (workers/features/features.yml). Kreslia sa nad cestami, lebo
   // násyp aj zárez sú hrany PRI ceste – pod ňou by ich cesta prekryla.
   if (featuresUrl) {
     // Násyp a zárez majú zúbky ako bralo, len opačne: násyp klesá od hrany

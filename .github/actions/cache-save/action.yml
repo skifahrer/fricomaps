@@ -29,6 +29,6 @@ runs:
         CACHE_PATH: ${{ inputs.path }}
       run: |
         set -euo pipefail
-        python3 "$GITHUB_WORKSPACE/workers/drive-cache.py" --save \
+        python3 "$GITHUB_WORKSPACE/workers/drive/cache.py" --save \
           --key="$CACHE_KEY" \
           --path="$CACHE_PATH"
