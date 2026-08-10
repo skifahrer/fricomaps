@@ -599,7 +599,7 @@ def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     if args.smooth > 0:
         subprocess.run([sys.executable,
                         os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                     "smooth-polygons.py"),
+                                     "smooth-shapes.py"),
                         f"--in={metric}", f"--out={smooth}", "--layer=rock",
                         f"--passes={args.smooth}"], check=True)
         src = smooth

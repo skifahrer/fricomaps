@@ -188,7 +188,7 @@ export const THEMES = {
     contour: "#b09070",
     contourMajor: "#96764e",
     contourText: "#8a6a45",
-    rockArea: "#b3b3b3",
+    rockArea: "#8f8f8f",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -305,7 +305,7 @@ export const THEMES = {
     contour: "#4a4436",
     contourMajor: "#6a6048",
     contourText: "#8a7f60",
-    rockArea: "#45454a",
+    rockArea: "#33333a",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -421,7 +421,7 @@ export const THEMES = {
     contour: "#b3835a",
     contourMajor: "#966034",
     contourText: "#7a4f28",
-    rockArea: "#b0aeac",
+    rockArea: "#8c8a88",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -536,7 +536,7 @@ export const THEMES = {
     contour: "#c8a488",
     contourMajor: "#b0846a",
     contourText: "#9a7058",
-    rockArea: "#bcb9b6",
+    rockArea: "#999693",
     // Prvky, ktoré schéma OpenMapTiles vôbec neprenáša (vlastný .pmtiles,
     // workers/features.yml) plus tie, ktoré v dlaždiciach sú, ale štýl ich
     // dlho nekreslil – bralná hrana, kosodrevina, cesta vo výstavbe.
@@ -1885,10 +1885,52 @@ export function buildStyle({
     ["uzemie", "Park (obrys)", "line", { "line-color": "parkOutline" }]
   );
 
+  // ================= skalné plochy =================
+  // SÚ TU, TESNE POD TIEŇOVANÍM, A NIE PRI VRSTEVNICIACH. Skala je tvar
+  // terénu, nie kresba nad ním – a tieňovanie je to isté, len rastrom.
+  // Keď ležala sivá plocha NAD tieňovaním, prekryla ho a stena bola v mape
+  // plochá škvrna bez reliéfu presne tam, kde je terén najzaujímavejší.
+  // Teraz cez ňu tieňovanie prejde a stena má tvar. Voda ostáva nad oboma:
+  // tieňovaná vodná hladina vyzerá nesprávne a jazero na skalnej ploche je
+  // jazero.
+  //
+  // JEDNA VRSTVA, JEDNA SIVÁ, BEZ PRIEHĽADNOSTI. Predtým to boli dve
+  // polopriehľadné vrstvy (`steep` a `cliff`) a tenký obrys. Priehľadnosť
+  // ale znamená, že KAŽDÝ prekryv je vidieť – dve plochy cez seba vyjdú
+  // tmavšie než jedna, a stačí na to plocha rozseknutá hranicou bloku
+  // alebo `cliff` ležiaci vo vyplnenej diere `steep`u. Plná farba to rieši
+  // na úrovni kreslenia: prekryv je neviditeľný, takže sa plochy nemusia
+  // ani zlepovať, ani strážiť proti sebe.
+  if (rocksUrl) {
+    add(
+      {
+        id: "rock-area",
+        type: "fill",
+        source: "rocks",
+        "source-layer": "rock",
+        // Od z1: veľká stena je čitateľná aj z prehľadu a sivá škvrna
+        // v hrebeni je na malej mierke presne tá informácia, kvôli ktorej
+        // sa mapa otvára. Obrys je tam zjednodušený (Planetiler ho reže
+        // podľa veľkosti pixela), takže to nič nestojí – drobné plochy sa
+        // do nízkych dlaždíc ani nedostanú.
+        minzoom: 1,
+        paint: {
+          "fill-color": c.rockArea,
+          "fill-opacity": 1,
+          // `fill-antialias` ostáva: hrana plochy má byť hladká. S plnou
+          // farbou to nerobí ani prekryv navyše – vyhladzuje sa okraj,
+          // nie výplň.
+          "fill-antialias": true
+        }
+      },
+      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }]
+    );
+  }
+
   // ================= tieňovanie reliéfu =================
-  // Ide nad krajinnú pokrývku, ale pod vodu – tieňovaná vodná hladina
-  // vyzerá nesprávne. Zdroj `dem` zostáva v štýle aj keď je tieňovanie
-  // vypnuté, lebo z neho žije 3D terén.
+  // Ide nad krajinnú pokrývku a nad skaly, ale pod vodu – tieňovaná vodná
+  // hladina vyzerá nesprávne. Zdroj `dem` zostáva v štýle aj keď je
+  // tieňovanie vypnuté, lebo z neho žije 3D terén.
   if (demTiles && showHillshade) {
     add(
       {
@@ -1973,45 +2015,11 @@ export function buildStyle({
     ["voda", "Potoky a priekopy", "line", { "line-color": "river" }]
   );
 
-  // ================= vrstevnice a skaly =================
+  // ================= vrstevnice =================
   // Kreslia sa nad vodou (pod hladinou nemajú čo robiť) a pod budovami
-  // a cestami, aby neprekrývali dôležitejšie prvky.
-  // Skalné plochy idú POD vrstevnice: sú to podkladové plochy, čiary
-  // vrstevníc nad nimi musia zostať čitateľné. Tam, kde by z vrstevníc
-  // aj tak bola tmavá šmuha (husté čiary = veľký sklon), teraz sedí
-  // jednoznačná sivá plocha.
-  //
-  // JEDNA VRSTVA, JEDNA SIVÁ, BEZ PRIEHĽADNOSTI. Predtým to boli dve
-  // polopriehľadné vrstvy (`steep` a `cliff`) a tenký obrys. Priehľadnosť
-  // ale znamená, že KAŽDÝ prekryv je vidieť – dve plochy cez seba vyjdú
-  // tmavšie než jedna, a stačí na to plocha rozseknutá hranicou bloku
-  // alebo `cliff` ležiaci vo vyplnenej diere `steep`u. Plná farba to rieši
-  // na úrovni kreslenia: prekryv je neviditeľný, takže sa plochy nemusia
-  // ani zlepovať, ani strážiť proti sebe.
-  if (rocksUrl) {
-    add(
-      {
-        id: "rock-area",
-        type: "fill",
-        source: "rocks",
-        "source-layer": "rock",
-        // Skaly majú byť vidieť všade, kde sú – veľká stena je čitateľná
-        // aj z prehľadu. Drobné plochy sa na nízkych zoomoch neriešia:
-        // do dlaždíc sa vôbec nedostanú (Planetiler ich zahodí pod pixel).
-        minzoom: 9,
-        paint: {
-          "fill-color": c.rockArea,
-          "fill-opacity": 1,
-          // `fill-antialias` ostáva: hrana plochy má byť hladká. S plnou
-          // farbou to nerobí ani prekryv navyše – vyhladzuje sa okraj,
-          // nie výplň.
-          "fill-antialias": true
-        }
-      },
-      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }]
-    );
-  }
-
+  // a cestami, aby neprekrývali dôležitejšie prvky. Nad tieňovaním aj nad
+  // skalami: čiara vrstevnice musí ostať čitateľná aj cez sivú stenu,
+  // inak je práve tam, kde je terén najstrmší, mapa bez výšok.
   if (contoursUrl) {
     const contourLine = (id, label, level, minzoom, width, paletteKey) =>
       add(
@@ -2031,9 +2039,16 @@ export function buildStyle({
         ["vrstevnice", label, "line", { "line-color": paletteKey }]
       );
 
+    // Tri triedy sa NEZAPÍNAJÚ naraz, a to je celé to „zjednodušene na
+    // malých mierkach": pod z12 je v mape LEN hlavná vrstevnica (po 100 m
+    // pri štandardnom intervale), od z12 pribudne polovičná a od z13
+    // základná. Hlavná ide až po z1 – tvar pohoria je čitateľný aj
+    // z prehľadu a Planetiler ju tam má zjednodušenú podľa veľkosti pixela.
+    // Čiara sa navyše na svojom prvom zoome vynára z nuly (`line-opacity`),
+    // takže žiadna trieda „nenaskočí" naraz ako mreža.
     contourLine("minor", "Vrstevnice po 10 m", "minor", 13, [[13, 0.4], [16, 0.7], [20, 1.4]], "contour");
     contourLine("mid", "Vrstevnice po 50 m", "mid", 12, [[12, 0.5], [16, 0.9], [20, 1.8]], "contour");
-    contourLine("major", "Vrstevnice po 100 m", "major", 10, [[10, 0.7], [16, 1.4], [20, 2.6]], "contourMajor");
+    contourLine("major", "Vrstevnice po 100 m", "major", 1, [[1, 0.3], [10, 0.7], [16, 1.4], [20, 2.6]], "contourMajor");
 
     // Popisky nadmorskej výšky pozdĺž hlavných vrstevníc.
     add(

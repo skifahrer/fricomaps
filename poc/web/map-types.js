@@ -90,8 +90,10 @@ export const MAP_TYPES = [
       // tak, ako ich dáva štýl. Ploty naopak až celkom zblízka, inak by
       // z okrajov obcí bola šeď.
       { match: { id: BARRIERS }, minzoomFloor: 16 },
-      // Terén a chodníky sa objavia skôr než na základnej mape.
-      { match: { id: ROCKS }, minzoom: 8 },
+      // Chodníky sa objavia skôr než na základnej mape. Skaly tu pravidlo
+      // NEMAJÚ: štýl ich kreslí od z1 a `minzoom: 8` by ich už len držalo
+      // späť – pravidlo, ktoré kedysi zoom znižovalo, by ho po zmene štýlu
+      // ticho zdvíhalo. Zoom skál je v jednom mieste, a to je themes.js.
       { match: { id: "road-path" }, minzoom: 10 },
       { match: { id: "road-track" }, minzoom: 10 },
       { match: { id: "road-cycleway" }, minzoom: 11 },
@@ -124,7 +126,6 @@ export const MAP_TYPES = [
       { match: { id: "aerialway" }, minzoom: 9 },
       // Ostatné trasy až zblízka – inak by zo zjazdovky spravili spleť.
       { match: { id: OTHER_TRAILS }, minzoomFloor: 14, opacity: 0.7 },
-      { match: { id: ROCKS }, minzoom: 8 },
       { match: { id: "road-path" }, minzoomFloor: 13 },
       { match: { id: "poi-major" }, minzoom: 13 },
       { match: { id: "mountain-peak" }, minzoom: 8 }
@@ -185,7 +186,6 @@ export const MAP_TYPES = [
       { match: { id: "road-footway" }, minzoomFloor: 15 },
       { match: { id: "road-cycleway" }, visible: false },
       { match: { id: PISTES }, visible: false },
-      { match: { id: ROCKS }, minzoom: 9 },
       // Hradby, staré štôlne a haldy sú tu pamiatka, nie prekážka –
       // preto sú vidieť skôr než na ostatných mapách.
       { match: { id: "feature-wall" }, minzoom: 13 },

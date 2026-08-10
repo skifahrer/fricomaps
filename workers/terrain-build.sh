@@ -25,10 +25,23 @@ case "$TZ" in ''|*[!0-9]*) TZ=13 ;; esac
 # teste na testovací štvorec, nie na celý región.
 BBOX="${DEM_BBOX:?bbox pre DEM}"
 TDEM="${SHADING_SOURCE:?zdroj tieňovania}"
-# Zdroj je v mene assetu: tieňovanie zo Sonnyho a z DMR 3.5 nie je
-# to isté a nesmie sa jedno vydávať za druhé.
-ASSET="terrain-${REGION_KEY}-${TDEM}-z${TZ}.tar.zst"
+# Rozpočet na tieňovanie: podiel z rozpočtu celej stránky. Bez neho sa
+# zmestenie riešilo až na konci behu, v kontrole pred nasadením – čiže po
+# celej práci. Jemný model (DMR 5.0 → z15) je pritom nad celým krajom
+# šestnásťkrát viac dlaždíc než z13, tak to musí vedieť ten, kto ich robí.
+LIMIT_MB="${SIZE_LIMIT_MB:-900}"
+case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac
+TPCT="${BUDGET_TERRAIN_PCT:-12}"
+case "$TPCT" in ''|*[!0-9]*) TPCT=12 ;; esac
+TBUDGET_MB=$(( LIMIT_MB * TPCT / 100 ))
 REBUILD="${TERRAIN_REBUILD:-false}"
+
+# Meno assetu nesie ZDROJ a MAXZOOM – tieňovanie zo Sonnyho a z DMR 3.5 nie
+# je to isté a z13 nie je z15. Skutočný maxzoom je ale známy až po výpočte
+# (strop veľkosti ho môže zraziť), takže sa meno skladá funkciou a volá sa
+# dvakrát: raz s tým želaným, keď sa hľadá v sklade, a raz s vyrobeným,
+# keď sa nahráva.
+asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}.tar.zst"; }
 
 have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
 
@@ -39,12 +52,22 @@ elif have_tiles; then
   echo "Výškové dlaždice sú v cache behu ✓"
   TSRC="cache"
 else
-  # Skús sklad – uložené dlaždice sú lacnejšie než ich prepočítať.
-  if python3 workers/drive-store.py --get --store="$TERRAIN_STORE" \
-       --name="$ASSET" --dir=/tmp; then
+  # Skús sklad – uložené dlaždice sú lacnejšie než ich prepočítať. Hľadá sa
+  # NAJVYŠŠÍ uložený zoom, ktorý nie je vyšší než želaný: keď minulý beh
+  # narazil na strop veľkosti a uložil z13, je to presne to, čo by sa znova
+  # vypočítalo – a hľadanie na presné meno „z15" by ho nenašlo a hodinu by
+  # počítalo to isté. Nižší zoom je platná odpoveď, vyšší nie (ten by dal
+  # jemnejšie dlaždice, než sa žiadalo, a stránka by sa nemusela zmestiť).
+  HAVE_Z=$(python3 workers/drive-store.py --names --store="$TERRAIN_STORE" \
+      2>/dev/null \
+    | sed -n "s/^terrain-${REGION_KEY}-${TDEM}-z\([0-9]\+\)\.tar\.zst$/\1/p" \
+    | awk -v want="$TZ" '$1 <= want' | sort -n | tail -1)
+  if [ -n "$HAVE_Z" ] && python3 workers/drive-store.py --get \
+       --store="$TERRAIN_STORE" --name="$(asset_name "$HAVE_Z")" --dir=/tmp; then
     mkdir -p terrain-out
-    tar --use-compress-program=unzstd -xf "/tmp/$ASSET" -C terrain-out
-    echo "Výškové dlaždice stiahnuté zo skladu $TERRAIN_STORE ✓"
+    tar --use-compress-program=unzstd -xf "/tmp/$(asset_name "$HAVE_Z")" \
+      -C terrain-out
+    echo "Výškové dlaždice stiahnuté zo skladu $TERRAIN_STORE ✓ (z$HAVE_Z)"
     TSRC="sklad $TERRAIN_STORE"
   fi
 fi
@@ -77,23 +100,26 @@ if ! have_tiles; then
     echo "::warning::Model $TDEM pre tieňovanie nie je k dispozícii – tieňovanie sa počíta zo Sonnyho (20 m). Mapa bude, len s hrubším reliéfom, a atribúcia bude hovoriť Sonny."
     TDEM=sonny
     FELL_BACK=true
-    # Meno súboru nesie zdroj, tak sa musí prepočítať – inak by sa
-    # Sonnyho dlaždice uložili do skladu pod menom toho druhého
-    # modelu a nabudúce by sa vydávali za neho.
-    ASSET="terrain-${REGION_KEY}-${TDEM}-z${TZ}.tar.zst"
+    # Meno súboru nesie zdroj – `asset_name` ho skladá z premennej `TDEM`,
+    # takže sa prepísaním modelu opraví samo. Kým to bol reťazec napísaný
+    # druhýkrát, uložili sa Sonnyho dlaždice pod menom toho druhého modelu
+    # a nabudúce sa vydávali za neho.
     workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
   elif [ "$TRC" -ne 0 ]; then
     exit "$TRC"
   fi
-  echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM"
+  echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM (strop ${TBUDGET_MB} MB)"
   python3 workers/build-terrain.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \
-    --minzoom=5 --maxzoom="$TZ" --out=terrain-out
-  echo "$TZ" > terrain-out/maxzoom.txt
+    --minzoom=5 --maxzoom="$TZ" --budget-mb="$TBUDGET_MB" --out=terrain-out
+  # Vyrobený maxzoom píše `build-terrain.py` – strop veľkosti mohol ten
+  # želaný zraziť a asset sa MUSÍ volať podľa toho, čo v ňom naozaj je.
+  TZ=$(cat terrain-out/maxzoom.txt)
   echo "::endgroup::"
 
   # Ulož do skladu, nech ich nabudúce netreba počítať znova. Zlyhanie
   # uloženia NESMIE zhodiť beh – dlaždice sú spočítané a v `terrain-out`,
   # takže mapa bude; stratí sa len to, že sa nabudúce budú počítať znova.
+  ASSET=$(asset_name "$TZ")
   tar --use-compress-program='zstd -19 -T0' -cf "/tmp/$ASSET" -C terrain-out .
   python3 workers/drive-store.py --put --store="$TERRAIN_STORE" \
       --file="/tmp/$ASSET" \
