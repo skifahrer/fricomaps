@@ -527,6 +527,23 @@ hodiny čítania z Drive.
 | zmena `rock_slope` | sklad sa použije, prepočíta sa len vektorizácia |
 | `rocks_rebuild` | prepočíta sa všetko (`--rebuild`) |
 | testovací beh (`test`) | sklad sa použije, ale nič sa doň neuloží |
+| vypadne spojenie na jednej časti | časť sa skúsi znova (`--tries`, 3×) |
+
+**Jedna stratená časť nesmie zhodiť beh.** Sieť medzi GDALom a shimom vypadne
+raz za desaťtisíce požiadaviek a dovtedy to znamenalo koniec: beh
+[31338803278](https://github.com/skifahrer/fricomaps/actions/runs/31338803278)
+mal 45 častí zo 47 hotových a spadol na dvoch. Časť sa počíta minútu, takže
+druhý pokus stojí minútu – pád stojí celý job. Pokusy sú tri; trvalé chyby
+(zlé zadanie, plný disk) sa opakovaním nespravia, tak sa nečaká dlho. Keď sa
+časť nepodarí ani na tretí raz, beh spadne a **vypíše, čoho sa to týkalo
+a koľko je v sklade** – aby bolo z logu vidieť, že hotová práca sa nezahodila.
+
+**A počas počítania je počuť tep** (`--heartbeat`, predvolene 30 s, berie sa
+z `ROCK_HEARTBEAT_S`): koľko častí beží, ako dlho tá najstaršia, a koľko sa
+už prečítalo z Drive v koľkých požiadavkách. Riadok na hotovú časť stačí, kým
+časti trvajú desiatky sekúnd; len čo sa jedna zasekne, je v logu ticho
+a zaseknutý beh vyzerá presne ako pomalý. Počet požiadaviek je tu to hlavné
+číslo – keď rastie, číta sa; keď stojí, čaká sa.
 
 Dve vrstvy skladu zámerne: cache je rýchla, ale GitHub ju po siedmich dňoch
 bez použitia zmaže a repo má strop 10 GB; release nevyprší. Cache sa ukladá
@@ -1332,6 +1349,35 @@ Tri veci, ktoré ten workflow rieši, a všetky sú zmerané:
    Z toho istého testu vypadla druhá diera: rozsah, z ktorého po orezaní na
    súbor nič neostalo, sa bral ako „pošli celý súbor" – teda 145 GB namiesto
    32 kB. Teraz je z toho `416`, ako káže RFC 9110.
+
+5. **Fronta čakajúcich spojení bola päť.** `socketserver` má
+   `request_queue_size = 5` a to je pri šiestich súbežných gdalwarpoch
+   (`slope-chunks.py --jobs 6`) málo. Keď fronta pretečie, jadro SYN
+   **zahodí – ticho, bez chyby na oboch stranách**: shim sa o takej
+   požiadavke nikdy nedozvie a nemá čo napísať do logu, klient ju
+   retransmituje s exponenciálnym odstupom (1, 2, 4, 8 … s) a `connect` sa
+   vzdá až po vyše dvoch minútach. GDAL to vypíše ako
+   `Request for … failed with response_code=0`, čo vyzerá ako chyba Drive,
+   hoci sa požiadavka k Drive ani neblížila.
+
+   Beh [31338803278](https://github.com/skifahrer/fricomaps/actions/runs/31338803278)
+   na tom padol **dve časti pred koncom**: 45 zo 47 spočítaných za 5:52,
+   potom 3,5 minúty ticha a pád. Teraz je fronta `socket.SOMAXCONN` (nič
+   nestojí, kým je prázdna), GDAL má `GDAL_HTTP_MAX_RETRY=5`
+   a `GDAL_HTTP_CONNECTTIMEOUT=20` – z takého výpadku je dvadsaťsekundový
+   zádrhel namiesto padnutého jobu.
+
+   Prispieval k tomu aj bazén vlákien na sťahovanie úsekov: bol na **jednu
+   požiadavku**, takže `FETCH_WORKERS = 12` nebolo 12, ale 12 × počet
+   súbežných gdalwarpov (namerané 80 naraz) – a rástlo to práve s `--jobs`,
+   teda s tým, čo sa ladí kvôli rýchlosti. Vlákna navyše nestoja len Drive:
+   accept slučka shimu je obyčajná pythonovská slučka a pri stovkách vlákien
+   sa k nej GIL nedostane dosť často. Bazén je odteraz jeden na proces
+   (24 vlákien, namerané 68 ms/req).
+
+   Shim si zlyhané požiadavky aj **ráta** a `slope-chunks.py` to vypisuje.
+   Keď GDAL hlási chybu a tu je nula, požiadavka sa k shimu nedostala –
+   hľadať sa má v sieti pod ním, nie na Drive.
 
 Namerané: výrez 5,2 × 5,6 km pri 1 m trvá 1,2 min, stiahne 0,11 GB v 697
 požiadavkách; skaly z neho (`rock-areas.py`, `--res=2 --slope=50`) dajú

@@ -306,6 +306,11 @@ def main():
                          "pri --drive je to 1")
     ap.add_argument("--budget-min", type=float, default=100.0)
     ap.add_argument("--chunk-cells", type=float, default=150e6)
+    ap.add_argument("--tries", type=int, default=3,
+                    help="koľko pokusov na jednu časť, kým sa beh vzdá")
+    ap.add_argument("--heartbeat", type=float,
+                    default=float(os.environ.get("ROCK_HEARTBEAT_S") or 30),
+                    help="ako často povedať, čo práve beží (0 = ticho)")
     ap.add_argument("--print-res", action="store_true",
                     help="len vypíš zvolenú mriežku a skonči")
     ap.add_argument("--stats", default="", help="kam zapísať štatistiku (key=value)")
@@ -403,6 +408,43 @@ def main():
 
     done = [0]
     lock = threading.Lock()
+    running = {}          # meno časti → odkedy sa počíta
+    failed = []           # čo sa nepodarilo ani na posledný pokus
+    tries = max(1, args.tries)
+
+    def compute(name, chunk, path):
+        """Jedna časť – a keď spojenie vypadne, ešte raz.
+
+        Sieť medzi GDALom a shimom vypadne raz za desaťtisíce požiadaviek a
+        doteraz to znamenalo koniec celého behu: 31338803278 mal 45 častí zo
+        47 hotových a spadol na dvoch, ktoré sa k shimu vôbec nedostali
+        (`response_code=0`, čiže bez odpovede – nie chyba Drive). Časť sa
+        počíta minútu, takže druhý pokus stojí minútu; pád stojí celý job.
+
+        Trvalé chyby (zlé zadanie, plný disk) sa opakovaním nespravia, tak sú
+        pokusy tri a čaká sa krátko. Po `slope_chunk` neostáva ani pri páde
+        nič rozrobené – dočasné súbory si upratuje sám a hotová je časť až po
+        premenovaní – takže ďalší pokus začína načisto.
+        """
+        for attempt in range(1, tries + 1):
+            with lock:
+                running[name] = time.time()
+            try:
+                slope_chunk(dem, chunk, res, path, work, env)
+                return
+            except Exception as exc:                    # noqa: BLE001
+                if attempt >= tries:
+                    with lock:
+                        failed.append(name)
+                    raise
+                wait = 5 * attempt
+                why = str(exc).strip().splitlines()[-1][:200]
+                print(f"::warning::Časť {name} zlyhala na {attempt}. pokus "
+                      f"z {tries}, skúšam znova o {wait} s: {why}", flush=True)
+                time.sleep(wait)
+            finally:
+                with lock:
+                    running.pop(name, None)
 
     def one(chunk):
         ix, iy = chunk[0], chunk[1]
@@ -410,7 +452,7 @@ def main():
         path = os.path.join(args.out, name)
         got = None if args.rebuild else store.take(name)
         if got is None:
-            slope_chunk(dem, chunk, res, path, work, env)
+            compute(name, chunk, path)
             store.put(name)
         with lock:
             done[0] += 1
@@ -421,8 +463,52 @@ def main():
                   f"{rock.hms(el)} za sebou, zostáva ~{rock.hms(eta)}", flush=True)
         return path
 
-    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
-        tiles = list(ex.map(one, chunks))
+    # TEP. Riadok na hotovú časť stačí, kým časti trvajú desiatky sekúnd; len
+    # čo sa jedna zasekne, je v logu ticho a zaseknutý beh vyzerá presne ako
+    # pomalý. Beh 31338803278 mlčal 3,5 minúty a potom padol – a z logu sa
+    # nedalo povedať, či sa ešte číta, alebo sa už len čaká na spojenie.
+    # Počet požiadaviek na Drive je tu to hlavné číslo: keď rastie, číta sa;
+    # keď stojí, čaká sa a chyba je medzi GDALom a shimom, nie na Drive.
+    stop = threading.Event()
+
+    def beat():
+        while not stop.wait(args.heartbeat):
+            now = time.time()
+            with lock:
+                live = sorted(running.items(), key=lambda kv: kv[1])
+                d = done[0]
+            parts = [f"[{d}/{len(chunks)}] beží {len(live)}"]
+            if live:
+                parts.append(", ".join(
+                    f"{n.rsplit('-', 1)[-1][:-4]} {rock.hms(now - t)}"
+                    for n, t in live[:4]))
+            if stats_drive:
+                with stats_drive["lock"]:
+                    got, req = stats_drive["bytes"], stats_drive["requests"]
+                    bad = stats_drive.get("failed", 0)
+                parts.append(f"z Drive {got / 1e9:.2f} GB v {req:,} požiadavkách"
+                             + (f", {bad:,} zlyhalo" if bad else ""))
+            print("  … " + "  ".join(parts), flush=True)
+
+    if args.heartbeat > 0:
+        threading.Thread(target=beat, daemon=True).start()
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as ex:
+            tiles = list(ex.map(one, chunks))
+    except Exception:
+        # Čo z toho ostalo. Sklad je celý zmysel tohto skriptu, takže pri páde
+        # musí byť z logu vidieť, že hotová práca sa nezahodila a čo zostáva.
+        stop.set()
+        with lock:
+            bad = list(failed)
+        have_now = sum(1 for n in names if store.local(n))
+        print(f"::error::Sklon spadol na {len(bad)} častiach"
+              + (f" ({', '.join(bad[:6])})" if bad else "")
+              + f"; v sklade ich je {have_now} z {len(chunks)} – ďalší beh "
+              f"dopočíta len zvyšok, nič sa nezahodilo.", flush=True)
+        raise
+    stop.set()
 
     vrt = os.path.join(args.out, f"slope-r{res:g}.vrt")
     subprocess.run(["gdalbuildvrt", "-q", vrt] + tiles, check=True)

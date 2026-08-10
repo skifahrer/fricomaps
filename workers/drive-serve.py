@@ -68,6 +68,7 @@ import http.server
 import json
 import os
 import queue
+import socket
 import socketserver
 import ssl
 import sys
@@ -82,10 +83,38 @@ UA = "Mozilla/5.0 (compatible; fricomaps-dem/1.0)"
 PUBLIC_HOST = "drive.usercontent.google.com"
 # Prihlásená cesta: riadne Drive API. Range na `alt=media` funguje rovnako.
 API_HOST = "www.googleapis.com"
-# Koľko úsekov viacnásobného Range sa ťahá naraz. Nad ~16 začne Drive
-# odpovedať 403 „rate limit" a exponenciálne čakanie potom zožerie viac,
-# než tá súbežnosť získa.
-FETCH_WORKERS = 12
+# Koľko úsekov viacnásobného Range sa ťahá naraz – na CELÝ PROCES, nie na
+# jednu požiadavku. Bolo to na požiadavku a to nie je strop, ale násobenie:
+# pri `slope-chunks.py --jobs 6` bežalo šesť gdalwarpov naraz, každý si pýtal
+# viacnásobný Range a z „12 vlákien" bolo 72 – a rástlo to s `--jobs`, teda
+# presne s tým, čo sa ladí kvôli rýchlosti. Vlákna navyše nestoja len Drive:
+# accept slučka shimu je obyčajná pythonovská slučka a keď sa k nej pri
+# stovkách vlákien nedostane GIL, prestane preberať spojenia (viď frontu
+# v `Server` nižšie).
+#
+# 24 je namerané (48 náhodných výrezov po 400 kB: 1 vlákno 1 143 ms/req,
+# 8 vlákien 147 ms/req, 24 vlákien 68 ms/req). Nad ~32 začne Drive odpovedať
+# 403 „rate limit" a exponenciálne čakanie zožerie viac, než tá súbežnosť
+# získa – to je tá hranica, po ktorú sa toto číslo smie dvíhať.
+FETCH_WORKERS = 24
+
+_FETCH = None
+_FETCH_LOCK = threading.Lock()
+
+
+def fetch_pool():
+    """Jeden zdieľaný bazén vlákien na sťahovanie úsekov.
+
+    Zdieľaný preto, aby `FETCH_WORKERS` naozaj niečo ohraničoval, a jeden
+    preto, aby sa vlákna nevyrábali znova pri každej požiadavke – tých sú za
+    beh desaťtisíce.
+    """
+    global _FETCH
+    with _FETCH_LOCK:
+        if _FETCH is None:
+            _FETCH = ThreadPoolExecutor(max_workers=FETCH_WORKERS,
+                                        thread_name_prefix="drive-fetch")
+    return _FETCH
 
 
 def quota_hint(authed):
@@ -513,6 +542,12 @@ def make_handler(pool, files, stats):
             except (BrokenPipeError, ConnectionResetError):
                 pass              # GDAL zavrel spojenie – bežné a v poriadku
             except Exception as exc:            # noqa: BLE001
+                # Zlyhania sa aj RÁTAJÚ, nielen vypisujú. Volajúci potom vie
+                # povedať, či shim o požiadavke vôbec vedel: keď GDAL hlási
+                # chybu a tu je nula, spojenie sa k shimu nedostalo (fronta,
+                # sieť) a hľadať sa má inde než na Drive.
+                with stats["lock"]:
+                    stats["failed"] += 1
                 print(f"  drive-serve: {self.path} {hdr} zlyhalo: {exc}",
                       file=sys.stderr, flush=True)
                 # ODPOVEDAJ AJ NA CHYBU. Kým sa sem chodilo len vypísať,
@@ -560,8 +595,8 @@ def make_handler(pool, files, stats):
             self.wfile.write(body)
 
         def _send_multipart(self, file_id, size, ranges):
-            with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as ex:
-                bodies = list(ex.map(lambda r: self._fetch(file_id, *r), ranges))
+            bodies = list(fetch_pool().map(
+                lambda r: self._fetch(file_id, *r), ranges))
             boundary = "fricomaps_%d" % time.time_ns()
             parts, total = [], 0
             for (start, end), body in zip(ranges, bodies):
@@ -589,6 +624,19 @@ def make_handler(pool, files, stats):
 class Server(socketserver.ThreadingTCPServer):
     daemon_threads = True
     allow_reuse_address = True
+    # FRONTA ČAKAJÚCICH SPOJENÍ. `socketserver` má predvolene 5 a to je pri
+    # šiestich súbežných gdalwarpoch málo. Keď fronta pretečie, jadro SYN
+    # jednoducho ZAHODÍ – ticho, bez chyby, na oboch stranách: shim sa
+    # o takej požiadavke nikdy nedozvie a nemá čo zapísať do logu. Klient ju
+    # potom retransmituje s exponenciálnym odstupom (1, 2, 4, 8 … s) a
+    # `connect` sa vzdá až po vyše dvoch minútach; GDAL to vypíše ako
+    # `response_code=0`, čo vyzerá ako chyba Drive, hoci sa požiadavka
+    # k Drive ani neblížila.
+    #
+    # Presne to zhodilo beh 31338803278 dve časti pred koncom: 45 zo 47
+    # spočítaných, potom 3,5 minúty ticha a pád. Preto sa berie to, čo
+    # dovolí jadro (`SOMAXCONN`) – fronta nič nestojí, kým je prázdna.
+    request_queue_size = socket.SOMAXCONN
 
 
 def probe_size(pool, file_id):
@@ -617,7 +665,7 @@ def serve(ids, port=8787, creds=None):
     for name, file_id in ids.items():
         files[name] = (file_id, probe_size(pool, file_id))
         sizes[name] = files[name][1]
-    stats = {"requests": 0, "bytes": 0, "lock": threading.Lock()}
+    stats = {"requests": 0, "bytes": 0, "failed": 0, "lock": threading.Lock()}
     httpd = Server(("127.0.0.1", port), make_handler(pool, files, stats))
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return f"http://127.0.0.1:{httpd.server_address[1]}", sizes, stats
@@ -632,12 +680,23 @@ def gdal_env(extra=None):
     `GDAL_DISABLE_READDIR_ON_OPEN` sa tu ZÁMERNE nenastavuje: skryl by
     `.ovr` vedľa `.tif`, a práve tie pyramídy robia hrubšie výrezy lacnými.
     Shim na neexistujúci sidecar odpovie 404, čo je presne to, čo GDAL čaká.
+
+    `GDAL_HTTP_MAX_RETRY` a krátky `CONNECTTIMEOUT` sú tu preto, že jedno
+    stratené spojenie z desaťtisícov nesmie byť koncom hodinovej práce. GDAL
+    predvolene neopakuje NIČ a na spojenie čaká, kým sa nevzdá jadro – teda
+    vyše dvoch minút, ak sa SYN stratil. Dvadsať sekúnd a päť pokusov spraví
+    z takého výpadku dvadsaťsekundový zádrhel namiesto padnutého jobu (beh
+    31338803278). Hodnoty sa dajú prebiť z prostredia.
     """
     env = {
         **os.environ,
         "GDAL_HTTP_MULTIRANGE": "YES",
         "GDAL_HTTP_MERGE_CONSECUTIVE_RANGES": "YES",
         "GDAL_HTTP_VERSION": "1.1",
+        "GDAL_HTTP_MAX_RETRY": os.environ.get("GDAL_HTTP_MAX_RETRY", "5"),
+        "GDAL_HTTP_RETRY_DELAY": os.environ.get("GDAL_HTTP_RETRY_DELAY", "1"),
+        "GDAL_HTTP_CONNECTTIMEOUT": os.environ.get(
+            "GDAL_HTTP_CONNECTTIMEOUT", "20"),
         "GDAL_NUM_THREADS": "ALL_CPUS",
         "GDAL_CACHEMAX": os.environ.get("GDAL_CACHEMAX", "2048"),
         "VSI_CACHE": "TRUE",
