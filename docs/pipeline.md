@@ -1137,6 +1137,25 @@ Parametre, ktoré tu používame, a prečo:
 | `--transportation_z13_paths=true` | všetky chodníky a cestičky (dôležité pre turistiku) |
 | `--building_merge_z13=false` | samostatné budovy namiesto zlepencov – potrebné pre 3D |
 | `--languages=sk,en` | do dlaždíc idú len tie jazykové varianty názvov, ktoré naozaj použijeme |
+| `--http_timeout=120s --http_retries=10` | zdroje idú z cudzích serverov, viď nižšie |
+
+**Zdrojové dáta sa sťahujú vlastným krokom a s opakovaním.** Planetiler okrem
+PBF potrebuje ešte tri súbory z cudzích serverov – water polygons
+(osmdata.openstreetmap.de), Natural Earth (naciscdn.org) a lake centerlines
+(GitHub), dokopy ~515 MB. Kým sedeli v cache, nesťahoval ich nikto; prvý beh po
+presťahovaní cache na Drive ju mal prázdnu a spadol **desať sekúnd po štarte**
+na `Error getting size of …water-polygons-split-3857.zip` (beh
+[31367295712](https://github.com/skifahrer/fricomaps/actions/runs/31367295712))
+– teda ešte pred akoukoľvek prácou. Vlastné opakovanie Planetileru na to
+nestačí: server sa nedovolal už pri zisťovaní veľkosti súboru.
+
+Preto `workers/tiles-build.sh` sťahuje zdroje zvlášť (`--only-download`), s
+dlhším limitom a v slučke na tri pokusy. Cudzí server, ktorý má výpadok na pár
+desiatok sekúnd, nemá právo zhodiť štyridsaťminútový build; keď je nedostupný
+naozaj, hláška povie, ktorý to je a že sa dá podať zrkadlo cez
+`--water_polygons_url`. Stiahnuté súbory ide uložiť krok *Cache – zdrojové dáta
+Planetileru (save)*, ktorý má `if: always()` – takže ich má ďalší beh aj vtedy,
+keď tilovanie spadne.
 
 ### `assets` – sady ikoniek → SDF sprity
 
