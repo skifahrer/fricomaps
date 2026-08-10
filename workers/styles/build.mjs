@@ -49,6 +49,12 @@ import {
 } from "../../poc/web/themes.js";
 import { ICON_SOURCES } from "../../poc/web/icon-sources.js";
 
+// Vlastný priečinok je `workers/styles`. Číselníky sú v susednom
+// `workers/data/`, koreň repozitára o dve úrovne vyššie – kým bol tento
+// súbor priamo vo `workers/`, bola to jedna úroveň a po presune z toho
+// vyšlo `workers/styles/regions.json` (beh 31413580102).
+const SELF = dirname(fileURLToPath(import.meta.url));
+
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
     const [k, ...v] = a.replace(/^--/, "").split("=");
@@ -103,7 +109,7 @@ if (!baseUrl) {
 }
 
 const regions = JSON.parse(
-  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "regions.json"), "utf8")
+  readFileSync(join(SELF, "..", "data", "regions.json"), "utf8")
 );
 // Región nemusí byť v regions.json (custom región z osm.fr – Európa/svet);
 // vtedy sa meno berie z --name, prípadne z kľúča regiónu.
@@ -139,7 +145,7 @@ function readSprite(path) {
 // ---------- úpravy z developer módu ----------
 // Súbor je voliteľný; ak chýba alebo je prázdny, štýl je pôvodný.
 const overridesPath =
-  args.overrides || join(dirname(fileURLToPath(import.meta.url)), "..", "poc", "web", "style-overrides.json");
+  args.overrides || join(SELF, "..", "..", "poc", "web", "style-overrides.json");
 let overrides = null;
 if (existsSync(overridesPath)) {
   try {
