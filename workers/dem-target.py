@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Jedna odpoveď na otázku „z ktorého releasu a ktoré súbory“ – pre celý build.
+Jedna odpoveď na otázku „z ktorého skladu a ktoré súbory“ – pre celý build.
 
 PREČO EXISTUJE. Tú istú otázku si kladú DVE miesta a musia si odpovedať
 rovnako:
 
-  check-dem (build-map.yml)   čo hľadať v release a či to treba doplniť
+  check-dem (build-map.yml)   čo hľadať v sklade a či to treba doplniť
   workers/fetch-dem.sh        čo naozaj stiahnuť
 
 Kým bola odpoveď napísaná dvakrát, rozišli sa – a presne to zhodilo beh
@@ -16,9 +16,15 @@ Kontrola teda povedala „chýba `ugkk-vysoke_tatry.tif` v dem-ugkk“, doplneni
 sa spustilo na dem-ugkk – a tieňovanie potom spadlo na tom, že v dem-dmr5
 nie je ani jedna dlaždica. Dve pravdy o jednej veci; odteraz je pravda tu.
 
-DVE PODOBY DMR 5.0. Je to jeden a ten istý 1 m LiDAR od ÚGKK, len sa nedá
-uložiť dvakrát: pri 1 m má jedna 1°×1° dlaždica ~48 GB a strop assetu
-v release je 2 GB.
+SKLAD JE PRIEČINOK NA DRIVE, nie GitHub release – celý rozpis je vo
+`workers/drive-store.py`. Mená súborov sú tie isté, aké mali assety releasov,
+lebo meno je sľub o rozsahu.
+
+DVE PODOBY DMR 5.0. Je to jeden a ten istý 1 m LiDAR od ÚGKK, len ho nemá
+zmysel držať dvakrát: pri 1 m má jedna 1°×1° dlaždica ~48 GB a runner má
+voľných ~60 GB, takže sa nemá kde ani rozbaliť, nieto zlepiť do mozaiky.
+(Kým sa ukladalo do releasov, hranicu určoval ich 2 GB strop na asset; na
+Drive taký strop nie je, ale runner ostal ten istý.)
 
     kľúč výrezu (`area`)   ugkk-<vyrez>.tif v dem-ugkk    plné 1 m
     bez výrezu (`cely`)    N49E019.tif … v dem-dmr5       prevzorkované na 5 m
@@ -38,7 +44,7 @@ Použitie:
 Výstup je `key=value` na stdout (rovnaký tvar ako GITHUB_OUTPUT):
 
     form=tiles | area
-    release=dem-dmr5
+    store=dem-dmr5
     assets=N49E019.tif N49E020.tif      (prázdne = bbox nie je známy)
     mirror=dmr5:tiles:19,49,21,50       otlačok toho, čo treba doplniť
     degrees=19,49,21,50                 okno pre doplnenie, na celé stupne
@@ -52,11 +58,11 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Meno releasu sa dá prebiť z prostredia – workflow si ich drží ako env, aby
-# sa dal celý build presmerovať na testovací release bez zmeny v JSONe.
-ENV_TILES = {"sonny": "DEM_RELEASE", "dmr35": "DMR35_RELEASE",
-             "dmr5": "DMR5_RELEASE"}
-ENV_AREA = {"dmr5": "UGKK_RELEASE"}
+# Meno skladu sa dá prebiť z prostredia – workflow si ich drží ako env, aby
+# sa dal celý build presmerovať na testovací sklad bez zmeny v JSONe.
+ENV_TILES = {"sonny": "DEM_STORE", "dmr35": "DMR35_STORE",
+             "dmr5": "DMR5_STORE"}
+ENV_AREA = {"dmr5": "UGKK_STORE"}
 
 # Zdroje, ktoré majú aj výrezovú podobu (jeden COG na pohorie v plnom
 # rozlíšení). Ostatné sú vždy dlaždice.
@@ -101,11 +107,11 @@ def target(source, area_key, bbox, sources_path=None):
 
     if src in HAS_AREA_FORM and key and key != "cely":
         rel = os.environ.get(ENV_AREA.get(src, ""), "") or \
-            meta.get("release_area", "dem-ugkk")
+            meta.get("store_area", "dem-ugkk")
         asset = f"ugkk-{key}.tif"
         return {
             "form": "area",
-            "release": rel,
+            "store": rel,
             "assets": asset,
             "mirror": f"{src}:area:{key}",
             "degrees": "",
@@ -113,18 +119,18 @@ def target(source, area_key, bbox, sources_path=None):
         }
 
     rel = os.environ.get(ENV_TILES.get(src, ""), "") or \
-        meta.get("release", "dem-sonny")
+        meta.get("store", "dem-sonny")
     if not bbox:
         # Vlastný región bez bboxu: zoznam dlaždíc sa nedá zistiť. Volajúci
         # si s prázdnym zoznamom poradí sám (kontrola sa vtedy pýta len na to,
-        # či je v release vôbec niečo).
-        return {"form": "tiles", "release": rel, "assets": "",
+        # či je v sklade vôbec niečo).
+        return {"form": "tiles", "store": rel, "assets": "",
                 "mirror": f"{src}:tiles", "degrees": "",
                 "label": f"{label} – dlaždice"}
     deg = degrees_box(bbox)
     return {
         "form": "tiles",
-        "release": rel,
+        "store": rel,
         "assets": " ".join(f"{t}.tif" for t in tiles_for(bbox)),
         "mirror": f"{src}:tiles:" + ",".join(str(v) for v in deg),
         "degrees": ",".join(str(v) for v in deg),

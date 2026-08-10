@@ -1,12 +1,12 @@
-name: Upratať Actions
+name: Upratať GitHub
 
-# Zmaže behy, ktoré nie sú záznamom o ničom – a tým aj položky, ktoré po nich
-# ostali v ľavom zozname Actions.
+# Zmaže behy, ktoré nie sú záznamom o ničom – a VŠETKY releasy aj artefakty,
+# lebo do GitHubu sa už nepublikuje nič.
 #
-# PREČO WORKFLOW A NIE PULL REQUEST: behy a vetvy nie sú súbory v repozitári,
-# takže sa nedajú zmazať zmenou kódu. Token mimo Actions na to nemá právo
-# (`Resource not accessible by integration`), vnútri behu ho `GITHUB_TOKEN`
-# má – keď mu to workflow dovolí nižšie v `permissions`.
+# PREČO WORKFLOW A NIE PULL REQUEST: behy, vetvy, releasy ani artefakty nie sú
+# súbory v repozitári, takže sa nedajú zmazať zmenou kódu. Token mimo Actions
+# na to nemá právo (`Resource not accessible by integration`), vnútri behu ho
+# `GITHUB_TOKEN` má – keď mu to workflow dovolí nižšie v `permissions`.
 #
 # ČO MAŽE:
 #   • behy zrušených workflowov – po zmazanom súbore ostane položka v zozname
@@ -14,10 +14,21 @@ name: Upratať Actions
 #   • behy odmietnutých súborov – keď je súbor workflowu neplatný, GitHub pri
 #     pushi vyrobí beh BEZ JOBOV, pomenovaný cestou k súboru, a vyzerá to, že
 #     sa workflow spustil sám po mergi;
-#   • voliteľne vetvy `claude/*`, ktoré sú celé v hlavnej vetve.
+#   • voliteľne vetvy `claude/*`, ktoré sú celé v hlavnej vetve;
+#   • releasy (`dem-sonny`, `dem-dmr5`, `dem-terrain`, …), ich assety a tagy;
+#   • artefakty všetkých behov.
+#
+# NIČ SA TÝM NESTRATÍ. Výškové modely, skaly, tieňovanie aj medzivýsledky na
+# pozretie ležia v sklade na Google Drive (`workers/drive-store.py`) – to je
+# odteraz JEDINÉ miesto, kam pipeline publikuje. Že sa `gh release` ani
+# dlhodobý artefakt nevrátia, stráži `Lint workflows`.
 #
 # Čo je normálna história (behy so skutočným menom workflowu, ktorého súbor
 # stále existuje), sa nemaže nikdy.
+#
+# TÝŽDENNE beží režim `releasy_a_artefakty`: keby release či dlhodobý artefakt
+# niekedy pribudol, nemá tam ostať ležať mesiace. Behy a vetvy sa z plánu
+# nemažú – to je história a patrí do rúk človeku.
 
 on:
   workflow_dispatch:
@@ -30,15 +41,20 @@ on:
         options:
           - behy
           - behy_a_vetvy
+          - releasy_a_artefakty
+          - vsetko
       dry_run:
         description: "Len vypísať, čo by sa zmazalo (nič sa nemaže)"
         required: false
         default: false
         type: boolean
+  schedule:
+    # Nedeľa 03:50 UTC – po „Upratať cache" (03:20), nech si nelezú do cesty.
+    - cron: "50 3 * * 0"
 
 permissions:
-  actions: write    # mazanie behov
-  contents: write   # mazanie vetiev (len pri `behy_a_vetvy`)
+  actions: write    # mazanie behov a artefaktov
+  contents: write   # mazanie vetiev a releasov aj s ich tagmi
 
 concurrency:
   # Dva behy naraz by si navzájom mazali to isté a hádzali 404.
@@ -47,7 +63,7 @@ concurrency:
 
 jobs:
   upratat:
-    name: Upratať Actions
+    name: Upratať GitHub
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -59,6 +75,8 @@ jobs:
       - name: Upratať
         env:
           GH_TOKEN: ${{ github.token }}
-          MODE: ${{ inputs.co }}
+          # Pri behu z plánu je `inputs.co` prázdne – vtedy sa upratujú len
+          # releasy a artefakty. Behy a vetvy sú história a tú maže človek.
+          MODE: ${{ inputs.co || 'releasy_a_artefakty' }}
           DRY_RUN: ${{ inputs.dry_run }}
         run: python3 workers/cleanup-actions.py

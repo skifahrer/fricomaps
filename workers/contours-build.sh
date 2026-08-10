@@ -17,9 +17,9 @@
 #   OPT_ROCK_PLNE OPT_ROCK_ZAPLN_DIERY
 #   OPT_ROCK_IMG_ASSET OPT_ROCKS_REBUILD
 #   OPT_SIZE_LIMIT_MB OPT_UGKK_FALLBACK
-# a k tomu `env:` celého workflowu (ROCK_* , *_RELEASE,
-# BUDGET_CONTOURS_PCT, BUDGET_ROCKS_PCT)
-# plus GH_TOKEN.
+# a k tomu `env:` celého workflowu (ROCK_*, *_STORE, BUDGET_CONTOURS_PCT,
+# BUDGET_ROCKS_PCT) plus prihlásenie na Drive: GDRIVE_CREDENTIALS, alebo
+# premenná DRIVE_CLIENT so secretmi DRIVE_SECRET / DRIVE_REFRESH.
 
 set -euo pipefail
 sudo apt-get update -qq
@@ -29,11 +29,12 @@ python3 -m pip install --quiet numpy
 # `dem/`, ktoré ide celé do cache. `clip.tif` má aj gigabajty.
 #
 # `slope-chunks/` je NIEČO INÉ než medzivýsledok: je to sklad častí rastra
-# sklonu. Má vlastnú cache aj vlastný release, lebo práve on robí to, že
-# zrušený alebo spadnutý beh nezahodí hodinu čítania z Drive. Preto sa ani
-# na konci nemaže.
-SLOPE_STORE="${SLOPE_STORE:-slope-chunks}"
-mkdir -p dem data work contours-out "$SLOPE_STORE"
+# sklonu. Má vlastnú cache aj vlastný sklad na Drive, lebo práve on robí to,
+# že zrušený alebo spadnutý beh nezahodí hodinu čítania z Drive. Preto sa ani
+# na konci nemaže. (`SLOPE_DIR` je ten adresár, `SLOPE_STORE` meno skladu na
+# Drive – dve rôzne veci, ktoré sa kedysi obe volali „store".)
+SLOPE_DIR="${SLOPE_DIR:-slope-chunks}"
+mkdir -p dem data work contours-out "$SLOPE_DIR"
 
 BBOX="$REGION_BBOX"
 IFS=, read -r W S E N <<< "$BBOX"
@@ -279,41 +280,37 @@ if [ "$OPT_ROCKS" = 'true' ]; then
   # ---------- skaly z tieňovaných dlaždíc (rock_source: tienovanie) ----------
   # Tie sa v TOMTO jobe nepočítajú – spravil to job `shading-rocks`
   # o kus vyššie v tom istom behu (stiahol tieňované dlaždice
-  # z freemap.sk, odložil ich ako artefakt a hotové polygóny nahral
-  # do releasu). Tu sa už len stiahne výsledok. Keď je vyplnený
-  # `rock_img_asset`, ten job nebežal a berie sa presne ten asset.
+  # z freemap.sk a hotové polygóny nahral do skladu na Drive). Tu sa
+  # už len stiahne výsledok. Keď je vyplnený `rock_img_asset`, ten job
+  # nebežal a berie sa presne ten súbor.
   if [ "$OPT_ROCK_SOURCE" = 'tienovanie' ]; then
     IMG_ASSET="$OPT_ROCK_IMG_ASSET"
-    echo "::group::Skaly z tieňovania – $AREA_NAME, release $ROCK_IMG_RELEASE"
+    echo "::group::Skaly z tieňovania – $AREA_NAME, sklad $ROCK_IMG_STORE"
     if [ -z "$IMG_ASSET" ]; then
-      # Najnovší asset pre tento výrez. Zoradiť sa musí podľa času
+      # Najnovší súbor pre tento výrez. Zoradiť sa musí podľa času
       # nahratia, nie podľa mena: v mene sú prahy, takže abecedne
-      # by vyhral ten s najväčším číslom, nie ten posledný.
-      # `env.PREFIX`, lebo `gh --jq` nevie `--arg`.
-      export PREFIX="rockimg-${AREA_KEY}-"
-      IMG_ASSET=$(gh release view "$ROCK_IMG_RELEASE" \
-        --repo "$GITHUB_REPOSITORY" --json assets \
-        --jq '[.assets[] | select(.name | startswith(env.PREFIX))
-               | select(.name | endswith(".gpkg.zst"))]
-              | sort_by(.createdAt) | last | .name // ""' \
-        2>/dev/null || true)
+      # by vyhral ten s najväčším číslom, nie ten posledný. Robí to
+      # `--latest` v sklade, aby to poradie bolo napísané raz.
+      IMG_ASSET=$(python3 workers/drive-store.py --latest \
+        --store="$ROCK_IMG_STORE" --prefix="rockimg-${AREA_KEY}-" \
+        --suffix=".gpkg.zst" 2>/dev/null || true)
     fi
     if [ -z "$IMG_ASSET" ]; then
       echo "::endgroup::"
-      echo "::error::V release $ROCK_IMG_RELEASE nie je pre výrez '$AREA_KEY' žiadny asset (rockimg-${AREA_KEY}-*.gpkg.zst). Pozri job „Skaly z tieňovania\" v tomto behu – ten ich mal vyrobiť; keď spadol, hovorí prečo. Alebo vo výbere rock_source zvoľ výškový model (sonny / dmr35 / dmr5 / ugkk)."
+      echo "::error::V sklade $ROCK_IMG_STORE nie je pre výrez '$AREA_KEY' žiadny súbor (rockimg-${AREA_KEY}-*.gpkg.zst). Pozri job „Skaly z tieňovania\" v tomto behu – ten ich mal vyrobiť; keď spadol, hovorí prečo. Alebo vo výbere rock_source zvoľ výškový model (sonny / dmr35 / dmr5 / ugkk)."
       exit 1
     fi
     rm -rf /tmp/rockimg && mkdir -p /tmp/rockimg
-    if ! gh release download "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" \
-           --pattern "$IMG_ASSET" --dir /tmp/rockimg --clobber; then
+    if ! python3 workers/drive-store.py --get --store="$ROCK_IMG_STORE" \
+           --name="$IMG_ASSET" --dir=/tmp/rockimg; then
       echo "::endgroup::"
-      echo "::error::Asset $IMG_ASSET sa z releasu $ROCK_IMG_RELEASE nedal stiahnuť."
+      echo "::error::Súbor $IMG_ASSET sa zo skladu $ROCK_IMG_STORE nedal stiahnuť."
       exit 1
     fi
     echo "  beriem: $IMG_ASSET ($(du -h "/tmp/rockimg/$IMG_ASSET" | cut -f1))"
     unzstd -q -f -o data/rock.gpkg "/tmp/rockimg/$IMG_ASSET"
     ROCK_READY=1
-    ROCK_SRC="release $ROCK_IMG_RELEASE ($IMG_ASSET)"
+    ROCK_SRC="sklad $ROCK_IMG_STORE ($IMG_ASSET)"
     # Výrez sa tu NEOREZÁVA na bbox regiónu zámerne: asset vznikol
     # presne pre tento výrez a orezanie by len prerezalo polygóny
     # na hranici. Keby výrez presahoval región, dlaždice mimo neho
@@ -321,25 +318,24 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     echo "::endgroup::"
   fi
 
-  # Hotové skaly pre tento región a tieto nastavenia sú v release –
-  # nastavenia sú v mene assetu, takže sa nikdy nepomiešajú. Výpočet
+  # Hotové skaly pre tento región a tieto nastavenia sú v sklade –
+  # nastavenia sú v mene súboru, takže sa nikdy nepomiešajú. Výpočet
   # je na desiatky minút, stiahnutie na sekundy. `rocks_rebuild` ten
-  # asset zahodí a počíta odznova.
-  # Výrez je v mene assetu: skaly len z Tatier sa nesmú nabudúce
+  # súbor zahodí a počíta odznova.
+  # Výrez je v mene súboru: skaly len z Tatier sa nesmú nabudúce
   # vydávať za skaly celého kraja.
   ROCK_ASSET="rock-${REGION_KEY}-${AREA_KEY}-${ROCK_DEM_USED:-none}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
   if [ -n "$ROCK_READY" ]; then
     : # skaly už sú (z tieňovania) – DEM sa na ne vôbec nečíta
   elif [ "$OPT_ROCKS_REBUILD" = 'true' ]; then
     echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
-    gh release delete-asset "$ROCK_RELEASE" "$ROCK_ASSET" \
-      --repo "$GITHUB_REPOSITORY" --yes >/dev/null 2>&1 \
-      && echo "  zmazané z releasu: $ROCK_ASSET" || true
-  elif gh release download "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
-         --pattern "$ROCK_ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
+    python3 workers/drive-store.py --rm --store="$ROCK_STORE" \
+      --name="$ROCK_ASSET" || true
+  elif python3 workers/drive-store.py --get --store="$ROCK_STORE" \
+         --name="$ROCK_ASSET" --dir=/tmp >/dev/null 2>&1; then
     unzstd -q -f -o data/rock.gpkg "/tmp/$ROCK_ASSET" && ROCK_READY=1
-    [ -n "$ROCK_READY" ] && ROCK_SRC="release $ROCK_RELEASE" \
-      && echo "Skaly z releasu $ROCK_RELEASE ✓ ($ROCK_ASSET)"
+    [ -n "$ROCK_READY" ] && ROCK_SRC="sklad $ROCK_STORE" \
+      && echo "Skaly zo skladu $ROCK_STORE ✓ ($ROCK_ASSET)"
   fi
 
   if [ -z "$ROCK_READY" ]; then
@@ -384,8 +380,8 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     set +e
     python3 workers/slope-chunks.py --bbox="$AREA_BBOX" --res="$RES" \
       "${SRC_ARGS[@]}" "${STORE_ARGS[@]}" \
-      --out="$SLOPE_STORE" --jobs="${SLOPE_JOBS:-6}" \
-      --release="${SLOPE_RELEASE:-dem-slope}" \
+      --out="$SLOPE_DIR" --jobs="${SLOPE_JOBS:-6}" \
+      --store="${SLOPE_STORE:-dem-slope}" \
       --stats=contours-out/slope-stats.txt
     RC=$?
     set -e
@@ -418,16 +414,14 @@ if [ "$OPT_ROCKS" = 'true' ]; then
     fi
     if [ "$RC" -eq 0 ]; then
       ls -lh data/rock.gpkg
-      # Ulož ich, nech ich nabudúce netreba počítať znova.
+      # Ulož ich, nech ich nabudúce netreba počítať znova. Zlyhanie
+      # uloženia NESMIE zhodiť beh – skaly sú spočítané a v `rock.gpkg`.
       zstd -q -19 -T0 -f -o "/tmp/$ROCK_ASSET" data/rock.gpkg
-      gh release view "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-        gh release create "$ROCK_RELEASE" --repo "$GITHUB_REPOSITORY" \
-          --title "Skalné plochy z DEM" \
-          --notes "Vektorové skaly počítané zo sklonu výškového modelu. Meno assetu nesie región, výrez, model a nastavenia (prah sklonu, mriežka obrysu)." || true
-      gh release upload "$ROCK_RELEASE" "/tmp/$ROCK_ASSET" \
-        --repo "$GITHUB_REPOSITORY" --clobber \
-        && echo "Uložené do releasu $ROCK_RELEASE ako $ROCK_ASSET" \
-        || echo "::warning::Skaly sa nepodarilo uložiť do releasu."
+      python3 workers/drive-store.py --put --store="$ROCK_STORE" \
+          --file="/tmp/$ROCK_ASSET" \
+          --note="Vektorové skaly zo sklonu výškového modelu – meno nesie región, výrez, model a nastavenia (prah sklonu, mriežka obrysu)" \
+        && echo "Uložené do skladu $ROCK_STORE ako $ROCK_ASSET" \
+        || echo "::warning::Skaly sa nepodarilo uložiť do skladu $ROCK_STORE – nabudúce sa budú počítať znova."
     else
       echo "::warning::Skalné plochy sa nevygenerovali – vrstva bude prázdna."
       make_empty_rock

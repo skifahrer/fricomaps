@@ -5,7 +5,7 @@ name: Skaly z tieňovaných dlaždíc
 # u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326 – takže si ho
 # „Build map" vie vypýtať namiesto vlastného výpočtu:
 #
-#   Skaly z tieňovaných dlaždíc  ─►  release `dem-rocks-img`
+#   Skaly z tieňovaných dlaždíc  ─►  sklad `dem-rocks-img` na Drive
 #                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
 #                                        ▼
 #   Build map  s  výberom  rock_source: tienovanie    ─►  vrstva `rock` v mape
@@ -183,10 +183,10 @@ on:
         default: ""
         type: string
     outputs:
-      # Meno assetu v release – build si podľa neho vypýta presne tie skaly,
+      # Meno súboru v sklade – build si podľa neho vypýta presne tie skaly,
       # ktoré tento beh vyrobil, a nie „najnovšie pre výrez".
       asset:
-        description: "Meno assetu so skalami v release dem-rocks-img"
+        description: "Meno súboru so skalami v sklade dem-rocks-img"
         value: ${{ jobs.skaly.outputs.asset }}
       zoom:
         description: "Zoom dlaždíc, z ktorých sa skaly počítali"
@@ -209,12 +209,14 @@ on:
       DRIVE_REFRESH:
         required: false
 
+# `contents: read` stačí: hotové polygóny idú do skladu na Drive, nie do
+# releasu, takže tento workflow do repozitára nezapisuje nič.
 permissions:
-  contents: write   # ukladanie hotových polygónov do releasu
+  contents: read
 
 concurrency:
   # Dva behy na to isté pohorie by z dobrovoľníckeho servera freemap.sk
-  # ťahali dvojnásobok dlaždíc a prepisovali si ten istý asset.
+  # ťahali dvojnásobok dlaždíc a prepisovali si ten istý súbor v sklade.
   group: shading-rocks-${{ inputs.area }}
   cancel-in-progress: false
 
@@ -230,10 +232,10 @@ env:
   # Vysoké rozlíšenie tieňovania (LiDAR) z freemap.sk. Je to XYZ šablóna,
   # žiadne metadáta – najvyšší zoom sa preto zisťuje skúšobnou dlaždicou.
   SHADING_URL: "https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg"
-  # Release s hotovými polygónmi. Zámerne NIE `dem-rocks`: tie sú z DEM
+  # Sklad s hotovými polygónmi. Zámerne NIE `dem-rocks`: tie sú z DEM
   # a tieto z obrázka, takže sa nesmú pomiešať ani omylom.
-  ROCK_IMG_RELEASE: dem-rocks-img
-  # Verzia algoritmu v mene assetu. Zmena algoritmu = iné skaly.
+  ROCK_IMG_STORE: dem-rocks-img
+  # Verzia algoritmu v mene súboru. Zmena algoritmu = iné skaly.
   # v2: diery v plochách ostávajú (v1 ich zapĺňal a zožral tým detail)
   # v3: pásmo POD prahom (pozadie) sa zahadzuje – dovtedy prešlo do výsledku
   #     a v mape z neho bola sivá plocha cez celý výrez
@@ -254,7 +256,7 @@ jobs:
   # ktorej z nich beh práve je:
   #
   #   Stiahnuť dlaždice  →  Obrysy po blokoch  →  Skaly (spojenie a filter)
-  #        cache               cache               release + artefakty
+  #        cache               cache               sklad na Drive
   #
   # GDAL tu netreba – sťahujú sa obrázky, nič sa nepočíta.
   dlazdice:
@@ -307,14 +309,17 @@ jobs:
             --png=out/kde-to-je.png --md=out/kde-to-je.md
           cat out/kde-to-je.md >> "$GITHUB_STEP_SUMMARY"
 
+      # Do skladu `vysledky` na Drive, nie ako artefakt behu: do GitHubu sa
+      # nepublikuje nič. Balenie, pomenovanie a hlásenie robí jeden skript –
+      # `workers/publish-results.sh`.
       - name: Odlož obrázok testovacieho výrezu
         if: ${{ always() && hashFiles('out/kde-to-je.png') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: kde-to-je-${{ steps.area.outputs.key }}
-          path: out/kde-to-je.png
-          retention-days: 14
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          NAZOV: kde-to-je-${{ steps.area.outputs.key }}
+          SUBORY: out/kde-to-je.png
+          POPIS: Kde v regióne leží testovací výrez (skaly z tieňovania)
+        run: workers/publish-results.sh
 
       # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
       # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
@@ -354,21 +359,20 @@ jobs:
           path: tiles-cache
           key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
 
-      # Samotné obrázky, z ktorých sa skaly hľadajú. `compression-level: 0`:
-      # JPG je už komprimovaný, balenie by len ukradlo minúty.
-      - name: Odlož stiahnuté dlaždice ako artefakt
+      # Samotné obrázky, z ktorých sa skaly hľadajú – do skladu `vysledky`.
+      # Medzivýsledky (pásy rastra, obrysy) v cache byť majú, v archíve
+      # s obrázkami nie, preto sa `_rozrobene` odloží nabok.
+      - name: Odlož stiahnuté dlaždice do skladu
         if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.dl.outputs.zoom }}
-          # Medzivýsledky (pásy rastra, obrysy) v cache byť majú, v artefakte
-          # s obrázkami nie.
-          path: |
-            tiles-cache
-            !tiles-cache/_rozrobene
-          retention-days: 14
-          compression-level: 0
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          NAZOV: dlazdice-tienovania-${{ steps.area.outputs.key }}-z${{ steps.dl.outputs.zoom }}
+          POPIS: Tieňované JPG dlaždice z freemap.sk, z ktorých sa skaly hľadali
+        run: |
+          set -uo pipefail
+          mv tiles-cache/_rozrobene "$RUNNER_TEMP/_rozrobene" 2>/dev/null || true
+          SUBORY=tiles-cache workers/publish-results.sh
+          mv "$RUNNER_TEMP/_rozrobene" tiles-cache/_rozrobene 2>/dev/null || true
 
   # ---------- 2. obrysy po blokoch ----------
   # Najdrahšia časť: raster tmavosti a `gdal_contour` po blokoch. Hodiny.
@@ -456,12 +460,12 @@ jobs:
       # vtedy, keď zlepovanie za tým ešte nedobehlo.
       - name: Odlož náhľad
         if: ${{ always() && hashFiles('out/preview.png') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: nahlad-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
-          path: out/preview.png
-          retention-days: 90
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          NAZOV: nahlad-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
+          SUBORY: out/preview.png
+          POPIS: Raster tmavosti ako náhľad – podľa neho sa ladia prahy
+        run: workers/publish-results.sh
 
   # ---------- 3. spojenie, filter, výstup ----------
   # Minúty, nie hodiny: bloky sa zlepia, plochy rozseknuté hranicou bloku sa
@@ -559,48 +563,46 @@ jobs:
             -lco COORDINATE_PRECISION=6 -lco RFC7946=YES
           ls -lh data/rock.gpkg out/rock.geojson
 
-      # Iba polygóny – to je celý zmysel tohto artefaktu. Náhľad a čísla sú
-      # vedľa, v samostatnom, aby sa dali polygóny stiahnuť samé.
-      - name: Odlož polygóny ako artefakt
-        uses: actions/upload-artifact@v4
-        with:
-          name: skaly-obrazok-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
-          path: |
+      # Iba polygóny – to je celý zmysel tohto balíka. Náhľad a čísla sú
+      # vedľa, v samostatnom, aby sa dali polygóny vziať samé. (Ten istý GPKG
+      # ide o krok nižšie aj do skladu `dem-rocks-img`, odkiaľ si ho berie
+      # Build map; tu je s GeoJSONom navyše, na pozretie v QGISe.)
+      - name: Odlož polygóny do skladu
+        continue-on-error: true
+        env:
+          NAZOV: skaly-obrazok-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
+          SUBORY: |
             data/rock.gpkg
             out/rock.geojson
-          retention-days: 90
-          compression-level: 9
-          if-no-files-found: error
+          POPIS: Skalné polygóny z tieňovania – GPKG aj GeoJSON
+        run: workers/publish-results.sh
 
       # Dlaždice odložil job `dlazdice` a náhľad job `vektor` – oboje hneď,
       # ako vzniknú, teda aj vtedy, keď to, čo je za nimi, nedobehne.
       - name: Odlož čísla
         if: ${{ always() && hashFiles('out/rock-img-stats.txt') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: cisla-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
-          path: out/rock-img-stats.txt
-          retention-days: 90
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          NAZOV: cisla-${{ needs.dlazdice.outputs.key }}-z${{ needs.dlazdice.outputs.zoom }}
+          SUBORY: out/rock-img-stats.txt
+          POPIS: Čísla behu – koľko plôch, aké prahy, koľko dlaždíc
+        run: workers/publish-results.sh
 
       # Aby si ich vedel vypýtať build mapy. Artefakt behu sa z iného
-      # workflowu dostáva ťažko (treba číslo behu), release asset ľahko –
-      # rovnako to robia skaly z DEM v release `dem-rocks`.
-      - name: Ulož do releasu
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # workflowu dostáva ťažko (treba číslo behu), súbor v sklade ľahko –
+      # rovnako to robia skaly z DEM v sklade `dem-rocks`. Toto NIE JE to isté
+      # ako krok „Odlož polygóny do skladu" vyššie: ten ukladá vec na pozretie
+      # do `vysledky`, toto je vstup pre Build map pod menom, ktoré si vypýta.
+      - name: Ulož do skladu na Drive
         run: |
           set -euo pipefail
           ASSET='${{ steps.rocks.outputs.asset }}'
           zstd -q -19 -T0 -f -o "/tmp/$ASSET" data/rock.gpkg
           ls -lh "/tmp/$ASSET"
-          gh release view "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$ROCK_IMG_RELEASE" --repo "$GITHUB_REPOSITORY" \
-              --title "Skalné plochy z tieňovaných dlaždíc" \
-              --notes "Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno assetu nesie výrez, zoom a všetky prahy. Build map si ich vypýta výberom \`rock_source: tienovanie\`." || true
-          gh release upload "$ROCK_IMG_RELEASE" "/tmp/$ASSET" \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          echo "Uložené do releasu $ROCK_IMG_RELEASE ako $ASSET"
+          python3 workers/drive-store.py --put --store="$ROCK_IMG_STORE" \
+            --file="/tmp/$ASSET" \
+            --note="Polygóny nájdené ako tmavé plochy v hillshade dlaždiciach freemap.sk. Meno nesie výrez, zoom a všetky prahy; Build map si ich vypýta výberom rock_source: tienovanie."
+          echo "Uložené do skladu $ROCK_IMG_STORE ako $ASSET"
 
       - name: Súhrn
         if: ${{ always() }}
@@ -629,7 +631,7 @@ jobs:
               echo "| veľkosť dát | ${out_mb} MB = **${mb_per_km2} MB na km² skál** |"
               echo "| trvanie | ${seconds} s |"
               echo
-              echo "Asset v release \`$ROCK_IMG_RELEASE\`: \`${{ steps.rocks.outputs.asset }}\`"
+              echo "V sklade \`$ROCK_IMG_STORE\`: \`${{ steps.rocks.outputs.asset }}\`"
               echo
               echo "### Ďalej"
               echo

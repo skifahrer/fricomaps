@@ -1,23 +1,27 @@
 #!/usr/bin/env bash
-# Stiahne DEM dlaždice pre bbox z GitHub releasu a zlepí ich do jedného VRT.
+# Stiahne DEM dlaždice pre bbox zo skladu na Drive a zlepí ich do jedného VRT.
 #
 # Potrebujú to dva joby – vrstevnice/skaly aj tieňovanie – a kým bol build
 # jeden veľký job, stačilo to raz. Po rozdelení na joby by sa to inak
 # kopírovalo dvakrát a jedna kópia by časom zaostala za druhou.
 #
-# Zdroj hovorí, z ktorého releasu: `sonny` = 1°×1° dlaždice 20 m modelu
-# (release `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených
-# dát ÚGKK (release `dem-dmr35`, jemnejšia mriežka), `dmr5` = LLS DMR 5.0,
-# ktoré má dve podoby podľa rozsahu (viď nižšie). Všetko sú zrkadlá – build
-# nikdy nesiaha priamo na cudzí server, to robia sťahovacie pipeline
-# `Stiahnuť výškové dáta` (update-dem.yml), `DMR 5.0 z Drive`
-# (dmr5-drive.yml) – tú si volá build sám a je to jediná cesta k DMR 5.0.
+# SKLAD JE PRIEČINOK NA GOOGLE DRIVE, nie GitHub release. Do releasov sa už
+# nepublikuje nič (rozpis: `workers/drive-store.py`); mená súborov ostali tie
+# isté, aké mali assety, lebo meno je sľub o rozsahu.
 #
-# `sonny`, `dmr35` a `dmr5` na celý región sa líšia LEN menom releasu:
+# Zdroj hovorí, z ktorého skladu: `sonny` = 1°×1° dlaždice 20 m modelu (sklad
+# `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených dát ÚGKK
+# (sklad `dem-dmr35`, jemnejšia mriežka), `dmr5` = LLS DMR 5.0, ktoré má dve
+# podoby podľa rozsahu (viď nižšie). Všetko sú zrkadlá – build nikdy nesiaha
+# priamo na cudzí server, to robia sťahovacie pipeline `Stiahnuť výškové dáta`
+# (update-dem.yml), `DMR 5.0 z Drive` (dmr5-drive.yml) – tú si volá build sám
+# a je to jediná cesta k DMR 5.0.
+#
+# `sonny`, `dmr35` a `dmr5` na celý región sa líšia LEN menom skladu:
 # dlaždice majú tú istú pomenúvaciu schému (`N49E019.tif`), takže sa nižšie
 # nič nevetví.
 #
-# KTORÝ RELEASE A KTORÉ SÚBORY nerozhoduje tento skript – rozhoduje
+# KTORÝ SKLAD A KTORÉ SÚBORY nerozhoduje tento skript – rozhoduje
 # `workers/dem-target.py`, lebo tú istú otázku si kladie aj job `check-dem`
 # v build-map.yml a musia si odpovedať rovnako. Kým to bolo napísané dvakrát,
 # rozišlo sa to: kontrola hľadala výrez v `dem-ugkk`, kým tieňovanie sťahovalo
@@ -35,7 +39,9 @@
 #   <adresár>/tiles/N49E019.tif …   stiahnuté dlaždice
 #   <adresár>/all.vrt               mozaika na čítanie
 #
-# Očakáva v prostredí: DEM_RELEASE, GITHUB_REPOSITORY, GH_TOKEN.
+# Očakáva v prostredí prihlásenie na Drive: GDRIVE_CREDENTIALS, alebo premennú
+# DRIVE_CLIENT so secretmi DRIVE_SECRET / DRIVE_REFRESH (`client_id` tajný nie
+# je, je to repository variable). Stráži to `Lint workflows`.
 set -euo pipefail
 
 BBOX="$1"
@@ -44,45 +50,47 @@ STEPS_TSV="${3:-}"
 SOURCE="${4:-sonny}"
 AREA_KEY="${5:-cely}"
 T0=$(date +%s)
+STORE_PY="$(dirname "$0")/drive-store.py"
 
 # Čo sa má stiahnuť, povie jediný zdroj pravdy – ten istý, z ktorého sa pýta
-# aj `check-dem`. Sem prídu hotové mená a release; vetvenie „ktorá podoba
+# aj `check-dem`. Sem prídu hotové mená a sklad; vetvenie „ktorá podoba
 # DMR 5.0" tu už nie je.
 TARGET=$(python3 "$(dirname "$0")/dem-target.py" \
   --source="$SOURCE" --area-key="$AREA_KEY" --bbox="$BBOX")
 get() { printf '%s\n' "$TARGET" | sed -n "s/^$1=//p" | head -1; }
 FORM=$(get form)
-SRC_RELEASE=$(get release)
+SRC_STORE=$(get store)
 SRC_LABEL=$(get label)
 
 # DMR 5.0 má DVE PODOBY a rozhoduje medzi nimi ROZSAH, nie druhý výber vo
-# formulári. Je to jeden a ten istý 1 m LiDAR, len sa nedá uložiť dvakrát:
+# formulári. Je to jeden a ten istý 1 m LiDAR, len ho nemá zmysel držať
+# dvakrát:
 #
-#   výrez (`area`)   ugkk-<vyrez>.tif v release dem-ugkk, plné 1 m rozlíšenie
+#   výrez (`area`)   ugkk-<vyrez>.tif v sklade dem-ugkk, plné 1 m rozlíšenie
 #   celý región      dlaždice N49E019.tif v dem-dmr5, prevzorkované na 5 m
 #
-# Dôvod je veľkosť: pri 1 m má jedna 1°×1° dlaždica ~48 GB a strop assetu
-# v release je 2 GB. Celý región v metri sa teda nemá kam uložiť – a keďže
-# to je fyzikálne obmedzenie a nie voľba, nemá zmysel pýtať sa naň vo
-# formulári. Preto tu bývali dva zdroje (`dmr5` a `ugkk`) a je z nich jeden.
+# Dôvod je veľkosť: pri 1 m má jedna 1°×1° dlaždica ~48 GB a runner má
+# voľných ~60 GB. Celý región v metri sa teda nemá kde ani rozbaliť – a keďže
+# to je obmedzenie stroja a nie voľba, nemá zmysel pýtať sa naň vo formulári.
+# Preto tu bývali dva zdroje (`dmr5` a `ugkk`) a je z nich jeden.
 if [ "$FORM" = "area" ]; then
   mkdir -p "$DIR"
   UASSET=$(get assets)
-  if ! gh release download "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
-        --pattern "$UASSET" --dir "$DIR" --clobber >/dev/null 2>&1; then
+  if ! python3 "$STORE_PY" --get --store="$SRC_STORE" --name="$UASSET" \
+        --dir="$DIR" --skip-local; then
     # Kód 3 = „pre tento výrez to nemáme", nie „všetko je zle". Volajúci sa
     # podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na hrubší model
     # (input ugkk_fallback).
-    echo "::warning::V release $SRC_RELEASE nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY."
+    echo "::warning::V sklade $SRC_STORE nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY."
     exit 3
   fi
   gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
   SIZE=$(du -h "$DIR/$UASSET" | cut -f1)
-  echo "$SRC_LABEL z releasu: $UASSET, $SIZE"
+  echo "$SRC_LABEL zo skladu: $UASSET, $SIZE"
   gdalinfo "$DIR/$UASSET" | grep -E "Pixel Size|Size is" || true
   if [ -n "$STEPS_TSV" ]; then
     printf '%s\t%s\t%s\t%s\n' 20 "DEM (DMR 5.0, výrez)" "$(( $(date +%s) - T0 ))" \
-      "$UASSET z releasu, $SIZE" >> "$STEPS_TSV"
+      "$UASSET zo skladu, $SIZE" >> "$STEPS_TSV"
   fi
   exit 0
 fi
@@ -93,35 +101,31 @@ mkdir -p "$DIR/tiles"
 
 # Dlaždice sú 1°×1°, pomenované podľa juhozápadného rohu (konvencia SRTM):
 # N49E019. Zoznam počíta dem-target.py – ten istý, z ktorého sa pýta kontrola.
-get assets | tr ' ' '\n' | sed '/^$/d;s/\.tif$//' > "$DIR/list.txt"
+get assets | tr ' ' '\n' | sed '/^$/d' > "$DIR/list.txt"
 WANT=$(wc -l < "$DIR/list.txt")
 echo "DEM dlaždíc pre bbox: $WANT"
 
-# Zoznam dlaždíc v release si vypýtame naraz – nemá zmysel skúšať sťahovať
-# to, čo tam nie je.
-ASSETS=$(gh release view "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
-  --json assets -q '.assets[].name' 2>/dev/null || echo '')
+# JEDNO VOLANIE NA VŠETKY DLAŽDICE, nie jedno na každú. Sklad si priečinok
+# vypíše raz a potom sťahuje; `--missing-ok`, lebo bbox je obdĺžnik, ale
+# produkt pokrýva krajinu – rohové bunky (u Slovenska napr. N47E016
+# v Maďarsku) v ňom nikdy nebudú a „chýba jedna, tak spadni" by zhodilo každý
+# build pri hranici. `--skip-local`: čo už je v cache behu, sa neťahá znova.
+set +e
+python3 "$STORE_PY" --get --store="$SRC_STORE" --dir="$DIR/tiles" \
+  --name="$(tr '\n' ' ' < "$DIR/list.txt")" --missing-ok --skip-local
+SRC=$?
+set -e
 
-have=0
-missing=""
-while IFS= read -r t; do
-  if [ -s "$DIR/tiles/$t.tif" ]; then
-    have=$(( have + 1 ))          # už v cache behu
-  elif printf '%s\n' "$ASSETS" | grep -qx "$t.tif" && \
-       gh release download "$SRC_RELEASE" --repo "$GITHUB_REPOSITORY" \
-         --pattern "$t.tif" --dir "$DIR/tiles" --clobber >/dev/null 2>&1; then
-    have=$(( have + 1 ))
-  else
-    missing="$missing $t"
-  fi
-done < "$DIR/list.txt"
+shopt -s nullglob
+tifs=("$DIR"/tiles/*.tif)
+have=${#tifs[@]}
 
 if [ "$have" -eq 0 ]; then
   # Kód 3 = „tento model nemáme", nie „všetko je zle" – rovnako ako pri výreze
   # vyššie. Volajúci sa podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na
   # hrubší model. Pri Sonnym sa už nie je kam vrátiť, tak je to tvrdá chyba;
   # keby aj on vracal 3, volajúci s fallbackom by sa zacyklil.
-  echo "::warning::V release $SRC_RELEASE nie je pre toto územie ani jedna dlaždica."
+  echo "::warning::V sklade $SRC_STORE nie je pre toto územie ani jedna dlaždica (kód $SRC)."
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
     # Dlaždicovú podobu DMR 5.0 dopĺňa job `mirror-dmr5-tiles` v Build map,
@@ -136,20 +140,13 @@ if [ "$have" -eq 0 ]; then
   [ "$SOURCE" = "sonny" ] && exit 1
   exit 3
 fi
-if [ -n "$missing" ]; then
+if [ "$have" -lt "$WANT" ]; then
   # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za hranicou
   # v ňom byť nemusia. Tam jednoducho nebude terén; radšej diera, ktorú
   # vidno, než výplň z modelu povrchu.
-  echo "::warning::V release $SRC_RELEASE nie sú dlaždice:$missing – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
+  echo "::warning::V sklade $SRC_STORE nie je $(( WANT - have )) z $WANT dlaždíc – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Update DEM' s priečinkom, ktorý ho pokrýva."
 fi
-echo "$SRC_LABEL: $have z $WANT dlaždíc z release $SRC_RELEASE ✓"
-
-shopt -s nullglob
-tifs=("$DIR"/tiles/*.tif)
-if [ ${#tifs[@]} -eq 0 ]; then
-  echo "::error::Nepodarilo sa získať žiadnu DEM dlaždicu pre bbox $BBOX."
-  exit 1
-fi
+echo "$SRC_LABEL: $have z $WANT dlaždíc zo skladu $SRC_STORE ✓"
 
 # -resolution highest: dlaždice môžu mať rôznu mriežku (20m model má
 # obdĺžnikové pixely) – mozaika ide na to jemnejšie.

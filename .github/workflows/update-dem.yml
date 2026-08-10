@@ -1,15 +1,17 @@
 name: Stiahnuť výškové dáta
 
 # JEDINÁ sťahovacia pipeline. Vyber v `source` model a ona ho zoženie,
-# preveďí na dlaždice a uloží do releasu, z ktorého si ho berie „Build map".
+# preveďí na dlaždice a uloží do skladu na Drive, z ktorého si ho berie
+# „Build map". (Do GitHub releasov sa nepublikuje nič – celý formát skladu má
+# `workers/drive-store.py`.)
 #
 # Do augusta 2026 to boli tri workflowy (Sonny, ÚGKK 1 m, ÚGKK otvorené dáta)
-# a jeden diagnostický. Robili to isté – stiahni, preveď, nahraj do releasu –
+# a jeden diagnostický. Robili to isté – stiahni, preveď, ulož –
 # len z iného URL, takže sa opravy museli robiť trikrát. Teraz je to jeden
 # workflow s výberom zdroja; URL nesie workers/dem-sources.json a dá sa
 # prebiť poľom `url`.
 #
-# | source  | čo to je                    | release      | mriežka |
+# | source  | čo to je                    | sklad        | mriežka |
 # |---------|-----------------------------|--------------|---------|
 # | sonny   | Sonny's LiDAR DTM (Drive)   | dem-sonny    | 20 m    |
 # | dmr35   | ÚGKK DMR 3.5 (opendata ZIP) | dem-dmr35    | ~10 m   |
@@ -25,7 +27,7 @@ name: Stiahnuť výškové dáta
 # Bol tu rozcestník, ktorý na `dmr5` vypísal, kam ísť ručne, a skončil
 # ÚSPECHOM. To bola tichá diera: `check-dem` sem poslal „dmr5 treba doplniť",
 # nič sa nedoplnilo, job zazelenal a build spadol o desať jobov neskôr na tom,
-# že v release nie je ani jedna dlaždica (beh 31307163093). Doplnenie, ktoré
+# že v sklade nie je ani jedna dlaždica (beh 31307163093). Doplnenie, ktoré
 # nedopĺňa, musí byť červené hneď.
 #
 # `ugkk` sa z GitHub runnera stiahnuť NEDÁ – `zbgis.skgeodesy.sk` aj
@@ -38,8 +40,8 @@ name: Stiahnuť výškové dáta
 # stiahnutí vracia "Too many users have viewed or downloaded this file",
 # takže sa z neho nedá spoľahlivo sťahovať v každom builde mapy. Stiahne sa
 # preto raz sem, prevedie na dlaždice `N49E019.tif` (GeoTIFF, DEFLATE) a
-# publikuje ako assety releasu – build mapy si potom vypýta len tie dlaždice,
-# ktoré pokrývajú jeho bbox.
+# uloží do skladu – build mapy si potom vypýta len tie dlaždice, ktoré
+# pokrývajú jeho bbox.
 #
 # KTORÝ MODEL: Sonny ponúka viac produktov a pre nás je najlepší **20m**
 # (GeoTIFF, mriežka 20×20 m, výška po 0,1 m). Model 1″ (.hgt) má mriežku
@@ -53,8 +55,8 @@ name: Stiahnuť výškové dáta
 # dlaždice 1°×1° vo WGS84. Súbory .hgt sú už samé o sebe 1° dlaždice, len
 # bez hlavičky, takže tie sa prevádzajú priamo.
 #
-# JEDEN RELEASE = JEDEN MODEL. Miešať 20m a 1″ v jednom `release_tag` nemá
-# zmysel – dlaždice sa volajú rovnako a prepísali by sa navzájom.
+# JEDEN SKLAD = JEDEN MODEL. Miešať 20m a 1″ v jednom sklade nemá zmysel –
+# dlaždice sa volajú rovnako a prepísali by sa navzájom.
 #
 # Licencia dát: Sonny's LiDAR DTM – CC BY 4.0, zdroj treba uviesť v mape
 # (robí to atribúcia zdroja `contours` v style.json).
@@ -77,8 +79,8 @@ on:
         required: false
         default: ""
         type: string
-      release_tag:
-        description: "Do ktorého releasu uložiť (prázdne = podľa výberu vyššie)"
+      store:
+        description: "Do ktorého skladu na Drive uložiť (prázdne = podľa výberu)"
         required: false
         default: ""
         type: string
@@ -88,11 +90,11 @@ on:
         default: vysoke_tatry
         type: string
       force:
-        description: "Stiahnuť nanovo, aj keď už dáta v release sú"
+        description: "Stiahnuť nanovo, aj keď už dáta v sklade sú"
         required: false
         default: false
         type: boolean
-  # Volá ho aj "Build map", keď v release nie sú dlaždice pre jeho územie.
+  # Volá ho aj "Build map", keď v sklade nie sú dlaždice pre jeho územie.
   # `workflow_call` nepozná `type: choice`, tak sem chodí holý kľúč zdroja
   # (sonny/dmr35/ugkk) – krok „Priprav zdroj" berie oboje. `dmr5` sem Build map
   # neposiela: ten si volá `dmr5-drive.yml` priamo.
@@ -105,7 +107,7 @@ on:
         required: false
         default: ""
         type: string
-      release_tag:
+      store:
         required: false
         default: ""
         type: string
@@ -132,8 +134,11 @@ on:
       DRIVE_REFRESH:
         required: false
 
+# `contents: read` stačí: publikuje sa na Drive, nie do releasov, takže tento
+# workflow do repozitára nezapisuje nič. Kým tu bolo `write`, bolo to práve
+# na `gh release create`.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   mirror:
@@ -162,7 +167,7 @@ jobs:
           sudo apt-get install -y -qq gdal-bin p7zip-full
           python3 -m pip install --quiet --upgrade gdown
 
-      # Jediné miesto, kde sa rozhoduje „čo → odkiaľ → do ktorého releasu".
+      # Jediné miesto, kde sa rozhoduje „čo → odkiaľ → do ktorého skladu".
       # Zámerne obyčajný `case` a nie čítanie JSONu: URL je vidieť priamo vo
       # formulári, takže keď beh spadne, je z jedného pohľadu jasné, čo sa
       # sťahovalo. Skrytá indirekcia cez dem-sources.json bola o jeden krok
@@ -207,7 +212,7 @@ jobs:
           if [ -n "${CUSTOM//[[:space:]]/}" ] && [ "$KEY" != "sonny" ]; then
             URL="$CUSTOM"
           fi
-          [ -n '${{ inputs.release_tag }}' ] && REL='${{ inputs.release_tag }}'
+          [ -n '${{ inputs.store }}' ] && REL='${{ inputs.store }}'
           if [ "$KEY" != "sonny" ] && [ -z "${URL//[[:space:]]/}" ]; then
             echo "::error::Pre „$KEY“ treba URL – vyplň custom_url."
             exit 1
@@ -215,12 +220,12 @@ jobs:
           {
             echo "key=$KEY"
             echo "url=$URL"
-            echo "release=$REL"
+            echo "store=$REL"
             echo "label=$LABEL"
           } >> "$GITHUB_OUTPUT"
           echo "── $LABEL"
-          echo "   URL:     ${URL:-(Google Drive)}"
-          echo "   release: $REL"
+          echo "   URL:   ${URL:-(Google Drive)}"
+          echo "   sklad: $REL"
 
       - name: Stiahni dlaždice
         id: fetch
@@ -383,24 +388,22 @@ jobs:
           du -sh tiles
           ls tiles
 
-      - name: Publikuj ako release assety
+      # DO SKLADU NA DRIVE, nie do releasu – do releasov sa nepublikuje nič.
+      # Formát skladu, „clobber" aj prihlásenie má `workers/drive-store.py`.
+      - name: Publikuj dlaždice do skladu
         if: ${{ steps.src.outputs.key == 'sonny' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.src.outputs.store }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.src.outputs.release }}'
 
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --title "Výškový model – Sonny's LiDAR DTM" \
-              --notes "Dlaždice 1°×1° výškového modelu (GeoTIFF, meno = juhozápadný roh). Zdroj: [Sonny's LiDAR Digital Terrain Models of Europe](https://sonny.4lima.de/), licencia CC BY 4.0."
-
+          # `force` = zahodiť, čo v sklade je. Bez toho by v ňom ostali
+          # dlaždice, ktoré sa už nesťahujú, a tvárili by sa ako súčasť
+          # tohto výsledku.
           if [ '${{ inputs.force }}' = 'true' ]; then
-            for a in $(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
-              gh release delete-asset "$TAG" "$a" --repo "$GITHUB_REPOSITORY" --yes || true
-            done
+            BOLO=$(python3 workers/drive-store.py --names --store="$STORE" | tr '\n' ' ')
+            [ -n "${BOLO// /}" ] && python3 workers/drive-store.py --rm \
+              --store="$STORE" --name="$BOLO" || true
           fi
 
           jq -n \
@@ -413,28 +416,29 @@ jobs:
             > tiles/meta.json
           cat tiles/meta.json
 
-          gh release upload "$TAG" tiles/*.tif tiles/meta.json \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          echo "Hotovo – ${{ steps.convert.outputs.count }} dlaždíc v release $TAG."
+          python3 workers/drive-store.py --put --store="$STORE" \
+            --file="$(find tiles -maxdepth 1 -name '*.tif' -printf '%p ')" \
+            --file=tiles/meta.json \
+            --note="Dlaždice 1°×1° výškového modelu (GeoTIFF, meno = juhozápadný roh). Zdroj: Sonny's LiDAR DTM (https://sonny.4lima.de/), CC BY 4.0."
+          echo "Hotovo – ${{ steps.convert.outputs.count }} dlaždíc v sklade $STORE."
 
       # ---------- ÚGKK DMR 3.5 (otvorené dáta, jeden ZIP) ----------
       # Ten istý výsledok ako Sonny – 1°×1° dlaždice `N49E019.tif` – takže
       # `workers/fetch-dem.sh` sa pri čítaní vôbec nevetví a rozhoduje len
-      # meno releasu.
-      - name: Sú dlaždice DMR 3.5 už v release?
+      # meno skladu.
+      - name: Sú dlaždice DMR 3.5 už v sklade?
         id: have35
         if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.src.outputs.store }}
         run: |
           set -uo pipefail
-          N=$(gh release view '${{ steps.src.outputs.release }}' --repo "$GITHUB_REPOSITORY" \
-                --json assets -q '.assets | length' 2>/dev/null || echo 0)
+          N=$(python3 workers/drive-store.py --names --store="$STORE" 2>/dev/null | grep -c . || echo 0)
           if [ '${{ inputs.force }}' = 'true' ]; then
-            echo "force=áno – sťahujem nanovo (v release je ${N:-0} dlaždíc)."
+            echo "force=áno – sťahujem nanovo (v sklade je ${N:-0} dlaždíc)."
             echo "skip=false" >> "$GITHUB_OUTPUT"
           elif [ "${N:-0}" -gt 0 ]; then
-            echo "V release '${{ steps.src.outputs.release }}' už je $N dlaždíc – nesťahujem."
+            echo "V sklade '$STORE' už je $N dlaždíc – nesťahujem."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -442,7 +446,7 @@ jobs:
 
       # `continue-on-error`: `opendata.skgeodesy.sk` sa z runnera ešte nikdy
       # neskúšal. Keď nepôjde, nie je to dôvod zhodiť beh – volajúci build to
-      # zistí z prázdneho releasu a spadne späť na Sonnyho.
+      # zistí z prázdneho skladu a spadne späť na Sonnyho.
       - name: Stiahni a rozrež DMR 3.5
         id: fetch35
         if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.have35.outputs.skip != 'true' }}
@@ -454,22 +458,18 @@ jobs:
             --url='${{ steps.src.outputs.url }}' \
             --out=tiles --stats=open-stats.txt
 
-      - name: Nahraj DMR 3.5 do releasu
+      - name: Nahraj DMR 3.5 do skladu
         if: ${{ steps.src.outputs.key != 'sonny' && steps.src.outputs.key != 'ugkk' && steps.fetch35.outcome == 'success' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.src.outputs.store }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.src.outputs.release }}'
           COUNT=$(find tiles -maxdepth 1 -name '*.tif' | wc -l)
           [ "$COUNT" -gt 0 ] || { echo "::warning::Žiadne dlaždice."; exit 0; }
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Výškový model – ÚGKK DMR 3.5 (otvorené dáta)" \
-              --notes "Dlaždice 1°×1° z https://opendata.skgeodesy.sk. Zdroj: ÚGKK SR."
-          find tiles -maxdepth 1 -name '*.tif' -print0 \
-            | xargs -0 gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber
-          echo "Nahraných $COUNT dlaždíc do releasu $TAG ✓"
+          python3 workers/drive-store.py --put --store="$STORE" \
+            --file="$(find tiles -maxdepth 1 -name '*.tif' -printf '%p ')" \
+            --note="Dlaždice 1°×1° z https://opendata.skgeodesy.sk. Zdroj: ÚGKK SR – DMR 3.5."
+          echo "Nahraných $COUNT dlaždíc do skladu $STORE ✓"
 
       # ---------- ÚGKK DMR 5.0 (1 m LiDAR, po výrezoch) ----------
       # Pri 1 m má jedna 1° dlaždica ~48 GB, takže sa tu nekrája na dlaždice,
@@ -483,11 +483,11 @@ jobs:
             --region-bbox='16.815,47.71,22.585,49.635' \
             --area='${{ inputs.area }}' --out="$GITHUB_OUTPUT"
 
-      - name: Je výrez už v release?
+      - name: Je výrez už v sklade?
         id: haveu
         if: ${{ steps.src.outputs.key == 'ugkk' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.src.outputs.store }}
         run: |
           set -uo pipefail
           ASSET="ugkk-${{ steps.area.outputs.key }}.tif"
@@ -495,9 +495,9 @@ jobs:
           if [ '${{ inputs.force }}' = 'true' ]; then
             echo "force=áno – sťahujem nanovo."
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif gh release view '${{ steps.src.outputs.release }}' --repo "$GITHUB_REPOSITORY" \
-                 --json assets -q '.assets[].name' 2>/dev/null | grep -qx "$ASSET"; then
-            echo "V release už je $ASSET – nesťahujem."
+          elif python3 workers/drive-store.py --names --store="$STORE" \
+                 2>/dev/null | grep -qx "$ASSET"; then
+            echo "V sklade už je $ASSET – nesťahujem."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -518,28 +518,25 @@ jobs:
             --out='${{ steps.haveu.outputs.asset }}' \
             --direct-urls='${{ steps.src.outputs.url }}'
 
-      - name: Nahraj DMR 5.0 do releasu
+      - name: Nahraj DMR 5.0 do skladu
         if: ${{ steps.src.outputs.key == 'ugkk' && steps.fetchu.outcome == 'success' }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.src.outputs.store }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.src.outputs.release }}'
           ASSET='${{ steps.haveu.outputs.asset }}'
           ls -lh "$ASSET"
-          # Release asset má strop 2 GB – radšej to povedať tu, než nechať
-          # upload zlyhať bez vysvetlenia.
+          # STROP 2 GB TU UŽ NIE JE. Kým sa ukladalo do releasu, väčší asset
+          # sa nedal nahrať a krok to hovoril vopred; na Drive taký strop nie
+          # je. Ostáva varovanie, lebo veľký COG stojí čas každému, kto ho
+          # potom sťahuje – a runner má voľných ~60 GB.
           SZ=$(stat -c%s "$ASSET")
-          if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
-            echo "::error::$ASSET má $(( SZ / 1048576 )) MB, strop je 2 GB. Zvoľ menší výrez."
-            exit 1
+          if [ "$SZ" -gt $((4 * 1024 * 1024 * 1024)) ]; then
+            echo "::warning::$ASSET má $(( SZ / 1048576 )) MB. Nahrá sa, ale každý build ho bude celý sťahovať – ak to nie je zámer, zvoľ menší výrez."
           fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "ÚGKK DMR 5.0 (1 m LiDAR)" \
-              --notes "Jeden COG na výrez; meno assetu je kľúč z workers/areas.json. Zdroj: ÚGKK SR."
-          gh release upload "$TAG" "$ASSET" --repo "$GITHUB_REPOSITORY" --clobber
-          echo "Uložené: $TAG / $ASSET"
+          python3 workers/drive-store.py --put --store="$STORE" --file="$ASSET" \
+            --note="Jeden COG na výrez; meno je kľúč z workers/areas.json. Zdroj: ÚGKK SR – DMR 5.0."
+          echo "Uložené: $STORE / $ASSET"
 
       - name: Súhrn
         if: ${{ always() }}
@@ -551,7 +548,7 @@ jobs:
             echo "| vec | hodnota |"
             echo "|---|---|"
             echo "| zdroj | \`${{ steps.src.outputs.key }}\` |"
-            echo "| release | \`${{ steps.src.outputs.release }}\` |"
+            echo "| sklad | \`${{ steps.src.outputs.store }}\` |"
             echo "| URL | ${{ steps.src.outputs.url }} |"
           } >> "$GITHUB_STEP_SUMMARY"
           # Sonny leží na Drive, takže „ako sa k nemu beh dostal" je súčasť

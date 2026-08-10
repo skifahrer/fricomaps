@@ -3,9 +3,9 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # Výškový model z DMR 5.0 v ETRS89, ktorý leží na Google Drive ako dva holé
 # BigTIFFy. Toto je JEDINÁ cesta k DMR 5.0:
 #
-#   area: <pohorie>       →  ugkk-<pohorie>.tif  →  release `dem-ugkk`
+#   area: <pohorie>       →  ugkk-<pohorie>.tif  →  sklad `dem-ugkk`
 #                            Build map: rock_source: dmr5 + rovnaké `rock_area`
-#   area: cele_slovensko  →  dlaždice N49E019.tif →  release `dem-dmr5`
+#   area: cele_slovensko  →  dlaždice N49E019.tif →  sklad `dem-dmr5`
 #                            Build map: rock_source: dmr5 bez výrezu
 #
 # V Build map je to jedna voľba `dmr5` a podobu si vyberá podľa rozsahu:
@@ -16,6 +16,10 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # dve podoby a chýbať môžu naraz (`mirror-dmr5-area` = výrez do `dem-ugkk`,
 # `mirror-dmr5-tiles` = 1° dlaždice do `dem-dmr5`). Sú to dva joby nad JEDNÝM
 # workflowom, nie dve pipeline.
+#
+# SKLADY SÚ PRIEČINKY NA DRIVE, nie GitHub releasy – do releasov sa nepublikuje
+# nič. Celý formát skladu je vo `workers/drive-store.py`; mená súborov ostali
+# tie isté, aké mali assety, lebo meno je sľub o rozsahu.
 #
 # PREČO UŽ NIE JE ZÁLOHA. Ten istý model sa dal brať aj z archívu ÚGKK
 # (`dmr5.yml`) – 198 GB ZIP, v ktorom je raster jedným deflate prúdom, takže
@@ -126,11 +130,11 @@ on:
         default: ""
         type: string
 
-  # Volá ho aj „Build map", keď mu v release chýba výškový model. Doteraz to
+  # Volá ho aj „Build map", keď mu v sklade chýba výškový model. Doteraz to
   # nešlo a bola to tá diera, cez ktorú padali behy: `check-dem` povedal
   # „dmr5 treba doplniť", poslal to do update-dem.yml – a ten na `dmr5` len
   # vypísal, kam ísť ručne, a skončil úspechom. Nič sa nestiahlo a build spadol
-  # o desať jobov neskôr na tom, že v release nie je ani jedna dlaždica
+  # o desať jobov neskôr na tom, že v sklade nie je ani jedna dlaždica
   # (beh 31307163093).
   #
   # `workflow_call` nepozná `type: choice`, tak sem chodia holé hodnoty:
@@ -199,8 +203,11 @@ on:
       DRIVE_REFRESH:
         required: false
 
+# `contents: read` stačí: publikuje sa na Drive, nie do releasov, takže tento
+# workflow do repozitára nezapisuje nič. Kým tu bolo `write`, bolo to práve
+# na `gh release create`.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   # Dva behy naraz by z Drive ťahali dvojnásobok a prepisovali ten istý asset.
@@ -231,7 +238,7 @@ jobs:
     #   7. Zloženie       mozaika → COG alebo 1° dlaždice (už len nad diskom)
     #   8. Kontrola       veľkosť assetov proti stropu 2 GB
     #   9. Metadáta       meta-*.json vedľa modelu
-    #  10. Nahranie       do releasu
+    #  10. Nahranie       do skladu na Drive
     #  11. Súhrn          tabuľka do prehľadu behu
     #
     # Kroky 5–7 sú fázy jedného scriptu (`--stage`), ktoré si stav podávajú
@@ -324,11 +331,14 @@ jobs:
           fi
 
           # Strážca, ktorý ušetrí hodiny počítania: 1°×1° dlaždica pri 1 m má
-          # vyše 5 GB a strop assetu v release je 2 GB. Platí pre KAŽDÚ
-          # dlaždicu, nie len pre celú krajinu – aj jeden stupeň z výrezu je
-          # celý stupeň.
+          # v metri ~48 GB surových buniek (vyše 5 GB skomprimovaná) a runner
+          # má voľných ~60 GB, takže sa nemá kde ani vyrobiť, nieto zlepiť do
+          # mozaiky. Platí pre KAŽDÚ dlaždicu, nie len pre celú krajinu – aj
+          # jeden stupeň z výrezu je celý stupeň. (Kým sa ukladalo do releasov,
+          # hranicu držal ich 2 GB strop na asset; sklad na Drive taký strop
+          # nemá, runner ostal ten istý.)
           if [ "$TILES" = true ] && [ "$GRID" -lt 3 ]; then
-            echo "::error::Dlaždice pri mriežke ${GRID} m sa do releasu nezmestia (jedna 1° dlaždica má vyše 5 GB, strop assetu je 2 GB). Zvoľ 5 m, alebo si vyber pohorie s vypnutým tiles."
+            echo "::error::Dlaždice pri mriežke ${GRID} m sa na runner nezmestia (jedna 1° dlaždica má v metri ~48 GB buniek, voľných je ~60 GB). Zvoľ 5 m, alebo si vyber pohorie s vypnutým tiles."
             exit 1
           fi
 
@@ -339,7 +349,7 @@ jobs:
 
           {
             echo "grid=$GRID"
-            echo "release=$REL"
+            echo "store=$REL"
             echo "dem_source=$SRC"
             echo "tiles=$TILES"
             echo "asset=$ASSET"
@@ -354,10 +364,10 @@ jobs:
             echo "| územie | \`$AREA\` |"
             echo "| mriežka | ${GRID} m |"
             echo "| podoba | $([ "$TILES" = true ] && echo '1° dlaždice' || echo "výrez \`$ASSET\`") |"
-            echo "| release | \`$REL\` |"
+            echo "| sklad | \`$REL\` |"
             echo "| výšky | $GEOID |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "── $AREA, mriežka ${GRID} m, výšky $GEOID, podoba $([ "$TILES" = true ] && echo dlaždice || echo "výrez $ASSET") → release $REL"
+          echo "── $AREA, mriežka ${GRID} m, výšky $GEOID, podoba $([ "$TILES" = true ] && echo dlaždice || echo "výrez $ASSET") → sklad $REL"
 
       # Lacná otázka s drahou odpoveďou: čítame ako VLASTNÍK dát, alebo
       # verejným odkazom? Verejný má denný limit sťahovania, ktorý zdieľajú
@@ -441,18 +451,20 @@ jobs:
           for f in "${FILES[@]}"; do
             SZ=$(stat -c%s "$f")
             printf '  %-24s %6s MB\n' "$(basename "$f")" "$(( SZ / 1048576 ))"
-            if [ "$SZ" -gt $((2 * 1024 * 1024 * 1024)) ]; then
-              echo "::error::$f má $(( SZ / 1048576 )) MB, strop assetu je 2 GB. Zvoľ hrubšiu mriežku alebo menšie územie."
-              BIG=1
+            # 2 GB strop assetu releasu tu už nie je – sklad na Drive ho
+            # nemá. Ostáva varovanie: veľký súbor platí každý build, ktorý si
+            # ho vypýta, a runner má voľných ~60 GB.
+            if [ "$SZ" -gt $((4 * 1024 * 1024 * 1024)) ]; then
+              echo "::warning::$f má $(( SZ / 1048576 )) MB. Nahrá sa, ale každý build ho bude celý sťahovať – ak to nie je zámer, zvoľ hrubšiu mriežku alebo menšie územie."
+              BIG=$(( BIG + 1 ))
             fi
           done
-          [ "$BIG" -eq 0 ] || exit 1
-          echo "${#FILES[@]} súborov, všetky pod stropom ✓"
+          echo "${#FILES[@]} súborov, $BIG z nich nad 4 GB"
 
       # Meno metadát nesie územie. Dlaždicová podoba sa dopĺňa po stupňoch
       # (Build map si vypýta len tie, čo jeho bbox pretína), takže jedno
       # spoločné `meta-dmr5-drive.json` by po každom behu tvrdilo, že
-      # v release je len to, čo vzniklo naposledy.
+      # v sklade je len to, čo vzniklo naposledy.
       - name: Metadáta modelu
         id: meta
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
@@ -473,25 +485,19 @@ jobs:
           cat "out/$META"
           echo "meta=$META" >> "$GITHUB_OUTPUT"
 
-      - name: Nahraj do releasu
+      - name: Nahraj do skladu na Drive
         if: ${{ !startsWith(inputs.mode, 'len sonda') }}
         env:
-          GH_TOKEN: ${{ github.token }}
+          STORE: ${{ steps.cfg.outputs.store }}
         run: |
           set -euo pipefail
-          TAG='${{ steps.cfg.outputs.release }}'
           shopt -s nullglob
           FILES=(out/*.tif)
-
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --title "Výškový model – ÚGKK DMR 5.0 (LLS, otvorené dáta)" \
-              --notes "Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
-
-          echo "Nahrávam ${#FILES[@]} súborov do releasu $TAG…"
-          gh release upload "$TAG" "${FILES[@]}" "out/${{ steps.meta.outputs.meta }}" \
-            --repo "$GITHUB_REPOSITORY" --clobber
-          echo "V releasi $TAG: ${#FILES[@]} súborov ✓"
+          echo "Nahrávam ${#FILES[@]} súborov do skladu $STORE…"
+          python3 workers/drive-store.py --put --store="$STORE" \
+            --file="${FILES[*]}" --file="out/${{ steps.meta.outputs.meta }}" \
+            --note="Z DMR 5.0 v ETRS89, čítaného cez HTTP Range. Zdroj: ÚGKK SR, voľné použitie pri uvedení zdroja."
+          echo "V sklade $STORE: ${#FILES[@]} súborov ✓"
 
       # Výstup tohto workflowu je vstup pre Build map – nech je z behu jasné,
       # čo tam nastaviť, aby z toho boli skaly.
@@ -505,11 +511,11 @@ jobs:
             echo "## Čo z toho má Build map"
             echo
             if [ '${{ steps.cfg.outputs.tiles }}' = 'true' ]; then
-              echo "Dlaždicová podoba v release \`${{ steps.cfg.outputs.release }}\`."
+              echo "Dlaždicová podoba v sklade \`${{ steps.cfg.outputs.store }}\`."
               echo "Berie si ju **tieňovanie a 3D terén** (\`shading_source: dmr5\`)"
               echo "a vrstevnice/skaly vtedy, keď beh nemá výrez."
             else
-              echo "Výrez v plnom rozlíšení v release \`${{ steps.cfg.outputs.release }}\`"
+              echo "Výrez v plnom rozlíšení v sklade \`${{ steps.cfg.outputs.store }}\`"
               echo "ako \`${{ steps.cfg.outputs.asset }}\`."
               echo "Berú si ho **vrstevnice a skaly** pri \`area: ${{ inputs.area }}\`."
               echo

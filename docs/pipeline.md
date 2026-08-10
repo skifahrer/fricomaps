@@ -92,7 +92,7 @@ timeout, vlastnú cache a keď spadne, ostatné dobehnú.
 | job | čo robí | timeout | beží súbežne s |
 |---|---|--:|---|
 | **plan** | overí Pages, vyrieši región/bbox, stiahne (a nacacheuje) PBF | 30 min | — |
-| **check-dem** | sú v release zvoleného zdroja dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
+| **check-dem** | sú v sklade zvoleného zdroja dlaždice pre bbox? spočíta `demkey` | — | tiles, assets |
 | **mirror-dem** | keď chýbajú, spustí *Stiahnuť výškové dáta* so zvoleným `source` | — | tiles, assets |
 | **mirror-dmr5-area** | chýbajúci výrez DMR 5.0 v plnom rozlíšení → *DMR 5.0 z Drive* | — | tiles, assets |
 | **mirror-dmr5-tiles** | chýbajúce 1° dlaždice DMR 5.0 (5 m) → *DMR 5.0 z Drive* | — | tiles, assets |
@@ -120,7 +120,7 @@ bloky sťahujú do `workers/`, kde sa dajú aj spustiť ručne:
 | [`fetch-pbf.sh`](../workers/fetch-pbf.sh) | PBF regiónu: stiahnutie, orez, kľúč a bbox | 5,6 kB v YAMLe |
 | [`build-site.sh`](../workers/build-site.sh) | viewer + `manifest.json` do `_site` | 5,0 kB |
 | [`tiles-build.sh`](../workers/tiles-build.sh) | Planetiler → `{región}.pmtiles` s rozpočtom | 3,5 kB |
-| [`terrain-build.sh`](../workers/terrain-build.sh) | tieňovanie: cache → release → prepočet | 5,2 kB |
+| [`terrain-build.sh`](../workers/terrain-build.sh) | tieňovanie: cache → sklad na Drive → prepočet | 5,2 kB |
 | [`contours-site.sh`](../workers/contours-site.sh) | hotové vrstevnice a skaly do `_site` | **2× tá istá kópia** |
 | [`trails-build.sh`](../workers/trails-build.sh) | značené trasy → `-trails.pmtiles` | 2,9 kB |
 | [`features-build.sh`](../workers/features-build.sh) | krajinné prvky → `-features.pmtiles` | 2,8 kB |
@@ -379,8 +379,8 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | kľúč vo výberoch | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
-| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš release `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
-| **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš release `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
+| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš sklad `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
+| **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš sklad `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
 | **ÚGKK DMR 5.0** | `dmr5` | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#štvrtý-workflow-dmr-50-z-drive-etrs89) | naplniť |
 
 **Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
@@ -428,7 +428,7 @@ pridať do jedného a zabudnúť v druhom.
 > stiahne, zlepí a odloží.
 >
 > **1 m ide len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, teda 64 GB
-> vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB). Build to
+> vo Float32 – a to sa nezmestí na runner (voľných má ~60 GB). Build to
 > odmietne v prípravnom jobe, nie po hodine sťahovania.
 >
 > Licencia ÚGKK je voľná aj komerčne, ale **podmienená uvedením zdroja** –
@@ -457,7 +457,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │                                  (pri dmr5 rovno z Drive cez HTTP Range)
   │      gdaldem slope             … sklon v stupňoch
   │      gdal_translate -ot Int16  … stotiny °, aby sa mozaika zmestila
-  │      → sklad: slope-chunks/ (cache) + release dem-slope (trvalý)
+  │      → sklad: slope-chunks/ (cache) + Drive dem-slope (trvalý)
   │      gdalbuildvrt              … mozaika sklonu celého územia
   │    workers/rock-areas.py
   │    b) vektorizácia NARAZ nad mozaikou:
@@ -471,7 +471,7 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   └─ tieňovanie a 3D ────────────────────────────────────────
        workers/build-terrain.py … terrarium PNG dlaždice
                                  → terrain/{z}/{x}/{y}.png
-                                 → release `dem-terrain` (.tar.zst)
+                                 → sklad `dem-terrain` (.tar.zst)
   │
   │  planetiler generate-custom --schema=workers/contours.yml
   ▼
@@ -494,7 +494,7 @@ Teraz je jednotkou **časť**:
    │  workers/slope-chunks.py
    ├─ rozdelí na časti absolútnej mriežky EPSG:3035 (4096² px)
    ├─ pre každú časť:
-   │    v sklade? → vezmi           (cache → release dem-slope)
+   │    v sklade? → vezmi           (cache → Drive dem-slope)
    │    nie?      → prečítaj z Drive len jej okno (HTTP Range),
    │                gdaldem slope, Int16 → ulož do skladu
    └─ gdalbuildvrt nad časťami → mozaika bez švov
@@ -547,7 +547,7 @@ a zaseknutý beh vyzerá presne ako pomalý. Počet požiadaviek je tu to hlavn�
 
 Dve vrstvy skladu zámerne: cache je rýchla, ale prerieďuje sa (kým bola
 v GitHube, mazal ju sám po siedmich dňoch bez použitia a repo malo strop 10 GB;
-na Drive ju raz za týždeň preriedi *Upratať cache*) – release nevyprší. Cache
+na Drive ju raz za týždeň preriedi *Upratať cache*) – sklad nevyprší sám. Cache
 sa ukladá pod **prefix + číslo behu** a obnovuje cez `restore-keys` – pri
 pevnom kľúči by ju prvý beh zabral a časti dopočítané neskôr by sa už nikdy
 neuložili.
@@ -883,7 +883,7 @@ Build sťahuje viac vecí, než len DEM, a všetky majú vlastnú cache:
 | DEM dlaždice | otlačok releasu + bbox | desiatky MB na dlaždicu |
 | výškové dlaždice | otlačok releasu + bbox + maxzoom | drahé na výpočet |
 | vrstevnice a skaly | + interval, prah, mriežka, kúsok | hodiny výpočtu |
-| hotové skaly (release `dem-rocks`) | región + nastavenia v mene assetu | desiatky minút výpočtu; `rocks_rebuild` ich prepočíta |
+| hotové skaly (sklad `dem-rocks`) | región + nastavenia v mene súboru | desiatky minút výpočtu; `rocks_rebuild` ich prepočíta |
 | glyfy a sprity | hash zoznamu zdrojov | menia sa len so zmenou kódu |
 | zdroje Planetileru | pevný | water polygons, Natural Earth |
 
@@ -941,15 +941,15 @@ veľkosti](#rozpočet-veľkosti).
 
 #### Pregenerovanie
 
-Cache aj release existujú preto, aby sa to isté nepočítalo dvakrát. Keď sa
+Cache aj sklad existujú preto, aby sa to isté nepočítalo dvakrát. Keď sa
 zmenia nastavenia, zmení sa kľúč a prepočíta sa to samo. Keď to treba
 prepočítať **nanovo aj pri rovnakých nastaveniach**, slúžia na to inputy:
 
 | `rebuild` | čo pregeneruje |
 |---|---|
 | `vrstevnice` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `skaly` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `teren` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+| `skaly` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `teren` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
 | `vsetko` | všetko z toho naraz |
 
 **Rýchly test (switch `test`) prebíja `rebuild` a pregenerúva vždy všetko** –
@@ -1211,6 +1211,53 @@ módu](../README.md#cesta-úprav-do-zdrojáku) (`poc/web/style-overrides.json`)
 ikoniek a tieňovanie reliéfu, a to aj tie, ktoré platia len pre jeden typ
 mapy (`maps.<typ>`).
 
+### Výplň nad zmiešanou geometriou: prečo boli od z13 čudné polygóny
+
+Na obyčajnej mape – bez skál a vrstevníc – sa **od zoomu 13** objavovali útvary,
+ktoré vyzerali ako plocha „prerezaná" cez krajinu a vnútri mali len farbu
+podkladu. Nebolo to v dátach ani v dlaždiciach; bolo to v štýle.
+
+**Mechanizmus.** MapLibre `fill` vrstve **nepreskočí čiary**. Prvok pustí do
+výplne bez ohľadu na typ geometrie a otvorenú lomenú čiaru pošle earcutu, ako
+keby to bol uzavretý prstenec – vypadne z toho sebaprekrývajúci sa
+mnohouholník, ktorý s tou čiarou nemá nič spoločné.
+
+Vinníkom bola vrstva `pedestrian-area`: `fill` nad vrstvou `transportation`
+s filtrom `class in [pedestrian, path]` a `minzoom: 13`. V komentári pri nej
+dokonca stálo *„`fill` vrstva kreslí len plochy, takže `class` stačí na
+rozlíšenie"* – a to je presne to, čo neplatí. Chodníky sú v tej vrstve **čiary**
+a Planetiler ich pri `--transportation_z13_paths=true`
+([`tiles-build.sh`](../workers/tiles-build.sh)) púšťa do dlaždíc **práve od
+z13** – teda presne odtiaľ, odkiaľ tie útvary pribúdali.
+
+A prečo „vnútri len podklad": farba `pedestrian` je od `background` na
+nerozoznanie (svetlá téma `#f2efe9` vs `#f8f4f0`), takže z toho bola plocha
+vo farbe podkladu, ktorá prekryla les aj lúku pod sebou – a `roadCasing` jej
+`fill-outline-color`-om obtiahol hrany, čo dalo ten dojem prerezania.
+
+**Oprava** je stráž na typ geometrie: `polygonOnly(…)` v
+[`themes.js`](../poc/web/themes.js) obalí filter do
+`["==", ["geometry-type"], "Polygon"]`. Dostali ju všetky výplne nad vrstvami,
+ktoré nesú viac než jeden typ geometrie:
+
+| vrstva dlaždíc | čo v nej nie je plocha | výplne v štýle |
+|---|---|---|
+| `transportation` | cesty a chodníky sú čiary | `pedestrian-area`, `bridge-area`, `pier-area` |
+| `piste` | os zjazdovky je čiara (zámerne, viď [`features.yml`](../workers/features.yml)) | `piste-area` |
+| `aeroway` | dráhy a rolovacie dráhy sú čiary | `aeroway-area` |
+| `park` | k obrysu ide bod pre popisok (`pointOnSurface`) | `park` |
+
+**Prečo to nikto nevidel skôr:** mapa sa načíta, štýl je platný, MapLibre
+nepovie ani slovo. Je to tichý omyl v čistej podobe, takže na to vznikla
+kontrola – [`workers/lint-style.mjs`](../workers/lint-style.mjs) v *Lint
+workflows* postaví štýl pre **všetkých 5 typov máp × 4 témy** a hlási každú
+výplň nad zmiešanou vrstvou, ktorá stráž nemá. (Preto sa `Lint workflows`
+spúšťa aj pri zmene v `poc/web/**`.)
+
+Je to ten istý druh omylu ako `LINE_CLASSES` o kus vyššie v tom istom súbore,
+len z druhej strany: tam symbolová vrstva položila trojuholníček vrcholu
+doprostred bralnej hrany, tu výplňová vrstva vyplnila chodník.
+
 ### `deploy` – vzory do spritu
 
 Vzory plôch a čiar sú **generované z predpisu, ktorý je zároveň názvom
@@ -1331,7 +1378,7 @@ bol rýchlejší:
 | Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
 | Značené trasy z OSM | 0:01:38 | ~1 400 trás, ~39 000 úsekov, ~6 000 ciest s viac trasami |
 | Značené trasy → PMTiles | 0:00:44 | maxzoom 14, ~9M |
-| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
+| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (sklad dem-terrain) |
 | Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
 | Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
 
@@ -1420,7 +1467,7 @@ Google Drive priečinok (napr. Slovensko, model 20m)
   │  workers/dem-tiles.py … GeoTIFF → dlaždice 1°×1° vo WGS84
   │  (alebo .hgt priamo … to je už 1° dlaždica, len bez hlavičky)
   ▼
-release `dem-sonny`: N49E019.tif … + meta.json
+sklad `dem-sonny`: N49E019.tif … + meta.json
 ```
 
 - **Sťahuje sa prihlásene** ([`workers/drive-folder.py`](../workers/drive-folder.py)).
@@ -1492,7 +1539,7 @@ nedostane nič, čo by štýl rozbilo.
 > púšťa spoľahlivo a Range na ľubovoľnom offsete je rádovo lacnejší.
 
 DMR 5.0 leží na Google Drive ako **dva holé BigTIFFy v jednom priečinku**.
-Plní dva release (`dem-ugkk`, `dem-dmr5`), takže `fetch-dem.sh` ani `Build map`
+Plní dva sklady (`dem-ugkk`, `dem-dmr5`), takže `fetch-dem.sh` ani `Build map`
 nemusia vedieť, odkiaľ dáta prišli.
 
 **Zdrojom je priečinok, nie dve file id.** Vo `workers/dmr5-drive.py` je jediné
@@ -1786,7 +1833,7 @@ sklad častí sklonu a z rovnakého dôvodu.
 ### Build map si to dopĺňa sám
 
 Táto pipeline sa **nespúšťa ručne**. Je volateľná (`workflow_call`) a `Build
-map` si ju zavolá, keď mu v release chýba to, čo si vypýtal:
+map` si ju zavolá, keď mu v sklade chýba to, čo si vypýtal:
 
 ```
 check-dem  ──►  mirror-dmr5-area   area:  <bbox výrezu>     ──► dem-ugkk
@@ -1816,7 +1863,7 @@ výrezu. Stráži to `Lint workflows`.
 výrez" si odpoveď preberá. Keď sa počítal druhýkrát, dostal `dem_bbox` (už ten
 štvorec) a `--test-km2` sa mu nepodávalo, tak vyšiel ten istý bbox, ale kľúč
 **bez** prípony `_test2`: výrez na 2 km² sa volal `vysoke_tatry` presne ako celé
-pohorie. Meno assetu je z kľúča, takže by testovací DEM sadol v release pod
+pohorie. Meno súboru je z kľúča, takže by testovací DEM sadol v sklade pod
 `ugkk-vysoke_tatry.tif` – meno, ktoré sľubuje celý obdĺžnik – a ďalší ostrý beh
 by z dvoch kilometrov štvorcových počítal vrstevnice celých Tatier. Je to
 presne ten istý druh sľubu ako pri dlaždiciach nižšie. (`cely` príponu
@@ -1824,21 +1871,21 @@ zámerne nedostáva: je to sentinel „žiadny výrez", nie meno územia, a prí
 by prepla podobu modelu z dlaždíc na výrez.)
 
 **Dlaždice sa dopĺňajú po celých stupňoch, nie po bboxe.** Meno `N49E020.tif`
-je sľub o celom stupni a build si dlaždicu podľa mena hľadá – keby v release
+je sľub o celom stupni a build si dlaždicu podľa mena hľadá – keby v sklade
 ležal pod tým menom len prienik s bboxom, ďalší beh by kontrolou prešiel
 („dlaždica tam je") a tieňovanie by ticho skončilo v polovici mapy. Preto
 `--tiles` okno pred čítaním rozšíri na celé stupne. Cena: rádovo pol hodiny
-a ~2 GB z Drive **na stupeň** – ale raz, a potom to v release ostane.
+a ~2 GB z Drive **na stupeň** – ale raz, a potom to v sklade ostane.
 
 > **Prečo to nejde cez `update-dem.yml`.** Tá pipeline archív stiahne na runner
 > a rozreže ho; DMR 5.0 má 145 GB a runner má voľných ~60 GB. Bol tam
 > rozcestník, ktorý na `dmr5` vypísal, kam ísť ručne, a **skončil úspechom** –
 > takže `check-dem` poslal „treba doplniť" do jobu, ktorý nedoplnil nič, job
-> zazelenal a build spadol o desať jobov neskôr na tom, že v release nie je ani
+> zazelenal a build spadol o desať jobov neskôr na tom, že v sklade nie je ani
 > jedna dlaždica ([beh 31307163093](https://github.com/skifahrer/fricomaps/actions/runs/31307163093)).
 > Dnes je `what: dmr5` v `update-dem.yml` chyba.
 
-### Jedna odpoveď na „ktorý release a ktoré assety"
+### Jedna odpoveď na „ktorý sklad a ktoré súbory"
 
 Tú istú otázku si kladú dve miesta: `workers/check-dem.sh` (čo hľadať a či to
 treba doplniť) a `workers/fetch-dem.sh` (čo naozaj stiahnuť). Kým bola napísaná
@@ -1849,13 +1896,13 @@ sťahovalo dlaždice z `dem-dmr5`. Odpoveď preto dáva jediný
 ```console
 $ python3 workers/dem-target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.16,20.12,49.18
 form=area
-release=dem-ugkk
+store=dem-ugkk
 assets=ugkk-vysoke_tatry.tif
 mirror=dmr5:area:vysoke_tatry
 
 $ python3 workers/dem-target.py --source=dmr5 --area-key=cely --bbox=20.1,49.16,20.12,49.18
 form=tiles
-release=dem-dmr5
+store=dem-dmr5
 assets=N49E020.tif
 mirror=dmr5:tiles:20,49,21,50
 degrees=20,49,21,50
@@ -1883,7 +1930,7 @@ job „Stiahnuť dlaždice" (strop 2 h)
 ───────────────────────────────────────────────────────────────────────
 XYZ dlaždice   https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
    │           paralelné sťahovanie s trvalým spojením, disková cache
-   ├─► artefakt `dlazdice-tienovania-…`   samotné JPG
+   ├─► sklad `vysledky`: `dlazdice-tienovania-…`  samotné JPG
    └─► cache + výstupy `bbox`, `key`, `zoom` pre ďalšie joby
 
 job „Obrysy po blokoch" (strop 3 h)      ← toto je tá drahá časť
@@ -1899,7 +1946,7 @@ raster „tmavosti" (Byte)      score = clip(ref − šedá, 0, 255)
 otvorenie (`open`, 3 m)       preč všetko užšie než stena – vlásočnicové
    │                          ryhy a mikrotiene, z ktorých je pri z14
    │                          sivá deka (erózia + dilatácia)
-   ├─► artefakt `nahlad-…`     PNG mozaika vedľa masky + histogram
+   ├─► sklad `vysledky`: `nahlad-…`   PNG mozaika vedľa masky + histogram
    ▼
 gdal_contour -p -fl 0,5 -fl 256             PO BLOKOCH (block_tiles=8,
    │                          teda 2048 px) → JEDNO pásmo ako polygóny
@@ -1912,9 +1959,9 @@ zlepenie blokov do jedného prúdu
 filter plôch (diery sa nekreslia) → -simplify → smooth-polygons.py
    ▼
 rock.gpkg (EPSG:4326, vrstva `rock`, triedy steep/cliff)
-   ├─► release `dem-rocks-img`   pre Build map (výber `rock_source: tienovanie`)
-   ├─► artefakt `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
-   └─► artefakt `cisla-…`          namerané hodnoty behu
+   ├─► sklad `dem-rocks-img`     pre Build map (výber `rock_source: tienovanie`)
+   ├─► sklad `vysledky`: `skaly-obrazok-…`  iba polygóny (GPKG + GeoJSON)
+   └─► sklad `vysledky`: `cisla-…`          namerané hodnoty behu
 ```
 
 **Prečo tri joby a nie tri kroky.** Strop času platí na JOB. Sťahovanie
@@ -1925,7 +1972,7 @@ na ktorej beh práve je – z jedného trojhodinového jobu sa to prečítať ne
 
 Dva vedľajšie efekty, pre ktoré to stojí za to aj bez stropu času:
 
-- **Každý job odloží svoj výsledok hneď.** Obrázky sú v artefakte po stiahnutí,
+- **Každý job odloží svoj výsledok hneď.** Obrázky sú v sklade po stiahnutí,
   náhľad po rastri tmavosti – teda aj vtedy, keď to za nimi nedobehne. Predtým
   sa oboje odkladalo až na konci, čiže presne keď to bolo najmenej treba.
 - **Zmena `min_area` je posledný job (minúty), nie celý výpočet.** Obrysy sú
@@ -2096,13 +2143,13 @@ rock_source: tienovanie                    stiahne dlaždice a spočíta skaly
                                            (vtedy sa nepočíta nič)
 ```
 
-Stiahnuté JPG dlaždice vypadnú ako artefakt `dlazdice-tienovania-{výrez}-z{zoom}`.
+Stiahnuté JPG dlaždice idú do skladu `vysledky` ako `dlazdice-tienovania-{výrez}-z{zoom}`.
 Sú to tie isté obrázky, z ktorých sa skaly hľadali – dovtedy sa dali vidieť
 len v cache behu. Sú nekomprimované v ZIPe (JPG sa balí zbytočne) a pri z18
 na veľké pohorie to je aj vyše gigabajtu, preto sa držia 14 dní a nie 90 ako
 polygóny.
 
-Keby v release aj tak nič nebolo, build to povie (`::error::`) a nespadne
+Keby v sklade aj tak nič nebolo, build to povie (`::error::`) a nespadne
 späť na skaly z DEM – to by bola tichá zámena jedného zdroja za druhý. Zdroj skál je aj v kľúči cache vrstevníc, takže sa
 `dem` a `shading` nemôžu navzájom vrátiť z cache.
 
@@ -2195,6 +2242,110 @@ steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie – tie druhé teda
 cesta systematicky prehliadne. Zato má rozlíšenie, na aké si sami sklon
 nespočítame. Je to pokus vedľa hlavnej cesty, nie jej náhrada.
 
+## Sklad hotových dát na Drive – a prečo už nie releasy
+
+Do GitHubu nejde nič, čo má prežiť beh. Osem druhov drahých medzivýsledkov
+kedysi ležalo v **releasoch** a medzivýsledky na pozretie v **artefaktoch**
+s 30- až 90-dňovou retenciou; oboje je teraz v **sklade na Google Drive**
+([`workers/drive-store.py`](../workers/drive-store.py)).
+
+Dôvod nie je estetický. Release má na jeden asset strop 2 GB, ktorý pipeline
+tvaroval zvonku, a hotové dáta v releasoch verejného repozitára vyzerajú ako
+vydanie softvéru, ktorým nikdy neboli. Drive už aj tak drží DMR 5.0, cache
+buildu aj hotové mapy, takže sklad je štvrtý priečinok toho istého účtu, nie
+nová závislosť.
+
+```
+<koreň>/dem-dmr5/N49E020.tif             <koreň> = `fricomaps-sklad`
+<koreň>/dem-ugkk/ugkk-vysoke_tatry.tif   v My Drive vlastníka tokenu;
+<koreň>/vysledky/teren-…-r73.tar.zst     inde ho pošle DRIVE_STORE_FOLDER
+         sklad     meno – to isté, aké mal asset releasu
+```
+
+| sklad | čo v ňom je | kto ho plní |
+|---|---|---|
+| `dem-sonny` | 1°×1° dlaždice Sonny's LiDAR DTM (20 m) | *Stiahnuť výškové dáta* |
+| `dem-dmr35` | tie isté dlaždice z otvorených dát ÚGKK (10 m) | *Stiahnuť výškové dáta* |
+| `dem-dmr5` | dlaždicová podoba DMR 5.0 (5 m) | *DMR 5.0 z Drive* |
+| `dem-ugkk` | výrez DMR 5.0 v plnom 1 m rozlíšení, jeden COG na pohorie | *DMR 5.0 z Drive* |
+| `dem-terrain` | hotové terrarium dlaždice na tieňovanie a 3D terén | `terrain-build.sh` |
+| `dem-rocks` | skaly zo sklonu výškového modelu | `contours-build.sh` |
+| `dem-rocks-img` | skaly z tmavých plôch v tieňovaných dlaždiciach | *Skaly z tieňovaných dlaždíc* |
+| `dem-slope` | raster sklonu po častiach (medzivýsledok skál) | `slope-chunks.py` |
+| `vysledky` | medzivýsledky na pozretie (GPKG, GeoJSON, náhľady, čísla) | `publish-results.sh` |
+
+**Mená súborov sa nezmenili** – `N49E020.tif` ďalej hovorí „tento celý stupeň
+je tu" (pravidlo 2: meno je sľub o rozsahu), takže sa nezmenilo ani nič
+v tom, čo si build hľadá. A ktorý sklad ktorá vrstva potrebuje, hovorí ďalej
+jediné miesto: [`dem-target.py`](../workers/dem-target.py).
+
+**Čo tým odpadlo a čo nie.** 2 GB strop na jeden súbor odpadol. Dve podoby
+DMR 5.0 (dlaždice po 5 m, výrez v 1 m) ostávajú – tie nedržal strop assetu, ale
+runner: jedna 1°×1° dlaždica má v metri ~48 GB a voľných je ~60 GB.
+
+**Čo nahradilo `gh release`:**
+
+| bolo | je |
+|---|---|
+| `gh release view --json assets` | `--names` / `--index` / `--latest` |
+| `gh release download --pattern` | `--get --name=… --dir=…` (aj viac mien naraz) |
+| `gh release upload --clobber` | `--put --file=…` |
+| `gh release delete-asset` | `--rm --name=…` |
+
+`--get` berie **viac mien naraz** zámerne: priečinok sa vypíše raz a potom sa
+sťahuje, kým `gh` bol jeden proces na každú dlaždicu. `--missing-ok` je pre
+dlaždice – bbox je obdĺžnik, ale model pokrýva krajinu, takže rohová dlaždica
+(u Slovenska napr. `N47E016` v Maďarsku) v ňom nikdy nebude a „chýba jedna, tak
+spadni" by zhodilo každý build pri hranici.
+
+**„Clobber" je najprv nahrať, až potom zmazať staré.** Drive dovolí dva súbory
+s tým istým menom vedľa seba, takže „najprv zmaž" by po spadnutom uploade
+nenechalo ani nové, ani staré – a ďalší beh by hodinu počítal niečo, čo tam
+pred pár minútami bolo. Pri čítaní preto vždy vyhráva NAJNOVŠÍ súbor daného
+mena.
+
+**Bez prihlásenia to nefunguje a nesmie to byť tiché.** Drive API anonymné
+požiadavky neobsluhuje, takže „v sklade nič nie je" a „nemám token" by boli na
+nerozoznanie – a to druhé by znamenalo, že sa všetko počíta odznova a zapisuje
+do prázdna (pravidlo 8). Preto sa bez tokenu padá s návodom a `Lint workflows`
+stráži, že token dostane každý krok, ktorý so skladom hovorí.
+
+**Preklep v mene skladu je chyba, nie prázdny sklad.** `KNOWN` v
+`drive-store.py` je zoznam skladov, ktoré pipeline pozná; `--store=dem-dmr55`
+padne hneď, namiesto toho, aby ticho vrátil „nič tam nie je". Doslovné mená
+kontroluje aj [`workers/lint-publishing.py`](../workers/lint-publishing.py)
+staticky.
+
+### Artefakt smie žiť najviac jeden deň
+
+`site-*` a `steps-*` s `retention-days: 1` ostávajú a **nie sú publikovanie** –
+sú to prepravky, ktorými si joby jedného behu podávajú kusy `_site`, a bez nich
+sa stránka nedá zlepiť. Čokoľvek s dlhšou retenciou je uložený výsledok a patrí
+do skladu `vysledky` cez
+[`workers/publish-results.sh`](../workers/publish-results.sh); `Lint workflows`
+to odmietne. Jediná výnimka je `upload-pages-artifact`, bez ktorého sa Pages
+nenasadia.
+
+Meno v sklade `vysledky` nesie nastavenia **a k tomu dátum, čas a číslo behu**,
+takže sa dva behy neprepíšu – to isté pravidlo ako pri hotových mapách. Jeden
+súbor sa nahrá sám a s vlastnou príponou (náhľadový PNG má zmysel vidieť na
+Drive na jeden klik), viac súborov sa zabalí do `.tar.zst`.
+
+### Ako sa staré releasy a artefakty zmazali
+
+Release ani artefakt nie je súbor v repozitári, takže sa nedá zmazať pull
+requestom – a token mimo Actions na to nemá právo. Robí to preto workflow
+[*Upratať GitHub*](../.github/workflows/cleanup-actions.yml)
+([`workers/cleanup-actions.py`](../workers/cleanup-actions.py)) v režime
+`releasy_a_artefakty` (alebo `vsetko`): zmaže releasy **aj ich tagy** –
+osamotený tag `dem-sonny` na verejnom repozitári vyzerá presne ako vydanie,
+ktorým nikdy nebol – a artefakty všetkých behov okrem toho svojho, aby si
+`site-*` nepodrezal pod rukami.
+
+Ten istý režim beží aj z plánu, raz za týždeň (nedeľa 03:50 UTC): keby release
+či dlhodobý artefakt niekedy pribudol, nemá tam ostať ležať mesiace. Behy
+a vetvy sa z plánu nemažú – to je história a patrí do rúk človeku.
+
 ## Šiesty workflow: „Upratať cache"
 
 [`cleanup-cache.yml`](../.github/workflows/cleanup-cache.yml) je odpoveď na to,
@@ -2209,6 +2360,13 @@ Prečo obe polovice v jednom workflowe: sú to dve strany tej istej otázky
 |---|---|---|
 | GitHub | zmaže **všetky** záznamy (`/actions/caches`), vypíše, koľko sa uvoľnilo | [`workers/cleanup-cache.py`](../workers/cleanup-cache.py) |
 | Drive | zmaže duplikáty, záznamy staršie než `keep_days` a to, čo nevojde do `keep_gb` | `workers/drive-cache.py --prune` |
+| sklad `vysledky` | zmaže archívy staršie než `keep_days_results` (90 dní) | `workers/drive-store.py --prune` |
+
+Tretí riadok pribudol s tým, že medzivýsledky už nie sú artefakty: do skladu
+`vysledky` padá jeden archív na beh, takže je to niečo, čo len rastie – a 90 dní
+je presne tá retencia, ktorú mal artefakt. **Sklady s výškovým modelom sa
+NEPRERIEĎUJÚ**: to sú drahé zrkadlá (jeden stupeň DMR 5.0 je rádovo pol hodiny
+čítania z Drive) a majú tam ležať, kým ich niekto ručne nezmaže.
 
 **Prečo sa GitHub cache maže celá.** Build si od nej už nič nepýta – všetko
 chodí z Drive – takže tie záznamy nikto nehľadá a len zaberajú tých 10 GB, čo

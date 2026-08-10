@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Tieňovanie a 3D terén: terrarium PNG dlaždice z vybraného výškového modelu.
 #
-# Poradie je „najlacnejšie najprv": cache behu → release → prepočet. Hotové
-# dlaždice sa ukladajú do releasu, takže ďalší beh nad tým istým regiónom,
-# modelom a maxzoomom ich už len stiahne.
+# Poradie je „najlacnejšie najprv": cache behu → sklad na Drive → prepočet.
+# Hotové dlaždice sa ukladajú do skladu, takže ďalší beh nad tým istým
+# regiónom, modelom a maxzoomom ich už len stiahne. (Do GitHub releasov sa
+# nepublikuje nič – rozpis je vo `workers/drive-store.py`.)
 #
 # MENO ASSETU NESIE ZDROJ (`terrain-<kľúč>-<model>-z<maxzoom>.tar.zst`):
 # tieňovanie zo Sonnyho a z DMR 3.5 nie je to isté a jedno sa nesmie vydávať
@@ -11,8 +12,8 @@
 #
 # Použitie (hodnoty chodia z prostredia, aby sa dal skript spustiť aj ručne):
 #   REGION_KEY=presovsky_kraj DEM_BBOX=20,49,21,50 SHADING_SOURCE=sonny \
-#   TERRAIN_MAXZOOM=13 TERRAIN_RELEASE=dem-terrain GH_TOKEN=… \
-#   GITHUB_REPOSITORY=owner/repo workers/terrain-build.sh
+#   TERRAIN_MAXZOOM=13 TERRAIN_STORE=dem-terrain GDRIVE_CREDENTIALS=… \
+#   workers/terrain-build.sh
 set -euo pipefail
 : "${REGION_KEY:?kľúč regiónu}"
 T_TER=$(date +%s)
@@ -38,13 +39,13 @@ elif have_tiles; then
   echo "Výškové dlaždice sú v cache behu ✓"
   TSRC="cache"
 else
-  # Skús release – uložené dlaždice sú lacnejšie než ich prepočítať.
-  if gh release download "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
-       --pattern "$ASSET" --dir /tmp --clobber >/dev/null 2>&1; then
+  # Skús sklad – uložené dlaždice sú lacnejšie než ich prepočítať.
+  if python3 workers/drive-store.py --get --store="$TERRAIN_STORE" \
+       --name="$ASSET" --dir=/tmp; then
     mkdir -p terrain-out
     tar --use-compress-program=unzstd -xf "/tmp/$ASSET" -C terrain-out
-    echo "Výškové dlaždice stiahnuté z releasu $TERRAIN_RELEASE ✓"
-    TSRC="release $TERRAIN_RELEASE"
+    echo "Výškové dlaždice stiahnuté zo skladu $TERRAIN_STORE ✓"
+    TSRC="sklad $TERRAIN_STORE"
   fi
 fi
 
@@ -76,8 +77,8 @@ if ! have_tiles; then
     echo "::warning::Model $TDEM pre tieňovanie nie je k dispozícii – tieňovanie sa počíta zo Sonnyho (20 m). Mapa bude, len s hrubším reliéfom, a atribúcia bude hovoriť Sonny."
     TDEM=sonny
     FELL_BACK=true
-    # Meno assetu nesie zdroj, tak sa musí prepočítať – inak by sa
-    # Sonnyho dlaždice uložili do releasu pod menom toho druhého
+    # Meno súboru nesie zdroj, tak sa musí prepočítať – inak by sa
+    # Sonnyho dlaždice uložili do skladu pod menom toho druhého
     # modelu a nabudúce by sa vydávali za neho.
     ASSET="terrain-${REGION_KEY}-${TDEM}-z${TZ}.tar.zst"
     workers/fetch-dem.sh "$BBOX" "dem/$TDEM" steps-out/terrain.tsv "$TDEM"
@@ -90,16 +91,15 @@ if ! have_tiles; then
   echo "$TZ" > terrain-out/maxzoom.txt
   echo "::endgroup::"
 
-  # Ulož do releasu, nech ich nabudúce netreba počítať znova.
+  # Ulož do skladu, nech ich nabudúce netreba počítať znova. Zlyhanie
+  # uloženia NESMIE zhodiť beh – dlaždice sú spočítané a v `terrain-out`,
+  # takže mapa bude; stratí sa len to, že sa nabudúce budú počítať znova.
   tar --use-compress-program='zstd -19 -T0' -cf "/tmp/$ASSET" -C terrain-out .
-  gh release view "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-    gh release create "$TERRAIN_RELEASE" --repo "$GITHUB_REPOSITORY" \
-      --title "Výškové dlaždice (tieňovanie a 3D terén)" \
-      --notes "Terrarium PNG dlaždice z výškového modelu. Jeden .tar.zst na región, model a maxzoom; vyrába ich workflow Build map." || true
-  gh release upload "$TERRAIN_RELEASE" "/tmp/$ASSET" \
-    --repo "$GITHUB_REPOSITORY" --clobber \
-    && echo "Uložené do releasu $TERRAIN_RELEASE ako $ASSET" \
-    || echo "::warning::Výškové dlaždice sa nepodarilo uložiť do releasu."
+  python3 workers/drive-store.py --put --store="$TERRAIN_STORE" \
+      --file="/tmp/$ASSET" \
+      --note="Terrarium PNG dlaždice z výškového modelu – jeden .tar.zst na región, model a maxzoom (Build map)" \
+    && echo "Uložené do skladu $TERRAIN_STORE ako $ASSET" \
+    || echo "::warning::Výškové dlaždice sa nepodarilo uložiť do skladu $TERRAIN_STORE – nabudúce sa budú počítať znova."
 fi
 
 TZ=$(cat terrain-out/maxzoom.txt 2>/dev/null || echo "$TZ")
@@ -113,8 +113,8 @@ echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
 echo "dem_source=$TDEM" >> "$GITHUB_OUTPUT"
 # Keď sa spadlo na Sonnyho, dlaždice sa NESMÚ uložiť pod kľúč cache
 # toho pôvodného modelu – kľúč nesie jeho meno a nabudúce by sa
-# z neho vrátili ako keby boli jeho. Do releasu ísť môžu, tam ich
-# meno assetu už hovorí pravdu.
+# z neho vrátili ako keby boli jeho. Do skladu ísť môžu, tam ich
+# meno súboru už hovorí pravdu.
 echo "fell_back=$FELL_BACK" >> "$GITHUB_OUTPUT"
 echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ z modelu $TDEM, $(du -sm _site/terrain | cut -f1) MB"
 printf '%s\t%s\t%s\t%s\n' "60" "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \

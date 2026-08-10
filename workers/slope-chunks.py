@@ -4,7 +4,7 @@ Raster sklonu po častiach – s trvalým skladom, aby sa nič nepočítalo dvak
 
 ČO RIEŠI. Skaly pre pohorie sa dovtedy počítali takto: `mirror-dmr5-area`
 prečítal z Drive CELÝ výrez naraz a uložil ho ako jeden COG (`ugkk-<pohorie>
-.tif`, do 2 GB), a až potom sa z neho rátal sklon. Jednotka práce aj jednotka
+.tif`), a až potom sa z neho rátal sklon. Jednotka práce aj jednotka
 uloženia bola „celé územie", takže to bolo všetko alebo nič – zrušený beh
 31310604408 čítal Vysoké Tatry hodinu a nechal po sebe NULU.
 
@@ -67,9 +67,14 @@ def load(name, path):
 rock = load("rock_areas", "rock-areas.py")
 METRIC, SCALE = rock.METRIC, rock.SCALE
 
+# Trvalý sklad častí je priečinok na Drive; celý formát, prihlásenie aj
+# „clobber" má `drive-store.py` a berie sa odtiaľ ako modul. Volať ho procesom
+# na každú z rádovo stovky častí by znamenalo stovku vypísaní priečinka.
+store = load("drive_store", "drive-store.py")
+
 # Strana časti v pixeloch. 4096² = 16,8 mil. buniek: pri 2 m je to 8,2 km na
 # stranu, čo je ~35 častí na Vysoké Tatry. Menšie časti = jemnejšie
-# obnovenie po páde a menšie assety, väčšie = menej réžie okolo každej.
+# obnovenie po páde a menšie súbory, väčšie = menej réžie okolo každej.
 CHUNK_PX = 4096
 MARGIN_PX = 8    # presah, aby sklon na okraji časti nebol zrezaný
 MAX_CHUNKS = 600  # nad tým prestáva byť sklad výhodou (viď poistku v main)
@@ -139,84 +144,98 @@ def chunk_name(ix, iy, res):
 
 # ---------- sklad ----------
 
-class Store:
-    """Časti v adresári (cache behu) a v release (trvalé).
+NOTE = ("Medzivýsledok skál: sklon terénu v stotinách stupňa (Int16, "
+        "EPSG:3035) po častiach absolútnej mriežky (workers/slope-chunks.py)")
 
-    Dve vrstvy zámerne: cache je rýchla, ale GitHub ju po siedmich dňoch bez
-    použitia zmaže a repo má strop 10 GB. Release nevyprší, takže hodina
-    čítania z Drive sa nemá ako stratiť. Adresár je zároveň to, čo sa medzi
-    behmi ukladá do cache, takže stiahnuté časti sa doň vracajú.
+
+class Store:
+    """Časti v adresári (cache behu) a v sklade na Drive (trvalé).
+
+    Dve vrstvy zámerne: cache je rýchla, ale prerieďuje sa (a kým bola
+    v GitHube, mala strop 10 GB a vyhadzovala si záznamy navzájom). Sklad na
+    Drive nevyprší sám, takže hodina čítania z Drive sa nemá ako stratiť.
+    Adresár je zároveň to, čo sa medzi behmi ukladá do cache, takže stiahnuté
+    časti sa doň vracajú.
+
+    SKLAD JE PRIEČINOK NA DRIVE, nie GitHub release – do releasov sa už
+    nepublikuje nič. Rozpis je vo `workers/drive-store.py` a tento skript si
+    ho volá ako modul: pri stovkách častí je jedno vypísanie priečinka a potom
+    priame prenosy nesmierne lacnejšie než `gh` proces na každú časť.
     """
 
-    def __init__(self, path, release, repo, use_release=True):
+    def __init__(self, path, store_name, use_store=True):
         self.path = path
-        self.release = release
-        self.repo = repo
-        self.use_release = use_release and bool(repo)
+        self.store_name = store_name
         self.lock = threading.Lock()
         self.hits_local = 0
-        self.hits_release = 0
+        self.hits_store = 0
         self.made = 0
         os.makedirs(path, exist_ok=True)
-        self.assets = self._list_assets() if self.use_release else set()
-
-    def _list_assets(self):
+        self.creds = None
+        self.items = {}      # meno → {id, size, created}; vypíše sa RAZ
+        self.assets = set()
+        self.use_store = False
+        if not use_store:
+            return
+        # BEZ TOKENU SA POKRAČUJE, ale nahlas. Časti sa dajú spočítať aj bez
+        # skladu (stojí to čas, nie správnosť) – a keby to bola tvrdá chyba,
+        # lokálny beh bez prihlásenia by sa nedal spustiť vôbec.
         try:
-            out = subprocess.run(
-                ["gh", "release", "view", self.release, "--repo", self.repo,
-                 "--json", "assets", "-q", ".assets[].name"],
-                capture_output=True, text=True, check=True).stdout
-            return set(out.split())
-        except subprocess.CalledProcessError:
-            return set()   # release ešte nie je – vyrobí sa pri prvom uploade
+            self.creds = store.creds_or_die("sklad častí sklonu")
+            # JEDEN VÝPIS PRIEČINKA NA CELÝ BEH. Častí je rádovo stovka
+            # a vypísať pre každú z nich priečinok znovu by bola stovka
+            # zbytočných dopytov na Drive.
+            self.items = store.index(self.creds, store_name)
+            self.assets = set(self.items)
+            self.use_store = True
+        except SystemExit as exc:
+            print(f"::warning::Sklad častí sklonu na Drive je vypnutý "
+                  f"({str(exc).splitlines()[0][:200]}) – časti sa spočítajú "
+                  f"a po behu sa stratia.", flush=True)
 
     def local(self, name):
         p = os.path.join(self.path, name)
         return p if os.path.exists(p) and os.path.getsize(p) > 0 else None
 
     def take(self, name):
-        """Časť z cache alebo z releasu; None = treba ju spočítať."""
+        """Časť z cache alebo zo skladu; None = treba ju spočítať."""
         p = self.local(name)
         if p:
             with self.lock:
                 self.hits_local += 1
             return p
-        if not self.use_release or name not in self.assets:
+        if not self.use_store or name not in self.items:
             return None
-        ok = subprocess.run(
-            ["gh", "release", "download", self.release, "--repo", self.repo,
-             "--pattern", name, "--dir", self.path, "--clobber"],
-            capture_output=True, text=True).returncode == 0
-        if ok and self.local(name):
+        try:
+            store.download(self.creds, dict(self.items[name], name=name),
+                           os.path.join(self.path, name))
+        except (RuntimeError, OSError, SystemExit):
+            return None
+        if self.local(name):
             with self.lock:
-                self.hits_release += 1
+                self.hits_store += 1
             return os.path.join(self.path, name)
         return None
 
     def put(self, name):
-        """Hotovú časť do releasu. Zlyhanie uploadu NESMIE zhodiť beh – časť
+        """Hotovú časť do skladu. Zlyhanie uploadu NESMIE zhodiť beh – časť
         je spočítaná a v adresári, takže build môže pokračovať; stratí sa len
         to, že ju nabudúce netreba počítať."""
         with self.lock:
             self.made += 1
-        if not self.use_release:
+        if not self.use_store:
             return
-        with self.lock:
-            if not self.assets:
-                subprocess.run(
-                    ["gh", "release", "create", self.release, "--repo", self.repo,
-                     "--title", "Raster sklonu po častiach",
-                     "--notes", "Medzivýsledok skál: sklon terénu v stotinách "
-                                "stupňa (Int16, EPSG:3035) po častiach absolútnej "
-                                "mriežky. Vyrába workers/slope-chunks.py."],
-                    capture_output=True, text=True)
-        r = subprocess.run(
-            ["gh", "release", "upload", self.release, os.path.join(self.path, name),
-             "--repo", self.repo, "--clobber"], capture_output=True, text=True)
-        if r.returncode:
-            print(f"::warning::Časť {name} sa nepodarila uložiť do releasu "
-                  f"{self.release} – nabudúce sa bude počítať znova. "
-                  f"{r.stderr.strip()[:200]}", flush=True)
+        try:
+            # `clobber=False`: časť sa nahráva len vtedy, keď v sklade podľa
+            # `self.items` nebola, takže niet čo prepisovať – a ušetrí to jedno
+            # vypísanie priečinka na každú časť.
+            store.upload(self.creds, self.store_name,
+                         os.path.join(self.path, name), name, NOTE,
+                         clobber=False)
+        except (RuntimeError, OSError, SystemExit) as exc:
+            print(f"::warning::Časť {name} sa nepodarilo uložiť do skladu "
+                  f"{self.store_name} – nabudúce sa bude počítať znova. "
+                  f"{str(exc)[:200]}", flush=True)
         else:
             with self.lock:
                 self.assets.add(name)
@@ -294,10 +313,10 @@ def main():
     ap.add_argument("--jobs", type=int, default=4,
                     help="koľko častí naraz; pri --drive rozhoduje latencia, "
                          "nie pásmo, takže sa oplatí ísť vyššie")
-    ap.add_argument("--release", default=os.environ.get("SLOPE_RELEASE", "dem-slope"))
-    ap.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    ap.add_argument("--store", default=os.environ.get("SLOPE_STORE", "dem-slope"),
+                    help="sklad na Drive (viď workers/drive-store.py)")
     ap.add_argument("--no-store", action="store_true",
-                    help="nepoužiť ani needkladať do releasu (testovací beh)")
+                    help="nepoužiť ani neodkladať do skladu (testovací beh)")
     ap.add_argument("--rebuild", action="store_true",
                     help="prepočítať časti aj keď v sklade sú")
     ap.add_argument("--chunk-px", type=int, default=CHUNK_PX)
@@ -358,7 +377,7 @@ def main():
 
     work = args.work or os.path.join(args.out, "tmp")
     os.makedirs(work, exist_ok=True)
-    store = Store(args.out, args.release, args.repo, use_release=not args.no_store)
+    sklad = Store(args.out, args.store, use_store=not args.no_store)
 
     # ČO TO BUDE STÁŤ – pred prvým gdalwarpom. Trojhodinový beh, ktorý spadne
     # na timeout, je najhorší možný výsledok: minie celý rozpočet a nevyrobí
@@ -367,7 +386,7 @@ def main():
     side_km = args.chunk_px * res / 1000
     names = [chunk_name(ix, iy, res) for ix, iy, *_ in chunks]
     have = 0 if args.rebuild else sum(
-        1 for n in names if store.local(n) or n in store.assets)
+        1 for n in names if sklad.local(n) or n in sklad.assets)
     todo = len(chunks) - have
     cells = len(chunks) * args.chunk_px ** 2
     est_s = todo * args.chunk_px ** 2 / rock.SLOPE_CELLS_PER_S
@@ -378,7 +397,8 @@ def main():
           f"({args.chunk_px}² px)")
     print(f"  buniek          {cells / 1e9:.2f} mld.")
     print(f"  sklad           {args.out}"
-          + (f" + release {args.release}" if store.use_release else " (release vypnutý)"))
+          + (f" + Drive {args.store}" if sklad.use_store
+             else " (sklad na Drive vypnutý)"))
     print(f"  z toho hotových {have} → počítať treba {todo}")
     print(f"  odhad           {rock.hms(est_s)}"
           + ("  (všetko je v sklade)" if not todo else ""))
@@ -450,10 +470,10 @@ def main():
         ix, iy = chunk[0], chunk[1]
         name = chunk_name(ix, iy, res)
         path = os.path.join(args.out, name)
-        got = None if args.rebuild else store.take(name)
+        got = None if args.rebuild else sklad.take(name)
         if got is None:
             compute(name, chunk, path)
-            store.put(name)
+            sklad.put(name)
         with lock:
             done[0] += 1
             el = time.time() - t0
@@ -502,7 +522,7 @@ def main():
         stop.set()
         with lock:
             bad = list(failed)
-        have_now = sum(1 for n in names if store.local(n))
+        have_now = sum(1 for n in names if sklad.local(n))
         print(f"::error::Sklon spadol na {len(bad)} častiach"
               + (f" ({', '.join(bad[:6])})" if bad else "")
               + f"; v sklade ich je {have_now} z {len(chunks)} – ďalší beh "
@@ -514,8 +534,8 @@ def main():
     subprocess.run(["gdalbuildvrt", "-q", vrt] + tiles, check=True)
     mb = sum(os.path.getsize(t) for t in tiles) / 1048576
     print(f"Mozaika sklonu: {len(tiles)} častí, {mb:.0f} MB → {vrt}")
-    print(f"  zo skladu {store.hits_local} lokálne + {store.hits_release} "
-          f"z releasu, novo spočítaných {store.made}, "
+    print(f"  zo skladu {sklad.hits_local} lokálne + {sklad.hits_store} "
+          f"z Drive, novo spočítaných {sklad.made}, "
           f"celkom {rock.hms(time.time() - t0)}")
     if stats_drive:
         with stats_drive["lock"]:
@@ -525,9 +545,9 @@ def main():
     if args.stats:
         with open(args.stats, "w") as f:
             f.write(f"res={res:g}\nvrt={vrt}\nchunks={len(tiles)}\n"
-                    f"from_cache={store.hits_local}\n"
-                    f"from_release={store.hits_release}\n"
-                    f"computed={store.made}\nmosaic_mb={mb:.0f}\n")
+                    f"from_cache={sklad.hits_local}\n"
+                    f"from_store={sklad.hits_store}\n"
+                    f"computed={sklad.made}\nmosaic_mb={mb:.0f}\n")
     print(f"slope_vrt={vrt}")
     return 0
 
