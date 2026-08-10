@@ -114,36 +114,6 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # Dlhý súbor sa nedá naraz prehliadnuť a platí preň to isté ako pre
-      # veľkosť workflowu vyššie: keď run: blok alebo skript prerastie
-      # rozumnú dĺžku, ďalšia zmena v ňom už nevidí, čo tam je, a pridáva
-      # vedľa namiesto toho, aby použila to, čo tam už je (pravidlo 1
-      # v CLAUDE.md). Dlhý krok/skript sa má rozdeliť na viac súborov alebo
-      # jobov (pravidlo 5), nie rásť donekonečna v jednom.
-      - name: Súbory pod 801 riadkov
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import glob, sys
-          LIMIT = 800
-          bad = 0
-          for pattern in (".github/workflows/*.yml",
-                          "workers/*.py", "workers/*.sh", "workers/*.mjs"):
-              for path in sorted(glob.glob(pattern)):
-                  with open(path, encoding="utf-8") as f:
-                      n = sum(1 for _ in f)
-                  if n > LIMIT:
-                      print(f"::error file={path}::{n} riadkov, strop je "
-                            f"{LIMIT}. Rozdeľ na viac krokov/súborov "
-                            f"(pravidlo 5 v CLAUDE.md) – v jednom dlhom "
-                            f"súbore sa nedá rýchlo nájsť, čo sa zmenilo "
-                            f"alebo prečo to spadlo.")
-                      bad += 1
-                  else:
-                      print(f"{path}: {n} riadkov ✓")
-          sys.exit(1 if bad else 0)
-          PY
-
       # `}}` v shellovom skripte bez `${{` pred ním. GitHub taký súbor
       # NEPRIJME: po pushnutí vznikne beh bez jobov, pomenovaný cestou
       # k súboru, s červeným krížikom – a to aj vtedy, keď má workflow len
@@ -1024,4 +994,45 @@ jobs:
                       errs += 1
           print(f"odkazov medzi jobmi: {errs} chýb")
           sys.exit(1 if errs else 0)
+          PY
+
+      # POSLEDNÝ V JOBE ZÁMERNE. Táto kontrola je červená UŽ NA MASTERI – na
+      # šiestich súboroch, ktoré sa ešte nerozdelili (`build-map.yml`,
+      # `shading-rocks.py`, `lint-workflows.yml`, `dmr5-drive.py`,
+      # `drive-auth.py`, `dmr5-raster.py`); commit 8b034a0 to hovorí a označuje
+      # za samostatnú úlohu. Kým stála tretia, job na nej spadol a VŠETKY
+      # kontroly za ňou sa preskočili – teda celý zmysel tohto workflowu.
+      # (Zistilo sa to na behu 31377123600: nová kontrola štýlu ani
+      # publikovania sa v ňom nikdy nespustila.)
+      #
+      # Nezmäkčuje sa a nevynímajú sa súbory: job je ďalej červený a strop
+      # platí. Len sa to dozvieš SPOLU so všetkým ostatným, nie NAMIESTO toho.
+      # Dlhý súbor sa nedá naraz prehliadnuť a platí preň to isté ako pre
+      # veľkosť workflowu vyššie: keď run: blok alebo skript prerastie
+      # rozumnú dĺžku, ďalšia zmena v ňom už nevidí, čo tam je, a pridáva
+      # vedľa namiesto toho, aby použila to, čo tam už je (pravidlo 1
+      # v CLAUDE.md). Dlhý krok/skript sa má rozdeliť na viac súborov alebo
+      # jobov (pravidlo 5), nie rásť donekonečna v jednom.
+      - name: Súbory pod 801 riadkov
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, sys
+          LIMIT = 800
+          bad = 0
+          for pattern in (".github/workflows/*.yml",
+                          "workers/*.py", "workers/*.sh", "workers/*.mjs"):
+              for path in sorted(glob.glob(pattern)):
+                  with open(path, encoding="utf-8") as f:
+                      n = sum(1 for _ in f)
+                  if n > LIMIT:
+                      print(f"::error file={path}::{n} riadkov, strop je "
+                            f"{LIMIT}. Rozdeľ na viac krokov/súborov "
+                            f"(pravidlo 5 v CLAUDE.md) – v jednom dlhom "
+                            f"súbore sa nedá rýchlo nájsť, čo sa zmenilo "
+                            f"alebo prečo to spadlo.")
+                      bad += 1
+                  else:
+                      print(f"{path}: {n} riadkov ✓")
+          sys.exit(1 if bad else 0)
           PY
