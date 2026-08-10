@@ -42,6 +42,7 @@ import {
   MAX_TILE_Z,
   DEFAULT_DEM_TILES,
   DEFAULT_DEM_MAXZOOM,
+  DEFAULT_TERRAIN_EXAGGERATION,
   DEFAULT_DEM_SOURCE,
   DEM_SOURCES,
   MAP_TYPES,
@@ -92,6 +93,24 @@ const demTilesSource = DEM_SOURCES[args["dem-tiles-source"]]
 const demTiles =
   args["dem-tiles"] === "none" ? null : args["dem-tiles"] || DEFAULT_DEM_TILES;
 const demMaxzoom = Number(args["dem-maxzoom"] || DEFAULT_DEM_MAXZOOM);
+// 3D TERÉN. Zapína sa vtedy, keď máme VLASTNÉ výškové dlaždice – tie sú z
+// modelu vybraného v `shading_source` (predvolene DMR 5.0, mriežka 5 m, čo
+// dá dlaždice do z15). Na verejné AWS Terrain Tiles sa 3D nezapína: sú
+// globálne a hrubé, takže by z hôr spravili mydlové kopce.
+//
+// Doteraz si 3D zapínal len web za behu (`map.setTerrain` v poc/web/app.js) –
+// všetko ostatné, čo tento štýl číta (iOS cez MapLibre Native), dostávalo
+// plochú mapu, hoci dlaždice v štýle boli. `--terrain-3d=0` to vypne.
+const ownDemTiles = Boolean(demTiles) && demTiles !== DEFAULT_DEM_TILES;
+const terrain3dArg = String(args["terrain-3d"] ?? "auto").toLowerCase();
+const terrain3d = ["0", "false", "nie", "ziadne", "vypnute"].includes(terrain3dArg)
+  ? false
+  // `auto` aj `1`/`true` znamenajú „zapni, ak máme z čoho"; bez vlastných
+  // dlaždíc sa 3D nezapne ani na výslovnú žiadosť.
+  : ownDemTiles;
+const terrainExaggeration = Number(
+  args["terrain-exaggeration"] || DEFAULT_TERRAIN_EXAGGERATION
+);
 // Kde vlastné výškové dlaždice vôbec sú. Rýchly test (switch `test`) ich
 // počíta len na štvorci s pár km², kým mapa je celý kraj – bez tejto hranice
 // by klient pýtal tieňovanie po celom kraji a dostával 404.
@@ -280,6 +299,8 @@ for (const type of MAP_TYPES) {
       demTilesSource,
       demMaxzoom,
       demBounds,
+      terrain3d,
+      terrainExaggeration,
       name: `FricoMaps ${regionName} – ${type.label} (${THEMES[themeKey].label})`
     });
     const json = JSON.stringify(style, null, 2);
@@ -317,5 +338,6 @@ console.log(
           : `vlastné do z${demMaxzoom} z ${DEM_SOURCES[demTilesSource].label}`
         : "nie"
     }, ` +
-    `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`
+    `tieňovanie reliéfu: ${overrides?.hillshade ? "zapnuté" : "vypnuté"}`,
+    `3D terén: ${terrain3d ? `zapnutý (prevýšenie ${terrainExaggeration}×)` : "vypnutý"}`
 );

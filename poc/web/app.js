@@ -396,11 +396,22 @@ function applyStyle(manifest) {
   }
 }
 
-/** 3D terén používa ten istý raster-dem zdroj ako tieňovanie reliéfu. */
+/** 3D terén používa ten istý raster-dem zdroj ako tieňovanie reliéfu.
+ *
+ * Prevýšenie sa berie zo ŠTÝLU, keď ho tam pipeline dala (`terrain` je
+ * súčasť špecifikácie a `workers/styles/build.mjs` ho zapína, keď máme
+ * vlastné výškové dlaždice). Web si ho tak nedrží druhýkrát – inak by sa
+ * 3D na webe a v mape pre iOS raz rozišlo.
+ */
+function terrainExaggeration() {
+  const zo_stylu = map?.getStyle?.()?.terrain?.exaggeration;
+  return Number.isFinite(zo_stylu) ? zo_stylu : 1.3;
+}
+
 function applyTerrain() {
   if (!map) return;
   const on = terrainCheck.checked && map.getSource("dem");
-  map.setTerrain(on ? { source: "dem", exaggeration: 1.3 } : null);
+  map.setTerrain(on ? { source: "dem", exaggeration: terrainExaggeration() } : null);
 }
 
 // ---------- developer mode ----------

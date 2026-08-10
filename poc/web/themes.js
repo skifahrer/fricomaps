@@ -69,6 +69,12 @@ export const DEFAULT_DEM_TILES =
  */
 export const DEFAULT_DEM_MAXZOOM = 15;
 
+/** Násobok prevýšenia 3D terénu. 1.3 mierne zvýrazní tvar chrbtov –
+ *  je to tá istá hodnota, akú si web dovtedy nastavoval sám
+ *  (`map.setTerrain` v `poc/web/app.js`), nech sa 3D na webe a v štýle
+ *  pre iOS nerozchádza. */
+export const DEFAULT_TERRAIN_EXAGGERATION = 1.3;
+
 /**
  * Zdroje výšok, z ktorých pipeline počíta vrstevnice, skalné plochy
  * a tieňovanie. Kľúče sú tie isté ako vo `workers/data/dem-sources.json` a ako
@@ -1568,6 +1574,9 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  *                                        sú (`[w,s,e,n]`) – pri rýchlom teste
  *                                        je to štvorec s pár km², nie celý kraj
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
+ * @param {boolean} [opts.terrain3d] vyzdvihnúť mapu do 3D z tých istých
+ *                                   výškových dlaždíc (default nie)
+ * @param {number} [opts.terrainExaggeration] násobok prevýšenia (default 1.3)
  * @param {boolean} [opts.sdfIcons] sprite je SDF – ikonám sa dá nastaviť farba
  * @param {string} [opts.mapType]   typ mapy (turistická / lyžiarska / cestná /
  *                                  historická / základná) – určuje, ktoré
@@ -1599,6 +1608,8 @@ export function buildStyle({
   sdfIcons = false,
   iconSet = null,
   hillshade = null,
+  terrain3d = false,
+  terrainExaggeration = DEFAULT_TERRAIN_EXAGGERATION,
   mapType = DEFAULT_MAP_TYPE,
   overrides: rawOverrides = null
 }) {
@@ -1608,6 +1619,9 @@ export function buildStyle({
   const overrides = resolveOverrides(rawOverrides, mapTypeId);
   // Tieňovanie reliéfu je vypnuté, kým ho niekto výslovne nezapne.
   const showHillshade = hillshade === null ? overrides?.hillshade === true : hillshade === true;
+  // 3D sa dá zapnúť len tam, kde sú výškové dlaždice – bez zdroja `dem`
+  // by `terrain` v štýle ukazoval na nič a MapLibre by ho odmietol.
+  const show3d = terrain3d === true && Boolean(demTiles);
   const c = mergedPalette(theme, overrides);
   // Sada ikoniek určuje, ako sa mená skladajú (osm-liberty používa `_11`).
   const iconSetId = iconSet || selectedIconSource(overrides);
@@ -1652,6 +1666,7 @@ export function buildStyle({
       "frico:map-type": mapTypeId,
       "frico:icons": iconSetId,
       "frico:hillshade": showHillshade,
+      "frico:terrain-3d": show3d,
       "frico:overrides": hasOverrides(rawOverrides)
     },
     sources: {
@@ -1747,6 +1762,17 @@ export function buildStyle({
     // (.pmtiles si hranicu nesú v hlavičke samy, raster nie.)
     if (ownDem && Array.isArray(demBounds) && demBounds.length === 4) {
       style.sources.dem.bounds = demBounds.map(Number);
+    }
+    // 3D TERÉN PRIAMO V ŠTÝLE. Doteraz si ho zapínal len web za behu
+    // (`map.setTerrain` v poc/web/app.js), takže všetko ostatné, čo tento
+    // štýl číta – iOS cez MapLibre Native – dostávalo plochú mapu, hoci
+    // výškové dlaždice v štýle boli. `terrain` je súčasť štýlu podľa
+    // špecifikácie, takže ho každý klient zapne sám.
+    if (show3d) {
+      style.terrain = {
+        source: "dem",
+        exaggeration: Number(terrainExaggeration) || DEFAULT_TERRAIN_EXAGGERATION
+      };
     }
   }
 

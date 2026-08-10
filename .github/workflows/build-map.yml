@@ -668,6 +668,7 @@ jobs:
       opt_trails_maxzoom: ${{ steps.opts.outputs.opt_trails_maxzoom }}
       opt_features_maxzoom: ${{ steps.opts.outputs.opt_features_maxzoom }}
       opt_terrain_maxzoom: ${{ steps.opts.outputs.opt_terrain_maxzoom }}
+      opt_terrain_3d: ${{ steps.opts.outputs.opt_terrain_3d }}
       opt_rocks: ${{ steps.opts.outputs.opt_rocks }}
       opt_rock_slope: ${{ inputs.rock_slope }}
       opt_rock_res: ${{ steps.opts.outputs.opt_rock_res }}
@@ -1950,6 +1951,7 @@ jobs:
             --dem-source='${{ needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-bounds='${{ needs.plan.outputs.test_bbox }}' \
+            --terrain-3d='${{ needs.plan.outputs.opt_terrain_3d }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
