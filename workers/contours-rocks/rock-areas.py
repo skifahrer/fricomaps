@@ -86,6 +86,10 @@ def _load(name, path):
 
 
 plan = _load("rock_plan", "rock-plan.py")
+# Obrysy po blokoch sú spoločné so skalami z tieňovania, tak sú v lib.
+bloky_mod = _load("contour_blocks", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "lib", "contour-blocks.py"))
 METRIC, SCALE = plan.METRIC, plan.SCALE
 SLOPE_CELLS_PER_S = plan.SLOPE_CELLS_PER_S
 CONTOUR_SRC_CELLS_PER_S = plan.CONTOUR_SRC_CELLS_PER_S
@@ -191,6 +195,15 @@ def main():
                     help="strop buniek na jednu časť pri počítaní sklonu")
     # 0 = bez rozpočtu, a to je predvolené: „koľko som ochotný čakať" je
     # voľba behu (`rock_res` vo formulári), nie konštanta pre všetkých.
+    # OBRYSY PO BLOKOCH. `gdal_contour -p` nad celou mozaikou naraz je
+    # superlineárny: čím viac rozpracovaných prstencov drží, tým drahšie je
+    # pridať ďalší (beh 31418794845 – tempo padlo z 2 na 0,26 %/min a beh
+    # nedobehol). Blok je malý raster, takže sa prstence poskladajú rýchlo,
+    # pamäť je zhora ohraničená a hotové bloky ostávajú na disku, takže
+    # zrušený beh nezahodí prácu. 0 = jeden priechod (staré správanie).
+    ap.add_argument("--block-px", type=int, default=4096,
+                    help="strana bloku v pixeloch pri vektorizácii "
+                         "(0 = jeden priechod nad celou mozaikou)")
     ap.add_argument("--budget-min", type=float, default=0.0,
                     help="koľko minút MÁ výpočet trvať: podľa toho sa vyberá "
                          "mriežka (`--res=auto`) a nad tým sa povie, čo "
@@ -332,9 +345,15 @@ def main():
               f"{CONTOUR_SRC_CELLS_PER_S / 1e3:.0f} tis. buniek/s"
               + (f", rozpočet {args.budget_min:.0f} min"
                  if args.budget_min > 0 else "") + "; presný príde z percent")
-        print(f"  stropy          pamäť {args.max_rss_gb:g} GB; čas NEOBMEDZENÝ "
-              f"– priechod sa nedá prerušiť a nadviazať, tak beží, kým nie je "
-              f"hotový (percentá po 2,5 %, tep každých {args.heartbeat:g} s)")
+        if args.block_px > 0:
+            print(f"  po blokoch      {args.block_px}×{args.block_px} px – hotový "
+                  f"blok ostáva na disku, takže zrušený beh sa dá nadviazať")
+            print(f"  stropy          pamäť {args.max_rss_gb:g} GB; čas NEOBMEDZENÝ "
+                  f"(tep každých {args.heartbeat:g} s)")
+        else:
+            print(f"  stropy          pamäť {args.max_rss_gb:g} GB; čas NEOBMEDZENÝ "
+                  f"– priechod sa nedá prerušiť a nadviazať, tak beží, kým nie je "
+                  f"hotový (percentá po 2,5 %, tep každých {args.heartbeat:g} s)")
         print("─────────────────────────────────────────────────────", flush=True)
         # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediná úroveň, teda
         # jediné pásmo „sklon nad prahom". Druhá úroveň (`cliff`) mala zmysel,
@@ -343,16 +362,35 @@ def main():
         # priehľadnosti, je z nej len dvojnásobok prstencov na obtiahnutie.
         urovne = ([repr(args.slope * SCALE)] if args.plne else
                   [repr(args.slope * SCALE), repr(args.cliff * SCALE)])
+        atributy = ["-amin", "smin", "-amax", "smax"]
         try:
-            # ŽIADNY `max_s`: strop času tu nemá čo zachrániť (viď rozvahu
-            # nad odhadom vyššie). Tep dostane `--heartbeat`, aby sa dalo
-            # zhora nastaviť, ako často má byť počuť – dovtedy sa ten input
-            # bral a ticho zahadzoval.
-            run_watched(["gdal_contour", "-p", "-fl"] + urovne +
-                        ["-amin", "smin", "-amax", "smax",
-                         "-f", "GPKG", "-nln", "band", vrt, bands],
-                        "gdal_contour", tmp=tmp, every=args.heartbeat,
-                        max_rss_mb=args.max_rss_gb * 1024)
+            if args.block_px > 0:
+                # PO BLOKOCH. Hotový blok je na disku, takže zrušený beh
+                # nezahodí prácu – to je ten hlavný rozdiel oproti jednému
+                # priechodu, ktorý sa prerušiť ani nadviazať nedá.
+                _, _, mbox_v, _ = mosaic_info(vrt)
+                ox, oy = (mbox_v[0], mbox_v[3]) if mbox_v else (0.0, 0.0)
+                d, n_blokov = bloky_mod.po_blokoch(
+                    vrt, os.path.join(tmp, "bloky"), urovne, atributy,
+                    args.block_px, (ox, oy, vec_res),
+                    heartbeat=args.heartbeat,
+                    max_rss_mb=args.max_rss_gb * 1024)
+                seq = os.path.join(tmp, "bloky.geojsonl")
+                n_utvarov = bloky_mod.zlej(d, seq)
+                print(f"  {n_blokov} blokov → {n_utvarov} útvarov", flush=True)
+                # Švy: plocha aj diera preseknutá hranicou bloku sa spoja späť.
+                seq = bloky_mod.zlep_svy(seq, tmp, klucovy_atribut="smin",
+                                         heartbeat=args.heartbeat)
+                run(["ogr2ogr", "-f", "GPKG", bands, seq, "-nln", "band"])
+            else:
+                # ŽIADNY `max_s`: strop času tu nemá čo zachrániť (viď rozvahu
+                # nad odhadom vyššie). Tep dostane `--heartbeat`, aby sa dalo
+                # zhora nastaviť, ako často má byť počuť – dovtedy sa ten input
+                # bral a ticho zahadzoval.
+                run_watched(["gdal_contour", "-p", "-fl"] + urovne + atributy +
+                            ["-f", "GPKG", "-nln", "band", vrt, bands],
+                            "gdal_contour", tmp=tmp, every=args.heartbeat,
+                            max_rss_mb=args.max_rss_gb * 1024)
         except MemoryError:
             print("::error::Vektorizácia sa nezmestila do pamäte. Zmenši "
                   "územie cez rock_area alebo zvoľ hrubšiu mriežku rock_res.")
