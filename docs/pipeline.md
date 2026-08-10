@@ -428,9 +428,9 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 
 | zdroj | kľúč vo výberoch | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
-| **Sonny's LiDAR DTM 20m** | `sonny` (default) | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš sklad `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
+| **Sonny's LiDAR DTM 20m** | `sonny` | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš sklad `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš sklad `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
-| **ÚGKK DMR 5.0** | `dmr5` | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#štvrtý-workflow-dmr-50-z-drive-etrs89) | naplniť |
+| **ÚGKK DMR 5.0** | `dmr5` (default) | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#štvrtý-workflow-dmr-50-z-drive-etrs89) | naplniť |
 
 **Zdroj sa vyberá zvlášť pre každú vrstvu.** Formulár má tri výbery –
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
