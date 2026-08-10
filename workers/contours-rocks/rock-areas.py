@@ -111,6 +111,41 @@ sys.path.insert(0, os.path.join(
 from watch import hms, run_watched  # noqa: E402
 
 
+def skontroluj_polohu(path, bbox, layer="rock"):
+    """Ležia hotové skaly tam, kde je územie? Vráti hlášku, alebo None.
+
+    POSLEDNÁ POISTKA PRED MAPOU. Všetko pred týmto krokom môže vyzerať dobre –
+    plôch je 985, kilometre štvorcové sedia, `.pmtiles` sa vyrobí – a mapa je
+    aj tak prázdna, lebo geometria skončí na druhom konci sveta. Stalo sa to
+    v behu 31428413843: vrstva ostala bez CRS, `-t_srs EPSG:4326` nemal z čoho
+    prepočítať (`Warning 1: No SRS set on layer`) a Planetiler dostal
+    zemepisnú dĺžku 4 800 000. Výsledok: `rocks.pmtiles` s NULA dlaždicami
+    a zelený beh.
+
+    Porovnáva sa hrubo – stačí, že sa rozsahy prekrývajú. Ide o rozdiel medzi
+    „o kúsok vedľa" a „o milión stupňov vedľa".
+    """
+    try:
+        info = json.loads(run(["ogrinfo", "-json", "-so", path, layer]).stdout)
+        ext = (info.get("layers") or [{}])[0].get("geometryFields", [{}])[0].get("extent")
+    except (subprocess.CalledProcessError, ValueError, IndexError, KeyError):
+        return None  # nedá sa zistiť – nie je to dôvod zhodiť hotový výpočet
+    if not ext or len(ext) != 4:
+        return None
+    x0, y0, x1, y1 = ext
+    w, s, e, n = bbox
+    # Tolerancia 1° je veľkorysá: obrys môže presahovať výrez o kus, ale
+    # nikdy nie o rády.
+    if x1 < w - 1 or x0 > e + 1 or y1 < s - 1 or y0 > n + 1:
+        return (f"hotové skaly ležia na {x0:.4f},{y0:.4f} … {x1:.4f},{y1:.4f}, "
+                f"ale územie je {w},{s} … {e},{n} – to nie je posun, to sú iné "
+                f"súradnice. Vrstva zrejme skončila bez CRS a `-t_srs "
+                f"EPSG:4326` nemal z čoho prepočítať (hľadaj v logu `No SRS "
+                f"set on layer`). Planetiler z toho spraví prázdny .pmtiles "
+                f"a mapa bude ticho bez skál (beh 31428413843).")
+    return None
+
+
 def ogr_count(path, layer="rock"):
     try:
         out = run(["ogrinfo", "-so", path, layer]).stdout
@@ -381,7 +416,20 @@ def main():
                 # Švy: plocha aj diera preseknutá hranicou bloku sa spoja späť.
                 seq = bloky_mod.zlep_svy(seq, tmp, klucovy_atribut="smin",
                                          heartbeat=args.heartbeat)
-                run(["ogr2ogr", "-f", "GPKG", bands, seq, "-nln", "band"])
+                # `-a_srs`, nie `-t_srs`: súradnice sú UŽ metrické (z okna
+                # bloku sa vyhodil `<SRS>`, inak by ich GeoJSON prepočítal do
+                # stupňov). Toto ich len PREZNAČÍ, neprepočíta – a bez toho
+                # ostane vrstva bez CRS. Jednopriechodová cesta dostane SRS
+                # z rastra zadarmo; blokom ho treba vrátiť ručne.
+                #
+                # Bez tohto riadku sa nestane nič viditeľné až úplne na konci:
+                # `ogr2ogr -t_srs EPSG:4326` nižšie nemá z čoho prepočítať,
+                # GDAL povie len `Warning 1: No SRS set on layer` a nechá
+                # metre tak – Planetiler potom dostane zemepisnú dĺžku
+                # 4 800 000, zahodí všetko a `rocks.pmtiles` má NULA dlaždíc.
+                # Mapa je pritom zelená a bez skál (beh 31428413843).
+                run(["ogr2ogr", "-f", "GPKG", bands, seq, "-nln", "band",
+                     "-a_srs", METRIC])
             else:
                 # ŽIADNY `max_s`: strop času tu nemá čo zachrániť (viď rozvahu
                 # nad odhadom vyššie). Tep dostane `--heartbeat`, aby sa dalo
@@ -485,6 +533,10 @@ def main():
         st = area_stats(final_metric)
         run(["ogr2ogr", "-f", "GPKG", args.out, final_metric, "-nln", "rock",
              "-overwrite", "-t_srs", "EPSG:4326"])
+        zle = skontroluj_polohu(args.out, bbox)
+        if zle:
+            print(f"::error::{zle}")
+            return 1
         n = int(st.get("n", ogr_count(args.out)))
         # NULA SKÁL PO FILTRI NIE JE VÝSLEDOK, JE TO PODOZRENIE. Nad prahom
         # sklonu niečo bolo (inak by sme sem nedošli – `exploded` sa kontroluje
