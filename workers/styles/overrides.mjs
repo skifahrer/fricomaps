@@ -29,7 +29,10 @@ import {
   mapTypeDef
 } from "../../poc/web/themes.js";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+// `import.meta.url` je `workers/styles`, takže koreň repozitára je o DVE
+// úrovne vyššie. Kým bol tento súbor priamo vo `workers/`, stačila jedna –
+// a po presune z toho bolo `workers/poc/web/…` (viď beh 31413580102).
+const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TARGET = join(root, "poc", "web", "style-overrides.json");
 
 const args = Object.fromEntries(

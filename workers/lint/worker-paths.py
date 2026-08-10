@@ -46,9 +46,12 @@ def bez_komentarov(text, styl):
 
 def chyby_v(path, text, styl):
     here = os.path.dirname(path)
-    prem = {"HERE": here, "WORKERS": os.path.dirname(here)}
+    workers = os.path.dirname(here)
     t = bez_komentarov(text, styl)
     zle = []
+
+    # --- shell: $HERE/x, $WORKERS/x, $(dirname "$0")/x ---
+    prem = {"HERE": here, "WORKERS": workers}
     for m in re.finditer(r'\$\{?(HERE|WORKERS)\}?/([\w./-]+\.' + PRIP + r')', t):
         cesta = os.path.normpath(os.path.join(prem[m.group(1)], m.group(2)))
         if not os.path.exists(cesta):
@@ -57,6 +60,67 @@ def chyby_v(path, text, styl):
         cesta = os.path.normpath(os.path.join(here, m.group(1)))
         if not os.path.exists(cesta):
             zle.append((f'$(dirname "$0")/{m.group(1)}', cesta))
+
+    # --- python: os.path.join(_HERE | _WORKERS | _DATA | _DRIVE, "…") ---
+    # Toto bola druhá polovica tej istej chyby: cesty sa skladajú aj tu a pri
+    # presune sa im zmenil základ. Kontroluje sa doslovné volanie – premenná
+    # v argumente sa staticky rozlúsknuť nedá a nikto ju tu ani nepoužíva.
+    baza = {"_HERE": here, "_WORKERS": workers,
+            "_DATA": os.path.join(workers, "data"),
+            "_DRIVE": os.path.join(workers, "drive")}
+    for m in re.finditer(
+            r'os\.path\.join\(\s*(_HERE|_WORKERS|_DATA|_DRIVE)\s*,\s*'
+            r'((?:"[\w.-]+"\s*,\s*)*"[\w.-]+\.' + PRIP + r'")\s*\)', t):
+        casti = re.findall(r'"([^"]+)"', m.group(2))
+        cesta = os.path.normpath(os.path.join(baza[m.group(1)], *casti))
+        if not os.path.exists(cesta):
+            zle.append((f"os.path.join({m.group(1)}, {m.group(2)})", cesta))
+
+    # --- JS: join(<základ odvodený z import.meta.url>, "…") ---
+    # Základ býva aj v premennej (`SELF`, `root`), a tá si k nemu môže pridať
+    # `".."` – takže sa NEDÁ predpokladať, že je to vlastný priečinok. Najprv
+    # sa prečíta, ako je tá premenná definovaná, a až potom sa cesta skladá.
+    # Koreň repozitára je odteraz o DVE úrovne vyššie než `workers/<job>/` –
+    # práve na tom spadol beh 31413580102.
+    if styl == "js":
+        SAM = r'dirname\(\s*fileURLToPath\(\s*import\.meta\.url\s*\)\s*\)'
+        zaklady = {}
+        for m in re.finditer(r'(?:const|let|var)\s+(\w+)\s*=\s*' + SAM + r'\s*;', t):
+            zaklady[m.group(1)] = here
+        for m in re.finditer(
+                r'(?:const|let|var)\s+(\w+)\s*=\s*join\(\s*' + SAM + r'\s*,\s*'
+                r'((?:"[\w.-]+"\s*,?\s*)+)\)\s*;', t):
+            zaklady[m.group(1)] = os.path.normpath(
+                os.path.join(here, *re.findall(r'"([^"]+)"', m.group(2))))
+        vzory = [(SAM, here)] + [(re.escape(k), v) for k, v in zaklady.items()]
+        for vzor, baza in vzory:
+            for m in re.finditer(
+                    r'join\(\s*' + vzor + r'\s*,\s*'
+                    r'((?:"[\w.-]+"\s*,\s*)*"[\w.-]+\.' + PRIP + r'")\s*\)', t):
+                casti = re.findall(r'"([^"]+)"', m.group(1))
+                cesta = os.path.normpath(os.path.join(baza, *casti))
+                if not os.path.exists(cesta):
+                    zle.append((f"join(…, {m.group(1)})", cesta))
+
+    # --- python: load("meno", "modul.py") ---
+    # Moduly sa kvôli pomlčke v mene načítavajú cez `importlib` a `load()` si
+    # cestu vnútri sám lepí na `_HERE`. Volanie teda vyzerá ako holé meno –
+    # a keď sused skončí v inom priečinku, neexistuje. `os.pardir` sa berie
+    # tiež: tak sa volá do vedľajšieho jobu.
+    if styl == "py":
+        for m in re.finditer(
+                r'load\(\s*"[\w_]+"\s*,\s*((?:os\.path\.join\(\s*)?'
+                r'(?:os\.pardir\s*,\s*)?(?:"[\w.-]+"\s*,?\s*)+\)?)\s*\)', t):
+            arg = m.group(1)
+            casti = re.findall(r'"([^"]+)"', arg)
+            if not casti or not casti[-1].endswith(".py"):
+                continue
+            baza = os.path.join(here, os.pardir) if "os.pardir" in arg else here
+            cesta = os.path.normpath(os.path.join(baza, *casti))
+            if not os.path.exists(cesta):
+                zle.append((f"load(…, {arg})", cesta))
+
+    # --- celé `workers/…` cesty ---
     for m in re.finditer(r'(?<![\w/.])workers/[\w./-]+\.' + PRIP, t):
         if not os.path.exists(m.group(0)):
             zle.append((m.group(0), m.group(0)))
