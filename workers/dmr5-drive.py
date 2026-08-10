@@ -79,7 +79,7 @@ volá: čo sa má prečítať, je územie, ktoré si beh naozaj vypýtal (výrez
 s regiónom, pri rýchlom teste štvorec na pár km²) – nie celý obdĺžnik pohoria
 z `areas.json`. Meno výsledku sa vtedy podá zvlášť cez `--asset`, lebo
 `ugkk-20,49,21,50.tif` si build vypýtať nevie. Kým sa podával len kľúč
-pohoria, prečítal sa vždy celý obdĺžnik z `areas.json` a rýchly test na 2 km²
+pohoria, prečítal sa vždy celý obdĺžnik z `areas.json` a rýchly test na pár km²
 čítal z Drive 541 km² Vysokých Tatier.
 
 ROZDELENÉ NA FÁZY (`--stage`), aby dlhé čakanie nebolo jeden nemý krok:
@@ -97,7 +97,7 @@ Použitie:
     python3 workers/dmr5-drive.py --area=vysoke_tatry --grid-m=1 \\
         --out=out --asset=ugkk-vysoke_tatry.tif
     python3 workers/dmr5-drive.py --area=20.0,49.1,20.1,49.2 --grid-m=1 \\
-        --out=out --asset=ugkk-vysoke_tatry_test2.tif
+        --out=out --asset=ugkk-vysoke_tatry_test4.tif
     python3 workers/dmr5-drive.py --area=cele_slovensko --grid-m=5 --out=out
     python3 workers/dmr5-drive.py --area=20,49,21,50 --grid-m=5 --tiles --out=out
     python3 workers/dmr5-drive.py --stage=plan --area=vysoke_tatry --grid-m=1

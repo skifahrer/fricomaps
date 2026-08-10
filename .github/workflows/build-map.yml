@@ -60,21 +60,22 @@ on:
           - vihorlat
           - strazovske_vrchy
           - male_karpaty
-      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (2 km² sedia skoro
+      # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (4 km² sedia skoro
       # vždy), kým test sa zapína a vypína pri každom behu – a to je presne
       # rozdiel medzi switchom a textovým poľom. Veľkosť ostala ako voľba
-      # `test_km2=2`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
+      # `test_km2=4`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
       # odškrtnúť – opačné poradie znamenalo, že sa každé ladenie prahu
       # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
-      # Kľúč testovacieho behu má príponu `_test2`, takže si nesadne do cache
+      # Kľúč testovacieho behu má príponu `_test4` (číslo je z tej voľby, nie
+      # natvrdo), takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
       # Zmenší LEN to drahé – vrstevnice, skaly a tieňovanie sa spočítajú na
       # štvorci zo stredu výrezu. Mapa (kraj, cesty, trasy, prvky) ostáva celá
       # podľa nastavení regiónu, aby sa ten štvorec dal pozerať v mape, do
       # ktorej patrí. Mapa sa otvorí rovno na ňom. Iná veľkosť:
-      # `options: test_km2=5`. Iné miesto: `options: test_at=lon,lat`.
+      # `options: test_km2=8`. Iné miesto: `options: test_at=lon,lat`.
       test:
-        description: "Rýchly test: terén (vrstevnice, skaly, tieňovanie) len na 2 km² zo stredu výrezu"
+        description: "Rýchly test: terén (vrstevnice, skaly, tieňovanie) len na 4 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -151,7 +152,7 @@ on:
           - teren
           - vsetko
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
-      # Veľkosť rýchleho testu: `test_km2=5` (default 2).
+      # Veľkosť rýchleho testu: `test_km2=8` (default 4).
       # Mriežka na obrys skál: `rock_res=1` (default auto).
       # Celý zoznam aj s predvolenými hodnotami je vo workers/parse-options.py
       # a neznámy kľúč je chyba, nie ticho ignorovaná hodnota.
@@ -404,7 +405,7 @@ jobs:
           # regiónu), takže sa tu nepočítajú druhý raz – dva výpočty toho
           # istého sa vždy raz rozídu.
           # `dem_bbox`, nie `bbox`: kontroluje sa územie, na ktorom sa DEM
-          # naozaj číta. Pri rýchlom teste sú to 2 km², takže sa kvôli nemu
+          # naozaj číta. Pri rýchlom teste sú to 4 km², takže sa kvôli nemu
           # nezrkadlí (a nedopĺňa) výškový model na celý kraj.
           BBOX: ${{ needs.plan.outputs.dem_bbox }}
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
@@ -510,7 +511,7 @@ jobs:
       # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v sklade
       # hľadal a nenašiel. Kľúč pohoria sem NEchodí: `dmr5-drive.yml` by si
       # ho vyriešil z `areas.json` druhýkrát a prečítal celý obdĺžnik (test
-      # na 2 km² tak čítal 541 km² Tatier). Rozpis: workers/check-dem.sh.
+      # na pár km² tak čítal 541 km² Tatier). Rozpis: workers/check-dem.sh.
       area: ${{ needs.check-dem.outputs.mirror_dmr5_area }}
       asset: ${{ needs.check-dem.outputs.mirror_dmr5_asset }}
       tiles: false
@@ -798,9 +799,9 @@ jobs:
           # RÝCHLY TEST UŽ VÝREZ VYRIEŠIL – plán ho musel spočítať, aby vedel,
           # kam položiť štvorec pre terénne vrstvy. Odpoveď sa preberie, nie
           # preráta: druhý výpočet dostáva `dem_bbox`, teda UŽ ten štvorec, tak
-          # mu vyjde ten istý bbox, ale kľúč BEZ prípony `_test2` – lebo tu sa
+          # mu vyjde ten istý bbox, ale kľúč BEZ prípony `_test4` – lebo tu sa
           # `--test-km2` nepodáva. A z kľúča je meno DEM assetu, takže by výrez
-          # na 2 km² sadol v sklade pod `ugkk-vysoke_tatry.tif` – meno, ktoré
+          # na pár km² sadol v sklade pod `ugkk-vysoke_tatry.tif` – meno, ktoré
           # sľubuje celé pohorie (viď docs/pipeline.md).
           if [ -s /tmp/vyrez.txt ]; then
             RESOLVED=$(cat /tmp/vyrez.txt)
@@ -1094,7 +1095,7 @@ jobs:
         env:
           ONLY: contours
           GH_TOKEN: ${{ github.token }}
-          # Územie výpočtu, nie mapy: pri rýchlom teste je to štvorec s 2 km²,
+          # Územie výpočtu, nie mapy: pri rýchlom teste je to štvorec so 4 km²,
           # kým mapa okolo neho ostáva celý región.
           REGION_BBOX: ${{ needs.plan.outputs.dem_bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}

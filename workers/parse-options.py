@@ -15,7 +15,7 @@ Takto sú v ňom veci, ktoré meníš pri každom behu, a ostatné majú rozumn�
 predvolené hodnoty. Ktoré to sú, sa časom mení: `rock_res` (mriežka na obrys
 skál) sa prestavuje len s iným zdrojom výšok, kým rýchly test sa zapína
 a vypína pri každom behu – tak si vymenili miesto. Zapnutie je switch `test`,
-veľkosť štvorca ostala voľbou (`test_km2`, default 2 km²): jedno sa preklikáva
+veľkosť štvorca ostala voľbou (`test_km2`, default 4 km²): jedno sa preklikáva
 stále, druhé skoro nikdy.
 
 TRI VÝBERY ZDROJA namiesto jedného `dem_source` a zoznamu `layers`:
@@ -50,7 +50,11 @@ DEFAULTS = {
     # a miesto štvorca – oboje sa mení zriedka, kým samotné zapnutie pri
     # každom behu. Platí to len pri zapnutom switchi: `test_km2` bez neho je
     # chyba, nie ticho ignorované číslo.
-    "test_km2": ("2", "veľkosť štvorca pri zapnutom switchi `test` (km²)"),
+    # Štyri km², nie dva: na dvoch sa skalná plocha často netrafila do ničoho
+    # zaujímavého (2 km² je štvorec so stranou 1,4 km – v Tatrách sa doň zmestí
+    # jedna dolina alebo ani tá) a z testu sa nedalo prečítať, či skaly vyzerajú
+    # správne. Stojí to dvojnásobok DEM: sklon aj vektorizácia rastú s plochou.
+    "test_km2": ("4", "veľkosť štvorca pri zapnutom switchi `test` (km²)"),
     "test_at": ("", "stred testovacieho štvorca `lon,lat` (prázdne = stred výrezu)"),
     "size_limit_mb": ("900", "rozpočet celej stránky v MB"),
     "auto_shrink": ("true", "znížiť zoom dlaždíc, keď sa nezmestia"),
@@ -251,7 +255,7 @@ def main():
     # ---------- rýchly test na pár km² ----------
     # Zo switchu a veľkosti vyjde jedno číslo, s ktorým ďalej pracuje celý
     # workflow: 0 = ostrý beh, čokoľvek iné = strana štvorca v km². Ide do
-    # mena cache aj do kľúča uložených výsledkov (`…_test2`) a inde sa
+    # mena cache aj do kľúča uložených výsledkov (`…_test4`) a inde sa
     # porovnáva s „0" ako s reťazcom, takže sa tu aj normalizuje – `4.0`
     # aj `4` dajú to isté „4".
     test_on = (args.test or "false").strip().lower()

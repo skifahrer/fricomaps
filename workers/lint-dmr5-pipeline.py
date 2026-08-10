@@ -52,7 +52,7 @@ if not any(j.get("uses") == "./.github/workflows/dmr5-drive.yml"
 # obdĺžnika z `areas.json`; čo sa má naozaj prečítať, vie len Build
 # map (výrez pretnutý s regiónom, pri rýchlom teste štvorec na pár
 # km²). Kým sem chodil kľúč, `dmr5-drive.yml` si ho vyriešil
-# druhýkrát a čítal z Drive celý obdĺžnik – test na 2 km² tak čítal
+# druhýkrát a čítal z Drive celý obdĺžnik – test na pár km² tak čítal
 # 541 km² Vysokých Tatier. Je to tá istá chyba ako beh 31307163093,
 # len nezhodila beh, iba ho predražila – a preto sa vráti ticho.
 for name, job in (bm.get("jobs") or {}).items():

@@ -17,7 +17,7 @@ Diagnostika testovacieho výrezu nesmie zhodiť beh, ktorý ide o niečom inom.
 Použitie:
     python3 workers/test-locator.py \\
         --bbox=20.10,49.163,20.12,49.176 --full-bbox=19.9,49.09,20.32,49.25 \\
-        --name="Vysoké Tatry – test 2 km²" --png=out/kde-to-je.png \\
+        --name="Vysoké Tatry – test 4 km²" --png=out/kde-to-je.png \\
         --md=out/kde-to-je.md --pages-url=https://user.github.io/fricomaps/
 """
 import argparse
@@ -304,7 +304,7 @@ def main():
                       and fbox[2] <= obraz.width + 1
                       and fbox[3] <= obraz.height + 1)
     box = obdlznik(kresli, test, z, posun, CERVENA, 3)
-    # Nitkový kríž cez celý obrázok: pri 2 km² na prehľadovom zoome je
+    # Nitkový kríž cez celý obrázok: pri 4 km² na prehľadovom zoome je
     # štvorček taký malý, že sa v teréne inak hľadá očami.
     cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
     for a, b in (((cx, 0), (cx, box[1] - 6)), ((cx, box[3] + 6), (cx, obraz.height)),

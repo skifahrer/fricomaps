@@ -95,9 +95,9 @@ if [ -n "$CROP" ]; then
   NAME="$NAME (výrez)"
 fi
 
-# RÝCHLY TEST (switch `test`, predvolene zapnutý, 2 km²) zmenšuje to,
+# RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) zmenšuje to,
 # čo je naozaj drahé: vrstevnice, skaly a tieňovanie z výškového
-# modelu – na kraji desiatky minút, na 2 km² sekundy.
+# modelu – na kraji desiatky minút, na 4 km² jednotky minút.
 #
 # REGIÓN SA PRITOM NEOREZÁVA: mapa (cesty, vodstvo, trasy, prvky)
 # vyjde celá podľa nastavení, prešovský kraj ostane prešovským
@@ -118,12 +118,12 @@ if [ "${TEST_KM2:-0}" != "0" ]; then
   [ -n "$DEM_BBOX" ] || { echo "::error::Testovací štvorec sa nepodarilo spočítať."; exit 1; }
   # Okolie pre obrázok „kde to je" je CELÝ výrez pred zmenšením
   # (napr. Vysoké Tatry), nie celý región – z mapy Slovenska by
-  # bol štvorec s 2 km² neviditeľný bod.
+  # bol štvorec so 4 km² neviditeľný bod.
   printf '%s\n' "$RES" | sed -n 's/^full_bbox=/full_bbox=/p' >> "$GITHUB_OUTPUT"
   echo "test_bbox=$DEM_BBOX" >> "$GITHUB_OUTPUT"
   # A ODLOŽ CELÚ ODPOVEĎ pre krok „Vyrieš testovací výrez": je v nej
   # už všetko, čo ten krok potrebuje – vrátane kľúča s príponou
-  # `_test2`, ktorý mu druhým výpočtom vyjsť nemôže (prečo, hovorí
+  # `_test4`, ktorý mu druhým výpočtom vyjsť nemôže (prečo, hovorí
   # komentár v tom kroku). Rátať sa to má RAZ.
   printf '%s\n' "$RES" > /tmp/vyrez.txt
   # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa

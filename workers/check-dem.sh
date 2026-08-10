@@ -196,7 +196,7 @@ if [ -n "$DMR5_TILES" ]; then
   fi
   # A NAOPAK: keď je územie oveľa menšie než stupeň, ktorý sa preň číta.
   # Dlaždica sa VŽDY musí prečítať celá – jej meno je sľub o celom stupni –
-  # takže rýchly test na 2 km² zaplatí za tieňovanie pol hodinu, kým zvyšok
+  # takže rýchly test na 4 km² zaplatí za tieňovanie pol hodinu, kým zvyšok
   # behu trvá minúty. Nie je to chyba, ale je to prekvapenie, a to má byť
   # v logu vopred. Raz doplnená dlaždica v sklade ostane, takže ďalší
   # testovací beh na tom istom stupni je zadarmo.

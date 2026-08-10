@@ -329,7 +329,7 @@ návštevníkovi záleží: čo vidí, keď otvorí adresu.
 
 ### `plan` – rýchly test (switch `test`)
 
-Switch `test` vyreže zo stredu zvoleného výrezu **štvorec s 2 km²** a spočíta
+Switch `test` vyreže zo stredu zvoleného výrezu **štvorec so 4 km²** a spočíta
 na ňom to drahé – vrstevnice, skaly a tieňovanie. Z desiatok minút sú minúty,
 takže sa dá prah alebo interval overiť za jeden beh.
 
@@ -355,7 +355,7 @@ sa delí podľa toho, ktorý si vypýta:
 
 Kedysi to bolo **to isté orezanie regiónu ako `crop_bbox`**, len s bboxom,
 ktorý nezadávaš ty – teda aj orezané PBF. Ušetrilo to pár minút Planetilera
-a stálo použiteľnosť výsledku: 2 km² skál viseli nad prázdnom, bez ciest
+a stálo použiteľnosť výsledku: pár km² skál viselo nad prázdnom, bez ciest
 a bez okolia, na ktorom by bolo vidno, či sedia. Prešovský kraj má teda pri
 teste ostať prešovským krajom. `crop_bbox` je odvtedy na to, keď chceš orezať
 naozaj aj mapu, a dá sa s testom kombinovať: najprv sa oreže región, štvorec
@@ -367,7 +367,7 @@ skontroloval `check-dem`.
 
 Dve veci, na ktoré si treba dať pozor a sú vyriešené:
 
-- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test2`, takže si
+- **Kľúč.** Do mien cache aj uložených výsledkov ide `…_test4`, takže si
   testovací beh nesadne na to, čo počítal ostrý.
 - **Pregenerúva sa vždy všetko.** `parse-options.py` pri zapnutom teste
   prebije `rebuild` a zapne všetky tri príznaky (`contours_rebuild`,
@@ -406,7 +406,7 @@ iné miesto a `F5` nehodí mapu späť na celý región.
 **Samotná mapa sa otvorí na štvorci aj bez odkazu.** Manifest nesie pri
 regióne okrem `bbox` (celý kraj) aj `test_bbox` a `test_km2`; viewer sa pri
 štarte nastaví na `test_bbox`, keď je (`initialBounds` v `poc/web/app.js`),
-a do panelu napíše, že vrstevnice, skaly a tieňovanie sú len na tých 2 km².
+a do panelu napíše, že vrstevnice, skaly a tieňovanie sú len na tých 4 km².
 Bez toho by sa štvorec hľadal očami v štyroch tisícoch km² kraja – a kraj bez
 skál by vyzeral ako pokazený build.
 
@@ -1583,7 +1583,7 @@ sa vyrobí. Pri vlastnom PBF sa krajina vyčíta z odkazu na osm.fr
 s rôznymi nastaveniami a `mapa.zip` o žiadnom z nich nehovorí nič:
 
 ```
-presovsky-vysoke_tatry-test2km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-
+presovsky-vysoke_tatry-test4km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-
 tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
 ```
 
@@ -1599,7 +1599,7 @@ Tri veci na tom mene stoja za vysvetlenie:
 - **Zdroj je ten, ktorý sa NAOZAJ použil** (`…outputs.dem_source`), nie ten
   z formulára. Pri prepnutí na náhradný model (`ugkk_fallback`) by inak meno
   tvrdilo niečo iné, než v tej mape je – tá istá zásada ako `dem-source.txt`.
-- **Rýchly test to musí povedať** (`test2km2`). Mapa z neho vyzerá ako každá
+- **Rýchly test to musí povedať** (`test4km2`). Mapa z neho vyzerá ako každá
   iná, len jej väčšina chýba; meno je sľub o rozsahu.
 
 Publikuje sa **každá mapa, ktorá prešla kontrolou pred nasadením** – aj keď
@@ -2103,7 +2103,7 @@ dva rôzne assety. Nie sú to dve pipeline, len dve volania tej istej.
 prečítať, vie len `Build map`: výrez UŽ PRETNUTÝ S REGIÓNOM, a pri rýchlom
 teste štvorec na pár km². Kým sa podával kľúč, `dmr5-drive.yml` si ho vyriešil
 z `areas.json` **druhýkrát** a prečítal celý obdĺžnik pohoria – rýchly test na
-2 km² tak čítal z Drive 541 km² Vysokých Tatier, čiže hodiny namiesto minút.
+pár km² tak čítal z Drive 541 km² Vysokých Tatier, čiže hodiny namiesto minút.
 Je to tá istá trieda chyby ako beh 31307163093 (dve odpovede na jednu otázku),
 len nezhodila beh, iba ho predražila. Meno assetu preto chodí zvlášť
 (`asset:`): z bboxu sa odvodiť nedá, lebo build si súbor hľadá podľa kľúča
@@ -2113,7 +2113,7 @@ výrezu. Stráži to `Lint workflows`.
 `dem_bbox`, teda ten štvorec pre terénne vrstvy – a krok „Vyrieš testovací
 výrez" si odpoveď preberá. Keď sa počítal druhýkrát, dostal `dem_bbox` (už ten
 štvorec) a `--test-km2` sa mu nepodávalo, tak vyšiel ten istý bbox, ale kľúč
-**bez** prípony `_test2`: výrez na 2 km² sa volal `vysoke_tatry` presne ako celé
+**bez** prípony `_test<N>`: výrez na pár km² sa volal `vysoke_tatry` presne ako celé
 pohorie. Meno súboru je z kľúča, takže by testovací DEM sadol v sklade pod
 `ugkk-vysoke_tatry.tif` – meno, ktoré sľubuje celý obdĺžnik – a ďalší ostrý beh
 by z dvoch kilometrov štvorcových počítal vrstevnice celých Tatier. Je to
@@ -2260,7 +2260,7 @@ zdroja by bol ostrejší tvar, nie väčší rozsah zoomov.
 
 **Testovací režim** (výber `test`) vyreže zo stredu výrezu štvorec s pár km².
 Nie je to iný algoritmus, len menší bbox – celé je to jeden prepínač
-v `resolve-area.py`. Kľúč dostane príponu `_test2`, takže si testovací
+v `resolve-area.py`. Kľúč dostane príponu `_test4`, takže si testovací
 výsledok nesadne do tej istej cache ani na ten istý asset ako ostrý. Beh
 navyše vypíše obrázok, kde ten štvorec leží (viď nižšie).
 
