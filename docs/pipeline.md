@@ -733,6 +733,37 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   prvý bod je posledný, a ide cez prstencovú vetvu, kde je orezanie každého
   rohu naopak správne.
 
+- **Pri max zoome nerozhoduje čiara, ale mriežka dlaždice.** Vektorová dlaždica
+  má súradnice v celých číslach na mriežke `extent` (4096) a **Planetiler ju
+  meniť nevie** – v jeho nastaveniach taká voľba nie je. Krok mriežky teda
+  určuje maxzoom vrstevníc a nad ním sa dlaždice už len naťahujú (overzoom),
+  takže práve tie zaokrúhlené súradnice vidno pri najväčšom priblížení ako
+  schodíky:
+
+  | maxzoom vrstevníc | krok mriežky (49°) | priemerný lom | lomov > 30° |
+  |---|--:|--:|--:|
+  | bez mriežky (samotná čiara) | — | 8,2° | 1,6 % |
+  | **z14** (predvolený) | 0,391 m | 14,8° | **11,5 %** |
+  | z15 | 0,195 m | 10,4° | 4,3 % |
+  | z16 | 0,098 m | 8,7° | 2,1 % |
+
+  Dočistiť čiaru po Chaikinovi **nepomáha, práve naopak**: tolerancia 0,5–2×
+  mriežky zdvihne lomy na 22–45°, lebo Douglas–Peucker z hladkej krivky spraví
+  tetivy a tie lámu viac než kvantovanie. Z toho istého dôvodu je pri z14
+  horší aj **tretí** prechod Chaikina (34,6 % oproti 11,5 %) – čím hustejšie
+  body, tým väčší uhol z toho istého posunu o pol kroku mriežky.
+
+  Jediná páka je teda maxzoom, a ten stojí miesto: úroveň navyše je zhruba
+  **dvojnásobok** veľkosti (celý kraj má pri z14 namerané 187 MB, čo je už
+  21 % z 900 MB). Preto `pmtiles_do_rozpoctu`
+  ([`workers/pmtiles-budget.sh`](../workers/pmtiles-budget.sh)) hľadá zoom
+  **oboma smermi**: keď sa výsledok nezmestí do podielu rozpočtu, ide o úroveň
+  nižšie (ako doteraz), a keď v ňom ostalo miesto aspoň na dvojnásobok, skúsi
+  o úroveň vyššie – po 16, čo je strop Planetilera. Celý kraj tak ostane na
+  z14, kým výrez jedného pohoria vyjde na z16 a pri max zoome nemá schodíky.
+  Keď sa raz znižovalo, už sa nedvíha: inak by sa beh medzi dvomi zoomami
+  hojdal donekonečna a každé hojdanie je celý beh Planetilera.
+
   `workers/contours-build.sh` je preto v otlačku `SCHEMA_HASH` (kľúč cache):
   bez toho by sa dala zmeniť tolerancia a beh by vrátil z cache staré, zubaté
   vrstevnice – zelený a tichý. Otlačok ale vidí len súbory, a tie tri hodnoty

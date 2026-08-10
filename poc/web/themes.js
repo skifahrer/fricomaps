@@ -654,6 +654,7 @@ export const PALETTE_GROUPS = [
       ["ice", "Ľadovec"],
       ["wetland", "Mokraď"],
       ["rock", "Skaly / suť"],
+      ["rockPattern", "Kamienky v suti (vzor)"],
       // Kosodrevina a kroviny sú v dlaždiciach ako `landcover subclass`, ale
       // `class` majú `grass` – bez vlastnej farby by lúka a kosodrevina
       // vyzerali rovnako, čo je v Tatrách dosť podstatný rozdiel.
@@ -762,7 +763,6 @@ export const PALETTE_GROUPS = [
       ["contourMajor", "Hlavná vrstevnica"],
       ["contourText", "Popisok výšky"],
       ["rockArea", "Skalné plochy (plná výplň)"],
-      ["rockPattern", "Kamienky v skalnej ploche (vzor)"],
       // Bralná hrana a hrebeň sú `natural=cliff/ridge/arete` – v dlaždiciach
       // sú ako LÍNIE vo vrstve `mountain_peak`, nie ako skalná plocha z DEM.
       ["cliffLine", "Bralná hrana (z OSM)"],
@@ -1823,11 +1823,26 @@ export function buildStyle({
     ["garden", "Záhrady a sady", ["garden", "allotments", "orchard", "vineyard", "plant_nursery"], "garden", 0.8],
     ["golf", "Golfové ihriská", ["golf_course", "recreation_ground", "village_green"], "pitch", 0.6],
     ["wetland", "Mokrade", ["wetland", "swamp", "marsh", "bog"], "wetland", 0.8],
-    ["rock", "Skaly a suť", ["rock", "scree", "bare_rock"], "rock", 0.8],
+    // SUŤ MÁ VZOR DROBNÝCH KAMEŇOV. `natural=scree` a `bare_rock` z OSM je
+    // presne to, čo vzor kreslí: popadané kamene pod stenou, kamenné more,
+    // holá skala. Papierová horská mapa ich takto značí odjakživa a plná
+    // farba to nepovie – suť a lúka sú v nej rovnaká škvrna, len inak sfarbená.
+    //
+    // Vzor je JEMNÝ, nie ozdobný. Dlaždica sa zadáva v PIXELOCH OBRAZOVKY,
+    // nie v metroch – vzor sa so zoomom nezväčšuje, takže 9 px je jeden
+    // kamienok veľký dva-tri pixely na každom zoome. Vyskúšané aj 26 px
+    // (pôvodná veľkosť na skalných plochách): v ploche z toho bola dlažba,
+    // nie suť.
+    //
+    // Počítané skalné plochy (`rock-area` z DEM) vzor ZÁMERNE NEMAJÚ: to je
+    // stena a strmý sklon, nie sypké kamene, a kresba drobných kameňov by
+    // o tvare terénu klamala.
+    ["rock", "Skaly a suť", ["rock", "scree", "bare_rock"], "rock", 0.8,
+     { id: "rocks", color: "rockPattern", size: 9, weight: 0.6, opacity: 0.75 }],
     ["sand", "Piesok", ["sand", "beach"], "sand", 1],
     ["ice", "Ľadovec", ["ice", "glacier"], "ice", 1]
   ];
-  for (const [id, label, classes, paletteKey, opacity] of landcover) {
+  for (const [id, label, classes, paletteKey, opacity, pattern] of landcover) {
     add(
       {
         id: `landcover-${id}`,
@@ -1840,7 +1855,10 @@ export function buildStyle({
         ],
         paint: { "fill-color": c[paletteKey], "fill-opacity": opacity }
       },
-      ["krajina", label, "area", { "fill-color": paletteKey }]
+      // Farba vzoru je v zozname ako KĽÚČ PALETY, nie hex – aby ju mala každá
+      // téma svoju, rovnako ako výplň pod ňou.
+      ["krajina", label, "area", { "fill-color": paletteKey }, null,
+        pattern ? { ...pattern, color: c[pattern.color] } : null]
     );
   }
 
@@ -1995,23 +2013,12 @@ export function buildStyle({
           "fill-antialias": true
         }
       },
-      // KAMIENKY V PLOCHE. Plná sivá povie, KDE je skala, ale nie ČO to je –
-      // stena, balvanisko a sutinové pole vyzerajú rovnako. Vzor drobných
-      // kameňov je to, čím papierová horská mapa skalné pole odlišuje, a keďže
-      // je to `fill-pattern` nad tou istou geometriou, nestojí to ani nový
-      // zdroj, ani nový výpočet – len jednu odvodenú vrstvu.
-      //
-      // Krytie 0,6: vzor má plochu textúrovať, nie ju prekresliť. Pri plnom
-      // krytí zmizne pod kamienkami tieňovanie, kvôli ktorému skaly ležia
-      // práve tu (viď rozpis nad vrstvou), a stena je zase plochá škvrna.
-      // Pod 0,5 zase vzor v mierke 1:1 zmizne – vyskúšané na hotovej výplni,
-      // nie odhadnuté; farba `rockPattern` je preto aj o poriadny kus tmavšia
-      // než samotná plocha (v tmavej téme naopak svetlejšia).
-      //
-      // Dlaždica 26 px je pri z16 (1,57 m na pixel) kameň veľký asi tri metre.
-      // Menšia sa zlieva do sivej kaše, väčšia vyzerá ako dlažba.
-      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }, null,
-        { id: "rocks", color: c.rockPattern, size: 26, weight: 1.2, opacity: 0.6 }]
+      // BEZ VZORU, a je to rozdiel oproti suti v krajinnej pokrývke. Táto
+      // plocha je počítaná zo SKLONU: hovorí „tu je terén strmý", teda stena
+      // a bralo. Kresba drobných popadaných kameňov by tvrdila opak – že je
+      // to sypká suť – a to je práve tá informácia, kvôli ktorej sa na skaly
+      // v mape pozerá. Kamienky preto kreslí `landcover-rock` (scree z OSM).
+      ["vrstevnice", "Skalné plochy", "area", { "fill-color": "rockArea" }]
     );
   }
 
