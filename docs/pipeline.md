@@ -545,10 +545,12 @@ už prečítalo z Drive v koľkých požiadavkách. Riadok na hotovú časť sta
 a zaseknutý beh vyzerá presne ako pomalý. Počet požiadaviek je tu to hlavné
 číslo – keď rastie, číta sa; keď stojí, čaká sa.
 
-Dve vrstvy skladu zámerne: cache je rýchla, ale GitHub ju po siedmich dňoch
-bez použitia zmaže a repo má strop 10 GB; release nevyprší. Cache sa ukladá
-pod **prefix + číslo behu** a obnovuje cez `restore-keys` – pri pevnom kľúči
-by ju prvý beh zabral a časti dopočítané neskôr by sa už nikdy neuložili.
+Dve vrstvy skladu zámerne: cache je rýchla, ale prerieďuje sa (kým bola
+v GitHube, mazal ju sám po siedmich dňoch bez použitia a repo malo strop 10 GB;
+na Drive ju raz za týždeň preriedi *Upratať cache*) – release nevyprší. Cache
+sa ukladá pod **prefix + číslo behu** a obnovuje cez `restore-keys` – pri
+pevnom kľúči by ju prvý beh zabral a časti dopočítané neskôr by sa už nikdy
+neuložili.
 
 Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
 `rocks` nič nedopĺňa a `slope-chunks.py` si číta priamo z Drive po častiach.
@@ -885,14 +887,54 @@ Build sťahuje viac vecí, než len DEM, a všetky majú vlastnú cache:
 | glyfy a sprity | hash zoznamu zdrojov | menia sa len so zmenou kódu |
 | zdroje Planetileru | pevný | water polygons, Natural Earth |
 
-Všetky okrem zdrojov Planetileru sú rozdelené na `actions/cache/restore` hore
-a `actions/cache/save` hneď za krokom, ktorý dáta vyrobí. Obyčajné
-`actions/cache` totiž zapisuje až v post-kroku a **iba keď celý job dobehne
-úspešne** – keď build spadne o hodinu neskôr na niečom úplne inom, zahodí sa
-aj to, čo sa medzitým vypočítalo, a ďalší beh začína zase od nuly. Save kroky
-majú preto `if: always()` a ukladajú len vtedy, keď restore netrafil a súbory
-naozaj vznikli. Sprity sa ukladajú ešte **pred** zapečením vzorov do atlasu,
-aby sa do cache nedostal už dopečený sprite.
+Každá je rozdelená na `restore` hore a `save` hneď za krokom, ktorý dáta
+vyrobí. Pôvodné `actions/cache` totiž zapisovalo až v post-kroku a **iba keď
+celý job dobehol úspešne** – keď build spadol o hodinu neskôr na niečom úplne
+inom, zahodilo sa aj to, čo sa medzitým vypočítalo, a ďalší beh začínal zase
+od nuly. Save kroky majú preto `if: always()` a ukladajú len vtedy, keď restore
+netrafil a súbory naozaj vznikli. Sprity sa ukladajú ešte **pred** zapečením
+vzorov do atlasu, aby sa do cache nedostal už dopečený sprite.
+
+#### Cache leží na Google Drive, nie v GitHube
+
+**GitHubová cache má na repozitár 10 GB a keď sa naplní, nič nepovie** – ticho
+vyhodí najstaršie záznamy (LRU). Tabuľka vyššie je pritom na jeden výrez
+desiatky GB: samotný sklad častí sklonu a stiahnuté dlaždice tieňovania sú
+gigabajty. Výsledok bol, že si záznamy vyhadzovali navzájom a hodinové výpočty
+sa rátali odznova bez toho, aby bolo na čom to vidieť – build je zelený, len
+trvá hodinu namiesto minút. To je tá istá trieda chyby ako booleany nižšie.
+
+Preto záznamy ležia na Google Drive, na tom istom účte, ktorý drží DMR 5.0:
+
+```
+.github/actions/cache-restore  ─┐
+                                ├─►  workers/drive-cache.py  ─►  priečinok na Drive
+.github/actions/cache-save     ─┘                                jeden záznam = jeden .tar.zst
+```
+
+Sémantika ostala presne tá istá ako v GitHube, aby platilo všetko, čo je
+o cache napísané inde: `cache-hit` je `true` len pri **presnej** zhode kľúča,
+`restore-keys` sú **predpony** a berie sa **najnovší** záznam, ktorý na ne
+sedí, a **existujúci kľúč sa neprepisuje**. Zhoda sa hľadá podľa plného kľúča
+(je v `description` súboru), nie podľa mena – v mene sú znaky mimo
+`[A-Za-z0-9._-]` nahradené podčiarkovníkom a dva rôzne kľúče by tak mohli
+vyzerať rovnako.
+
+Čo sa tým mení naozaj:
+
+- **Bez prihlásenia na Drive cache nefunguje.** Krok si to nedomýšľa: keď
+  v prostredí nie je token vlastníka, spadne s návodom. Token sa preto podáva
+  v `env:` celého workflowu (`build-map.yml`, `shading-rocks.yml`) a stráži to
+  *Lint workflows* – zabudnutý token by inak znamenal ticho počítať všetko
+  odznova.
+- **Token musí vedieť zapisovať.** Starý mal rozsah `drive.readonly`; cache
+  potrebuje `drive`. Readonly token číta DMR 5.0 ďalej, len sa pod ním nič
+  neuloží – `python3 workers/drive-cache.py --check` to povie jednou vetou
+  a nový vyrobí workflow *Prihlásenie na Drive (jednorazové)*.
+- **Nič sa nemaže samo.** GitHub staré záznamy vyhadzoval sám (7 dní bez
+  použitia, 10 GB), Drive nie. Preriedi ich workflow *Upratať cache* – raz za
+  týždeň, alebo ručne (viď [Šiesty workflow: „Upratať
+  cache"](#šiesty-workflow-upratať-cache)).
 
 Vrstevnice sa robia **pred** mapovými dlaždicami zámerne – viď [rozpočet
 veľkosti](#rozpočet-veľkosti).
@@ -914,14 +956,17 @@ prepočítať **nanovo aj pri rovnakých nastaveniach**, slúžia na to inputy:
 viď [rýchly test](#plan--rýchly-test-switch-test). Vo formulári teda `rebuild`
 pri zapnutom teste nič nemení.
 
-Mechanika je dôležitá, lebo nie je zrejmá: **cache sa v GitHube nedá
-prepísať.** Kľúč, ktorý raz existuje, si drží starý obsah a `cache/save` naň
-len upozorní, že už tam je. Keby sa teda `rebuild` len „prepočítal a uložil",
+Mechanika je dôležitá, lebo nie je zrejmá: **existujúci záznam cache sa nedá
+prepísať.** Kľúč, ktorý raz existuje, si drží starý obsah a `save` naň len
+upozorní, že už tam je. Keby sa teda `rebuild` len „prepočítal a uložil",
 uloženie by nič nespravilo a ďalší build by dostal späť starú verziu. Preto:
 
-1. build má právo `actions: write`,
-2. krok *Pregenerovanie – zmaž staré cache* zmaže príslušný záznam
-   (`gh cache delete`) hneď na začiatku,
+1. krok *Pregenerovanie – zmaž staré cache* zmaže príslušný záznam
+   (`workers/drive-cache.py --delete`) hneď na začiatku,
+2. maže sa aj variant s príponou `-rocks` – skaly majú vlastný job, a teda
+   vlastný záznam pod tým istým kľúčom. Kým sa mazal len ten prvý,
+   pregenerovanie skál síce prepočítalo, ale uložiť sa už nemalo kam a ďalší
+   beh dostal z cache tie pôvodné,
 3. restore sa pri pregenerovaní **preskočí**, takže výpočet beží,
 4. save uloží novú verziu pod ten istý kľúč.
 
@@ -1356,9 +1401,18 @@ nedostane nič, čo by štýl rozbilo.
 > 198 GB ZIP so sekvenčným čítaním) bola zrušená, keď sa ukázalo, že Drive
 > púšťa spoľahlivo a Range na ľubovoľnom offsete je rádovo lacnejší.
 
-DMR 5.0 leží na Google Drive ako **dva holé BigTIFFy**. Plní dva release
-(`dem-ugkk`, `dem-dmr5`), takže `fetch-dem.sh` ani `Build map` nemusia vedieť,
-odkiaľ dáta prišli.
+DMR 5.0 leží na Google Drive ako **dva holé BigTIFFy v jednom priečinku**.
+Plní dva release (`dem-ugkk`, `dem-dmr5`), takže `fetch-dem.sh` ani `Build map`
+nemusia vedieť, odkiaľ dáta prišli.
+
+**Zdrojom je priečinok, nie dve file id.** Vo `workers/dmr5-drive.py` je jediné
+číslo – `FOLDER_ID` – a súbory v ňom sa hľadajú podľa mena (`dmr5_etrs89.tif`
+a `.tif.ovr` vedľa neho; keby sa premenovali, berie sa najväčší `.tif`, so
+145 GiB sa nedá pomýliť). Presun modelu na iný účet je tak zmena jedného čísla
+namiesto dvoch id na štyroch miestach. Má to jeden dôsledok, ktorý sa nedá
+obísť: **obsah priečinka povie len Drive API**, a to anonymné požiadavky
+neobsluhuje – bez prihlásenia sa DMR 5.0 nedá čítať vôbec (predtým sa dalo,
+verejným odkazom a s denným limitom). Beh to povie hneď a s návodom.
 
 ```
 dmr5_etrs89.tif      145,39 GiB   423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
@@ -1467,25 +1521,32 @@ tokenu:
 | prihlásený | `www.googleapis.com/drive/v3/files/<id>?alt=media` + `Authorization: Bearer` | vlastníkov, vysoký |
 | verejný | `drive.usercontent.google.com/download?id=<id>&confirm=t` | denný na súbor, zdieľaný |
 
-Bez secretu sa **nemení nič** – číta sa ako predtým, len sa výslovne vypíše,
-že platí verejný limit. To „výslovne" je tu to podstatné: tichý návrat
-k verejnému limitu (zmazaný secret, preklep v mene) by sa inak zistil až tým,
-že Drive po pol dni prestane púšťať dáta. Preto to hlási krok **Prihlásenie na
-Drive** na začiatku behu, riadok `prístup:` v logu čítania aj riadok
-`prístup` v súhrne – rovnaká logika ako `dem-source.txt`: nesie sa, čo sa
-NAOZAJ použilo. To isté platí pre Sonnyho: `Stiahnuť výškové dáta` píše cestu
-k dátam do riadku `cesta k dátam` v súhrne behu.
+Tá druhá cesta ostala už len pre **cudzie** dáta zdieľané odkazom (Sonny).
+K DMR 5.0 ňou ísť nejde: model leží v priečinku a jeho obsah povie len Drive
+API prihlásenému účtu. Bez secretu teda beh nespadne po pol dni na vyčerpanom
+limite, ale **hneď na začiatku a s návodom** – čo je to isté pravidlo, len
+lacnejšie. Ktorým účtom sa čítalo, aj tak hlási krok **Prihlásenie na Drive**,
+riadok `prístup:` v logu čítania a riadok `prístup` v súhrne – rovnaká logika
+ako `dem-source.txt`: nesie sa, čo sa NAOZAJ použilo. To isté platí pre
+Sonnyho: `Stiahnuť výškové dáta` píše cestu k dátam do riadku `cesta k dátam`
+v súhrne behu.
 
 **Kam všade sa token musí dostať.** `workflow_call` nededí secrets sám, takže
-volajúci ich musí podať – a čítanie z Drive je na štyroch miestach, z ktorých
-dve nie sú tam, kde by ich človek čakal:
+volajúci ich musí podať – a z Drive sa číta na viacerých miestach, z ktorých
+väčšina nie je tam, kde by ich človek čakal:
 
 | kde | čo číta | ako sa tam token dostane |
 |---|---|---|
 | `dmr5-drive.yml` | DMR 5.0 (výrez aj dlaždice) | `secrets: inherit` z `build-map.yml` |
 | `update-dem.yml` | Sonnyho priečinok | `secrets: inherit` z `build-map.yml` |
-| job `contours` v `build-map.yml` | vrstevnice z DMR 5.0 | `env:` priamo v jobe |
-| job `rocks` v `build-map.yml` | sklon z DMR 5.0 (`slope-chunks.py`) | `env:` priamo v jobe |
+| `shading-rocks.yml` | cache stiahnutých dlaždíc | `secrets: inherit` z `build-map.yml` |
+| job `contours` v `build-map.yml` | vrstevnice z DMR 5.0 | `env:` workflowu |
+| job `rocks` v `build-map.yml` | sklon z DMR 5.0 (`slope-chunks.py`) | `env:` workflowu |
+| každý krok `cache-restore` / `cache-save` | cache buildu | `env:` workflowu |
+
+Odkedy je na Drive aj cache, je tých miest priveľa na to, aby sa vypisovali po
+jednom – preto stojí prihlásenie v `env:` celého workflowu a nie pri
+jednotlivých joboch.
 
 Stráži to staticky `Lint workflows` (krok *Token vlastníka Drive sa dostane
 všade, kde sa z Drive číta*): pozerá aj na volajúceho, aj na volaného, a hlási
@@ -1507,8 +1568,13 @@ aj **nekompletnú** trojicu – tá sa nesmie brať ako „veď tam niečo je", 
    „out of band" tok; bez prehliadača na tom stroji je `--manual`.
 5. Vypísaný JSON vlož ako repository secret **`GDRIVE_CREDENTIALS`**.
 
-Rozsah práv je `drive.readonly` – pipeline z Drive iba číta, takže token
-v secrets nemôže na Drive nič zmeniť ani zmazať.
+**Rozsah práv je `drive`, teda aj zápis.** Kým sa z Drive len čítalo, stačilo
+`drive.readonly`; odkedy je na ňom aj cache buildu, sa tam musí dať ukladať
+a prerieďovať (`files.create` a `files.delete` readonly token nepustí – 403
+`insufficientPermissions`). Rozsah sa do hotového tokenu dopísať nedá, je v ňom
+od prihlásenia, takže starý readonly token treba vymeniť za nový: DMR 5.0 pod
+ním číta ďalej, len sa nič neuloží. Povie to `python3 workers/drive-cache.py
+--check`, aj krok *Prístup k cache na Drive* v „Upratať cache".
 
 Prihlásenie sa dá podať aj **po troch secretoch** namiesto jedného –
 `GDRIVE_CLIENT_ID`/`GDRIVE_CLIENT_SECRET`/`GDRIVE_REFRESH_TOKEN`, alebo
@@ -1537,7 +1603,8 @@ beh 2 (`code` = tá adresa)
 
 **Token nevidí ani jeho vlastník** a to je zámer: tento repozitár je public,
 takže log behu, súhrn aj artefakty vidí ktokoľvek na internete – a refresh
-token je čítací prístup na celý Drive. Preto sa z `--exchange` nedostane na
+token je prístup na celý Drive vlastníka (od cache už aj zapisovací). Preto
+sa z `--exchange` nedostane na
 stdout vôbec (`--out` je povinné) a do `gh secret set` ide po stdine zo
 súboru, nie argumentom ani cez `echo`.
 
@@ -1548,7 +1615,8 @@ behu zmaže. Workflow to kontroluje **pred** výmenou kódu – kód z Google pl
 pár minút a je jednorazový, tak nech nepadne až po ňom.
 
 Alternatíva bez PATu je Googlom hostovaný **OAuth Playground** (vlastné
-credentials, scope `drive.readonly`, *Access type: Offline*, *Force prompt:
+credentials, scope `drive` – nie `drive.readonly`, cache sa musí dať aj
+ukladať –, *Access type: Offline*, *Force prompt:
 Consent*) – token vidíš na obrazovke telefónu a prepíšeš ho do secretu. Chce
 si to druhého klienta typu *Web application* s redirect URI
 `https://developers.google.com/oauthplayground`, lebo desktopový smie mať len
@@ -2034,3 +2102,37 @@ Hillshade je obraz sklonu, ale **osvetleného z jednej strany**. Severozápadné
 steny sú na ňom najtmavšie, juhovýchodné najsvetlejšie – tie druhé teda táto
 cesta systematicky prehliadne. Zato má rozlíšenie, na aké si sami sklon
 nespočítame. Je to pokus vedľa hlavnej cesty, nie jej náhrada.
+
+## Šiesty workflow: „Upratať cache"
+
+[`cleanup-cache.yml`](../.github/workflows/cleanup-cache.yml) je odpoveď na to,
+čo zostalo po presťahovaní cache na Drive: **vyprázdni GitHub cache** a
+**preriedi tú na Drive**. Beží raz za týždeň (nedeľa 03:20 UTC) a dá sa spustiť
+ručne; režim *„Len vypísať"* nemaže nič.
+
+Prečo obe polovice v jednom workflowe: sú to dve strany tej istej otázky
+„koľko miesta cache zaberá a kde".
+
+| polovica | čo robí | čím |
+|---|---|---|
+| GitHub | zmaže **všetky** záznamy (`/actions/caches`), vypíše, koľko sa uvoľnilo | [`workers/cleanup-cache.py`](../workers/cleanup-cache.py) |
+| Drive | zmaže duplikáty, záznamy staršie než `keep_days` a to, čo nevojde do `keep_gb` | `workers/drive-cache.py --prune` |
+
+**Prečo sa GitHub cache maže celá.** Build si od nej už nič nepýta – všetko
+chodí z Drive – takže tie záznamy nikto nehľadá a len zaberajú tých 10 GB, čo
+repozitár má. Kým sa nevyprázdnili, GitHub ich držal ďalej a nová cache by sa
+o miesto delila so starou, ktorú nikto nepoužíva.
+
+**Prečo Drive treba prerieďovať.** GitHub si staré záznamy vyhadzoval sám
+(7 dní bez použitia, 10 GB na repozitár). Drive nie: čo sa doň nahrá, tam ostane,
+kým to niekto nezmaže – a keď sa zaplní účet, prestane fungovať aj DMR 5.0,
+ktoré leží na tom istom účte. Poradie mazania je zámerné: najprv duplikáty
+(dva behy, ktoré uložili ten istý kľúč naraz), potom vek, a strop až nakoniec,
+takže sa maže od najstaršieho.
+
+**Čo sa nemaže nikdy:** súbory v priečinku cache, ktoré nemajú príponu záznamu
+(`.tar.zst` / `.tar.gz`). Do priečinka môže niekto niečo položiť a cache nemá
+právo mu to upratať.
+
+Prerieďovanie potrebuje token, ktorý na Drive **zapisuje** – prvý krok behu
+(`drive-cache.py --check`) povie, či ho má, aj koľko miesta účet ešte má.

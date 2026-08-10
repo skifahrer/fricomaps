@@ -194,6 +194,20 @@ on:
       count:
         description: "Počet nájdených skalných plôch"
         value: ${{ jobs.skaly.outputs.count }}
+    # `workflow_call` nededí secrets sám, takže ich volajúci musí podať
+    # (`secrets: inherit`) a tento workflow prijať. Bez nich by sa cache na
+    # Drive nemala ako otvoriť a gigabajty dlaždíc by sa ťahali z freemap.sk
+    # pri každom behu. Dva tvary toho istého: všetko v jednom secrete, alebo
+    # po troch – rozpis vo `workers/drive-auth.py`.
+    secrets:
+      GDRIVE_CREDENTIALS:
+        required: false
+      DRIVE_CLIENT:
+        required: false
+      DRIVE_SECRET:
+        required: false
+      DRIVE_REFRESH:
+        required: false
 
 permissions:
   contents: write   # ukladanie hotových polygónov do releasu
@@ -205,6 +219,14 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Cache tejto podpipeline leží na Google Drive (`workers/drive-cache.py`) –
+  # sú to gigabajty JPG dlaždíc a v GitHubovej cache s 10 GB na repozitár
+  # vyhadzovali všetko ostatné. Preto sem musí prísť token vlastníka; keď sa
+  # tento workflow volá z „Build map", podáva sa cez `secrets: inherit`.
+  GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+  DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+  DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+  DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
   # Vysoké rozlíšenie tieňovania (LiDAR) z freemap.sk. Je to XYZ šablóna,
   # žiadne metadáta – najvyšší zoom sa preto zisťuje skúšobnou dlaždicou.
   SHADING_URL: "https://sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg"
@@ -296,12 +318,13 @@ jobs:
 
       # Dlaždice sa ťahajú z dobrovoľníckej služby – čo sa raz stiahlo, sa
       # nemá sťahovať znova len preto, že sa ladí prah. Kľúč na uloženie má
-      # v sebe číslo behu, aby sa dal doplniť aj neúplný obsah: cache sa
-      # v GitHube prepísať nedá, takže bez toho by prvý (hoc aj prerušený)
-      # beh zamkol obsah navždy. Hľadá sa cez `restore-keys` po predpone.
+      # v sebe číslo behu, aby sa dal doplniť aj neúplný obsah: existujúci
+      # kľúč sa neprepisuje (na Drive rovnako ako kedysi v GitHube), takže bez
+      # toho by prvý (hoc aj prerušený) beh zamkol obsah navždy. Hľadá sa cez
+      # `restore-keys` po predpone.
       - name: Cache dlaždíc (restore)
         id: tiles-cache
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: tiles-cache
           key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
@@ -326,7 +349,7 @@ jobs:
       - name: Cache dlaždíc (save)
         if: ${{ always() && hashFiles('tiles-cache/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: tiles-cache
           key: shading-tiles-${{ steps.area.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
@@ -377,7 +400,7 @@ jobs:
       # presne to, čo práve uložil. `restore-keys` je poistka na prípad, keď
       # sa uloženie nepodarilo – vtedy sa siahne po staršej cache výrezu.
       - name: Cache dlaždíc (restore)
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: tiles-cache
           key: shading-tiles-${{ needs.dlazdice.outputs.key }}-z${{ inputs.zoom }}-${{ github.run_id }}
@@ -386,7 +409,7 @@ jobs:
 
       # Rozrobené z predošlých BEHOV – hotové bloky sa nepočítajú znova.
       - name: Cache rozrobeného (restore)
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: |
             tiles-cache/_rozrobene
@@ -421,7 +444,7 @@ jobs:
       - name: Cache rozrobeného (save)
         if: ${{ always() && hashFiles('tiles-cache/_rozrobene/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: |
             tiles-cache/_rozrobene
@@ -472,7 +495,7 @@ jobs:
       # Preto sa neobnovuje celá cache dlaždíc (gigabajty JPEGov), ale len
       # rozrobené a čísla o sťahovaní do štatistiky.
       - name: Cache rozrobeného (restore)
-        uses: actions/cache/restore@v4
+        uses: ./.github/actions/cache-restore
         with:
           path: |
             tiles-cache/_rozrobene
@@ -516,13 +539,13 @@ jobs:
 
       # Keď zlepovanie spadne, rozrobené prežije a ďalší beh nadviaže. Kľúč má
       # na konci `-s`: pod kľúčom bez neho leží to, čo uložil job `vektor`,
-      # a existujúci kľúč sa v GitHube prepísať nedá – uloženie by ticho
+      # a existujúci kľúč sa prepísať nedá – uloženie by ticho
       # neurobilo nič. `restore-keys` hľadá po predpone, takže sa ďalší beh
       # trafí na tento (novší) záznam aj tak.
       - name: Cache rozrobeného (save)
         if: ${{ failure() && hashFiles('tiles-cache/_rozrobene/**') != '' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: ./.github/actions/cache-save
         with:
           path: |
             tiles-cache/_rozrobene

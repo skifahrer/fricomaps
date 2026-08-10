@@ -51,14 +51,23 @@ druhá trojica z `TRIOS` nižšie.
 Do secretov patria údaje TOHO klienta, ktorým bol token vyrobený: refresh
 token platí len pre pár, ktorý ho vydal.
 
-ROZSAH PRÁV je `drive.readonly`: pipeline z Drive iba číta. Zapisovať tam
-nemá čo a token, ktorý nemôže nič zmazať, sa dá aj oveľa pokojnejšie nechať
-v secrets.
+ROZSAH PRÁV. Kým sa z Drive iba čítalo, stačilo `drive.readonly`. Odkedy je
+na Drive aj CACHE buildu (`workers/drive-cache.py` – GitHubová sa nám plnila),
+sa tam aj ZAPISUJE, a na to readonly token nestačí: Drive na `files.create`
+odpovie 403 `insufficientPermissions`. Preto `--login` pýta predvolene rozsah
+`drive` (`--scope=citanie` dá starý readonly, keď má token slúžiť len na
+čítanie DMR 5.0).
+
+Rozsah sa nedá „dopísať" do hotového tokenu – je v ňom zapečený od
+prihlásenia. Starý readonly token teda ostane platný na čítanie a cache pod
+ním len nebude vedieť ukladať; `drive-cache.py --check` to povie jednou vetou
+a `--save` na tom padne s návodom, nie ticho.
 
 Použitie:
     python3 workers/drive-auth.py --login --client-id=… --client-secret=…
+    python3 workers/drive-auth.py --login --scope=citanie   # len čítanie
     python3 workers/drive-auth.py --login --manual      # bez localhostu
-    python3 workers/drive-auth.py --check               # kto som
+    python3 workers/drive-auth.py --check               # kto som a čo smiem
     python3 workers/drive-auth.py --check --file=<id>   # a vidím naň?
     python3 workers/drive-auth.py --print-token         # do curlu, lokálne
 """
@@ -99,11 +108,24 @@ TOKEN_HOST = "oauth2.googleapis.com"
 TOKEN_PATH = "/token"
 API_HOST = "www.googleapis.com"
 
-# Pipeline z Drive len číta. `drive.readonly` je síce „restricted" rozsah
-# (Google ho pri neoverenej appke ukáže s varovaním), ale žiadny menší
-# nestačí: `drive.file` vidí len súbory, ktoré appka sama vytvorila, a DMR 5.0
-# tam ležalo dávno pred ňou.
-SCOPE = "https://www.googleapis.com/auth/drive.readonly"
+# Dva rozsahy, a rozhoduje o nich to, či sa na Drive aj ZAPISUJE.
+#
+# `drive.readonly` stačilo, kým pipeline z Drive len čítala. Cache buildu tam
+# ale súbory ukladá aj maže (`workers/drive-cache.py`), a na to treba `drive`.
+# Menší zapisovací rozsah použiť nejde: `drive.file` vidí len súbory, ktoré
+# appka sama vytvorila – ani DMR 5.0 (ležalo tam dávno pred ňou), ani priečinok
+# cache, ktorý vznikol v prehliadači, by pod ním nebolo vidieť (`files.create`
+# by na neznámy `parents` vrátilo 404).
+SCOPE_READ = "https://www.googleapis.com/auth/drive.readonly"
+SCOPE_WRITE = "https://www.googleapis.com/auth/drive"
+# Čo `--login` pýta, keď sa nepovie inak. Predvolene ten širší: token bez
+# zápisu vyzerá rovnako a rozdiel sa ukáže až tým, že sa cache prestane
+# ukladať – a to je presne ten tichý omyl, čo sa hľadá týždeň.
+SCOPE = SCOPE_WRITE
+
+# Tokeninfo povie, aké rozsahy token NAOZAJ dostal. Lacná otázka (jedna
+# požiadavka), ktorá sa inak zodpovie až tým, že Drive odmietne zápis.
+TOKENINFO_PATH = "/tokeninfo?access_token="
 
 # Koľko pred vypršaním si token obnovíme. Access token platí hodinu, čítanie
 # blokov trvá aj dve – bez obnovy by beh spadol v polovici na 401.
@@ -141,7 +163,11 @@ def request_json(method, host, path, body=None, headers=None, tries=4):
             hdr = {"User-Agent": drive.UA, "Accept-Encoding": "identity",
                    **(headers or {})}
             if body is not None:
-                hdr["Content-Type"] = "application/x-www-form-urlencoded"
+                # `setdefault`, nie priradenie: volajúci, ktorý posiela JSON,
+                # si typ určil sám a prepísať mu ho na formulárový by znamenalo
+                # 400 od Google s hláškou o „invalid value".
+                hdr.setdefault("Content-Type",
+                               "application/x-www-form-urlencoded")
             conn.request(method, path, body=body, headers=hdr)
             resp = conn.getresponse()
             raw = resp.read()
@@ -187,24 +213,82 @@ def api_hint(status, data, creds, path):
                 f"ale API ho neobslúži. Zapni ho tu: {where} – a potom to spusti "
                 f"znova." + (f" Google k tomu píše: {detail}" if detail else ""))
     if reason in ("insufficientPermissions", "forbidden") and "scope" in detail.lower():
-        return (f"Token nemá rozsah {SCOPE} ({detail}). Vyrob ho znova – pri "
-                "prihlásení musí byť zaškrtnuté právo čítať Drive.")
+        return scope_hint(detail)
     return (f"Drive API vrátilo HTTP {status} na {path.split('?')[0]}: {reason}"
             + (f" – {detail}" if detail else ""))
 
 
-def api_get(creds, path):
-    """GET na Drive API s tokenom. Vracia dict; chybu prekladá do hlášky."""
-    status, data = request_json("GET", API_HOST, path,
-                                headers={"Authorization": "Bearer " + creds.token()})
+def scope_hint(detail=""):
+    """Hláška k „token na to nemá právo" – aj s tým, čo s ňou.
+
+    Rozsah sa do hotového tokenu dopísať nedá, je v ňom od prihlásenia. Preto
+    je odpoveď vždy tá istá: prihlásiť sa znova, tentoraz so zápisom.
+    """
+    return (f"Token nemá rozsah {SCOPE_WRITE}"
+            + (f" ({detail})" if detail else "")
+            + ". Readonly token vie DMR 5.0 čítať, ale cache na Drive "
+              "neuloží ani nepreriedi. Vyrob nový: workflow „Prihlásenie na "
+              "Drive (jednorazové)“, alebo `python3 workers/drive-auth.py "
+              "--login` (predvolene už pýta zápis) – a prepíš ten istý secret.")
+
+
+def api_call(creds, method, path, body=None, ctype="application/json"):
+    """Jedno volanie Drive API s tokenom. Vracia dict; chybu prekladá do hlášky.
+
+    Aj zápis a mazanie, nielen GET: keď má cache na Drive ukladať a prerieďovať,
+    musí to ísť tou istou cestou ako čítanie – s tou istou obnovou tokenu, tým
+    istým prekladom chýb a cez tie isté proxy. Dve miesta, ktoré s Drive
+    hovoria po svojom, sú dve rôzne hlášky na tú istú chybu.
+    """
+    raw = body if body is None else (
+        body if isinstance(body, bytes) else
+        (body if isinstance(body, str) else json.dumps(body)).encode("utf-8"))
+    head = {"Authorization": "Bearer " + creds.token()}
+    if raw is not None:
+        head["Content-Type"] = ctype
+    status, data = request_json(method, API_HOST, path, raw, head)
     if status == 401:
         # Token mohol vypršať práve teraz – skús ho raz vymeniť.
-        status, data = request_json(
-            "GET", API_HOST, path,
-            headers={"Authorization": "Bearer " + creds.renew(None)})
-    if status != 200:
+        head["Authorization"] = "Bearer " + creds.renew(None)
+        status, data = request_json(method, API_HOST, path, raw, head)
+    if status not in (200, 204):
         raise AuthError(api_hint(status, data, creds, path))
     return data
+
+
+def api_get(creds, path):
+    """GET na Drive API s tokenom. Vracia dict; chybu prekladá do hlášky."""
+    return api_call(creds, "GET", path)
+
+
+def api_delete(creds, file_id):
+    """Zmaž súbor na Drive. Použije to prerieďovanie cache."""
+    return api_call(creds, "DELETE",
+                    f"/drive/v3/files/{urllib.parse.quote(file_id)}"
+                    "?supportsAllDrives=true")
+
+
+def granted_scopes(creds):
+    """Rozsahy, ktoré token NAOZAJ dostal.
+
+    Jedna lacná požiadavka, ktorá odpovedá na otázku „vie tento token
+    zapisovať?" – inak sa odpoveď dozvieme až po hodine výpočtu, keď sa má
+    uložiť cache a Drive vráti 403.
+    """
+    status, data = request_json(
+        "GET", TOKEN_HOST, TOKENINFO_PATH + urllib.parse.quote(creds.token()))
+    if status != 200:
+        raise AuthError(f"tokeninfo vrátilo HTTP {status} "
+                        f"({data.get('error_description') or data.get('error') or ''})")
+    return (data.get("scope") or "").split()
+
+
+def can_write(creds):
+    """Vie tento token na Drive zapisovať? (None = nedá sa zistiť.)"""
+    try:
+        return SCOPE_WRITE in granted_scopes(creds)
+    except AuthError:
+        return None
 
 
 def api_reason(data):
@@ -296,7 +380,8 @@ def token_error(status, data, source):
                 "patria sem údaje toho web klienta, nie desktopového.")
     if reason == "invalid_scope":
         return (f"Rozsah práv {SCOPE} nie je pre tento OAuth projekt povolený "
-                "– skontroluj, či je v projekte zapnuté Google Drive API.")
+                "– skontroluj, či je v projekte zapnuté Google Drive API a či "
+                "je ten rozsah na OAuth consent screene medzi „Scopes“.")
     return (f"Obnova access tokenu z {source} zlyhala: {reason} {detail} "
             "(HTTP {status}). Nový token: "
             "`python3 workers/drive-auth.py --login`.").replace("{status}", str(status))
@@ -542,12 +627,22 @@ def describe(creds):
 
 # ---------- jednorazové prihlásenie ----------
 
-def auth_url(client_id, redirect_uri):
+def scope_of(name):
+    """Meno rozsahu z formulára → adresa rozsahu. Jedna odpoveď na jednom mieste."""
+    if name in ("citanie", "read", SCOPE_READ):
+        return SCOPE_READ
+    if name in ("", "zapis", "write", SCOPE_WRITE):
+        return SCOPE_WRITE
+    raise AuthError(f"Neznámy rozsah „{name}“ – čakám `zapis` (číta aj "
+                    f"ukladá cache) alebo `citanie` (len číta).")
+
+
+def auth_url(client_id, redirect_uri, scope=SCOPE):
     return AUTH_URL + "?" + urllib.parse.urlencode({
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": SCOPE,
+        "scope": scope,
         # `offline` + `consent` sú to, čo vyrobí refresh token. Bez `consent`
         # ho Google pri druhom prihlásení toho istého účtu už nepošle a z
         # `--login` vypadne JSON bez `refresh_token`.
@@ -626,7 +721,11 @@ def do_login(args):
 
     port = args.port or 8731
     redirect_uri = f"http://127.0.0.1:{port}"
-    url = auth_url(client_id, redirect_uri)
+    scope = scope_of(args.scope)
+    url = auth_url(client_id, redirect_uri, scope)
+    print(f"Rozsah práv: {scope}"
+          + ("  (číta DMR 5.0 aj ukladá cache)" if scope == SCOPE_WRITE
+             else "  (LEN ČÍTANIE – cache na Drive sa pod ním neuloží)"))
     print("Otvor v prehliadači (prihlás sa účtom, ktorý DMR 5.0 vlastní):\n")
     print("  " + url + "\n")
     print("Neoverenú appku preklikáš cez „Advanced → Go to … (unsafe)“.\n")
@@ -681,6 +780,14 @@ def do_check(args):
     print(f"Režim čítania z Drive: {describe(creds)}")
     print(f"  účet   {user.get('emailAddress')} ({user.get('displayName')})")
     print(f"  údaje  z {creds.source}")
+    # Rozsah patrí do každého výpisu „kto som": readonly token vyzerá úplne
+    # rovnako ako plný, kým sa niečo nemá uložiť.
+    write = can_write(creds)
+    print("  rozsah " + {True: "číta aj zapisuje (cache na Drive funguje)",
+                         False: "LEN ČÍTANIE – cache na Drive sa neuloží",
+                         None: "nedá sa zistiť (tokeninfo neodpovedalo)"}[write])
+    if write is False:
+        print(f"::warning::{scope_hint()}")
     bad = 0
     for file_id in args.file or []:
         try:
@@ -705,8 +812,8 @@ def do_check(args):
             # takže prihlásenie na ňom nič nezískalo – a nemá sa tváriť, že áno.
             print("::warning::Ten súbor tento účet nevlastní, len naň vidí. "
                   "Denný limit sťahovania sa tým neposunie – prihlás sa účtom "
-                  "vlastníka, alebo si nahraj vlastnú kópiu a prepíš "
-                  "TIF_ID/OVR_ID vo workers/dmr5-drive.py.")
+                  "vlastníka, alebo si nahraj vlastnú kópiu do priečinka "
+                  "z `FOLDER_ID` vo workers/dmr5-drive.py.")
     return 1 if bad else 0
 
 
@@ -719,6 +826,9 @@ def main():
                     help="pri --login: kód vložíš ručne (stroj bez prehliadača)")
     ap.add_argument("--client-id", default="")
     ap.add_argument("--client-secret", default="")
+    ap.add_argument("--scope", default="zapis", choices=("zapis", "citanie"),
+                    help="`zapis` (predvolené) číta DMR 5.0 aj ukladá cache "
+                         "na Drive; `citanie` je starý readonly rozsah")
     ap.add_argument("--port", type=int, default=0,
                     help="port loopbacku pri --login (predvolene 8731)")
     ap.add_argument("--auth-url", action="store_true",
@@ -745,7 +855,7 @@ def main():
         if args.auth_url:
             client_id, _secret, source = client_from_env()
             print(f"client_id z {source}", file=sys.stderr)
-            print(auth_url(client_id, redirect_uri))
+            print(auth_url(client_id, redirect_uri, scope_of(args.scope)))
             return 0
         if args.exchange:
             if not args.out:
