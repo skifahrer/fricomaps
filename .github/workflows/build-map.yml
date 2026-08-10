@@ -574,6 +574,7 @@ jobs:
       opt_custom_pbf_url: ${{ steps.opts.outputs.opt_custom_pbf_url }}
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
+      opt_publish: ${{ steps.opts.outputs.opt_publish }}
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
@@ -1895,6 +1896,7 @@ jobs:
         run: workers/build-site.sh
 
       - name: Skontroluj, že štýl odkazuje len na existujúce súbory
+        id: kontrola
         env:
           SPRITE: ${{ needs.assets.outputs.name }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
@@ -1920,6 +1922,48 @@ jobs:
           FEATURES: ${{ needs.features.outputs.enabled }}
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
         run: workers/smoke-test.sh
+
+      # ---------- hotová mapa na Drive ----------
+      # Celý `_site` ako jeden ZIP do priečinka `/krajina/kraj/výsek`, s menom,
+      # ktoré nesie výrez, zoom a KTORÉ vrstvy sú vnútri a z čoho (rozpis vo
+      # `workers/publish-map.py`). Vypína sa voľbou `publish=false`.
+      #
+      # Až ZA nasadením zámerne: mapa je vtedy na Pages už aj tak, takže keď
+      # Drive nepustí, nestratí sa nič – len to bude v logu červené a povie to
+      # aj súhrn behu, ktorý beží po tomto kroku (`if: always()`).
+      #
+      # PODMIENKA JE „PREŠLA KONTROLA", nie „všetko dobehlo". Publikuje sa
+      # každá mapa, ktorá prešla krokom vyššie (štýl odkazuje len na to, čo
+      # naozaj existuje) – aj keď potom zlyhalo nasadenie na Pages alebo smoke
+      # test, lebo tá mapa je v poriadku. Naopak mapa, ktorá kontrolou
+      # neprešla, sa na Drive nemá dostať vôbec: rozbitý ZIP v priečinku
+      # vyzerá presne ako dobrý.
+      #
+      # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
+      # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
+      # model by inak meno tvrdilo niečo iné, než v tej mape je.
+      - name: Publikuj mapu na Drive
+        if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
+        env:
+          AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
+          CONTOURS_SOURCE: ${{ needs.contours.outputs.dem_source }}
+          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CUSTOM_NAME: ${{ needs.plan.outputs.opt_custom_name }}
+          CUSTOM_PBF_URL: ${{ needs.plan.outputs.opt_custom_pbf_url }}
+          FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          ROCKS_ENABLED: ${{ needs.rocks.outputs.rocks_enabled || 'false' }}
+          ROCKS_SOURCE: ${{ needs.rocks.outputs.rock_source }}
+          TERRAIN_ENABLED: ${{ needs.terrain.outputs.enabled || 'false' }}
+          TERRAIN_SOURCE: ${{ needs.terrain.outputs.dem_source }}
+          TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
+          TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
+          TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+        run: |
+          set -euo pipefail
+          python3 workers/publish-map.py --site=_site \
+            --summary="$GITHUB_STEP_SUMMARY"
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
       # mieste v záložke Summary. Riadky si každý job odložil do svojho

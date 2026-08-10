@@ -1239,6 +1239,56 @@ Po nasadení si pipeline **sama overí, že mapa funguje**: `manifest.json`,
 `.pmtiles`, ktorý musí vrátiť **HTTP 206**. Keby hosting Range requesty
 nepodporoval, `.pmtiles` sa nedá čítať a mapa zostane prázdna.
 
+### `deploy` – hotová mapa ako ZIP na Google Drive
+
+Okrem Pages ide každá hotová mapa aj na Drive: celý `_site` (dlaždice, štýly,
+vrstevnice, skaly, tieňovanie, fonty, sprity) ako **jeden ZIP**. Robí to
+[`workers/publish-map.py`](../workers/publish-map.py) a vypína sa voľbou
+`publish=false`.
+
+**Priečinok hovorí, čoho sa mapa týka:**
+
+```
+<koreň>/slovensko/presovsky/vysoke_tatry/<mapa>.zip
+         krajina  kraj      výsek
+```
+
+Úrovne, ktoré nedávajú zmysel, sa vynechajú – build celej krajiny nemá kraj
+(`admin_level: 2` v [`regions.json`](../workers/regions.json), kde je aj nové
+pole `country`) a build celého kraja nemá výsek (`area_key: cely`). Čo chýba,
+sa vyrobí. Pri vlastnom PBF sa krajina vyčíta z odkazu na osm.fr
+(`…/extracts/europe/austria/…` → `austria`); keď sa to nedá, ide to do
+`ostatne` a nie do `slovensko`, kde nepatrí.
+
+**Meno nesie, čo v tej mape je** – do jedného priečinka padajú desiatky behov
+s rôznymi nastaveniami a `mapa.zip` o žiadnom z nich nehovorí nič:
+
+```
+presovsky-vysoke_tatry-test2km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-
+tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+```
+
+Teda: výrez, rýchly test a jeho veľkosť, zoom dlaždíc, **ktoré vrstvy sú
+vnútri a z čoho sú spočítané**, dátum, čas a číslo behu. Posledné tri robia
+meno jedinečným, takže sa dva behy nikdy neprepíšu.
+
+Tri veci na tom mene stoja za vysvetlenie:
+
+- **Vrstva, ktorá v mape nie je, sa píše tiež** (`bez_vrstevnic`, `bez_skal`,
+  `bez_tienovania`). Mlčanie by sa dalo čítať dvoma spôsobmi – „nie sú" aj
+  „zabudlo sa to dopísať".
+- **Zdroj je ten, ktorý sa NAOZAJ použil** (`…outputs.dem_source`), nie ten
+  z formulára. Pri prepnutí na náhradný model (`ugkk_fallback`) by inak meno
+  tvrdilo niečo iné, než v tej mape je – tá istá zásada ako `dem-source.txt`.
+- **Rýchly test to musí povedať** (`test2km2`). Mapa z neho vyzerá ako každá
+  iná, len jej väčšina chýba; meno je sľub o rozsahu.
+
+Publikuje sa **každá mapa, ktorá prešla kontrolou pred nasadením** – aj keď
+potom zlyhalo nasadenie na Pages alebo smoke test, lebo tá mapa je v poriadku.
+Naopak mapa, ktorá kontrolou neprešla, sa na Drive nedostane vôbec: rozbitý ZIP
+v priečinku vyzerá presne ako dobrý. A keď zlyhá samotné nahrávanie, nestratí
+sa nič – na Pages je mapa už nasadená, len bude krok červený.
+
 ### `deploy` – súhrn buildu
 
 Posledný krok napíše do záložky **Summary** prehľad celého behu. Beží

@@ -52,13 +52,11 @@ Použitie:
 import argparse
 import calendar
 import importlib.util
-import json
 import os
 import shutil
 import subprocess
 import sys
 import time
-import urllib.parse
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -92,14 +90,6 @@ FOLDER_ID = "15-Z37buVADUk9_-RMWAQp6arqqjPdRaV"
 ZSTD = ".tar.zst"
 GZIP = ".tar.gz"
 SUFFIXES = (ZSTD, GZIP)
-
-# Nahrávanie po blokoch. Google žiada násobok 256 KiB; 32 MiB je kompromis
-# medzi réžiou požiadavky a tým, o koľko sa vráti prerušené nahrávanie.
-CHUNK = 32 * 1024 * 1024
-
-UPLOAD_PATH = ("/upload/drive/v3/files?uploadType=resumable"
-               "&supportsAllDrives=true&fields=id,name,size")
-
 
 def human(n):
     return folder.human(n)
@@ -226,166 +216,6 @@ def unpack(src):
     log(f"  rozbalené za {time.time() - t0:.0f} s")
 
 
-# ---------- nahrávanie ----------
-
-def upload(creds, path, name, description, tries=4):
-    """Súbor na Drive cez „resumable upload". Vracia id.
-
-    PREČO RESUMABLE A NIE JEDNODUCHÝ POST. Záznamy majú stovky MB až jednotky
-    GB. Jednoduché nahranie je jedna požiadavka, ktorá sa pri prvom výpadku
-    siete celá zahodí; resumable sa Drive spýta „koľko si toho dostal" a
-    pokračuje odtiaľ. Tá istá logika ako `.part` súbory inde v pipeline: hodina
-    práce nesmie zmiznúť kvôli jednému stratenému spojeniu.
-    """
-    size = os.path.getsize(path)
-    meta = json.dumps({"name": name, "parents": [FOLDER_ID],
-                       # Celý kľúč nejde do `appProperties`: tie majú strop
-                       # 124 B na hodnotu a kľúče vrstevníc sú dlhšie.
-                       "description": description,
-                       "appProperties": {
-                           "repo": os.environ.get("GITHUB_REPOSITORY", ""),
-                           "run": os.environ.get("GITHUB_RUN_ID", "")}})
-
-    headers = _post_session(creds, meta, size)
-    loc = headers.get("Location")
-    if not loc:
-        raise RuntimeError("Drive nevrátil adresu nahrávania (Location)")
-    parts = urllib.parse.urlsplit(loc)
-    host = parts.netloc
-    upath = parts.path + (("?" + parts.query) if parts.query else "")
-
-    progress = folder.Progress(size)
-    sent = 0
-    attempt = 0
-    with open(path, "rb") as f:
-        while sent < size:
-            f.seek(sent)
-            body = f.read(min(CHUNK, size - sent))
-            end = sent + len(body) - 1
-            try:
-                status, headers, _ = _put_chunk(host, upath, body, sent, end,
-                                                size, creds)
-            except Exception as exc:                # noqa: BLE001
-                attempt += 1
-                if attempt >= tries:
-                    raise RuntimeError(
-                        f"Nahrávanie na Drive zlyhalo ani na {tries}. pokus "
-                        f"({exc}). Uložené je {human(sent)} z {human(size)}.")
-                time.sleep(min(2 ** attempt, 20))
-                # Koľko toho Drive naozaj má, vie len Drive – spýtaj sa ho,
-                # nedopočítavaj to. Keď neodpovie ani na to, skús ten istý
-                # blok znova: opakovaný blok Drive zahodí, chýbajúci nie.
-                try:
-                    sent = _uploaded(host, upath, size, creds)
-                except Exception as exc2:           # noqa: BLE001
-                    log(f"  (Drive nepovedal, koľko má: {exc2})")
-                continue
-            if status in (200, 201):
-                progress.add(len(body), name)
-                return json.loads(headers["_telo"] or b"{}").get("id", "")
-            if status == 308:
-                sent = _resume_from(headers, sent + len(body))
-                progress.add(len(body), name)
-                attempt = 0
-                continue
-            if status in (401, 403) and attempt < tries:
-                # Vypršaný token vymeň a skús ten istý blok znova.
-                attempt += 1
-                creds.renew(None)
-                continue
-            raise RuntimeError(_upload_error(status, headers))
-    raise RuntimeError("Drive nahrávanie neukončil – posledný blok nedostal "
-                       "odpoveď 200/201.")
-
-
-def _upload_error(status, headers):
-    body = headers.get("_telo") or b""
-    reason = drive.api_error(body) or f"HTTP {status}"
-    if status == 403 and ("insufficient" in str(reason).lower()
-                          or "insufficientPermissions" == reason):
-        return auth.scope_hint(str(reason))
-    if status == 403:
-        return (f"Drive odmietol zápis ({reason}). Najčastejšie je to plný "
-                f"disk účtu alebo právo len na čítanie priečinka cache "
-                f"({FOLDER_ID}).")
-    return f"Drive vrátil HTTP {status} pri nahrávaní ({reason})"
-
-
-def _request(host, method, path, body, headers, timeout=300):
-    """Jedna požiadavka; telo odpovede vracia v hlavičkách pod `_telo`.
-
-    Vlastná a nie `urllib` z toho istého dôvodu ako inde: runner nemá nič
-    doinštalované a proxy s vlastným CA rieši `drive.connect`.
-    """
-    conn = drive.connect(host, timeout=timeout)
-    try:
-        conn.request(method, path, body=body, headers=headers)
-        resp = conn.getresponse()
-        raw = resp.read()
-        head = dict(resp.headers)
-        head["_telo"] = raw
-        return resp.status, head, raw
-    finally:
-        try:
-            conn.close()
-        except Exception:                           # noqa: BLE001
-            pass
-
-
-def _post_session(creds, meta, size):
-    """Otvor nahrávaciu reláciu. Vracia hlavičky odpovede (v nich `Location`).
-
-    Na 401 sa token raz vymení a skúsi znova – vypršať mohol práve teraz a
-    zahodiť kvôli tomu celé nahrávanie by bolo drahé.
-    """
-    for pokus in range(2):
-        status, head, _ = _request(
-            auth.API_HOST, "POST", UPLOAD_PATH, meta.encode("utf-8"),
-            {"Authorization": "Bearer " + creds.token(),
-             "Content-Type": "application/json; charset=UTF-8",
-             "X-Upload-Content-Type": "application/octet-stream",
-             "X-Upload-Content-Length": str(size),
-             "User-Agent": drive.UA})
-        if status in (200, 201):
-            return head
-        if status == 401 and pokus == 0:
-            creds.renew(None)
-            continue
-        raise RuntimeError(_upload_error(status, head))
-    raise RuntimeError("Drive nezačal nahrávanie")
-
-
-def _put_chunk(host, path, body, start, end, size, creds):
-    return _request(host, "PUT", path, body,
-                    {"Authorization": "Bearer " + creds.token(),
-                     "Content-Range": f"bytes {start}-{end}/{size}",
-                     "Content-Length": str(len(body)),
-                     "User-Agent": drive.UA})
-
-
-def _uploaded(host, path, size, creds):
-    """Koľko bajtov už Drive z tohto nahrávania má."""
-    status, head, _ = _request(host, "PUT", path, b"",
-                               {"Authorization": "Bearer " + creds.token(),
-                                "Content-Range": f"bytes */{size}",
-                                "Content-Length": "0",
-                                "User-Agent": drive.UA})
-    if status in (200, 201):
-        return size
-    return _resume_from(head, 0)
-
-
-def _resume_from(headers, default):
-    """`Range: bytes=0-<n>` z odpovede 308 → odkiaľ pokračovať."""
-    rng = headers.get("Range") or ""
-    if "-" in rng:
-        try:
-            return int(rng.rsplit("-", 1)[1]) + 1
-        except ValueError:
-            pass
-    return default
-
-
 # ---------- sťahovanie ----------
 
 def download(creds, item, dest):
@@ -490,7 +320,7 @@ def do_save(args):
         pack(args.path, tmp)
         size = os.path.getsize(tmp)
         t0 = time.time()
-        upload(creds, tmp, name, args.key)
+        folder.upload(creds, tmp, name, FOLDER_ID, args.key)
         el = max(time.time() - t0, 1e-6)
         log(f"  nahraté {human(size)} za {el / 60:.1f} min "
             f"({size / el / 1e6:.1f} MB/s)")
