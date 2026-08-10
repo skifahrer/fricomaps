@@ -35,6 +35,45 @@ check() { # $1 = URL, $2 = očakávaný kód, $3 = popis, $4 = extra curl args
   fi
 }
 
+# NAJPRV: PODÁVA UŽ PAGES TOTO NASADENIE?
+#
+# `deploy-pages` skončí skôr, než Pages začne novú verziu naozaj podávať, a to
+# rozbíja kontroly dvomi spôsobmi naraz:
+#
+#   1. Falošný pád. Cesta, ktorá v predošlom nasadení NEBOLA – a meno štýlu
+#      nesie kľúč regiónu, takže pri zmene regiónu je nová vždy – vracia 404,
+#      kým sa nasadenie neprepne. Beh 31368710705 tak spadol na
+#      `styles/presovsky-svetla.json` (predtým sa nasadzoval `presovsky_test2`),
+#      hoci nasadenie bolo v poriadku: ten súbor je na webe dodnes.
+#   2. Falošné zelené. Cesty, ktoré sa medzi nasadeniami NEMENIA – manifest,
+#      sprity, `style-overrides.json` – vráti 200 aj to STARÉ nasadenie. Tie
+#      kontroly teda môžu prejsť na včerajších súboroch a nikto sa to nedozvie.
+#      V tom istom behu prešli za sekundu, kým nová cesta 75 sekúnd 404-kovala.
+#
+# Preto sa najprv počká, kým sa na webe objaví `built_at` z manifestu, ktorý
+# tento beh práve postavil. Až potom má zmysel čokoľvek kontrolovať.
+SITE_DIR="${SITE_DIR:-_site}"
+WANT=$(jq -r '.built_at // empty' "$SITE_DIR/tiles/manifest.json" 2>/dev/null)
+if [ -n "$WANT" ]; then
+  echo "Čakám, kým Pages začne podávať toto nasadenie (built_at=$WANT)"
+  live=""
+  for attempt in $(seq 1 30); do
+    live=$(curl -s "$BASE/tiles/manifest.json" | jq -r '.built_at // empty' 2>/dev/null)
+    [ "$live" = "$WANT" ] && break
+    [ $(( attempt % 3 )) -eq 0 ] && \
+      echo "  … $(( attempt * 10 )) s, na webe je zatiaľ built_at=${live:-nič}"
+    sleep 10
+  done
+  if [ "$live" = "$WANT" ]; then
+    echo "  ✓ Pages podávajú toto nasadenie"
+  else
+    echo "::error::Pages ani po piatich minútach nepodávajú toto nasadenie (na webe built_at=${live:-nič}, čakalo sa $WANT). Kontroly nižšie by preverili staré súbory, tak sa nespúšťajú – pozri stav nasadenia v Settings → Pages."
+    exit 1
+  fi
+else
+  echo "::warning::$SITE_DIR/tiles/manifest.json nemám, tak sa nedá počkať na prepnutie nasadenia – kontroly nižšie môžu preverovať staré súbory."
+fi
+
 echo "Kontrolujem $BASE"
 check "$BASE/tiles/manifest.json" 200 "manifest.json"
 check "$BASE/sprites/$SPRITE.json" 200 "sprite index"
