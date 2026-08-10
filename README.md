@@ -198,8 +198,9 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → gdal_contour -i 10
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
                a `-simplify` zmaže schodíky po hranách buniek DEM
+               (tolerancia: polovica bunky)
   → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
-                      (Chaikin, 1 prechod)
+                      (Chaikin, 2 prechody)
   → planetiler generate-custom --schema=workers/contours.yml
   → {región}-contours.pmtiles
 ```
@@ -207,14 +208,35 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
 **Zubatosť nerobí raster, robí ju zjednodušenie – a to isté platí pri
 skalách.** Vrstevnica je izolínia nad rastrom, čiže chodí po hranách buniek:
 pri 1 m DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, takže
-tie schodíky vidno. `-simplify` ich zmaže (tolerancia je štvrtina bunky DEM,
-takže sa čiara neposunie o viac než štvrtinu toho, z čoho vznikla), po ňom ale
-ostanú **ostré rohy** – a tie zaobli Chaikinovo orezávanie rohov. Jeden
-prechod, nie dva ako pri skalách: na čiare bez výplne sa roh vidí menej a
-každý prechod zdvojnásobí počet bodov, kým vrstevníc je rádovo viac než skál.
-Ovláda to `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:` build-map.yml
-(`CONTOUR_SMOOTH: 0` = vypnuté, `CONTOUR_SIMPLIFY` v metroch, `-1` = štvrtina
-bunky, `0` = presná čiara).
+tie schodíky vidno. `-simplify` ich zmaže, po ňom ale ostanú **ostré rohy** –
+a tie zaobli Chaikinovo orezávanie rohov. Merané na schodíkovej vrstevnici nad
+rastrom (oblúk okolo žľabu, bunka = 1):
+
+| nastavenie | bodov | priemerný lom | lomov > 60° | odchýlka od skutočnej izolínie |
+|---|--:|--:|--:|--:|
+| surová izolínia (schodíky) | 388 | 46,9° | 52,1 % | 0,72 bunky |
+| 1/4 bunky, bez zaoblenia | 203 | 90,0° | 100 % | 0,72 bunky |
+| 1/4 bunky + 1× Chaikin | 406 | 44,8° | 17,8 % | 0,58 bunky |
+| **1/2 bunky + 2× Chaikin (default)** | **692** | **21,2°** | **0,7 %** | **0,58 bunky** |
+| 1/2 bunky + 3× Chaikin | 1384 | 10,6° | 0,2 % | 0,58 bunky |
+| 3/4 bunky + 2× Chaikin | 180 | 16,3° | 1,1 % | **1,29 bunky** ← odlieplo sa |
+
+Čítať sa to dá takto: **jeden prechod nestačil** – zmazal pravé uhly, ale
+priemerný lom nechal na 44,8° a každý šiesty bol nad 60°, čo na čiare pri max
+zoome vidno. Dva prechody s väčším zjednodušením dajú 21,2° a takmer žiadny
+ostrý roh, pričom bodov je len 1,7× oproti predchádzajúcemu nastaveniu – väčší
+`-simplify` ich vyváži späť. Tretí prechod je dvojnásobok bodov za rohy, ktoré
+už ostré nie sú. A viac než polovica bunky sa nedá: pri 3/4 sa čiara začne
+odliepať od terénu.
+
+Za povšimnutie stojí posledný stĺpec: zaoblená čiara sedí na terén **lepšie**
+než surová izolínia (0,58 oproti 0,72 bunky), lebo Chaikin reže práve tie
+schodíky, ktoré do terénu nepatria.
+
+Ovláda to `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:` build-map.yml:
+záporné číslo = koľko **štvrtín** bunky DEM (`-2` = polovica), `0` = presná
+čiara, kladné číslo = tolerancia v metroch; `CONTOUR_SMOOTH: 0` zaoblenie
+vypne.
 
 Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
 najvyššom zoome bez zjednodušovania geometrie

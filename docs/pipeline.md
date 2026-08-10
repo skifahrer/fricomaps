@@ -508,9 +508,9 @@ DEM dlaždice 1°×1° pre bbox (N49E019.tif)
   │    gdalwarp       … oreže na bbox (voliteľne zjemní, viď nižšie)
   │    gdal_contour   … vytrasuje izolínie po `contour_interval` metroch
   │    ogr2ogr        … dopočíta atribút `level`, `-simplify` zmaže
-  │                     schodíky po hranách buniek DEM
+  │                     schodíky po hranách buniek DEM (polovica bunky)
   │    smooth-shapes.py … zaoblí rohy, čo po zjednodušení ostali ostré
-  │                     (Chaikin, 1 prechod)
+  │                     (Chaikin, 2 prechody)
   │
   ├─ skaly ──────────────────────────────────────────────────
   │    workers/slope-chunks.py
@@ -638,19 +638,44 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   schodíky vidno. Postup je preto ten istý ako pri obryse skaly a v tomto
   poradí:
 
-  1. `-simplify` s toleranciou **štvrtiny bunky DEM** (`CONTOUR_SIMPLIFY: -1`)
-     – zmaže schodíky, ale čiaru neposunie o viac než štvrtinu toho, z čoho
-     vznikla. `0` to vypne, kladné číslo je tolerancia v metroch (prepočíta
-     sa na stupne na šírke výrezu, lebo vrstva je v EPSG:4326).
-  2. **1× Chaikin** (`CONTOUR_SMOOTH: 1`, `workers/smooth-shapes.py`) na rohy,
+  1. `-simplify` s toleranciou **polovice bunky DEM** (`CONTOUR_SIMPLIFY: -2`;
+     záporné číslo je počet ŠTVRTÍN bunky, takže `-1` je štvrtina). `0` to
+     vypne, kladné číslo je tolerancia v metroch. Prepočet stupňov a metrov
+     berie **dlhší** z dvoch stupňov – ten po šírke (110 540 m oproti ~73 000
+     po dĺžke) – a to v oboch smeroch: tolerancia zadaná v metroch tak na zemi
+     nikdy nevyjde väčšia, než sa žiadalo, a číslo v logu je najväčšia možná
+     hodnota, nie najmenšia.
+  2. **2× Chaikin** (`CONTOUR_SMOOTH: 2`, `workers/smooth-shapes.py`) na rohy,
      ktoré po zjednodušení ostali ostré.
 
   Opačné poradie nefunguje: Chaikin by zaoblil každý schodík zvlášť, bodov by
   pribudlo a čiara by bola stále schodíková, len s oblými schodmi.
 
-  **Jeden prechod, nie dva ako pri skalách.** Na čiare bez výplne sa roh vidí
-  menej než na hrane plochy, každý prechod zdvojnásobí počet bodov a vrstevníc
-  je rádovo viac než skál – takže druhý prechod je hlavne veľkosť dlaždíc.
+  **Koľko zaoblenia stačí – merané** na schodíkovej vrstevnici nad rastrom
+  (oblúk okolo žľabu, bunka = 1):
+
+  | nastavenie | bodov | priemerný lom | > 60° | odchýlka od izolínie |
+  |---|--:|--:|--:|--:|
+  | surová izolínia (schodíky) | 388 | 46,9° | 52,1 % | 0,72 bunky |
+  | 1/4 bunky, bez zaoblenia | 203 | 90,0° | 100 % | 0,72 bunky |
+  | 1/4 bunky + 1× Chaikin | 406 | 44,8° | 17,8 % | 0,58 bunky |
+  | **1/2 bunky + 2× Chaikin** | **692** | **21,2°** | **0,7 %** | **0,58 bunky** |
+  | 1/2 bunky + 3× Chaikin | 1384 | 10,6° | 0,2 % | 0,58 bunky |
+  | 3/4 bunky + 2× Chaikin | 180 | 16,3° | 1,1 % | **1,29 bunky** |
+
+  Jeden prechod nestačil: zmazal pravé uhly, ale priemerný lom nechal na 44,8°
+  a každý šiesty bol nad 60°, čo na čiare pri max zoome vidno. Dva prechody
+  s väčším zjednodušením dajú 21,2° a takmer žiadny ostrý roh, pričom bodov je
+  len **1,7×** oproti jednému prechodu so štvrtinovou toleranciou – väčší
+  `-simplify` ich vyváži späť. Tretí prechod je dvojnásobok bodov za rohy,
+  ktoré už ostré nie sú (0,7 % → 0,2 %). A nad polovicu bunky sa nedá ísť: pri
+  3/4 sa čiara odlepí od terénu (posledný riadok).
+
+  Posledný stĺpec je pritom to hlavné: zaoblená čiara sedí na terén **lepšie**
+  než surová izolínia (0,58 oproti 0,72 bunky), lebo Chaikin reže práve tie
+  schodíky, ktoré do terénu nepatria. Zaoblenie teda nie je kozmetika na úkor
+  presnosti.
+
   Konce otvorenej čiary sa **neorezávajú**: sú to konce, nie rohy, a keby sa
   orezali, dva kusy tej istej vrstevnice by na hranici dlaždice prestali na
   seba sadnúť. Uzavretá vrstevnica (vrchol, kotlina) sa pozná podľa toho, že
