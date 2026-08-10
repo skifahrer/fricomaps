@@ -47,6 +47,42 @@ if [ "$BUDGET_MB" -lt 50 ]; then
 fi
 LIMIT=$(( BUDGET_MB * 1024 * 1024 ))
 
+# ZDROJE PLANETILERU SA SŤAHUJÚ VLASTNÝM KROKOM A S OPAKOVANÍM.
+#
+# Sú tri (lake_centerlines, water_polygons, natural_earth), dokopy ~515 MB,
+# a idú z CUDZÍCH serverov. Kým sedeli v cache, nesťahoval ich nikto; prvý beh
+# po presťahovaní cache na Drive ju mal prázdnu a spadol desať sekúnd po štarte
+# na `Error getting size of …water-polygons-split-3857.zip` (TimeoutException,
+# beh 31367295712) – teda ešte pred akoukoľvek prácou, a zhodilo to celý job.
+#
+# Planetiler má vlastné opakovanie (`http_retries`), ale to nepomôže, keď sa
+# server nedovolá už pri zisťovaní veľkosti. Preto sa sťahuje zvlášť
+# (`--only-download`, teda bez tilovania), s dlhším limitom a v slučke: cudzí
+# server, ktorý má výpadok na pár desiatok sekúnd, nemá právo zhodiť
+# štyridsaťminútový build. Samotné tilovanie potom už len nájde súbory na disku.
+DL_TRIES=3
+for i in $(seq 1 "$DL_TRIES"); do
+  echo "::group::Zdroje Planetileru (pokus $i z $DL_TRIES)"
+  if java -Xmx2g -jar planetiler.jar \
+      --osm-path=data/region.osm.pbf \
+      --download --only-download --download-dir=data/sources \
+      --http_timeout=120s --http_retries=10 --http_retry_wait=10s; then
+    echo "::endgroup::"
+    DL_OK=1
+    break
+  fi
+  echo "::endgroup::"
+  if [ "$i" -lt "$DL_TRIES" ]; then
+    echo "::warning::Zdroje Planetileru sa nestiahli (pokus $i z $DL_TRIES) – skúšam znova o $(( i * 30 )) s."
+    sleep $(( i * 30 ))
+  fi
+done
+if [ -z "${DL_OK:-}" ]; then
+  echo "::error::Zdrojové dáta Planetileru (water polygons, Natural Earth, lake centerlines) sa nepodarilo stiahnuť ani na $DL_TRIES pokusov. Najčastejšie je nedostupný https://osmdata.openstreetmap.de – skús beh o chvíľu zopakovať. Keď to potrvá, podaj Planetileru zrkadlo cez --water_polygons_url."
+  exit 1
+fi
+du -sh data/sources 2>/dev/null || true
+
 Z=$MAXZOOM
 while : ; do
   echo "::group::Planetiler – maxzoom $Z"
@@ -62,6 +98,7 @@ while : ; do
     --transportation_z13_paths=true \
     --building_merge_z13=false \
     --languages=sk,en \
+    --http_timeout=120s --http_retries=10 --http_retry_wait=10s \
     --force
   echo "::endgroup::"
 

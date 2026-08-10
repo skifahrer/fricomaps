@@ -467,6 +467,14 @@ def _uprac(tmp):
 
 def do_save(args):
     creds = creds_or_die("ukladá sa cache")
+    # ROZSAH SA PÝTA PRED BALENÍM, nie až pri nahrávaní. Readonly token
+    # `files.create` nepustí, takže by sa najprv zbytočne zabalilo pol giga
+    # (`planetiler-sources-v1` je 515 MB) a padlo by to až potom – v každom
+    # jednom kroku každého jobu. Jedna lacná otázka to skráti na sekundu
+    # a hláška je tá istá.
+    if auth.can_write(creds) is False:
+        raise SystemExit(f"::error::Uloženie cache `{args.key}` na Drive sa "
+                         f"ani neskúšalo: {auth.scope_hint()}")
     items = entries(creds)
     hit, exact = find(items, args.key, [])
     if exact:
