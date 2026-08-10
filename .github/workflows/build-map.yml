@@ -216,43 +216,47 @@ env:
   # nižšie ju len zaokrúhlia. `gdal_contour` interpoluje priesečník na hrane
   # bunky, takže z hladkého poľa výšok vyjde hladká čiara aj bez úprav – čo ju
   # krčí, je mikroreliéf v LiDARovom DTM (kry, balvany, šum na decimetroch).
-  # Namerané na simulovanom teréne (1 m mriežka, šum σ = 0,15 m, interval 5 m;
-  # „odchýlka" je vzdialenosť od izolínie toho istého terénu bez šumu):
   #
-  #   z DEM so šumom, bez úprav               192 b., lom 24,4°, >30° 33,2 %, 0,55 m
-  #   + simplify a 2× Chaikin                 184 b., lom 11,9°, >30°  4,9 %, 0,55 m
-  #   vyhladený DEM 5×5 + simplify + Chaikin  100 b., lom  3,2°, >30°  0,0 %, 0,37 m
+  # LENŽE V TOM OKNE NIE JE LEN ŠUM. Okno 5×5 zmazalo aj tvary, ktoré v teréne
+  # naozaj sú – rebro, žľab, terasu širokú pár metrov – a z toho boli tie
+  # priveľmi oblé vrstevnice. Merané na simulovanom teréne, ktorý má okrem šumu
+  # (σ = 0,15 m na 1 m mriežke) aj reálne tvary s vlnovou dĺžkou 60 / 25 / 12 m;
+  # posledné dva stĺpce sú, koľko z tvaru na čiare ostalo:
   #
-  # Zaoblenie zrazí lomy, ale odchýlka ostane – čiara je oblá a stále vedie
-  # inokade. Vyhladenie DEM zrazí oboje a k tomu ubudne bodov, čiže menšie
-  # dlaždice. Podrobne vo `workers/contours-build.sh`.
+  #   okno 5×5, 1/2 bunky, 2× Chaikin (doteraz)  436 b., lom 10,6°, 1,52 m, 75 %, 27 %
+  #   okno 3×3, 1/4 bunky, 2× Chaikin (teraz)    860 b., lom  8,2°, 0,70 m, 93 %, 63 %
+  #   okno 7×7, 1/2 bunky, 2× Chaikin            336 b., lom 10,8°, 2,23 m, 58 %,  5 %
   #
-  # V METROCH, nie v bunkách – preto sa to smie zapnúť predvolene: 5 m je na
-  # 1 m LiDARe okno 5×5, na 5 m dlaždiciach DMR 5.0 aj na Sonnyho 20 m vyjde
-  # nula. Hrubý model mikroreliéf neobsahuje (je v ňom spriemerovaný už zo
-  # zdroja) a „5×5 buniek" by v ňom zmazalo sto metrov terénu. 0 = vypnuté.
-  CONTOUR_DEM_LOWPASS: "5"
+  # Menšie okno teda nie je ústupok: odchýlka od skutočnej izolínie klesla
+  # z 1,52 na 0,70 m a lomy sú MENŠIE než predtým. Platí sa bodmi (2×).
+  # Podrobne vo `workers/contours-build.sh`.
+  #
+  # V METROCH, nie v bunkách – preto sa to smie zapnúť predvolene. Okno je
+  # vždy nepárny násobok bunky, takže „2" je na 1 m LiDARe okno 3×3, kým na
+  # 5 m dlaždiciach DMR 5.0 aj na Sonnyho 20 m vyjde jedna bunka a nehladí sa
+  # nič. Hrubý model mikroreliéf neobsahuje (je v ňom spriemerovaný už zo
+  # zdroja) a okno „3×3 buniek" by v ňom zmazalo desiatky metrov terénu.
+  # 0 = vypnuté.
+  CONTOUR_DEM_LOWPASS: "2"
   # Záporné číslo = koľko ŠTVRTÍN bunky DEM (tolerancia sa počíta z orezaného
   # rastra, nie z konštanty – model má raz 1 m a raz 20 m). 0 = vypnuté,
   # kladné číslo sa berie v metroch.
   #
-  # -2, teda polovica bunky. Nad polovicou sa čiara začína odliepať od
-  # terénu: pri 3/4 bunky vyskočí odchýlka od skutočnej izolínie zo 0,58 na
-  # 1,29 bunky.
-  CONTOUR_SIMPLIFY: "-2"
-  # Koľkokrát zaobliť (Chaikin). Dva prechody, rovnako ako pri skalách –
-  # jeden zmazal pravé uhly, ale priemerný lom nechal na 44,8° a každý šiesty
-  # bol nad 60°, čo na čiare pri max zoome vidno. Merané na schodíkovej
-  # vrstevnici nad rastrom (podrobne v contours-build.sh):
+  # -1, teda štvrtina bunky. Polovica bunky odrezáva to isté, čo priveľké okno
+  # vyššie: dlhé segmenty po nej dávajú Chaikinovi veľké rohy na orezanie,
+  # takže sa spolu s nimi zaoblí aj tvar terénu (12 m tvar prežil na 52 %
+  # namiesto 63 %, odchýlka 0,95 namiesto 0,70 m).
+  CONTOUR_SIMPLIFY: "-1"
+  # Koľkokrát zaobliť (Chaikin). ZOSTÁVA NA DVOCH – zaoblenie rohov NIE JE to,
+  # čo vrstevnice zaobľovalo priveľmi. Chaikin nad krátkymi segmentmi (1/4
+  # bunky) reže rohy dlhé štvrtinu segmentu, takže z tvaru terénu ubral 2
+  # percentuálne body, kým vyhladenie DEM ich brávalo desiatky:
   #
-  #   surová izolínia                  388 bodov, lom 46,9°, >60° 52,1 %
-  #   1/4 bunky + 1× Chaikin (doteraz)  406 bodov, lom 44,8°, >60° 17,8 %
-  #   1/2 bunky + 2× Chaikin (teraz)    692 bodov, lom 21,2°, >60°  0,7 %
+  #   okno 3×3, 1/4 bunky, 1× Chaikin  430 b., lom 16,5°, >30° 16,8 %, tvar 65 %
+  #   okno 3×3, 1/4 bunky, 2× Chaikin  860 b., lom  8,2°, >30°  1,6 %, tvar 63 %
   #
-  # Bodov je 1,7× oproti doterajšiemu nastaveniu (nie 4×, lebo väčšie
-  # zjednodušenie ich vyváži) a čiara sedí na terén LEPŠIE než surová.
-  # Tretí prechod je dvojnásobok bodov za 0,7 % → 0,2 %, tak sa nerobí.
-  # 0 = vypnuté.
+  # Jeden prechod nechá každý šiesty lom nad 30° – to je presne tá zubatosť,
+  # ktorú na čiare pri max zoome vidno. 0 = vypnuté.
   CONTOUR_SMOOTH: "2"
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
@@ -949,6 +953,9 @@ jobs:
           # zjednodušuje a zaobľuje, takže jeho zmena mení obsah dlaždíc.
           # Kým v ňom nebol, dala sa zmeniť tolerancia a beh vrátil z cache
           # staré, zubaté vrstevnice – zelený a tichý (pravidlo 8).
+          # Otlačok ale vidí len súbory, a ladenie hladkosti (CONTOUR_DEM_LOWPASS,
+          # CONTOUR_SIMPLIFY, CONTOUR_SMOOTH) je v `env:` tohto workflowu –
+          # tie sú preto v kľúči zvlášť, viď `workers/cache-keys.sh`.
           SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-shapes.py', 'workers/contours-build.sh') }}
         run: workers/cache-keys.sh
 
