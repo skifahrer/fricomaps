@@ -555,6 +555,14 @@ jobs:
       # Rozpis: `workers/lint/layout.py`.
       - name: Workery ležia v priečinku podľa jobu
         run: python3 workers/lint/layout.py
+
+      # A cesta MEDZI workermi musí ukazovať na existujúci súbor – aj tá, ktorú
+      # si skript skladá až za behu (`$HERE/…`). Práve tá prežila presun do
+      # priečinkov: prepísali sa cesty napísané celé, `$HERE/…` nie, a beh
+      # 31412152523 spadol na štyroch joboch naraz. `bash -n` vidí syntax, nie
+      # cesty. Rozpis: `workers/lint/worker-paths.py`.
+      - name: Cesty medzi workermi ukazujú na existujúce súbory
+        run: python3 workers/lint/worker-paths.py
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
       # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
       # tomto sa dá po rozdelení na joby ticho pomýliť.

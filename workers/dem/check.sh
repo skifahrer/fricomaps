@@ -52,7 +52,13 @@
 # kľúča výrezu (`ugkk-vysoke_tatry.tif`), a to meno vie povedať `dem-target.py`.
 set -euo pipefail
 
+# Cesty k susedom sa skladajú z vlastného priečinka: `$HERE` je
+# `workers/dem`, `$WORKERS` je `workers`. Kým boli workery na jednej
+# kope, stačilo `$HERE/dem-target.py`; po presune do priečinkov podľa
+# jobu z toho bolo `workers/dem/dem-target.py` a beh spadol až na
+# runneri (beh 31412152523) – doma to nikto nespustí.
 HERE="$(dirname "$0")"
+WORKERS="$(dirname "$HERE")"
 BBOX="${BBOX:-}"
 AREA_KEY="${AREA_KEY:-cely}"
 # Bbox výrezu, už pretnutý s regiónom (počíta ho `resolve-area.py` v príprave).
@@ -82,7 +88,7 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
   local what="$1" src="$2" akey rel assets names need=false
   local form target want mirror degrees
   akey=$(layer_area_key "$what")
-  target=$(python3 "$HERE/dem-target.py" --source="$src" \
+  target=$(python3 "$HERE/target.py" --source="$src" \
     --area-key="$akey" --bbox="$BBOX")
   tget() { printf '%s\n' "$target" | sed -n "s/^$1=//p" | head -1; }
   form=$(tget form); rel=$(tget store); want=$(tget assets)
@@ -92,7 +98,7 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
   # Dva dopyty na to isté by sa len rozišli. `|| true` vnútri zátvoriek: keď
   # sa sklad ešte nezaložil, skript skončí nenulovo a `pipefail` by zhodil
   # celý krok.
-  assets=$({ python3 "$HERE/drive-store.py" --index --store="$rel" \
+  assets=$({ python3 "$WORKERS/drive/store.py" --index --store="$rel" \
     2>/dev/null || true; } | sort)
   names=$(printf '%s\n' "$assets" | cut -d: -f1)
 

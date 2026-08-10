@@ -50,12 +50,16 @@ STEPS_TSV="${3:-}"
 SOURCE="${4:-sonny}"
 AREA_KEY="${5:-cely}"
 T0=$(date +%s)
-STORE_PY="$(dirname "$0")/drive-store.py"
+# `$HERE` je `workers/dem`, `$WORKERS` je `workers` – sklad je
+# v susednom priečinku, `target.py` vedľa tohto skriptu.
+HERE="$(dirname "$0")"
+WORKERS="$(dirname "$HERE")"
+STORE_PY="$WORKERS/drive/store.py"
 
 # Čo sa má stiahnuť, povie jediný zdroj pravdy – ten istý, z ktorého sa pýta
 # aj `check-dem`. Sem prídu hotové mená a sklad; vetvenie „ktorá podoba
 # DMR 5.0" tu už nie je.
-TARGET=$(python3 "$(dirname "$0")/dem-target.py" \
+TARGET=$(python3 "$HERE/target.py" \
   --source="$SOURCE" --area-key="$AREA_KEY" --bbox="$BBOX")
 get() { printf '%s\n' "$TARGET" | sed -n "s/^$1=//p" | head -1; }
 FORM=$(get form)
@@ -133,7 +137,7 @@ if [ "$have" -eq 0 ]; then
     # Keď tu aj tak nič nie je, ten job buď nebežal (kontrola sa rozišla
     # s týmto skriptom – pozri dem-target.py), alebo spadol.
     echo "Doplniť ich mal job 'Doplniť DMR 5.0 (dlaždice)' – pozri jeho log."
-    echo "Ručne: workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$(dirname "$0")/dem-target.py" --source=dmr5 --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m."
+    echo "Ručne: workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$HERE/target.py" --source=dmr5 --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m."
   else
     echo "Spusti workflow 'Stiahnuť výškové dáta' so zdrojom, ktorý toto územie pokrýva."
   fi
