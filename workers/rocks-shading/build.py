@@ -399,9 +399,15 @@ def main():
     ap.add_argument("--log-every", type=int, default=25,
                     help="po koľkých dlaždiciach vypísať riadok "
                          "(1 = každá, 0 = len každých 15 s)")
-    ap.add_argument("--budget-min", type=float, default=100,
+    # 0 = BEZ STROPU, a to je predvolené. Strop tu robil dve veci naraz:
+    # zhora obmedzoval, aký zoom si `auto` vyberie, a v polovici obrysov
+    # beh zastavil s `TimeoutError`. To druhé nezachránilo nikdy nič –
+    # rozrobené bloky sa síce odkladajú, ale beh skončil chybou namiesto
+    # toho, aby dopočítal zvyšok. Kto strop chce, podá `budget_min=…`.
+    ap.add_argument("--budget-min", type=float, default=0,
                     help="koľko minút smú trvať obrysy; `auto` pod to zíde "
-                         "sám a beh sa nad tým zastaví (0 = bez stropu)")
+                         "sám a beh sa nad tým zastaví (0 = bez stropu, "
+                         "predvolené)")
     ap.add_argument("--dark", type=int, default=125,
                     help="absolútny strop: nad touto šedou nie je skala nikdy")
     ap.add_argument("--dark-always", type=int, default=70,

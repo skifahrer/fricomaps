@@ -131,7 +131,7 @@ on:
       #   zapln_diery=1    zaplniť diery (zožerie detail – viď hlavičku)
       #   zlepit=1         zlepiť plochy na hraniciach blokov
       #   log_every=1      riadok na každú dlaždicu
-      #   budget_min=150   viac času na obrysy
+      #   budget_min=150   zastaviť obrysy po 150 min (0 = bez stropu, predvolené)
       #   fresh=1          nepokračovať v rozrobenom
       #   block_tiles=3    menšie bloky pri obrysoch
       # Celý zoznam je vo workers/rocks-shading/build.py; neznámy kľúč je chyba.
@@ -263,7 +263,6 @@ jobs:
   dlazdice:
     name: Stiahnuť dlaždice
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     outputs:
       key: ${{ steps.area.outputs.key }}
       name: ${{ steps.area.outputs.name }}
@@ -383,7 +382,6 @@ jobs:
     name: Obrysy po blokoch
     needs: dlazdice
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -477,7 +475,6 @@ jobs:
     name: Skaly z tieňovania
     needs: [dlazdice, vektor]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     outputs:
       asset: ${{ steps.rocks.outputs.asset }}
       count: ${{ steps.rocks.outputs.count }}

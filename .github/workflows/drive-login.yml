@@ -79,7 +79,6 @@ jobs:
   login:
     name: Refresh token vlastníka Drive
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     env:
       DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}

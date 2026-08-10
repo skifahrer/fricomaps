@@ -222,7 +222,6 @@ jobs:
   model:
     name: Výškový model z Drive
     runs-on: ubuntu-latest
-    timeout-minutes: 350
     # ROZDELENÉ NA KROKY, KTORÝCH JE ČO NAJVIAC. Kým to boli tri („Nastavenia",
     # „Vyrež model", „Nahraj do releasu"), bol z hodinového behu v Actions
     # jeden riadok bez konca a z padnutého behu sa nedalo povedať, či nesedelo

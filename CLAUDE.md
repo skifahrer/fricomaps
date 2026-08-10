@@ -114,7 +114,11 @@ počas nej **postup** – `[7/12] … zostáva ~5 min` – a na konci namerané 
 oproti odhadu. Odhady rob z merania a to meranie napíš do komentára.
 
 **5. Rozdeľuj joby, kroky a súbory.** Strop času platí na job, takže dlhé fázy
-majú byť každá vo svojom. V rámci jobu radšej viac malých krokov než jeden
+majú byť každá vo svojom – a platí to aj bez `timeout-minutes`: tie sme
+zrušili (zabíjali prácu, ktorá by bola dobehla, a drahé fázy sa nedajú
+prerušiť a nadviazať), ale GitHub dáva jobu najviac **360 minút** a to sa
+vypnúť nedá. Prácu stráži sklad (`.part` + premenovanie), strop pamäte
+a plán s odhadom, nie budík. V rámci jobu radšej viac malých krokov než jeden
 veľký: z mena kroku, ktorý spadol, má byť hneď vidieť, či nesedelo zadanie,
 zlyhala sieť, došlo miesto na disku alebo upload.
 

@@ -350,6 +350,26 @@ env:
   BUDGET_FEATURES_PCT: "4"
   BUDGET_ASSETS_MB: "40"
 
+# ŽIADNY JOB TU NEMÁ `timeout-minutes` A JE TO ZÁMER.
+#
+# Boli tu (30 až 350 minút) a nezachránili nič – zabíjali prácu, ktorá by bola
+# dobehla. Drahé fázy sa nedajú prerušiť a nadviazať: vektorizácia skál je
+# jeden priechod nad celou mozaikou, takže zabitý `gdal_contour` nenechá ani
+# neúplný výsledok. Timeout teda neznamenal „skonči skôr a máš aspoň niečo",
+# ale „zahoď hodinu a pol a začni odznova".
+#
+# Čo prácu stráži namiesto toho:
+#   * sklad – sklon, bloky obrysov aj dlaždice sa zapisujú cez `.part`
+#     a premenovanie, takže zrušený beh nezahodí hotové a ďalší dopočíta zvyšok,
+#   * strop PAMÄTE (`ROCK_MAX_RSS_GB`) – OOM zabije runner a v logu nie je nič,
+#     tak sa radšej zastaví s hláškou,
+#   * plán s odhadom pred drahou časťou a tep počas nej (pravidlo 4), aby sa
+#     dalo zasiahnuť skôr, než sa minie celý rozpočet.
+#
+# ÚPLNE BEZ STROPU TO NIE JE A ANI BYŤ NEMÔŽE: GitHub dáva jobu na hostenom
+# runneri najviac 360 minút a to sa vypnúť nedá. Bez `timeout-minutes` teda
+# platí práve tých 360. Preto stále platí pravidlo 5 – dlhé fázy patria každá
+# do svojho jobu, lebo tých 360 minút sa počíta na job, nie na beh.
 jobs:
   # ---------- je v sklade terén pre toto územie? ----------
   # Iný zdroj výšok nemáme (Copernicus je zámerne vypnutý), takže bez dlaždíc
@@ -577,7 +597,6 @@ jobs:
   plan:
     name: Príprava (región, kľúče, PBF)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     permissions:
       contents: read
       # `write` a nie `read`: príprava Pages nielen kontroluje, ale aj zapína
@@ -907,7 +926,6 @@ jobs:
             mirror-dmr5-area, mirror-dmr5-tiles]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     permissions:
       # `actions: write` tu bolo na mazanie GitHub cache. Cache je na Drive,
       # takže sa maže tokenom vlastníka z `env:` workflowu a GitHub na to
@@ -994,7 +1012,6 @@ jobs:
     needs: [plan, keys, shading-rocks]
     if: ${{ !cancelled() && needs.plan.outputs.opt_contours == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     permissions:
       # `read`: hotové skaly idú do skladu na Drive, nie do releasu.
       contents: read
@@ -1233,7 +1250,6 @@ jobs:
     needs: [plan, keys, shading-rocks]
     if: ${{ !cancelled() && needs.plan.outputs.opt_contours == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
     permissions:
       # `read`: hotové skaly idú do skladu na Drive, nie do releasu.
       contents: read
@@ -1413,7 +1429,6 @@ jobs:
     needs: [plan, keys]
     if: ${{ !cancelled() && needs.plan.outputs.opt_terrain == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
     permissions:
       # `read`: hotové dlaždice idú do skladu na Drive, nie do releasu.
       contents: read
@@ -1531,7 +1546,6 @@ jobs:
     needs: plan
     if: ${{ !cancelled() && needs.plan.outputs.opt_trails == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 60
     outputs:
       enabled: ${{ steps.trails.outputs.enabled }}
       maxzoom: ${{ steps.trails.outputs.maxzoom }}
@@ -1624,7 +1638,6 @@ jobs:
     needs: plan
     if: ${{ !cancelled() && needs.plan.outputs.opt_features == 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 90
     outputs:
       enabled: ${{ steps.features.outputs.enabled }}
       maxzoom: ${{ steps.features.outputs.maxzoom }}
@@ -1700,7 +1713,6 @@ jobs:
     needs: plan
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 150
     outputs:
       maxzoom: ${{ steps.tiles.outputs.maxzoom }}
       size_mb: ${{ steps.tiles.outputs.size_mb }}
@@ -1797,7 +1809,6 @@ jobs:
   assets:
     name: Ikonky a fonty
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     outputs:
       name: ${{ steps.sprite.outputs.name }}
       available: ${{ steps.sprite.outputs.available }}
@@ -1870,7 +1881,6 @@ jobs:
     needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     permissions:
       contents: read
       pages: write

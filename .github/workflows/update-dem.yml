@@ -156,7 +156,6 @@ jobs:
       DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
-    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v7

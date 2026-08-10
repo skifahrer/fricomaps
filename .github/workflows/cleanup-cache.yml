@@ -74,7 +74,6 @@ jobs:
   upratat:
     name: Upratať cache
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     env:
       # Prerieďovanie na Drive maže súbory, takže potrebuje token vlastníka
       # – a s rozsahom na zápis. Readonly token to povie hneď a s návodom.
