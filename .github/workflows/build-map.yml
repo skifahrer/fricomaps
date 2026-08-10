@@ -233,11 +233,22 @@ env:
   # Vektorizuje sa až hotová mozaika, jedným priechodom – po častiach by sa
   # diery prerezané hranicou časti stratili.
   ROCK_CHUNK_CELLS: "150000000"
-  # Koľko minút smú skaly trvať. Celý job má na runneri 3 hodiny a musí sa
-  # doň zmestiť aj mapa. Nad odhad sa výpočet vôbec nezačne – build to povie
-  # v prvých sekundách aj s tým, čo zmenšiť, namiesto trojhodinového behu do
-  # prázdna. (Prešovský kraj: pri 2 m ~40 min, pri 1 m ~2 h 40 min.)
-  ROCK_BUDGET_MIN: "100"
+  # Koľko minút smú skaly trvať. Nad odhad sa výpočet vôbec nezačne – build to
+  # povie v prvých sekundách aj s tým, čo zmenšiť, namiesto trojhodinového behu
+  # do prázdna.
+  #
+  # BOLO TO 100 A NIKDY TO NEZNAMENALO STO MINÚT. Odhad, proti ktorému sa to
+  # porovnávalo, bol 20× optimistický, takže „100" v skutočnosti prepúšťalo
+  # rádovo tridsaťhodinové zadania. Odkedy je odhad meraný
+  # (`CONTOUR_SRC_CELLS_PER_S`), znamená to číslo presne to, čo je na ňom
+  # napísané – a stotinúcová práca na skalách je viac, než na čo sa čaká: behy
+  # 31357217326 a 31360120952 zrušil človek po 22 a 30 minútach.
+  #
+  # 30 minút znamená pre Vysoké Tatry sklad na 2 m (~24 min); na 1 m by to bolo
+  # 1:38 a auto ho preto neponúkne. Kto chce 1 m, zadá `rock_res=1` alebo si
+  # toto číslo zdvihne – je to voľba „koľko som ochotný čakať", nie technický
+  # strop.
+  ROCK_BUDGET_MIN: "30"
   ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
   ROCK_HEARTBEAT_S: "30" # ako často hlásiť, že sa stále počíta
   # Rozpočet stránky si joby delia podielom, nie „čo zvýšilo" – bežia

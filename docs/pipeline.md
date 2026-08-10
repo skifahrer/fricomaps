@@ -693,38 +693,48 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   Konštanty sú namerané na runneri: sklon 5,1 mil. buniek/s, obrysy podľa
   mriežky (viď nižšie).
 
-  **Odhad obrysov bol dlho jedno číslo a bolo 29× vedľa.** Cena
-  `gdal_contour -p` nie je úmerná počtu buniek: rastie s tým, aký zrnitý je
-  na danej mriežke sklon, lebo z jemnej mriežky vypadnú z tých istých buniek
-  desaťtisíce drobných prstencov navyše. Namerané body sú dva – 0,5 m dá
-  45 tis. buniek/s ([31334778253](https://github.com/skifahrer/fricomaps/actions/runs/31334778253))
-  a 1 m dá 122 tis. ([31357217326](https://github.com/skifahrer/fricomaps/actions/runs/31357217326)),
-  čiže rýchlosť ide s `res^1,42`. Kým tu stálo 3,5 mil./s, strážca rozpočtu
-  porovnával s číslom dvadsaťkrát menším, než je pravda, a prepustil beh, čo
-  mieril na 1:40 h; zastavil ho až človek.
+  **Odhad obrysov bol dvakrát zle a druhý raz to stálo celý beh.** Najprv tu
+  stála konštanta 3,5 mil. buniek/s (29× vedľa). Potom model, ktorý cenu viazal
+  na mriežku, na akú sa TRASUJE (`res^1,42`) – a ten vyvrátilo meranie:
 
-  Odhad sa preto **rozpisuje na obe polovice** – bez toho sa z tabuľky nedalo
-  prísť na to, ktorá vlastne stojí čas:
+  | beh | trasuje sa na | buniek na trasovanie | celkom | zdrojových buniek/s |
+  |---|--:|--:|--:|--:|
+  | [31357217326](https://github.com/skifahrer/fricomaps/actions/runs/31357217326) | 1 m | 0,71 mld. | 97 min | 123 tis. |
+  | [31360120952](https://github.com/skifahrer/fricomaps/actions/runs/31360120952) | 2 m | 0,18 mld. | 98 min | 121 tis. |
+
+  To isté územie, štvrtina buniek na trasovanie, **rovnaký čas**. Cena
+  `gdal_contour -p` teda ide so **zdrojovými bunkami** – s tým, koľko ich
+  prečíta zo skladu – a nie s mriežkou, na ktorú kreslí; prepočet na ne sedí
+  na 1,5 %.
+
+  **Obrys sa nezlacní hrubším trasovaním, ale hrubším SKLADOM.** Odhad preto
+  účtuje vektorizáciu mriežke skladu – to je jediné číslo, ktoré s časom hýbe:
 
   ```
   ── Výber mriežky (rock_res=auto) ────────────────────
     plocha územia   689 km²
-       1 m   0.69 mld.  sklon ~0:02:15  + vektory ~0:08:47 (na 2 m)  = ~0:11:02  ✓
-     1.5 m   0.31 mld.  sklon ~0:01:00  + vektory ~0:08:47 (na 2 m)  = ~0:09:47  ✓
-       2 m   0.17 mld.  sklon ~0:00:34  + vektory ~0:08:47 (na 2 m)  = ~0:09:21  ✓
+       1 m   0.69 mld.  sklon ~0:02:15  + vektory ~1:35:41 (trasuje sa na 2 m)  = ~1:37:56  × nad rozpočet
+     1.5 m   0.31 mld.  sklon ~0:01:00  + vektory ~0:42:31 (trasuje sa na 2 m)  = ~0:43:31  × nad rozpočet
+       2 m   0.17 mld.  sklon ~0:00:33  + vektory ~0:23:55 (trasuje sa na 2 m)  = ~0:24:29  ✓
   ```
 
-  | územie | `rock_res` | buniek | sklon | obrysy | spolu |
+  | územie | `rock_res` | buniek | sklon | obrysy | spolu (rozpočet 30 min) |
   |---|--:|--:|--:|--:|--:|
-  | Vysoké Tatry | 1 m | 0,69 mld. | 0:02:15 | 0:08:47 (na 2 m) | 0:11:02 ✓ |
-  | Vysoké Tatry | 1 m, `rock_vec_res=1` | 0,69 mld. | 0:02:15 | **1:34:07** | 1:36:22 ✓ |
-  | Tatry | 1 m | 1,34 mld. | 0:04:22 | 0:17:06 (na 2 m) | 0:21:28 ✓ |
-  | Prešovský kraj | 2 m | 5,27 mld. | 0:17:13 | 1:07:14 (na 3 m) | 1:24:27 ✓ |
+  | Vysoké Tatry | 1 m | 0,69 mld. | 0:02:15 | 1:35:41 | 1:37:56 ✗ |
+  | Vysoké Tatry | 1,5 m | 0,31 mld. | 0:01:00 | 0:42:31 | 0:43:31 ✗ |
+  | Vysoké Tatry | **2 m** | 0,17 mld. | 0:00:33 | 0:23:55 | 0:24:29 ✓ |
+  | Tatry | 2 m | 0,34 mld. | 0:01:05 | 0:46:31 | 0:47:37 ✗ |
+  | Prešovský kraj | 2 m | 5,27 mld. | 0:17:13 | **12:11:56** | 12:29:10 ✗ |
+  | Prešovský kraj | 10 m | 0,21 mld. | 0:00:41 | 0:29:16 | 0:29:58 ✓ |
 
-  Druhý riadok je ten, ktorý sa naozaj stal: pri trasovaní na 1 m sa aj
-  s opraveným odhadom do stominútového rozpočtu **zmestí** – tesne. Rozpočet
-  teda nie je to, čo pred takým behom ochráni; ochráni pred ním až to, že sa
-  netrasuje jemnejšie, než je vidieť.
+  Prvý riadok je ten, ktorý sa dvakrát stal. Predposledný ukazuje, čo starý
+  odhad prepúšťal: pri 3,5 mil./s vychádzal Prešovský kraj na 2 m ako „~40 min
+  ✓", v skutočnosti je to dvanásť hodín.
+
+  Rozpočet je preto **30 minút**, nie sto. Sto tam bolo, kým sa porovnávalo
+  s dvadsaťkrát optimistickejším číslom – teda nikdy neznamenalo sto minút.
+  Odkedy odhad zodpovedá realite, je to voľba „koľko som ochotný čakať":
+  `rock_budget_min` sa dá zdvihnúť, alebo sa dá zadať `rock_res` natvrdo.
 
 - **Počas výpočtu je vidieť, čo sa deje.** Pri počítaní sklonu ide po každej
   časti riadok s odpracovaným časom, odhadom zvyšku a veľkosťou mozaiky;
@@ -798,21 +808,24 @@ Skaly z `dmr5` si tým pádom **DEM vôbec nesťahujú**: `check-dem` pre vrstvu
   raz spočítaný a navždy uložený), ale **obrys nemá zmysel trasovať jemnejšie,
   než je vidieť** – pixel dlaždice má pri z16, kam skaly idú, 1,57 m.
 
-  Rozdiel nie je štvrtina práce, ale jedenástina: pri 1 m to bolo 0,71 mld.
-  buniek a ~1:40 h, pri 2 m je to 0,18 mld. a rádovo 9 minút. Klesne aj počet
-  buniek (4×), aj cena jednej bunky (2,7×), lebo hrubšie pole sklonu je menej
-  zrnité a nevypadnú z neho tie desaťtisíce drobných prstencov.
+  > **ČAS TÝM NEUŠETRÍŠ – a bolo to napísané naopak.** Keď toto vzniklo, stálo
+  > tu „nie je to štvrtina práce, ale jedenástina". Beh
+  > [31360120952](https://github.com/skifahrer/fricomaps/actions/runs/31360120952)
+  > to vyvrátil: štvrtina buniek na trasovanie, **rovnaký čas** (tabuľka
+  > vyššie). `gdal_contour` musí zdrojové bunky prečítať tak či tak.
+
+  Zmysel to má aj tak, len iný: menší výstup, menej pamäte a menej bodov na
+  obryse, ktoré by `--simplify` aj tak zmazal. **Na dĺžku behu je jediná páka
+  hrubší sklad** (`rock_res`).
 
   Robí to `clip_vrt`: mriežku si vypýta rovno VRT, ktorý sa aj tak stavia
-  kvôli orezu na územie, takže **zhrubnutie nestojí ani jeden priechod navyše**
-  – je to ten istý zápis do XML. Priemeruje sa (`-r average`), nie berie
-  najbližší sused: priemer je najbližšie tomu, ako by sklon vyšiel, keby sa
-  rovno počítal na hrubšej mriežke.
+  kvôli orezu na územie, takže je to ten istý zápis do XML. Priemeruje sa
+  (`-r average`), nie berie najbližší sused: priemer je najbližšie tomu, ako by
+  sklon vyšiel, keby sa rovno počítal na hrubšej mriežke.
 
   **Sklad sa tým nemení.** Časti ostávajú v plnom rozlíšení v cache aj
   v releasi `dem-slope`, takže zmena `rock_vec_res` neznamená ani jedno
-  čítanie z Drive navyše – prepočíta sa len ten jeden lacný priechod. Kto
-  chce starý stav, zadá `rock_vec_res=1`.
+  čítanie z Drive navyše. Kto chce starý stav, zadá `rock_vec_res=1`.
 
   Najmenšia ponechaná plocha je **jedna bunka mriežky trasovania** (pri 2 m
   teda 4 m²) – menší útvar už nie je tvar terénu, ale rohy jedinej bunky.
