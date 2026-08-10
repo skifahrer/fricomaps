@@ -36,8 +36,8 @@
   ],
   "sonny": {
     "label": "Sonny's LiDAR DTM 20m",
-    "kind": "release",
-    "release": "dem-sonny",
+    "kind": "sklad",
+    "store": "dem-sonny",
     "for": [
       "contours",
       "rocks",
@@ -51,7 +51,7 @@
     "label": "ÚGKK DMR 3.5 (otvorené dáta)",
     "kind": "zip-url",
     "url": "https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip",
-    "release": "dem-dmr35",
+    "store": "dem-dmr35",
     "for": [
       "contours",
       "rocks",
@@ -83,9 +83,9 @@
   },
   "dmr5": {
     "label": "ÚGKK DMR 5.0 (LiDAR)",
-    "kind": "release",
-    "release": "dem-dmr5",
-    "release_area": "dem-ugkk",
+    "kind": "sklad",
+    "store": "dem-dmr5",
+    "store_area": "dem-ugkk",
     "workflow": "dmr5-drive.yml",
     "for": [
       "contours",

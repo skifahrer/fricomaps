@@ -34,9 +34,9 @@ Build map                    deväť jobov, tie dlhé bežia súbežne:
                                deploy   zloží _site ─► GitHub Pages
 
 Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
-(sám, keď terén chýba)       na 1° dlaždice ─► release `dem-sonny`:
+(sám, keď terén chýba)       na 1° dlaždice ─► sklad `dem-sonny`:
                              N49E019.tif + meta.json
-                             ▲ Build map ho zavolá automaticky, keď v release
+                             ▲ Build map ho zavolá automaticky, keď v sklade
                                nie je pre jeho územie ani jedna dlaždica
 
 DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
@@ -51,7 +51,7 @@ DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
 
 
 Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
-(pokus, na jedno pohorie)    plochy ─► polygóny ─► release `dem-rocks-img`
+(pokus, na jedno pohorie)    plochy ─► polygóny ─► sklad `dem-rocks-img`
                              ▲ Build map si ich vypýta výberom
                                rock_source: tienovanie
 
@@ -114,8 +114,8 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | čo | zdroj | kde sa berie |
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
-| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš release `dem-sonny` (napĺňa ho workflow *Stiahnuť výškové dáta*) |
-| **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastné PNG dlaždice `terrain/{z}/{x}/{y}.png`, uložené v release `dem-terrain` |
+| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš sklad `dem-sonny` na Drive (napĺňa ho workflow *Stiahnuť výškové dáta*) |
+| **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastné PNG dlaždice `terrain/{z}/{x}/{y}.png`, uložené v sklade `dem-terrain` |
 | tieňovanie a 3D – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/), keď sa vlastné nevyrobia |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
@@ -161,14 +161,14 @@ Google Drive (priečinok krajiny)
   → workers/dem-tiles.py   GeoTIFF (aj celá krajina v metrickej projekcii)
                            → dlaždice 1°×1° N49E019.tif vo WGS84
      (.hgt sa prevádza priamo – je to už 1° dlaždica, len bez hlavičky)
-  → release `dem-sonny` + meta.json
+  → sklad `dem-sonny` + meta.json
 ```
 
 Rezanie na dlaždice je potrebné preto, že 20m model môže byť **jeden GeoTIFF
 na celú krajinu a v metrickej projekcii**, kým build mapy chce sťahovať len
 dlaždice pre svoj bbox a lepiť ich `gdalbuildvrt`-om (ten rôzne projekcie
-v jednom VRT neunesie). Jeden release = jeden model; miešať 20m a 1″ pod
-rovnakým `release_tag` nemá zmysel, dlaždice sa volajú rovnako.
+v jednom VRT neunesie). Jeden sklad = jeden model; miešať 20m a 1″ v jednom
+sklade nemá zmysel, dlaždice sa volajú rovnako.
 
 Build mapy si potom vypýta **len tie dlaždice, ktoré pokrývajú jeho bbox**.
 Bbox je obdĺžnik, ale produkt pokrýva krajinu – rohové bunky za hranicou
@@ -377,7 +377,7 @@ XYZ dlaždice sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
                                          istá sémantika ako u skál z DEM
   → -explodecollections + filter plôch a dier
   → -simplify + smooth-polygons.py       rovnaké zaoblenie ako pri DEM
-  → rock.gpkg  ─► release `dem-rocks-img`  +  artefakt behu (iba polygóny)
+  → rock.gpkg  ─► sklad `dem-rocks-img`  +  sklad `vysledky` (na pozretie)
 ```
 
 **Prečo to môže fungovať:** tieňovanie je obraz sklonu a hires vrstva
@@ -457,9 +457,10 @@ Predvolené hodnoty nie sú odhad – sú namerané na výreze z tej vrstvy
 
 **Prvý beh je ladiaci.** Predvolené prahy sú kvalifikovaný odhad, nie
 nameraná hodnota – tá dlaždicová vrstva sa nedá ochutnať dopredu. Beh preto
-odloží artefakt `nahlad-…` s PNG **mozaika vedľa nájdených plôch** (vľavo
-tieňovanie, vpravo to isté s červenou maskou) a histogramom odtieňov. Podľa
-nich sa `dark` / `dark_always` / `rel` doladia za jeden pohľad.
+odloží do skladu `vysledky` na Drive súbor `nahlad-…` s PNG **mozaika vedľa
+nájdených plôch** (vľavo tieňovanie, vpravo to isté s červenou maskou)
+a histogramom odtieňov. Podľa nich sa `dark` / `dark_always` / `rel` doladia
+za jeden pohľad.
 
 **Každý request vyzerá ako iný prehliadač.** Hlavičky sa berú z deviatich
 profilov skutočných prehliadačov (Chrome, Firefox, Safari, Edge; Windows,
@@ -520,9 +521,9 @@ zoomu tak či tak, z vyššieho zdroja by bol ostrejší tvar, nie väčší roz
 
 | job | strop | čo robí | čo po ňom ostane |
 |---|--:|---|---|
-| Stiahnuť dlaždice | 2 h | JPG z freemap.sk | cache + artefakt `dlazdice-tienovania-…` |
-| Obrysy po blokoch | 3 h | raster tmavosti, `gdal_contour` po blokoch | cache s rozrobeným + artefakt `nahlad-…` |
-| Skaly z tieňovania | 1 h | zlepenie blokov, švy, filter, vyhladenie | polygóny, release, čísla |
+| Stiahnuť dlaždice | 2 h | JPG z freemap.sk | cache + `dlazdice-tienovania-…` v sklade |
+| Obrysy po blokoch | 3 h | raster tmavosti, `gdal_contour` po blokoch | cache s rozrobeným + `nahlad-…` v sklade |
+| Skaly z tieňovania | 1 h | zlepenie blokov, švy, filter, vyhladenie | polygóny do skladu, čísla |
 
 Sťahovanie býva desiatky minút a obrysy ďalšiu hodinu — dokopy sa to do
 jedného rozpočtu zmestiť nemusí, a keď čas dôjde, padne aj to, čo už bolo
@@ -559,9 +560,10 @@ rozrobené maže; `options: fresh=1` ho zahodí dopredu.
 **Ako to dostať do mapy:** stačí **Build map** s `area: vysoke_tatry`
 a `rock_source: tienovanie`. Nič sa dopredu púšťať nemusí – build si tú
 pipeline zavolá sám, rovnako ako si sám dopĺňa chýbajúce výškové modely.
-V behu z toho vypadnú dva artefakty: `dlazdice-tienovania-…` so stiahnutými
-JPG dlaždicami (to sú tie obrázky, z ktorých sa skaly hľadali)
-a `nahlad-…` s mozaikou, maskou a histogramom na doladenie prahov.
+V behu z toho pribudnú do skladu `vysledky` na Drive dva balíky:
+`dlazdice-tienovania-…` so stiahnutými JPG dlaždicami (to sú tie obrázky,
+z ktorých sa skaly hľadali) a `nahlad-…` s mozaikou, maskou a histogramom na
+doladenie prahov.
 
 | chcem | ako |
 |---|---|
@@ -645,7 +647,7 @@ dobrovoľníckeho servera freemap.sk neťahá nič. Tieňovanie na **celý regi�
 build odmietne hneď v príprave – dlaždice sú cudzie a na kraj by ich boli
 státisíce.
 
-Keby v release aj tak nič nebolo (napr. keď ten job spadol), build to povie
+Keby v sklade aj tak nič nebolo (napr. keď ten job spadol), build to povie
 a **nespadne späť na skaly z DEM** – tichá zámena jedného zdroja za druhý by
 bola horšia než zastavenie.
 
@@ -685,7 +687,7 @@ voľba, tak sa na ňu formulár nepýta.
 > dalo zadať `ugkk` bez výrezu a beh spadol na strážcovi – alebo `dmr5` na
 > pohorie a build ticho vzal 5 m tam, kde bol k dispozícii meter.
 
-Oba release plní jediný workflow – [*DMR 5.0 z
+Oba sklady plní jediný workflow – [*DMR 5.0 z
 Drive*](#dmr-50-z-drive-145-gb-cez-http-range) (ETRS89 verzia, **toto si
 `Build map` volá sám**, a to dvoma jobmi, lebo model má dve podoby). Záloha
 z archívu ÚGKK (198 GB ZIP so sekvenčným čítaním) bola zrušená – Drive púšťa
@@ -810,11 +812,11 @@ To je workflow **DMR 5.0 z Drive**
 ([`dmr5-drive.yml`](.github/workflows/dmr5-drive.yml)), jeden job:
 
 ```
-area: <pohorie>       ─► out/ugkk-<pohorie>.tif  ─► release dem-ugkk
+area: <pohorie>       ─► out/ugkk-<pohorie>.tif  ─► sklad dem-ugkk
                           ▲ Build map: vrstevnice a skaly s rovnakým `area`
-area: <bbox stupňov>  ─► out/N49E019.tif …       ─► release dem-dmr5
+area: <bbox stupňov>  ─► out/N49E019.tif …       ─► sklad dem-dmr5
   + tiles: true           ▲ Build map: tieňovanie a 3D terén
-area: cele_slovensko  ─► out/N49E019.tif …       ─► release dem-dmr5
+area: cele_slovensko  ─► out/N49E019.tif …       ─► sklad dem-dmr5
                           ▲ to isté, ale rovno na celú krajinu
 ```
 
@@ -823,7 +825,7 @@ dávno, takže Build map sa nemení ani o riadok.
 
 **Nespúšťaš to ručne.** Workflow je volateľný a `Build map` si ho zavolá sám
 (joby `Doplniť DMR 5.0 (výrez…)` a `Doplniť DMR 5.0 (dlaždice)`), keď mu
-v release chýba to, čo si vypýtal. Dva joby preto, že `dmr5` má dve podoby
+v sklade chýba to, čo si vypýtal. Dva joby preto, že `dmr5` má dve podoby
 a chýbať môžu naraz: vrstevnice a skaly čítajú výrez v plnom rozlíšení,
 tieňovanie 1° dlaždice na 5 m – to sa robí na celý región, kde 1 m verzia
 neexistuje.
@@ -838,7 +840,7 @@ rádovo pol hodiny a ~2 GB z Drive na stupeň – ale raz.
 Toto je celý zmysel workflowu — čo z neho vypadne, z toho vie `Build map`
 počítať **vrstevnice, skaly aj tieňovanie**:
 
-| `area` | mriežka | výsledok | release | v Build map |
+| `area` | mriežka | výsledok | sklad | v Build map |
 |---|--:|---|---|---|
 | `cele_slovensko` | 5 m | dlaždice `N49E019.tif` | `dem-dmr5` | `dmr5` vo výbere vrstevníc/skál/tieňovania |
 | pohorie | **1 m** | `ugkk-<pohorie>.tif` | `dem-ugkk` | `dmr5` vo výbere vrstevníc/skál + rovnaké `area` |
@@ -851,7 +853,7 @@ nastavenia vypíše workflow do súhrnu behu, aby sa nemuseli hádať.
 **Licencia ÚGKK:** voľné použitie vrátane komerčného pri uvedení zdroja
 (ÚGKK SR) — atribúcia je v [`poc/web/themes.js`](poc/web/themes.js).
 
-**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, čo mu v release
+**Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, čo mu v sklade
 chýba, a doplnenie si spustí ako svoju úlohu. Ručne netreba spúšťať nič –
 vrátane `dmr5`, ktorý sa dopĺňa cez `DMR 5.0 z Drive` (číta cez HTTP Range len
 to, čo územie pretína, takže to nie je „prekvapenie na osem hodín", ako keby sa
@@ -870,10 +872,10 @@ Build map
        └─ terrain     stiahne dlaždice z releasu a tieňuje
 ```
 
-Ktorý release a ktoré assety ktorá vrstva potrebuje, hovorí jediné miesto –
+Ktorý sklad a ktoré súbory ktorá vrstva potrebuje, hovorí jediné miesto –
 [`workers/dem-target.py`](workers/dem-target.py). Pýta sa doň aj kontrola
 (`workers/check-dem.sh`), aj sťahovanie (`workers/fetch-dem.sh`); kým to bolo
-napísané dvakrát, rozišlo sa to a build kontroloval jeden release, kým sťahoval
+napísané dvakrát, rozišlo sa to a build kontroloval jeden sklad, kým sťahoval
 z druhého ([beh 31307163093](https://github.com/skifahrer/fricomaps/actions/runs/31307163093)).
 
 > **Zrkadlo skúša štyri cesty a v každej sa tvári ako prehliadač.**
@@ -960,7 +962,7 @@ všetky sú na tej istej doméne a každý z nich stojí štyri profily prehliad
 plus curl.
 
 **1 m sa dá len na výrez.** Celý kraj má pri 1 m 16 miliárd buniek, čo je 64 GB
-vo Float32 – to sa nezmestí ani do release assetu (strop 2 GB), ani do runnera.
+vo Float32 – a to sa nezmestí na runner (voľných má ~60 GB).
 Preto si `dmr5` podobu vyberá podľa rozsahu: s vyplneným `area` ide plné 1 m,
 bez neho dlaždice na 5 m. Nie je to teda čo zakázať, ale čo dopočítať:
 
@@ -1114,13 +1116,14 @@ sa dajú v developer móde doladiť ako čokoľvek iné.
 menom, ktoré nesie región aj nastavenia
 (`rock-{región}-s{prah}-g{mriežka}-{algo}.gpkg.zst`), takže ďalší build s tými istými
 nastaveniami ich len stiahne – sekundy namiesto desiatok minút. Iné nastavenia
-dajú iné meno assetu, takže sa nikdy nepomiešajú. Ako to prepočítať nanovo,
+dajú iné meno súboru, takže sa nikdy nepomiešajú. Ako to prepočítať nanovo,
 hovorí [Pregenerovanie](#pregenerovanie).
 
-Hotové skaly a vrstevnice si každý build odloží aj ako **artefakt behu**
-(`teren-{región}-s{prah}-g{mriežka}`) s 90-dňovou lehotou – to je maximum,
-ktoré GitHub dovolí. Dajú sa teda stiahnuť a pozrieť v QGISe bez ďalšieho
-buildu.
+Hotové skaly a vrstevnice si každý build odloží aj do **skladu `vysledky`**
+(`teren-{región}-s{prah}-g{mriežka}-{dátum}-r{beh}.tar.zst`) – aj s GPKG
+geometriou, takže sa dajú stiahnuť a pozrieť v QGISe bez ďalšieho buildu.
+Kedysi to bol artefakt behu s 90-dňovou lehotou; do GitHubu sa už nepublikuje
+nič a sklad na Drive prerieďuje na tých istých 90 dní workflow *Upratať cache*.
 
 Podiel plochy nad prahom (merané pri 40°, teda hornom odhade):
 
@@ -1141,8 +1144,8 @@ so zaškrtnutým inputom:
 | input | čo pregeneruje |
 |---|---|
 | `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `rocks_rebuild` | skaly – zmaže cache aj asset v release `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj asset v release `dem-terrain` |
+| `rocks_rebuild` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
 
 Prečo to musí najprv mazať: **existujúci záznam cache sa nedá prepísať.**
 Kľúč, ktorý raz existuje, si drží starý obsah, takže bez zmazania by sa
@@ -1153,6 +1156,40 @@ lebo skaly majú vlastný job a tým aj vlastný záznam).
 Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
 dátum, alebo otlačok zdroja.
+
+### Hotové dáta ležia v sklade na Google Drive, nie v releasoch
+
+Do GitHubu nejde nič, čo má prežiť beh — **ani release, ani artefakt**. Osem
+druhov drahých medzivýsledkov kedysi ležalo v releasoch (`dem-sonny`,
+`dem-dmr35`, `dem-dmr5`, `dem-ugkk`, `dem-terrain`, `dem-rocks`,
+`dem-rocks-img`, `dem-slope`) a medzivýsledky na pozretie v artefaktoch
+s 30- až 90-dňovou retenciou. Oboje je teraz v **sklade na Google Drive** —
+na tom istom účte, ktorý drží DMR 5.0, cache buildu aj hotové mapy.
+
+```
+<koreň>/dem-dmr5/N49E020.tif             <koreň> = `fricomaps-sklad`
+<koreň>/dem-ugkk/ugkk-vysoke_tatry.tif   v My Drive vlastníka tokenu
+<koreň>/vysledky/teren-…-r73.tar.zst
+         sklad     meno — to isté, aké mal asset releasu
+```
+
+Prečo: release má na jeden asset **strop 2 GB**, ktorý pipeline tvaroval
+zvonku, a hotové dáta v releasoch verejného repozitára vyzerajú ako vydanie
+softvéru, ktorým nikdy neboli. Ten strop teda odpadol — **dve podoby DMR 5.0
+však ostávajú**, tie nedržal release, ale runner: jedna 1°×1° dlaždica má
+v metri ~48 GB a voľných je ~60 GB.
+
+Čo sa tým **nezmenilo**: mená súborov (`N49E020.tif` ďalej hovorí „tento celý
+stupeň je tu"), ani to, ktorý sklad ktorá vrstva hľadá. Celý rozpis je vo
+[`workers/drive-store.py`](workers/drive-store.py).
+
+Krátkodobé artefakty (`site-*`, `steps-*` s `retention-days: 1`) ostávajú a nie
+sú publikovanie — sú to prepravky, ktorými si joby jedného behu podávajú kusy
+`_site`. Čokoľvek s dlhšou retenciou ide do skladu `vysledky` cez
+[`workers/publish-results.sh`](workers/publish-results.sh) a *Lint workflows* to
+kontroluje. Staré releasy, ich tagy aj artefakty zmaže *Upratať GitHub*
+([`cleanup-actions.yml`](.github/workflows/cleanup-actions.yml)) v režime
+`releasy_a_artefakty`.
 
 ### Cache leží na Google Drive
 
@@ -1222,7 +1259,7 @@ trvalo a s akým výsledkom.
 | Vrstevnice a skaly → PMTiles | 0:06:12 | maxzoom 14, 187M |
 | Značené trasy z OSM | 0:01:38 | ~1 400 trás, ~39 000 úsekov, ~6 000 ciest s viac trasami |
 | Značené trasy → PMTiles | 0:00:44 | maxzoom 14, ~9M |
-| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (release dem-terrain) |
+| Tieňovanie a 3D terén | 0:00:31 | 24 118 PNG dlaždíc do z13, 96 MB (sklad dem-terrain) |
 | Mapové dlaždice (Planetiler) | 0:18:20 | maxzoom 16, 421 MB |
 | Ikonky (SDF sprity) | 0:00:09 | sady: maki temaki osm-bright, štýl používa temaki (z cache) |
 
@@ -1713,6 +1750,19 @@ Toto je základ; **typ mapy tieto hranice posúva** – turistická púšťa ska
 chodníky a trasy skôr (z8–z10), cestná naopak bežné POI až od z15 a chodníky
 vôbec. Konkrétne posuny sú v [poc/web/map-types.js](poc/web/map-types.js)
 a dajú sa prekliknúť v developer móde.
+
+**Výplň nad zmiešanou geometriou (a čudné polygóny od z13).** `--transportation_z13_paths=true`
+vyššie má jeden dôsledok, ktorý stál opravu v štýle: od z13 sú v dlaždiciach
+všetky chodníky, a to sú **čiary**. MapLibre `fill` vrstve čiary nepreskočí –
+otvorenú lomenú čiaru pošle earcutu, ako keby to bol uzavretý prstenec, a
+vyrobí z nej sebaprekrývajúci sa mnohouholník. Vrstva `pedestrian-area` (`fill`
+nad `transportation`, `minzoom: 13`) tak od z13 kreslila útvary „prerezané" cez
+krajinu, a keďže farba `pedestrian` je od podkladu na nerozoznanie, vyzeralo to
+ako diera do podkladu. Každá výplň nad vrstvou, ktorá nesie viac typov
+geometrie (`transportation`, `piste`, `aeroway`, `park`), preto ide cez
+`polygonOnly(…)` a stráži to kontrola
+[`workers/lint-style.mjs`](workers/lint-style.mjs). Rozpis:
+[docs/pipeline.md](docs/pipeline.md#výplň-nad-zmiešanou-geometriou-prečo-boli-od-z13-čudné-polygóny).
 
 **Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB a do toho sa musia
 zmestiť dlaždice **aj vrstevnice, fonty a sprity** – nie každé zvlášť. Celé

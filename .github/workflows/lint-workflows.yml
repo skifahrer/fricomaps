@@ -12,10 +12,14 @@ on:
     paths:
       - ".github/workflows/**"
       - "workers/**"
+      # Aj štýl: `fill` vrstva nad zmiešanou geometriou je tichý omyl, ktorý
+      # sa inak nájde až v hotovej mape (viď `workers/lint-style.mjs`).
+      - "poc/web/**"
   pull_request:
     paths:
       - ".github/workflows/**"
       - "workers/**"
+      - "poc/web/**"
   workflow_dispatch:
 
 permissions:
@@ -40,7 +44,7 @@ jobs:
           #
           # SC2153 („ROCK_RES may not be assigned. Did you mean ROCK_DEM?")
           # je tu preto, že shellcheck nevidí `env:` workflowu. Do skriptov
-          # ich chodí pätnásť (ROCK_RES, ROCK_ALGO, DEM_RELEASE…), takže
+          # ich chodí pätnásť (ROCK_RES, ROCK_ALGO, DEM_STORE…), takže
           # každá lokálna premenná s podobným menom vyrobí falošný poplach –
           # a prepisovať mená premenných podľa toho, čo sa shellchecku zdá,
           # je horšie než tento check nepoužívať.
@@ -515,9 +519,19 @@ jobs:
           # Volanie workera sa hľadá na ZAČIATKU riadku v `run:`, nie kdekoľvek
           # v texte – inak by kontrola našla samu seba a ostatné kontroly,
           # ktoré tie isté mená spomínajú ako dáta.
-          CMD = re.compile(r"^\s*(?:\w+=\$\()?(?:python3?|bash|sh|\./)\s+\S*"
+          # Interpret je NEPOVINNÝ: `run: workers/check-dem.sh` je celý riadok
+          # bez `bash` pred ním a kým to regex vyžadoval, tento krok cez sieť
+          # kontrolou prešiel. Pred cestou smú stáť len shellové kľúčové slová
+          # a operátory (`elif python3 …`) – nie `\S*`, lebo to by našlo aj
+          # `print(f"workers/slope-chunks.py …")` v INEJ kontrole tohto súboru
+          # a hlásilo by chybu na kroku, ktorý so sieťou nemá nič.
+          CMD = re.compile(r"^\s*(?:(?:if|elif|then|else|do|!|&&|\|\|)\s+)*"
+                           r"(?:\w+=\$\()?(?:(?:python3?|bash|sh)\s+)?"
+                           r"(?:\./)?[\w./-]*"
                            r"(?:dmr5-drive|slope-chunks|contours-build"
-                           r"|drive-folder|drive-cache|publish-map)"
+                           r"|terrain-build|check-dem|fetch-dem"
+                           r"|drive-folder|drive-cache|drive-store"
+                           r"|publish-map|publish-results)"
                            r"\.(?:py|sh)\b", re.M)
           # Cache leží na Drive, takže KAŽDÝ krok s ňou je krok, ktorý sa musí
           # vedieť prihlásiť. Bez tokenu sa nič nestratí, len sa nič nenájde
@@ -671,6 +685,31 @@ jobs:
           print(f"cache na Drive: {bad} chýb")
           sys.exit(1 if bad else 0)
           PY
+
+      # PUBLIKUJE SA LEN NA DRIVE. Do GitHubu nesmie ísť ani release, ani
+      # artefakt, ktorý má prežiť beh – celý sklad je vo `workers/drive-store.py`.
+      #
+      # Prečo kontrola a nie len dohoda: `gh release upload` je jeden riadok
+      # a keby sa vrátil, poznalo by sa to len tým, že v Releases pribúdajú
+      # gigabajty, ktoré nikto nečíta, a že tá istá vec leží na dvoch miestach
+      # (pravidlo 1). Rovnako `retention-days: 90` – artefakt s ním je uložený
+      # výsledok, nie prepravka medzi jobmi jedného behu.
+      #
+      # Rozpis je vo `workers/lint-publishing.py`, nie tu: tento súbor je nad
+      # stropom 800 riadkov, ktorý si sám kontroluje o pár krokov vyššie, a
+      # ďalší storiadkový heredoc doň nepatrí (pravidlo 3). Skript sa dá
+      # spustiť aj lokálne: `python3 workers/lint-publishing.py`.
+      - name: Publikuje sa len na Drive, nie do releasov a artefaktov
+        run: python3 workers/lint-publishing.py
+
+      # `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že chce
+      # len plochy. MapLibre jej čiaru nepreskočí – earcutom z nej vyrobí
+      # sebaprekrývajúci sa mnohouholník, mapa sa načíta a nikto nič nepovie.
+      # Presne tak vznikli tie „prerezané" útvary od zoomu 13 (pedestrian-area
+      # nad `transportation`, kde sú chodníky čiary). Rozpis a zoznam
+      # zmiešaných vrstiev je vo `workers/lint-style.mjs`.
+      - name: Výplne v štýle chcú len plochy
+        run: node workers/lint-style.mjs
 
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
       # vedieť spamätať z jedného stratného spojenia. Obe veci sú tiché:

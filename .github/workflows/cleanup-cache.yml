@@ -16,6 +16,13 @@ name: Upratať cache
 # sám (7 dní bez použitia, 10 GB na repozitár), Drive nie – bez toho by
 # priečinok rástol donekonečna a raz by zaplnil účet, ktorý drží aj DMR 5.0.
 #
+# A K TOMU SKLAD `vysledky`. Odkedy sa nepublikuje do artefaktov, padajú do
+# neho medzivýsledky každého behu (vrstevnice, skaly, trasy, náhľady) – jeden
+# archív na beh, teda niečo, čo len rastie. Prerieďuje sa na 90 dní, presne tá
+# retencia, ktorú mal artefakt. Sklady s výškovým modelom sa NEPRERIEĎUJÚ: to
+# sú drahé zrkadlá (jeden stupeň DMR 5.0 je pol hodiny čítania z Drive) a majú
+# tam ležať, kým ich niekto ručne nezmaže.
+#
 # Beží raz za týždeň a dá sa spustiť ručne. „Len vypísať" nemaže nič.
 
 on:
@@ -44,6 +51,11 @@ on:
         description: "Strop priečinka cache na Drive v GB (0 = bez stropu)"
         required: false
         default: "100"
+        type: string
+      keep_days_results:
+        description: "V sklade `vysledky` nechať archívy mladšie než toľkoto dní"
+        required: false
+        default: "90"
         type: string
   schedule:
     # Nedeľa 03:20 UTC – mimo času, keď sa buildy spúšťajú ručne.
@@ -103,5 +115,23 @@ jobs:
           python3 workers/drive-cache.py --prune \
             --keep-days="${KEEP_DAYS:-30}" \
             --keep-gb="${KEEP_GB:-100}" \
+            "${ARGS[@]}" \
+            --summary="$GITHUB_STEP_SUMMARY"
+
+      # Sklad `vysledky` je to, čo nahradilo dlhodobé artefakty behov –
+      # a rovnako ako ony sa má sám prerieďovať. Ostatné sklady nie: výškový
+      # model je drahé zrkadlo, nie odpad po behu.
+      - name: Prerieď sklad medzivýsledkov
+        if: ${{ inputs.co != 'github' }}
+        continue-on-error: true
+        env:
+          KEEP_DAYS: ${{ inputs.keep_days_results }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          ARGS=()
+          if [ "${DRY_RUN:-false}" = "true" ]; then ARGS+=(--dry-run); fi
+          python3 workers/drive-store.py --prune --store=vysledky \
+            --keep-days="${KEEP_DAYS:-90}" \
             "${ARGS[@]}" \
             --summary="$GITHUB_STEP_SUMMARY"

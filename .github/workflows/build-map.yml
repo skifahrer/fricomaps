@@ -136,7 +136,7 @@ on:
         required: false
         default: "50"
         type: string
-      # Zmaže cache aj uloženú verziu v release. Pri zapnutom switchi `test`
+      # Zmaže cache aj uloženú verziu v sklade. Pri zapnutom switchi `test`
       # sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto
       # pole je vtedy jedno.
       rebuild:
@@ -187,33 +187,39 @@ env:
   # jediný bod zlyhania, pri ktorom sa mapa vykreslí bez akýchkoľvek nápisov.
   # (Zdroje ikoniek sú v poc/web/icon-sources.js.)
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
-  # Release s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
-  DEM_RELEASE: dem-sonny
+  # SKLADY NA DRIVE, nie GitHub releasy. Do releasov sa nepublikuje nič –
+  # celý formát skladu, prihlásenie aj „clobber" je vo `workers/drive-store.py`
+  # a mená súborov ostali tie isté, aké mali assety (meno je sľub o rozsahu).
+  #
+  # Sklad s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
+  DEM_STORE: dem-sonny
   # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
   # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
-  DMR35_RELEASE: dem-dmr35
+  DMR35_STORE: dem-dmr35
   # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
   # ich job `mirror-dmr5-tiles` cez „DMR 5.0 z Drive" – po stupňoch, ktoré
   # bbox pretína (celé Slovensko naraz netreba).
-  DMR5_RELEASE: dem-dmr5
+  DMR5_STORE: dem-dmr5
+  # Výrez DMR 5.0 v plnom 1 m rozlíšení, jeden COG na pohorie.
+  UGKK_STORE: dem-ugkk
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
-  # Release s hotovými výškovými (hillshade) dlaždicami – aby sa nerobili znova.
-  TERRAIN_RELEASE: dem-terrain
-  # Release s hotovými skalami. Sú to desiatky minút výpočtu, ale závisia len
-  # od územia a nastavení – tie sú preto v mene assetu a hotové skaly sa
+  # Sklad s hotovými výškovými (hillshade) dlaždicami – aby sa nerobili znova.
+  TERRAIN_STORE: dem-terrain
+  # Sklad s hotovými skalami. Sú to desiatky minút výpočtu, ale závisia len
+  # od územia a nastavení – tie sú preto v mene súboru a hotové skaly sa
   # nabudúce len stiahnu.
-  ROCK_RELEASE: dem-rocks
+  ROCK_STORE: dem-rocks
   # Skaly nájdené ako tmavé plochy v tieňovaných dlaždiciach – napĺňa ich
   # workflow „Skaly z tieňovaných dlaždíc". Build ich nikdy nepočíta, len
   # si ich vypýta výberom `rock_source: tienovanie`.
-  ROCK_IMG_RELEASE: dem-rocks-img
+  ROCK_IMG_STORE: dem-rocks-img
   # Sklad častí rastra sklonu (workers/slope-chunks.py). Na rozdiel od cache
   # nevyprší, takže hodina čítania z Drive sa nemá ako stratiť ani vtedy, keď
   # GitHub cache zahodí. Časti majú absolútnu mriežku, takže sa delia medzi
   # výrezmi: čo sa spočítalo pre vysoke_tatry, použijú aj tatry.
-  SLOPE_RELEASE: dem-slope
+  SLOPE_STORE: dem-slope
   ROCK_RES: auto # záložná mriežka na sklon (m), keď voľba rock_res chýba
   # Mriežka, na ktorej sa TRASUJE obrys. Nemusí byť tá, na ktorej je uložený
   # sklon: pixel dlaždice má pri z16 – kam skaly idú – 1,57 m, takže obrys
@@ -281,9 +287,9 @@ env:
   BUDGET_ASSETS_MB: "40"
 
 jobs:
-  # ---------- je v release terén pre toto územie? ----------
+  # ---------- je v sklade terén pre toto územie? ----------
   # Iný zdroj výšok nemáme (Copernicus je zámerne vypnutý), takže bez dlaždíc
-  # by build po pár minútach zlyhal. Radšej sa najprv pozrieme, či v release
+  # by build po pár minútach zlyhal. Radšej sa najprv pozrieme, či v sklade
   # niečo pre náš bbox je – a keď nie, doplnia ho joby `mirror-*` ešte predtým.
   check-dem:
     name: Kontrola výškového modelu
@@ -312,7 +318,7 @@ jobs:
       mirror_dmr5_area: ${{ steps.check.outputs.mirror_dmr5_area }}
       mirror_dmr5_asset: ${{ steps.check.outputs.mirror_dmr5_asset }}
       mirror_dmr5_tiles: ${{ steps.check.outputs.mirror_dmr5_tiles }}
-      # Otlačok releasu na vrstvu. Ide do kľúča cache – keď sa release
+      # Otlačok skladu na vrstvu. Ide do kľúča cache – keď sa sklad
       # doplní, nesmie sa z nej vrátiť starý výsledok. Na vrstvu preto, aby
       # doplnenie DMR 5.0 nezahodilo vrstevnice zo Sonnyho.
       demkey_contours: ${{ steps.check.outputs.demkey_contours }}
@@ -324,10 +330,10 @@ jobs:
 
       # Rozhodovanie je vo `workers/check-dem.sh`: build-map.yml je blízko
       # k stropu, nad ktorým ho GitHub neprijme, a hlavne – to isté
-      # rozhodovanie („ktorý release, ktoré assety") si robí aj
+      # rozhodovanie („ktorý sklad, ktoré súbory") si robí aj
       # `workers/fetch-dem.sh`, tak ho oba berú z `workers/dem-target.py`.
       # Kým to bolo napísané dvakrát, rozišlo sa to a beh 31307163093 spadol.
-      - name: Sú v release dlaždice pre bbox?
+      - name: Sú v sklade dlaždice pre bbox?
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
@@ -361,14 +367,15 @@ jobs:
   # vrstva si model pýta – a `check-dem` vie povedať „tento model už dopĺňa
   # iná vrstva", takže sa to isté nesťahuje dvakrát.
   #
-  # Spúšťajú sa SAMY, keď v release nie sú dlaždice pre naše územie. Netreba
+  # Spúšťajú sa SAMY, keď v sklade nie sú dlaždice pre naše územie. Netreba
   # teda púšťať nič ručne – `Build map` je jediné, čo spúšťaš.
   mirror-contours:
     name: Doplniť výškový model (vrstevnice)
     needs: [plan, check-dem]
     if: ${{ !cancelled() && needs.check-dem.outputs.mirror_contours != '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/update-dem.yml
     # Sonny chodí z Google Drive: bez tokenu by sa ťahal anonymne a platil by
     # naň verejný denný limit. `workflow_call` nededí secrets sám.
@@ -386,7 +393,8 @@ jobs:
     # len zbytočné.
     if: ${{ !cancelled() && needs.check-dem.outputs.mirror_rocks != '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/update-dem.yml
     secrets: inherit                      # Drive, ako vyššie
     with:
@@ -399,7 +407,8 @@ jobs:
     needs: [plan, check-dem]
     if: ${{ !cancelled() && needs.check-dem.outputs.mirror_terrain != '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/update-dem.yml
     secrets: inherit                      # Drive, ako vyššie
     with:
@@ -428,13 +437,14 @@ jobs:
     needs: [plan, check-dem]
     if: ${{ !cancelled() && needs.check-dem.outputs.mirror_dmr5_area != '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/dmr5-drive.yml
     # Kvôli GDRIVE_CREDENTIALS: bez tokenu vlastníka by doplnenie čítalo
     # verejným odkazom, na ktorý platí denný limit sťahovania.
     secrets: inherit
     with:
-      # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v release
+      # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v sklade
       # hľadal a nenašiel. Kľúč pohoria sem NEchodí: `dmr5-drive.yml` by si
       # ho vyriešil z `areas.json` druhýkrát a prečítal celý obdĺžnik (test
       # na 2 km² tak čítal 541 km² Tatier). Rozpis: workers/check-dem.sh.
@@ -447,7 +457,8 @@ jobs:
     needs: [plan, check-dem]
     if: ${{ !cancelled() && needs.check-dem.outputs.mirror_dmr5_tiles != '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/dmr5-drive.yml
     secrets: inherit                      # GDRIVE_CREDENTIALS, ako vyššie
     with:
@@ -462,7 +473,7 @@ jobs:
   # behu – nie „spusti si najprv ten druhý workflow a potom príď". Je to tá
   # istá pipeline (shading-rocks.yml), len volaná; stiahnuté JPG dlaždice
   # z nej vypadnú ako artefakt `dlazdice-tienovania-…` a hotové polygóny ako
-  # asset v release, ktorý si o kus nižšie vypýta job s vrstevnicami.
+  # súbor v sklade, ktorý si o kus nižšie vypýta job s vrstevnicami.
   #
   # Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build
   # z dobrovoľníckeho servera freemap.sk neťahá nič.
@@ -474,7 +485,8 @@ jobs:
     needs: plan
     if: ${{ !cancelled() && needs.plan.outputs.opt_rock_source == 'tienovanie' && needs.plan.outputs.opt_rock_img_asset == '' }}
     permissions:
-      contents: write
+      # `read`, nie `write`: doplnenie publikuje na Drive, nie do releasu.
+      contents: read
     uses: ./.github/workflows/shading-rocks.yml
     # Kvôli cache na Drive: bez tokenu by si tá podpipeline nemala ako otvoriť
     # sklad stiahnutých dlaždíc a ťahala by gigabajty z freemap.sk odznova.
@@ -725,7 +737,7 @@ jobs:
           # preráta: druhý výpočet dostáva `dem_bbox`, teda UŽ ten štvorec, tak
           # mu vyjde ten istý bbox, ale kľúč BEZ prípony `_test2` – lebo tu sa
           # `--test-km2` nepodáva. A z kľúča je meno DEM assetu, takže by výrez
-          # na 2 km² sadol v release pod `ugkk-vysoke_tatry.tif` – meno, ktoré
+          # na 2 km² sadol v sklade pod `ugkk-vysoke_tatry.tif` – meno, ktoré
           # sľubuje celé pohorie (viď docs/pipeline.md).
           if [ -s /tmp/vyrez.txt ]; then
             RESOLVED=$(cat /tmp/vyrez.txt)
@@ -905,7 +917,7 @@ jobs:
   contours:
     name: Vrstevnice
     # `shading-rocks` je v needs kvôli poradiu, nie kvôli dátam: keď skaly
-    # idú z tieňovania, musí byť asset v release skôr, než si ho tento job
+    # idú z tieňovania, musí byť súbor v sklade skôr, než si ho tento job
     # vypýta. Pri inom zdroji je ten job preskočený a `!cancelled()` sa
     # o preskočenú závislosť nezastaví.
     needs: [plan, keys, shading-rocks]
@@ -913,7 +925,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
-      contents: write   # ukladanie hotových skál do releasu dem-rocks
+      # `read`: hotové skaly idú do skladu na Drive, nie do releasu.
+      contents: read
     outputs:
       enabled: ${{ steps.contours.outputs.enabled }}
       maxzoom: ${{ steps.contours.outputs.maxzoom }}
@@ -979,7 +992,7 @@ jobs:
           key: ${{ needs.keys.outputs.contours }}
 
       # DEM dlaždice sú desiatky MB na kus a menia sa len vtedy, keď sa zmení
-      # release – čo je presne to, čo hovorí `demkey`. Tie sa nepregenerúvajú
+      # sklade – čo je presne to, čo hovorí `demkey`. Tie sa nepregenerúvajú
       # nikdy: sú to stiahnuté dáta, nie výpočet.
       #
       # Cachuje sa celý `dem/`, lebo v ňom môžu byť dva modely naraz
@@ -1040,7 +1053,7 @@ jobs:
           # pár km² a jeho časti by v sklade vyzerali ako plnohodnotné),
           # `rocks_rebuild` ho má obísť.
           OPT_TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
-          SLOPE_STORE: slope-chunks
+          SLOPE_DIR: slope-chunks
           # Drive je latenčný, nie úzky – šesť častí naraz je meraný
           # kompromis (nad ~16 vláknami začne odpovedať 403).
           SLOPE_JOBS: "6"
@@ -1066,12 +1079,12 @@ jobs:
       # `always()` je tu to podstatné: sklad má prežiť práve tie behy, ktoré
       # sa nedopočítali. Keď job spadne alebo ho niekto zruší v polovici,
       # hotové časti sa aj tak uložia a ďalší beh dopočíta len zvyšok.
-      # (Do releasu `dem-slope` ich ukladá `slope-chunks.py` hneď, ako
+      # (Do skladu `dem-slope` ich ukladá `slope-chunks.py` hneď, ako
       # vzniknú – toto je len rýchlejšia vrstva.)
       # Testovací beh sa neukladá. Počíta pár km², takže by pod ten istý
       # prefix uložil takmer prázdny sklad – a `restore-keys` berie NAJNOVŠÍ
       # záznam, takže by ďalší ostrý beh dostal ten chudobný namiesto plného.
-      # (Prísť by o nič netrpel, časti sú aj v release `dem-slope`, ale ťahal
+      # (Prísť by o nič netrpel, časti sú aj v sklade `dem-slope`, ale ťahal
       # by ich zbytočne odtiaľ.)
       - name: Cache DEM dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.demtiles-cache.outputs.cache-hit != 'true' && hashFiles('dem/**') != '' }}
@@ -1096,20 +1109,18 @@ jobs:
           REGION_KEY: ${{ needs.plan.outputs.key }}
         run: workers/contours-site.sh
 
-      - name: Odlož skaly a vrstevnice ako artefakt
+      # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
+      # nič. Zoznam súborov je vo `workers/publish-results.sh`, lebo ten istý
+      # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
+      # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
+      # tá retencia, ktorú mal artefakt.
+      - name: Odlož skaly a vrstevnice do skladu
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
-          path: |
-            data/rock.gpkg
-            data/contours.gpkg
-            contours-out/contours.pmtiles
-            contours-out/rocks.pmtiles
-            contours-out/rock-stats.txt
-          retention-days: 90
-          compression-level: 9
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          CO: teren
+          NAZOV: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
+        run: workers/publish-results.sh
 
       # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
       # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
@@ -1152,7 +1163,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 180
     permissions:
-      contents: write   # ukladanie hotových skál do releasu dem-rocks
+      # `read`: hotové skaly idú do skladu na Drive, nie do releasu.
+      contents: read
     outputs:
       enabled: ${{ steps.contours.outputs.rocks_enabled }}
       rocks_enabled: ${{ steps.contours.outputs.rocks_enabled }}
@@ -1237,7 +1249,7 @@ jobs:
           OPT_SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
           OPT_TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
-          SLOPE_STORE: slope-chunks
+          SLOPE_DIR: slope-chunks
           SLOPE_JOBS: "6"
           # Toto je TEN krok, čo z Drive číta najviac: sklon pre skaly z `dmr5`
           # ide po častiach rovno zo 145 GB rastra. Bez tokenu vlastníka by
@@ -1287,20 +1299,18 @@ jobs:
           REGION_KEY: ${{ needs.plan.outputs.key }}
         run: workers/contours-site.sh
 
-      - name: Odlož skaly a vrstevnice ako artefakt
+      # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
+      # nič. Zoznam súborov je vo `workers/publish-results.sh`, lebo ten istý
+      # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
+      # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
+      # tá retencia, ktorú mal artefakt.
+      - name: Odlož skaly a vrstevnice do skladu
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: skaly-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
-          path: |
-            data/rock.gpkg
-            data/contours.gpkg
-            contours-out/contours.pmtiles
-            contours-out/rocks.pmtiles
-            contours-out/rock-stats.txt
-          retention-days: 90
-          compression-level: 9
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          CO: teren
+          NAZOV: skaly-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
+        run: workers/publish-results.sh
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
@@ -1332,7 +1342,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
-      contents: write   # ukladanie hotových dlaždíc do releasu dem-terrain
+      # `read`: hotové dlaždice idú do skladu na Drive, nie do releasu.
+      contents: read
     outputs:
       enabled: ${{ steps.terrain.outputs.enabled }}
       maxzoom: ${{ steps.terrain.outputs.maxzoom }}
@@ -1495,17 +1506,13 @@ jobs:
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/trails-build.sh
 
-      - name: Odlož trasy ako artefakt
+      - name: Odlož trasy do skladu
         if: ${{ always() && hashFiles('data/trails.geojson') != '' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: trasy-${{ needs.plan.outputs.key }}
-          path: |
-            data/trails.geojson
-            steps-out/trail-stats.txt
-          retention-days: 30
-          compression-level: 9
-          if-no-files-found: ignore
+        continue-on-error: true
+        env:
+          CO: trasy
+          NAZOV: trasy-${{ needs.plan.outputs.key }}
+        run: workers/publish-results.sh
 
       # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
       # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles

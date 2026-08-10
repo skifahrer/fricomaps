@@ -38,8 +38,8 @@ behu. Čísla behov sú v komentároch pri kóde.
 
 **1. Jedna otázka, jedna odpoveď, jedno miesto.** Keď si tú istú vec počítajú
 dve miesta, raz sa rozídu – a je to tichý druh chyby, lebo obe strany vyzerajú
-samy o sebe správne. Preto existuje `workers/dem-target.py` („ktorý release
-a ktoré assety"), `workers/resolve-area.py` („čo je výrez") a `workers/parse-
+samy o sebe správne. Preto existuje `workers/dem-target.py` („ktorý sklad
+a ktoré súbory"), `workers/resolve-area.py` („čo je výrez") a `workers/parse-
 options.py` („čo je vo formulári"). Keď potrebuješ odpoveď, ktorú niekto už
 pozná, **podaj si ju**, neprepočítavaj.
 
@@ -131,15 +131,16 @@ tam sa token nikde nevypíše, lebo log public repozitára vidí ktokoľvek;
 `dmr5-drive.py --auth-check` overí). Bez secretu beh spadne hneď a s návodom.
 
 **Rozsah tokenu je `drive`, teda aj zápis** – nie preto, že by pipeline
-zapisovala dáta, ale preto, že na Drive leží aj cache buildu (nižšie).
-Readonly token DMR 5.0 číta ďalej, len sa pod ním nič neuloží.
+zapisovala samotný model, ale preto, že na Drive leží aj sklad hotových dát,
+cache buildu a hotové mapy (všetko nižšie). Readonly token DMR 5.0 číta ďalej,
+len sa pod ním nič neuloží.
 
 **Ten strop visí na VLASTNÍKOVI súboru, nie na tom, kto sťahuje.** Na DMR 5.0
 (naše vlastné súbory) prihlásenie strop dvíha; na cudzí priečinok zdieľaný
 odkazom – Sonny – nie, a nesmie sa tváriť, že áno (`drive-folder.py` preto
 vypíše, koľko súborov účet nevlastní). Aj tam sa ale prihlásiť oplatí: Drive
 API povie dôvod odmietnutia rovno, kým verejná cesta vráti HTTP 200 a HTML
-stránku. Proti Sonnyho stropu chráni zrkadlo v releasi, nie token.
+stránku. Proti Sonnyho stropu chráni zrkadlo v sklade, nie token.
 
 **Token sa musí dostať na všetky miesta, kde sa z Drive číta** –
 `workflow_call` nededí secrets sám:
@@ -177,6 +178,46 @@ dlaždice  N49E020.tif      → dem-dmr5   5 m        tieňovanie (celý región
 
 Skaly z `dmr5` si DEM **nedopĺňajú vôbec**: `workers/slope-chunks.py` číta
 z Drive rovno tie časti, ktoré územie pretína, a odkladá si ich do skladu.
+
+## Publikuje sa LEN na Drive – ani release, ani artefakt
+
+Do GitHubu nejde nič, čo má prežiť beh. Osem druhov drahých medzivýsledkov
+kedysi ležalo v releasoch (`dem-sonny`, `dem-dmr35`, `dem-dmr5`, `dem-ugkk`,
+`dem-terrain`, `dem-rocks`, `dem-rocks-img`, `dem-slope`) a medzivýsledky na
+pozretie v artefaktoch s 90-dňovou retenciou. Oboje je teraz v **sklade na
+Drive**.
+
+| čo | kde |
+|---|---|
+| `workers/drive-store.py` | celý formát skladu (`--check`, `--list`, `--names`, `--index`, `--latest`, `--get`, `--put`, `--rm`, `--prune`) |
+| `workers/publish-results.sh` | medzivýsledky na pozretie → sklad `vysledky` |
+| `cleanup-actions.yml` | zmaže releasy, ich tagy aj artefakty (týždenne + ručne) |
+| `workers/lint-publishing.py` | stráži, že sa `gh release` ani dlhodobý artefakt nevrátia |
+
+```
+<koreň>/dem-dmr5/N49E020.tif        <koreň> = fricomaps-sklad v My Drive
+<koreň>/dem-ugkk/ugkk-vysoke_tatry.tif        (alebo DRIVE_STORE_FOLDER)
+         sklad     meno – to isté, aké mal asset releasu
+```
+
+**Mená súborov sa nezmenili** (pravidlo 2: meno je sľub o rozsahu) a ktorý
+sklad ktorá vrstva hľadá, hovorí ďalej jediné miesto – `dem-target.py`.
+
+Čo tým odpadlo a čo nie: **2 GB strop na asset** odpadol. **Dve podoby DMR 5.0**
+ostávajú – tie nedržal strop releasu, ale runner: jedna 1°×1° dlaždica má
+v metri ~48 GB a voľných je ~60 GB.
+
+**Artefakt smie žiť najviac jeden deň.** `site-*` a `steps-*` s
+`retention-days: 1` nie sú publikovanie, ale prepravky – tými si joby jedného
+behu podávajú kusy `_site` a bez nich sa stránka nedá zlepiť. Čokoľvek s dlhšou
+retenciou je uložený výsledok a patrí do skladu `vysledky`; `Lint workflows` to
+odmietne. Jediná výnimka je `upload-pages-artifact`, bez ktorého sa Pages
+nenasadia.
+
+**„Clobber" je najprv nahrať, potom zmazať staré.** Drive dovolí dva súbory
+s tým istým menom vedľa seba, takže „najprv zmaž" by po spadnutom uploade
+nenechalo ani nové, ani staré – a ďalší beh by hodinu počítal niečo, čo tam
+pred pár minútami bolo. Pri čítaní preto vyhráva NAJNOVŠÍ súbor daného mena.
 
 ## Cache je na Drive, nie v GitHube
 
@@ -252,18 +293,24 @@ PY
 # workery sa dajú spustiť aj lokálne – hodnoty berú z prostredia práve preto
 python3 workers/resolve-area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tatry
 python3 workers/dem-target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
+python3 workers/lint-publishing.py     # nepublikuje sa do releasov/artefaktov
+node    workers/lint-style.mjs         # výplne v štýle chcú len plochy
+python3 workers/drive-store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/check-dem.sh
 REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/build-site.sh   # a tak ďalej
 ```
 
 `Lint workflows` (`.github/workflows/lint-workflows.yml`) beží pri každom pushi
-do `.github/workflows/**` a kontroluje aj veci, ktoré actionlint nevie: veľkosť
-súboru, zdvojené zátvorky v `run:`, dĺžku popisov inputov, súlad výberov
-s `areas.json` a `dem-sources.json`, existenciu `needs.*.outputs.*`
-a `steps.*.outputs.*`, to, že každý `workers/*.sh` dostane env, ktoré číta,
-že cesta k DMR 5.0 ostane celá a že cache ostane na Drive (žiadne
-`actions/cache`, každý cache krok sa vie prihlásiť). **Keď opravíš tichú chybu,
-pridaj naň kontrolu** – tak sú tam všetky ostatné.
+do `.github/workflows/**`, `workers/**` a `poc/web/**` a kontroluje aj veci,
+ktoré actionlint nevie: veľkosť aj dĺžku súboru, zdvojené zátvorky v `run:`,
+dĺžku popisov inputov, súlad výberov s `areas.json` a `dem-sources.json`,
+existenciu `needs.*.outputs.*` a `steps.*.outputs.*`, to, že každý
+`workers/*.sh` dostane env, ktoré číta, že cesta k DMR 5.0 ostane celá, že
+cache ostane na Drive (žiadne `actions/cache`, každý cache krok sa vie
+prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
+(`workers/lint-publishing.py`) a že **každá výplň v štýle nad vrstvou so
+zmiešanou geometriou chce len plochy** (`workers/lint-style.mjs`). **Keď
+opravíš tichú chybu, pridaj naň kontrolu** – tak sú tam všetky ostatné.
 
 ## Commity a PR
 

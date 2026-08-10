@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Je v release výškový model pre naše územie – a keď nie, čo treba doplniť?
+# Je v sklade na Drive výškový model pre naše územie – a keď nie, čo doplniť?
 #
 # PREČO SAMOSTATNÝ SKRIPT A NIE `run:` V WORKFLOWE: build-map.yml má k stropu,
 # nad ktorým ho GitHub NEPRIJME (128 kB), blízko – a nepovie to; po pushi len
@@ -8,8 +8,11 @@
 # lokálne a nie „pushni a pozri sa, čo z toho vyšlo".
 #
 # ČO ROBÍ. Pre každú z troch vrstiev (vrstevnice, skaly, tieňovanie) sa spýta
-# `workers/dem-target.py`, ktorý release a ktoré assety jej zdroj potrebuje,
+# `workers/dem-target.py`, ktorý sklad a ktoré súbory jej zdroj potrebuje,
 # a pozrie sa, či tam sú. Keď nie sú, zaradí ich na doplnenie.
+#
+# SKLAD JE PRIEČINOK NA GOOGLE DRIVE, nie GitHub release – do releasov sa už
+# nepublikuje nič (rozpis: `workers/drive-store.py`).
 #
 # KĽÚČOVÁ VEC, NA KTOREJ SA TO UŽ RAZ ROZBILO. `dmr5` má dve podoby a prepína
 # medzi nimi KĽÚČ VÝREZU, ktorý vrstva podá do `fetch-dem.sh`:
@@ -28,13 +31,13 @@
 # Použitie (hodnoty chodia z prostredia, aby sa dal skript spustiť aj ručne):
 #   BBOX=W,S,E,N AREA_KEY=vysoke_tatry AREA_BBOX=W,S,E,N \
 #   SRC_CONTOURS=dmr5 SRC_ROCKS=dmr5 SRC_TERRAIN=dmr5 \
-#   GH_TOKEN=… GITHUB_REPOSITORY=owner/repo workers/check-dem.sh
+#   GDRIVE_CREDENTIALS=… workers/check-dem.sh
 #
 # Zapisuje do $GITHUB_OUTPUT (keď je nastavený):
-#   demkey_<vrstva>       otlačok obsahu releasu, ide do kľúča cache
+#   demkey_<vrstva>       otlačok obsahu skladu, ide do kľúča cache
 #   mirror_<vrstva>       zdroj pre update-dem.yml (sonny/dmr35), inak prázdne
 #   mirror_dmr5_area      bbox výrezu `W,S,E,N` pre `DMR 5.0 z Drive`
-#   mirror_dmr5_asset     meno, pod ktorým ten výrez build hľadá v release
+#   mirror_dmr5_asset     meno, pod ktorým ten výrez build hľadá v sklade
 #   mirror_dmr5_tiles     stupne `W,S,E,N` pre `DMR 5.0 z Drive`, inak prázdne
 #
 # PREČO SA VÝREZ PODÁVA BBOXOM A NIE KĽÚČOM POHORIA. `DMR 5.0 z Drive` dostane
@@ -72,7 +75,7 @@ DMR5_AREA=""    # bbox, ktorý sa má prečítať ako výrez v plnom rozlíšen�
 DMR5_ASSET=""   # a meno, pod ktorým ho build hľadá
 DMR5_TILES=""   # ktoré stupne doplniť ako 1° dlaždice
 
-# Pozrie sa na jeden zdroj: či pre naše územie v jeho release niečo je a aký je
+# Pozrie sa na jeden zdroj: či pre naše územie v jeho sklade niečo je a aký je
 # otlačok obsahu. Výsledok ide do DEMKEY, prípadné doplnenie do NEED_SRC
 # (resp. DMR5_AREA / DMR5_TILES).
 check_source() { # $1 = vrstva (na výpis), $2 = zdroj
@@ -82,31 +85,31 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
   target=$(python3 "$HERE/dem-target.py" --source="$src" \
     --area-key="$akey" --bbox="$BBOX")
   tget() { printf '%s\n' "$target" | sed -n "s/^$1=//p" | head -1; }
-  form=$(tget form); rel=$(tget release); want=$(tget assets)
+  form=$(tget form); rel=$(tget store); want=$(tget assets)
   mirror=$(tget mirror); degrees=$(tget degrees)
 
   # Meno aj veľkosť naraz: z mien sa hľadá, z celého riadku počíta otlačok.
-  # Dva `gh` dopyty na to isté by sa len rozišli. `|| true` vnútri zátvoriek:
-  # keď release ešte neexistuje, gh skončí nenulovo a `pipefail` by zhodil
+  # Dva dopyty na to isté by sa len rozišli. `|| true` vnútri zátvoriek: keď
+  # sa sklad ešte nezaložil, skript skončí nenulovo a `pipefail` by zhodil
   # celý krok.
-  assets=$({ gh release view "$rel" --repo "$GITHUB_REPOSITORY" --json assets \
-    -q '.assets[] | .name + ":" + (.size|tostring)' 2>/dev/null || true; } | sort)
+  assets=$({ python3 "$HERE/drive-store.py" --index --store="$rel" \
+    2>/dev/null || true; } | sort)
   names=$(printf '%s\n' "$assets" | cut -d: -f1)
 
   if [ "$form" = 'area' ]; then
     # Plné rozlíšenie sa zrkadlí po výrezoch (pri 1 m má jedna 1° dlaždica
     # ~48 GB), takže sa hľadá jeden asset podľa kľúča výrezu.
     if printf '%s\n' "$names" | grep -qx "$want"; then
-      echo "$what ($src): $want je v release $rel ✓"
+      echo "$what ($src): $want je v sklade $rel ✓"
     else
-      echo "$what ($src): $want v release $rel nie je → doplní sa"
+      echo "$what ($src): $want v sklade $rel nie je → doplní sa"
       need=true
     fi
   elif [ -z "$want" ]; then
     # Vlastný región bez bboxu – zoznam dlaždíc sa nedá zistiť, tak sa
-    # pozeráme len na to, či v release vôbec niečo je.
+    # pozeráme len na to, či v sklade vôbec niečo je.
     [ -z "$assets" ] && need=true || true
-    echo "$what ($src): bbox nie je známy; release $rel má $(printf '%s' "$assets" | grep -c . || true) assetov → doplniť: $need"
+    echo "$what ($src): bbox nie je známy; sklad $rel má $(printf '%s' "$assets" | grep -c . || true) súborov → doplniť: $need"
   else
     local have=0 total=0 t
     for t in $want; do
@@ -118,7 +121,7 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
     # N47E016 v Maďarsku) v ňom nikdy nebudú, takže „chýba jedna, tak sťahuj
     # znova" by mirrorovalo pri každom builde.
     [ "$have" -eq 0 ] && need=true || true
-    echo "$what ($src): dlaždíc pre bbox $total, v release $rel $have → doplniť: $need"
+    echo "$what ($src): dlaždíc pre bbox $total, v sklade $rel $have → doplniť: $need"
   fi
 
   if [ "$need" = true ]; then
@@ -138,7 +141,7 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
           if [ "$form" = 'area' ]; then
             # Bbox, nie kľúč: čítať sa má presne to, čo si beh vypýtal (viď
             # rozpis hore). Meno assetu je to isté `$want`, ktoré sa o pár
-            # riadkov vyššie hľadalo v release – z jedného zdroja pravdy,
+            # riadkov vyššie hľadalo v sklade – z jedného zdroja pravdy,
             # takže sa doplní práve to, čo chýbalo.
             DMR5_AREA="$AREA_BBOX"
             DMR5_ASSET="$want"
@@ -195,7 +198,7 @@ if [ -n "$DMR5_TILES" ]; then
   # Dlaždica sa VŽDY musí prečítať celá – jej meno je sľub o celom stupni –
   # takže rýchly test na 2 km² zaplatí za tieňovanie pol hodinu, kým zvyšok
   # behu trvá minúty. Nie je to chyba, ale je to prekvapenie, a to má byť
-  # v logu vopred. Raz doplnená dlaždica v release ostane, takže ďalší
+  # v logu vopred. Raz doplnená dlaždica v sklade ostane, takže ďalší
   # testovací beh na tom istom stupni je zadarmo.
   python3 - "$BBOX" "$DEG" <<'PY' || true
 import math, sys
@@ -212,7 +215,7 @@ if km2 > 0 and tile_km2 / km2 > 50:
           f"({tile_km2 / km2:.0f}× viac). Dlaždica sa musí prečítať celá – jej "
           f"meno je sľub o celom stupni. Je to rádovo pol hodiny na stupeň; "
           f"na rýchly test je lacnejšie `shading_source: sonny`. Raz doplnená "
-          f"dlaždica v release ostane, takže ďalší beh ju už neplatí.")
+          f"dlaždica v sklade ostane, takže ďalší beh ju už neplatí.")
 PY
 fi
 if [ -n "$DMR5_AREA" ]; then

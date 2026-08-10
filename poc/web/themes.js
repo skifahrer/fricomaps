@@ -901,6 +901,35 @@ const str = (prop) => ["coalesce", ["get", prop], ""];
 const num = (prop, fallback) => ["coalesce", ["get", prop], fallback];
 
 /**
+ * IBA PLOCHY – povinná stráž pre `fill` vrstvu nad vrstvou so ZMIEŠANOU
+ * geometriou.
+ *
+ * MapLibre `fill` vrstve NEPRESKOČÍ čiary. Prvok pustí do výplne bez ohľadu
+ * na typ geometrie a otvorenú lomenú čiaru pošle earcutu, ako keby to bol
+ * uzavretý prstenec – vypadne z toho sebaprekrývajúci sa mnohouholník, ktorý
+ * s tou čiarou nemá nič spoločné. `fill-outline-color` mu k tomu obtiahne
+ * hrany, takže to v mape vyzerá ako útvar „prerezaný" cez krajinu.
+ *
+ * PRÁVE TO BOLI TIE ČUDNÉ POLYGÓNY OD ZOOMU 13 na obyčajnej mape (bez skál
+ * a vrstevníc). Vinníkom bola `pedestrian-area`: `fill` nad vrstvou
+ * `transportation` s `class in [pedestrian, path]` a `minzoom: 13`. Vo vrstve
+ * `transportation` sú chodníky ČIARY a Planetiler ich pri
+ * `--transportation_z13_paths=true` (workers/tiles-build.sh) púšťa do dlaždíc
+ * práve od z13 – teda presne odtiaľ, odkiaľ tie útvary pribúdali. A prečo bolo
+ * „vnútri len podklad": farba `pedestrian` je od `background` na nerozoznanie
+ * (svetlá téma #f2efe9 vs #f8f4f0), takže z toho bola plocha v barve podkladu,
+ * ktorá prekryla les aj lúku pod sebou, a `roadCasing` jej obtiahol obrys.
+ *
+ * Pri `fill` nad `transportation`, `aeroway`, `park` a `piste` teda platí:
+ * `class` NESTAČÍ, treba aj typ geometrie. (Ten istý druh omylu ako
+ * `LINE_CLASSES` nižšie, len z druhej strany: tam symbolová vrstva umiestnila
+ * bod na líniu, tu výplňová vrstva vyplnila líniu.)
+ */
+const POLYGON_ONLY = ["==", ["geometry-type"], "Polygon"];
+const polygonOnly = (filter) =>
+  filter ? ["all", POLYGON_ONLY, filter] : POLYGON_ONLY;
+
+/**
  * Triedy `mountain_peak`, ktoré nie sú bodovým vrcholom, ale pretiahnutým
  * útvarom – hrebeňom či masívom. Popisujú územie, takže sa kreslia ako
  * geografický názov, nie ako vrchol s výškou.
@@ -1811,12 +1840,18 @@ export function buildStyle({
     // `piste:type` schéma nepozná. Na lyžiarskej mape tak boli vleky bez
     // toho, k čomu vedú. Plocha aj os sú tá istá vrstva – uzavretá cesta
     // vyjde ako plocha aj ako čiara, takže dostane výplň s obrysom.
+    //
+    // A práve preto tu MUSÍ byť `polygonOnly`: `workers/features.yml` púšťa do
+    // vrstvy `piste` zámerne oba tvary, takže by táto výplň dostala aj os
+    // zjazdovky – otvorenú čiaru, z ktorej MapLibre earcutom vyrobí nezmysel
+    // (rozpis pri `POLYGON_ONLY`). Os kreslí `piste-line` o kus nižšie.
     add(
       {
         id: "piste-area",
         type: "fill",
         source: "features",
         "source-layer": "piste",
+        filter: polygonOnly(),
         paint: { "fill-color": c.pisteArea, "fill-opacity": 0.8 }
       },
       ["prvky", "Zjazdovky (plocha)", "area", { "fill-color": "pisteArea" }]
@@ -1828,6 +1863,9 @@ export function buildStyle({
       id: "park",
       type: "fill",
       "source-layer": "park",
+      // Vrstva `park` nesie aj bod pre popisok (Planetiler ho dáva ako
+      // `pointOnSurface`), nie len obrys chráneného územia.
+      filter: polygonOnly(),
       paint: { "fill-color": c.park, "fill-opacity": 0.55 }
     },
     ["uzemie", "Park (plocha)", "area", { "fill-color": "park" }]
@@ -2122,7 +2160,10 @@ export function buildStyle({
       id: "aeroway-area",
       type: "fill",
       "source-layer": "aeroway",
-      filter: ["in", str("class"), ["literal", ["apron", "aerodrome", "heliport"]]],
+      // Vrstva `aeroway` má dráhy ako čiary a odbavovacie plochy ako polygóny;
+      // `class` ich síce rozlíši, ale letisko býva na nízkom zoome bodom.
+      filter: polygonOnly(
+        ["in", str("class"), ["literal", ["apron", "aerodrome", "heliport"]]]),
       paint: { "fill-color": c.aeroway }
     },
     ["letiska", "Letiskové plochy", "area", { "fill-color": "aeroway" }]
@@ -2160,15 +2201,21 @@ export function buildStyle({
   // Vrstva `transportation` nesie aj POLYGÓNY – pešiu zónu a námestie
   // (`highway=pedestrian` + `area=yes`), mólo ako plochu a teleso mosta
   // (`man_made=bridge`). Štýl mal nad ňou len líniové vrstvy, takže sa
-  // námestie nevyplnilo a plošné mólo zmizlo úplne. `fill` vrstva kreslí
-  // len plochy, takže `class` stačí na rozlíšenie.
+  // námestie nevyplnilo a plošné mólo zmizlo úplne.
+  //
+  // POZOR: „`fill` vrstva kreslí len plochy, takže `class` stačí na
+  // rozlíšenie" NEPLATÍ – bol to práve ten omyl, z ktorého boli čudné
+  // polygóny od zoomu 13. Vo `transportation` sú chodníky, mólo aj most
+  // BEŽNE čiary, MapLibre ich do výplne pustí a earcutom z nich vyrobí
+  // nezmysel. Rozpis je pri `POLYGON_ONLY`; každá výplň tu preto ide cez
+  // `polygonOnly`.
   add(
     {
       id: "bridge-area",
       type: "fill",
       "source-layer": "transportation",
       minzoom: 13,
-      filter: ["==", str("class"), "bridge"],
+      filter: polygonOnly(["==", str("class"), "bridge"]),
       paint: { "fill-color": c.roadCasing, "fill-opacity": 0.5 }
     },
     ["cesty", "Teleso mosta (plocha)", "area", { "fill-color": "roadCasing" }]
@@ -2179,7 +2226,11 @@ export function buildStyle({
       type: "fill",
       "source-layer": "transportation",
       minzoom: 13,
-      filter: ["in", str("class"), ["literal", ["pedestrian", "path"]]],
+      // `path` sú takmer výhradne čiary a od z13 ich je v dlaždiciach plno
+      // (`--transportation_z13_paths=true`) – bez tejto stráže z nich bola tá
+      // „prerezaná" plocha vo farbe podkladu. Viď `POLYGON_ONLY`.
+      filter: polygonOnly(
+        ["in", str("class"), ["literal", ["pedestrian", "path"]]]),
       paint: {
         "fill-color": c.pedestrian,
         "fill-outline-color": c.roadCasing
@@ -2198,7 +2249,8 @@ export function buildStyle({
       type: "fill",
       "source-layer": "transportation",
       minzoom: 13,
-      filter: ["==", str("class"), "pier"],
+      // `man_made=pier` býva mapované čiarou aspoň tak často ako plochou.
+      filter: polygonOnly(["==", str("class"), "pier"]),
       paint: { "fill-color": c.pier }
     },
     ["doprava", "Móla (plocha)", "area", { "fill-color": "pier" }]
