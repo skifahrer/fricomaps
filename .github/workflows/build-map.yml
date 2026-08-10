@@ -211,6 +211,27 @@ env:
   # nich ostali. Opačné poradie by zaoblilo každý schodík zvlášť: viac bodov
   # a čiara stále schodíková, len s oblými schodmi.
   #
+  # Vyhladenie SAMOTNÉHO DEM pred trasovaním – okno priemeru v METROCH.
+  # Toto je tá páka, ktorá zubatosť naozaj odstráni; `-simplify` a Chaikin
+  # nižšie ju len zaokrúhlia. `gdal_contour` interpoluje priesečník na hrane
+  # bunky, takže z hladkého poľa výšok vyjde hladká čiara aj bez úprav – čo ju
+  # krčí, je mikroreliéf v LiDARovom DTM (kry, balvany, šum na decimetroch).
+  # Namerané na simulovanom teréne (1 m mriežka, šum σ = 0,15 m, interval 5 m;
+  # „odchýlka" je vzdialenosť od izolínie toho istého terénu bez šumu):
+  #
+  #   z DEM so šumom, bez úprav               192 b., lom 24,4°, >30° 33,2 %, 0,55 m
+  #   + simplify a 2× Chaikin                 184 b., lom 11,9°, >30°  4,9 %, 0,55 m
+  #   vyhladený DEM 5×5 + simplify + Chaikin  100 b., lom  3,2°, >30°  0,0 %, 0,37 m
+  #
+  # Zaoblenie zrazí lomy, ale odchýlka ostane – čiara je oblá a stále vedie
+  # inokade. Vyhladenie DEM zrazí oboje a k tomu ubudne bodov, čiže menšie
+  # dlaždice. Podrobne vo `workers/contours-build.sh`.
+  #
+  # V METROCH, nie v bunkách – preto sa to smie zapnúť predvolene: 5 m je na
+  # 1 m LiDARe okno 5×5, na 5 m dlaždiciach DMR 5.0 aj na Sonnyho 20 m vyjde
+  # nula. Hrubý model mikroreliéf neobsahuje (je v ňom spriemerovaný už zo
+  # zdroja) a „5×5 buniek" by v ňom zmazalo sto metrov terénu. 0 = vypnuté.
+  CONTOUR_DEM_LOWPASS: "5"
   # Záporné číslo = koľko ŠTVRTÍN bunky DEM (tolerancia sa počíta z orezaného
   # rastra, nie z konštanty – model má raz 1 m a raz 20 m). 0 = vypnuté,
   # kladné číslo sa berie v metroch.

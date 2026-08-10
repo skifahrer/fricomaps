@@ -221,11 +221,91 @@ else
       -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" "$CONTOUR_VRT" work/clip.tif
   fi
 
+  # ---------- vyhladenie SAMOTNÉHO DEM ----------
+  # TOTO JE TÁ PÁKA, KTORÁ ZUBATOSŤ NAOZAJ ODSTRÁNI, a `-simplify` s Chaikinom
+  # nie sú jej náhrada. Dôvod je v tom, odkiaľ zubatosť pochádza: `gdal_contour`
+  # interpoluje priesečník na hrane bunky, takže z HLADKÉHO poľa výšok vyjde
+  # hladká čiara aj bez akýchkoľvek úprav. Čo ju krčí, je mikroreliéf
+  # v LiDARovom DTM – kry, balvany, šum merania na úrovni decimetrov. Čiara sa
+  # okolo nich vlní a ZAOBLENIE TO VLNENIE LEN ZAOKRÚHLI, neodstráni:
+  # namerané na simulovanom teréne (1 m mriežka, šum σ = 0,15 m, interval 5 m;
+  # „odchýlka" je vzdialenosť od izolínie toho istého terénu bez šumu):
+  #
+  #   izolínia hladkého terénu (referencia)   296 b., lom  0,3°, >30°  0,0 %, —
+  #   z DEM so šumom, bez úprav               192 b., lom 24,4°, >30° 33,2 %, 0,55 m
+  #   + simplify a 2× Chaikin                 184 b., lom 11,9°, >30°  4,9 %, 0,55 m
+  #   vyhladený DEM 3×3 + simplify + Chaikin  212 b., lom  7,5°, >30°  0,0 %, 0,42 m
+  #   vyhladený DEM 5×5 + simplify + Chaikin  100 b., lom  3,2°, >30°  0,0 %, 0,37 m
+  #   vyhladený DEM 7×7 + simplify + Chaikin   68 b., lom  2,0°, >30°  0,0 %, 0,34 m
+  #
+  # Všimni si stredný riadok: zaoblenie zrazí lomy z 24,4° na 11,9°, ale
+  # odchýlka ostane 0,55 m – čiara je oblá a stále vedie inokade než skutočná
+  # vrstevnica. Vyhladenie DEM zrazí OBOJE, a k tomu ubudne bodov (100 namiesto
+  # 184), čiže sú z toho aj menšie dlaždice.
+  #
+  # OKNO SA ZADÁVA V METROCH, NIE V BUNKÁCH, a to je celé, prečo sa to smie
+  # zapnúť predvolene. Päť metrov je na 1 m LiDARe okno 5×5 (vyhladí kry
+  # a šum, tvar svahu nechá), na 5 m dlaždiciach DMR 5.0 vyjde nula a na
+  # Sonnyho 20 m mriežke tiež – hrubý model mikroreliéf neobsahuje, ten je
+  # v ňom spriemerovaný už zo zdroja, a okno „5×5 buniek" by tam zmazalo sto
+  # metrov terénu. `0` to vypne.
+  #
+  # Ako sa to počíta: priemer v okne sa robí dvoma gdalwarpmi – zmenšením
+  # s `-r average` (to je ten priemer) a zväčšením späť na pôvodnú mriežku
+  # s `-r cubicspline` (hladká rekonštrukcia medzi vzorkami). Je to lacnejšie
+  # a pamäťovo bezpečnejšie než ťahať gigabajtový raster cez numpy, a na
+  # mierke, o ktorú tu ide, to robí to isté.
+  CONTOUR_RASTER=work/clip.tif
+  LOWPASS_M="${CONTOUR_DEM_LOWPASS:-5}"
+  case "$LOWPASS_M" in ''|*[!0-9.]*) LOWPASS_M=5 ;; esac
+  set +e
+  LP_OUT=$(python3 - "$LOWPASS_M" <<'PY'
+import json, subprocess, sys
+want_m = float(sys.argv[1])
+info = json.loads(subprocess.run(["gdalinfo", "-json", "work/clip.tif"],
+                                 capture_output=True, text=True,
+                                 check=True).stdout)
+gt = info["geoTransform"]
+cell_deg = min(abs(gt[1]), abs(gt[5]))
+cell_m = cell_deg * 110540          # stupeň po šírke, viď nižšie pri tolerancii
+# Okno musí byť nepárny násobok bunky – `2r+1`. Keď vyjde r = 0, model je na
+# mikroreliéf privhrubý a nevyhladzuje sa vôbec.
+r = int(round(want_m / cell_m / 2)) if cell_m > 0 else 0
+print(f"{2 * r + 1} {cell_deg:.10f} {cell_m:.2f}")
+PY
+)
+  LP_RC=$?
+  set -e
+  if [ "$LP_RC" -ne 0 ] || [ -z "$LP_OUT" ]; then
+    echo "::warning::Veľkosť okna na vyhladenie DEM sa nedá spočítať – vrstevnice sa trasujú z nevyhladeného modelu."
+  else
+    read -r LP_WIN LP_CELL_DEG LP_CELL_M <<< "$LP_OUT"
+    if [ "$LP_WIN" -le 1 ]; then
+      echo "Vyhladenie DEM: vypnuté – bunka modelu má ${LP_CELL_M} m, čo je viac než okno ${LOWPASS_M} m (mikroreliéf v ňom nie je)."
+    else
+      LP_COARSE=$(python3 -c "print(f'{$LP_CELL_DEG * $LP_WIN:.10f}')")
+      echo "Vyhladenie DEM: okno ${LP_WIN}×${LP_WIN} buniek (~$(python3 -c "print(f'{$LP_CELL_M * $LP_WIN:.1f}')") m) – priemer, potom späť na pôvodnú mriežku"
+      python3 workers/watch.py --label="vyhladenie DEM (priemer)" \
+        --watch-file=work/lp.tif \
+        -- gdalwarp -overwrite -r average -tr "$LP_COARSE" "$LP_COARSE" \
+           work/clip.tif work/lp.tif
+      python3 workers/watch.py --label="vyhladenie DEM (späť na mriežku)" \
+        --watch-file=work/clip-smooth.tif \
+        -- gdalwarp -overwrite -r cubicspline -te "$W" "$S" "$E" "$N" \
+           -tr "$LP_CELL_DEG" "$LP_CELL_DEG" work/lp.tif work/clip-smooth.tif
+      rm -f work/lp.tif
+      CONTOUR_RASTER=work/clip-smooth.tif
+      # Pôvodný orez už netreba a má aj gigabajty – na disku runnera je to
+      # rozdiel medzi „prejde" a „no space left on device".
+      rm -f work/clip.tif
+    fi
+  fi
+
   # `-q` je preč a ide to cez watch.py: gdal_contour nad krajom beží
   # desiatky minút a doteraz pri tom nepovedal ani slovo.
   python3 workers/watch.py --label="vrstevnice" --watch-file=work/raw.gpkg \
     -- gdal_contour -a ele -i "$INTERVAL" -f GPKG -nln contours \
-       work/clip.tif work/raw.gpkg
+       "$CONTOUR_RASTER" work/raw.gpkg
 
   # `level` rozdelí vrstevnice na hlavné/polovičné/základné, aby sa
   # dali zapínať podľa zoomu a kresliť rôzne hrubo. Hranice sa počítajú
@@ -261,9 +341,9 @@ else
   # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
   # nepredstaví). Prepočet je na jednom mieste, nie dvakrát.
   set +e
-  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" <<'PY'
+  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" "$CONTOUR_RASTER" <<'PY'
 import json, subprocess, sys
-want = float(sys.argv[1])
+want, raster = float(sys.argv[1]), sys.argv[2]
 # DLHŠÍ z dvoch stupňov – ten po ŠÍRKE (110 540 m). Stupeň po dĺžke má u nás
 # len ~73 000 m, takže je to on, kto rozhoduje o najhoršom prípade, a ten sa
 # tu musí použiť dvakrát:
@@ -277,8 +357,11 @@ if want == 0:
 elif want > 0:
     deg = want / m_per_deg          # zadané v metroch
 else:
+    # Raster, z ktorého sa NAOZAJ trasovalo – pri zapnutom vyhladení je to
+    # `clip-smooth.tif` a `clip.tif` už neexistuje. Mriežka je tá istá, ale
+    # pýtať sa súboru, ktorý sme zmazali, by znamenalo pád.
     info = json.loads(subprocess.run(
-        ["gdalinfo", "-json", "work/clip.tif"],
+        ["gdalinfo", "-json", raster],
         capture_output=True, text=True, check=True).stdout)
     gt = info["geoTransform"]
     # -1 = štvrtina bunky, -2 = polovica, -4 = celá. Nad polovicou sa čiara

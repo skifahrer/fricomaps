@@ -195,6 +195,9 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → gdalwarp   orez na bbox (zjemnenie DEM je predvolene vypnuté – vrstevnice
                sa trasujú z plného rozlíšenia; `contour_smoothing` v oblúkových
                sekundách ho vie zapnúť, 2 = pôvodné hladenie)
+  → gdalwarp   vyhladí DEM: priemer v okne 5 m (`-r average` na hrubšiu
+               mriežku a `-r cubicspline` späť na pôvodnú). Pri hrubom modeli
+               vyjde okno na jednu bunku a nerobí sa nič
   → gdal_contour -i 10
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
                a `-simplify` zmaže schodíky po hranách buniek DEM
@@ -205,12 +208,40 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → {región}-contours.pmtiles
 ```
 
-**Zubatosť nerobí raster, robí ju zjednodušenie – a to isté platí pri
-skalách.** Vrstevnica je izolínia nad rastrom, čiže chodí po hranách buniek:
-pri 1 m DEM je jeden schodík meter a pixel dlaždice má pri z16 1,57 m, takže
-tie schodíky vidno. `-simplify` ich zmaže, po ňom ale ostanú **ostré rohy** –
-a tie zaobli Chaikinovo orezávanie rohov. Merané na schodíkovej vrstevnici nad
-rastrom (oblúk okolo žľabu, bunka = 1):
+**Zubatosť robí mikroreliéf v modeli, nie mriežka – a preto sa hladí DEM, nie
+len čiara.** `gdal_contour` interpoluje priesečník na hrane bunky, takže
+z hladkého poľa výšok vyjde hladká čiara aj bez akýchkoľvek úprav. Čo ju krčí,
+je to, čo je v LiDARovom DTM naozaj: kry, balvany, šum merania na úrovni
+decimetrov. Zaoblenie čiary to vlnenie len **zaokrúhli**, neodstráni. Merané
+na simulovanom teréne (1 m mriežka, šum σ = 0,15 m, interval 5 m; „odchýlka"
+je vzdialenosť od izolínie toho istého terénu **bez** šumu):
+
+| postup | bodov | priemerný lom | lomov > 30° | odchýlka |
+|---|--:|--:|--:|--:|
+| izolínia hladkého terénu (referencia) | 296 | 0,3° | 0,0 % | — |
+| z DEM so šumom, bez úprav | 192 | 24,4° | 33,2 % | 0,55 m |
+| + simplify a 2× Chaikin | 184 | 11,9° | 4,9 % | **0,55 m** |
+| vyhladený DEM 3×3 + simplify + Chaikin | 212 | 7,5° | 0,0 % | 0,42 m |
+| **vyhladený DEM 5×5 + simplify + Chaikin** | **100** | **3,2°** | **0,0 %** | **0,37 m** |
+| vyhladený DEM 7×7 + simplify + Chaikin | 68 | 2,0° | 0,0 % | 0,34 m |
+
+Kľúčový je tretí riadok: zaoblenie zrazí lomy z 24,4° na 11,9°, ale **odchýlka
+ostane 0,55 m** – čiara je oblá a stále vedie inokade než skutočná vrstevnica.
+Vyhladenie DEM zrazí oboje naraz, a k tomu **ubudne bodov** (100 namiesto 184),
+čiže sú z toho aj menšie dlaždice.
+
+Okno sa zadáva **v metroch** (`CONTOUR_DEM_LOWPASS`, default 5 m), nie
+v bunkách – a to je celé, prečo sa smie zapnúť predvolene: päť metrov je na 1 m
+LiDARe okno 5×5, kým na 5 m dlaždiciach DMR 5.0, na DMR 3.5 (10 m) aj na
+Sonnyho 20 m vyjde nula a nevyhladzuje sa nič. Hrubý model mikroreliéf
+neobsahuje – je v ňom spriemerovaný už zo zdroja – a okno „5×5 buniek" by
+v ňom zmazalo sto metrov terénu. Priemer robia dva `gdalwarp`y (zmenšenie
+s `-r average`, zväčšenie späť s `-r cubicspline`), takže sa gigabajtový raster
+nemusí ťahať cez pamäť.
+
+**Až potom sa upratuje čiara.** `-simplify` zmaže schodíky po hranách buniek,
+po ňom ostanú **ostré rohy** – a tie zaobli Chaikinovo orezávanie rohov.
+Merané zvlášť na schodíkovej vrstevnici (oblúk okolo žľabu, bunka = 1):
 
 | nastavenie | bodov | priemerný lom | lomov > 60° | odchýlka od skutočnej izolínie |
 |---|--:|--:|--:|--:|
