@@ -486,6 +486,21 @@ def main():
         run(["ogr2ogr", "-f", "GPKG", args.out, final_metric, "-nln", "rock",
              "-overwrite", "-t_srs", "EPSG:4326"])
         n = int(st.get("n", ogr_count(args.out)))
+        # NULA SKÁL PO FILTRI NIE JE VÝSLEDOK, JE TO PODOZRENIE. Nad prahom
+        # sklonu niečo bolo (inak by sme sem nedošli – `exploded` sa kontroluje
+        # vyššie), a filter najmenšej plochy to celé zmietol. Buď je `min_area`
+        # privysoká, alebo sú súradnice v iných jednotkách, než z akých sa
+        # plocha počíta – presne to sa stalo v behu 31426542010, kde mapa ticho
+        # ostala bez skál a beh bol zelený.
+        if n == 0:
+            print(f"::error::Nad prahom sklonu {args.slope:g}° niečo bolo, ale "
+                  f"po filtri najmenšej plochy ({args.min_area:g} m²) neostala "
+                  f"ani jedna skala. Buď je prah privysoký a `rock_slope` treba "
+                  f"znížiť, alebo sa plocha počíta z iných jednotiek, než v "
+                  f"akých sú súradnice (viď `skontroluj_metricke` vo "
+                  f"`workers/lib/contour-blocks.py`). Mapa by inak ticho "
+                  f"vyšla bez skál.")
+            return 1
         took = time.time() - t_start
         naozaj = src_cells / max(took, 1)
         print(f"Skalných plôch: {n} (celý výpočet {hms(took)}, "

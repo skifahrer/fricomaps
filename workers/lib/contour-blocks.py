@@ -30,6 +30,7 @@ jedného (pravidlo 1).
 """
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -79,23 +80,67 @@ def oznac_svy(src, dst, na_hranici):
     return n
 
 
+def _suradnice(geom):
+    """Body geometrie – bez ohľadu na to, či je to Polygon alebo MultiPolygon."""
+    t, c = geom.get("type"), geom.get("coordinates")
+    if t == "Polygon":
+        for ring in c or []:
+            yield from ring
+    elif t == "MultiPolygon":
+        for poly in c or []:
+            for ring in poly:
+                yield from ring
+
+
 def _dotyka_sa(geom, x0, y0, x1, y1, tol):
     """Siaha geometria na okraj okna (v súradniciach rastra)?"""
-    def body(g):
-        t = g.get("type")
-        c = g.get("coordinates")
-        if t == "Polygon":
-            for ring in c or []:
-                yield from ring
-        elif t == "MultiPolygon":
-            for poly in c or []:
-                for ring in poly:
-                    yield from ring
-    for x, y in body(geom):
+    for x, y in _suradnice(geom):
         if (abs(x - x0) <= tol or abs(x - x1) <= tol
                 or abs(y - y0) <= tol or abs(y - y1) <= tol):
             return True
     return False
+
+
+def skontroluj_metricke(seq, minimum=1000.0, vzoriek=200):
+    """Sú súradnice v metroch, alebo sa niekde stratili do stupňov?
+
+    Rozdiel nevidno na ničom inom: beh dobehne, výstup existuje a je zelený –
+    len každá plocha má rádovo 1e-9 m² a filter najmenšej plochy ju vyhodí.
+    Preto sa to kontroluje rovno pri zdroji a je to CHYBA, nie varovanie.
+
+    Rozhoduje NAJVÄČŠIA súradnica zo vzorky, nie prvá: jeden bod môže byť
+    blízko nuly aj v metroch. V EPSG:3035 má Slovensko rádovo 4,8e6 / 3,0e6,
+    v stupňoch je to do 180 – tie dva svety sa nemajú ako pomýliť.
+    """
+    najvacsia = 0.0
+    videl = False
+    try:
+        with open(seq) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    obj = json.loads(line)
+                except ValueError:
+                    continue
+                for x, y in _suradnice(obj.get("geometry") or {}):
+                    videl = True
+                    najvacsia = max(najvacsia, abs(x), abs(y))
+                    vzoriek -= 1
+                    if vzoriek <= 0:
+                        break
+                if vzoriek <= 0:
+                    break
+    except FileNotFoundError:
+        return True
+    if videl and najvacsia < minimum:
+        raise ValueError(
+            f"súradnice vyzerajú ako stupne (najväčšia {najvacsia:.6f}), nie "
+            f"ako metre – z okna bloku sa nevyhodil `<SRS>` a GDAL ich "
+            f"prepočítal do WGS84. Plocha by potom vyšla rádovo 1e-9 m² "
+            f"a filter najmenšej plochy by vyhodil VŠETKY skaly, pričom beh "
+            f"by ostal zelený (behy 31245134321 a 31426542010).")
+    return True
 
 
 def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
@@ -132,12 +177,34 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
         subprocess.run(["gdal_translate", "-q", "-of", "VRT",
                         "-srcwin", str(bx), str(by), str(bw), str(bh),
                         vrt, okno], check=True)
+        # A TERAZ TO DÔLEŽITÉ: z okna sa vyhodí <SRS>.
+        #
+        # Ovládač GeoJSON prepočítava do WGS84 vždy, keď zdroj vie, v čom je.
+        # `gdal_contour` nad rastrom s EPSG:3035 by teda vypísal STUPNE – a kto
+        # z toho počíta plochu ako z metrov, tomu vyjde každá skala rádovo
+        # 1e-9 m² a spadne pod `min_area`. Von potom ide NULA plôch a beh je
+        # pritom zelený. Stalo sa to dvakrát: v tieňovacej ceste (beh
+        # 31245134321, 976 725 plôch → 0 ponechaných) a znova tu, keď sa
+        # bloky písali pre sklon a tento riadok sa nepreniesol (beh
+        # 31426542010). Bez SRS nemá GDAL čo prepočítať a súradnice ostanú
+        # metrické.
+        with open(okno) as f:
+            xml = f.read()
+        with open(okno, "w") as f:
+            f.write(re.sub(r"\s*<SRS[^>]*>.*?</SRS>", "", xml, flags=re.S))
         part = cesta + ".part"
         if os.path.exists(part):
             os.remove(part)
         subprocess.run(["gdal_contour", "-p", "-q", "-fl", *urovne, *atributy,
-                        "-f", "GeoJSONSeq", "-nln", "band", okno, part],
+                        "-f", "GeoJSONSeq", "-nln", "band",
+                        # Súradnice sú metrické, dve desatiny = centimeter.
+                        "-lco", "COORDINATE_PRECISION=2", okno, part],
                        check=True)
+        # STRÁŽCA: prvý blok sa pozrie, či sú súradnice naozaj metrické.
+        # Keď sa sem raz vráti prepočet do stupňov, nespadne nič – len
+        # z filtra plochy vypadne všetko a mapa bude ticho bez skál.
+        if spravene == 0:
+            skontroluj_metricke(part)
         # Súradnice sú v metroch výrezu; hranica bloku je jeho okraj.
         x0, y0 = ox + bx * res, oy - by * res
         x1, y1 = x0 + bw * res, y0 - bh * res
