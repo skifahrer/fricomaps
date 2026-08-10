@@ -1181,6 +1181,33 @@ Dve veci, ktoré z toho plynú:
   alebo ručne. Ten istý workflow vyprázdni aj GitHub cache, ktorú už nikto
   nehľadá.
 
+### Hotová mapa ide aj na Drive ako ZIP
+
+Okrem GitHub Pages sa každý build publikuje do priečinka na Google Drive: celý
+web (dlaždice, štýly, vrstevnice, skaly, tieňovanie, fonty, sprity) ako **jeden
+ZIP**. Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
+
+```
+<koreň>/slovensko/presovsky/vysoke_tatry/…zip
+         krajina  kraj      výsek   (úrovne, čo nedávajú zmysel, sa vynechajú)
+```
+
+**Meno nesie, čo v tej mape je** — do jedného priečinka padajú desiatky behov
+s rôznymi nastaveniami:
+
+```
+presovsky-vysoke_tatry-test2km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+```
+
+Teda výrez, rýchly test a jeho veľkosť, zoom dlaždíc, ktoré vrstvy sú vnútri
+a **z ktorého modelu sú spočítané** — a to podľa toho, čo build naozaj použil,
+nie čo bolo vo formulári. Vrstva, ktorá v mape nie je, sa píše tiež
+(`bez_skal`). Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa
+dva behy nikdy neprepíšu.
+
+Robí to [`workers/publish-map.py`](workers/publish-map.py) a vypnúť sa to dá
+voľbou `publish=false` v poli `options`.
+
 ### Súhrn buildu
 
 Každý beh napíše do záložky **Summary** prehľad: čo sa robilo, ako dlho to

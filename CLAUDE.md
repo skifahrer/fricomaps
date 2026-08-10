@@ -152,6 +152,7 @@ stránku. Proti Sonnyho stropu chráni zrkadlo v releasi, nie token.
 | job `contours` | vrstevnice z `dmr5` | `env:` workflowu |
 | job `rocks` | sklon z `dmr5` rovno z Drive | `env:` workflowu |
 | každý krok s cache | cache buildu | `env:` workflowu |
+| krok `Publikuj mapu na Drive` | hotová mapa ako ZIP | `env:` workflowu |
 
 Odkedy je na Drive aj cache, je tých miest priveľa na to, aby stáli pri každom
 jobe – preto je prihlásenie v `env:` celého workflowu.
@@ -204,6 +205,26 @@ Dve veci, ktoré GitHub robil sám a Drive nie: **nič sa nemaže samo** (na to 
 `--prune` a týždenný workflow) a **bez prihlásenia to nefunguje** (krok vtedy
 spadne s návodom; `Lint workflows` stráži, že token dostane každý cache krok).
 Nový `uses: actions/cache…` tá istá kontrola odmietne.
+
+## Hotová mapa ide na Drive ako ZIP
+
+Okrem Pages sa každý build publikuje aj do priečinka na Drive – celý `_site`
+v jednom ZIPe (`workers/publish-map.py`, vypína to voľba `publish=false`):
+
+```
+<koreň>/slovensko/presovsky/vysoke_tatry/<mapa>.zip
+         krajina  kraj      výsek        (úrovne, čo nedávajú zmysel, sa vynechajú)
+```
+
+**Meno je sľub o obsahu** (pravidlo 2 v inej podobe): nesie výrez, zoom, ktoré
+vrstvy v mape sú a Z ČOHO sú spočítané – a to podľa toho, čo joby NAOZAJ
+použili, nie čo bolo vo formulári. Vrstva, ktorá tam nie je, sa píše tiež
+(`bez_skal`), lebo mlčanie sa dá čítať aj ako „zabudlo sa to dopísať". Rýchly
+test má v mene `test2km2`, inak by mapa z 2 km² vyzerala ako celá.
+
+Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa dva behy
+nikdy neprepíšu. Publikuje sa len mapa, ktorá prešla kontrolou pred nasadením;
+rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
 ## Než niečo pushneš
 

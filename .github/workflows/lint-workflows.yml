@@ -485,7 +485,7 @@ jobs:
           # ktoré tie isté mená spomínajú ako dáta.
           CMD = re.compile(r"^\s*(?:\w+=\$\()?(?:python3?|bash|sh|\./)\s+\S*"
                            r"(?:dmr5-drive|slope-chunks|contours-build"
-                           r"|drive-folder|drive-cache)"
+                           r"|drive-folder|drive-cache|publish-map)"
                            r"\.(?:py|sh)\b", re.M)
           # Cache leží na Drive, takže KAŽDÝ krok s ňou je krok, ktorý sa musí
           # vedieť prihlásiť. Bez tokenu sa nič nestratí, len sa nič nenájde
