@@ -137,6 +137,15 @@ class Heartbeat(threading.Thread):
         # dlhého behu naozaj zaujíma.
         self.pct = 0.0
         self.pct_at = self.t0
+        # Predošlé hlásené percento – z neho sa počíta NEDÁVNE tempo. Bez neho
+        # sa dá povedať len priemer od štartu, a ten pri spomaľujúcom procese
+        # klame smerom nadol: `gdal_contour -p` nad jemným sklonom ide prvých
+        # 20 % rýchlo a potom sa každý ďalší krok predlžuje, takže odhad
+        # z priemeru sľubuje koniec, ktorý nepríde (beh 31418794845).
+        self.prev_pct = 0.0
+        self.prev_at = self.t0
+        # Aby varovanie o spomalení nezaznelo pri každom tepe.
+        self.spomalenie_ohlasene = False
         # Namerané čísla si tep drží aj pre záverečný riadok: keď proces
         # skončí, `/proc/<pid>` zmizne a spýtať sa už nie je koho.
         self.rss_mb = 0.0
@@ -145,6 +154,15 @@ class Heartbeat(threading.Thread):
         self.io = (0.0, 0.0)
         self.out_mb = 0.0
         self._last = (self.t0, 0.0, (0.0, 0.0), 0.0)  # čas, cpu, io, výstup
+
+    def tempo(self):
+        """(priemerné, nedávne) tempo v %/min; nedávne je z posledného kroku."""
+        beh = max(time.time() - self.t0, 1e-6)
+        priemer = self.pct / (beh / 60.0)
+        dt = self.pct_at - self.prev_at
+        dp = self.pct - self.prev_pct
+        nedavne = dp / (dt / 60.0) if dt > 1 and dp > 0 else 0.0
+        return priemer, nedavne
 
     def sample(self):
         """Odmeria proces a vráti jednu vetu o tom, čo práve robí."""
@@ -162,9 +180,20 @@ class Heartbeat(threading.Thread):
         # Konštanta sa mýli aj osemdesiatnásobne (`gdal_contour` nad
         # jemným sklonom); percentá z bežiaceho procesu nie.
         if 0 < self.pct < 100:
+            priemer, nedavne = self.tempo()
             zvysok = beh / (self.pct / 100.0) - beh
-            parts.append(f"{self.pct:g} %, zostáva ~{hms(zvysok)} "
-                         f"(koniec ~{o_kolkej(zvysok)})")
+            # Keď je nedávne tempo výrazne pod priemerom, proces spomaľuje
+            # a odhad z priemeru je lož. Vtedy sa ukáže oboje a odhad sa
+            # počíta z toho, ako to ide TERAZ.
+            if nedavne and priemer and nedavne < priemer / 2:
+                z_nedavneho = (100.0 - self.pct) / nedavne * 60.0
+                parts.append(
+                    f"{self.pct:g} %, tempo kleslo {priemer / nedavne:.1f}× "
+                    f"({priemer:.2f} → {nedavne:.2f} %/min), pri terajšom "
+                    f"tempe zostáva ~{hms(z_nedavneho)}")
+            else:
+                parts.append(f"{self.pct:g} %, zostáva ~{hms(zvysok)} "
+                             f"(koniec ~{o_kolkej(zvysok)})")
         elif self.pct >= 100:
             parts.append("100 % – dopisuje výstup")
 
@@ -318,7 +347,25 @@ def run_watched(cmd, label, tmp=None, max_rss_mb=0, every=30, max_s=0):
             beh = teraz - t0
             # Tepu sa to podá, aby vedel dopočítať odhad aj medzi bodkami –
             # pri pomalom behu je medzi nimi aj štvrť hodiny.
+            hb.prev_pct, hb.prev_at = hb.pct, hb.pct_at
             hb.pct, hb.pct_at = pct, teraz
+            # SPOMAĽUJE? Povedať to nahlas a HNEĎ, nie až keď to niekto po
+            # hodine zruší. `gdal_contour -p` nad jemným sklonom nezrýchli
+            # späť – keď tempo spadne na štvrtinu, je to signál, že zadanie
+            # je nad možnosti jedného priechodu (rozpis pri
+            # `CONTOUR_SRC_CELLS_PER_S` v contours-rocks/rock-plan.py).
+            priemer, nedavne = hb.tempo()
+            if (not hb.spomalenie_ohlasene and beh > 300
+                    and nedavne and priemer and nedavne < priemer / 4):
+                hb.spomalenie_ohlasene = True
+                print(f"::warning::{label}: tempo kleslo {priemer / nedavne:.0f}× "
+                      f"({priemer:.2f} → {nedavne:.2f} %/min pri {pct:g} %). "
+                      f"Pri terajšom tempe zostáva ~"
+                      f"{hms((100.0 - pct) / nedavne * 60.0)} a ďalej sa to "
+                      f"bude predlžovať – jeden priechod `gdal_contour -p` sa "
+                      f"nedá prerušiť, takže to buď dobehne, alebo padne na "
+                      f"strope jobu. Zváž hrubší sklad (`rock_res`) alebo "
+                      f"menší výrez (`area`).", flush=True)
             if pct % 10 and teraz - last_at < krok_s:
                 continue
             last_at = teraz

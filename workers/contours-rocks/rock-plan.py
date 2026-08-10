@@ -43,14 +43,31 @@ SLOPE_CELLS_PER_S = 5.1e6    # gdalwarp + gdaldem slope + gdal_translate
 # územia (Vysoké Tatry, 689 km², sklad na 1 m), ktoré sa líšia len mriežkou
 # trasovania:
 #
-#   beh          trasuje sa na   buniek trasovania   celkom   zdrojových buniek/s
-#   31357217326  1 m             0,71 mld.           97 min   123 tis.
-#   31360120952  2 m             0,18 mld.           98 min   121 tis.
+#   beh          trasuje sa na   buniek trasovania   dokedy bežal   kam došiel
+#   31357217326  1 m             0,71 mld.           21 min         17 %
+#   31360120952  2 m             0,18 mld.           30 min         26 %
 #
-# Štvrtina buniek na trasovanie, ROVNAKÝ čas – a zhoda v prepočte na zdrojové
-# bunky je na 1,5 %. Predtým tu stál model, ktorý cenu viazal na mriežku
-# trasovania (`res^1,42`); tie dva riadky ho vyvracajú a je preč. Predtým tu
-# stála konštanta 3,5 mil./s a bola 29× vedľa.
+# POZOR, ANI JEDEN Z TÝCH BEHOV NEDOBEHOL – oba zrušil človek. Kým tu stálo
+# „97 min" a „98 min", boli to ODHADY, ktoré si tep vypísal z tejto konštanty
+# („beží 0:16:30 z 1:39:59"), nie namerané časy. Číslo teda potvrdzovalo samo
+# seba a rovnaká chyba tu už raz bola (3,5 mil./s z behu 30948662582, ktorý
+# tiež nedobehol). Skutočná rýchlosť nie je známa a je NIŽŠIA.
+#
+# A HLAVNE: NIE JE KONŠTANTNÁ. `gdal_contour -p` nad jemným sklonom výrazne
+# spomaľuje, ako pribúdajú rozpracované prstence. Namerané v behu 31418794845
+# (689 km², sklad 1 m, trasovanie 2 m) – tempo po krokoch po 2,5 %:
+#
+#   do 17,5 %   ~2 %/min        22,5 % → 25 %    6:55 na krok
+#   22,5 %      1,07 %/min      25 % → 27,5 %    9:45 na krok
+#   25 %        0,36 %/min      ďalší krok       > 26 min (beh zrušený)
+#
+# Každý ďalší krok je ~1,4× dlhší než predošlý. Lineárny odhad z tejto
+# konštanty sľuboval 1:39; pri tom raste sa priechod nedokončí ani za hodiny.
+# ŽIADNY beh skál nad celým výrezom zatiaľ nedobehol – všetky hotové sú
+# 4 km² testy (1–2 min).
+#
+# Konštanta tu teda ostáva len ako HRUBÉ rádové vodítko pre `pick_res`; skutočný
+# obraz dáva až tep, ktorý hlási, keď tempo klesá (`workers/lib/watch.py`).
 #
 # ČO Z TOHO PLYNIE PRE ZADANIE: obrys sa nezlacní tým, že sa trasuje hrubšie,
 # ale tým, že je hrubší SKLAD. `pick_res` preto účtuje vektorizáciu mriežke
