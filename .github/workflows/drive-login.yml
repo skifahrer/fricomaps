@@ -35,8 +35,11 @@ name: Prihlásenie na Drive (jednorazové)
 # Po úspešnom behu DRIVE_PAT zmaž – workflow to na konci aj pripomenie.
 #
 # ČO TREBA MAŤ PRIPRAVENÉ (jedno aj druhé sa dá spraviť z telefónu):
-#   DRIVE_CLIENT   client_id  OAuth klienta typu „Desktop app"
-#   DRIVE_SECRET   client_secret toho istého klienta
+#   DRIVE_CLIENT   client_id  OAuth klienta typu „Desktop app" – NIE secret,
+#                             ale repository VARIABLE (Settings → Secrets
+#                             and variables → Actions → Variables): nie je to
+#                             tajné, chodí v každej adrese prihlásenia.
+#   DRIVE_SECRET   client_secret toho istého klienta – toto UŽ secret je
 #   DRIVE_PAT      ten PAT vyššie
 #
 # AKO TO IDE (dva behy tohto workflowu):
@@ -78,7 +81,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
     steps:
       - name: Checkout

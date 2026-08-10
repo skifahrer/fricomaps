@@ -67,7 +67,7 @@ jobs:
       # Prerieďovanie na Drive maže súbory, takže potrebuje token vlastníka
       # – a s rozsahom na zápis. Readonly token to povie hneď a s návodom.
       GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
-      DRIVE_CLIENT: ${{ secrets.DRIVE_CLIENT }}
+      DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
       DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
       DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
     steps:
