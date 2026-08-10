@@ -15,7 +15,10 @@ Prvé chytá porovnanie „čo skript číta" × „čo mu krok dáva", druhé k
 `steps.<id>.outputs` proti skutočným `id` krokov v tom jobe.
 
 Čo si skript nastaví sám (vrátane `local`, `read`, `for`, `mapfile`) sa neráta,
-a `${VAR:-default}` tiež nie – na ten prípad má predvolenú hodnotu.
+a `${VAR:-default}` tiež nie – na ten prípad má predvolenú hodnotu. Keď skript
+sourcuje iný `workers/*.sh`, prečíta sa aj ten: `contours-build.sh` si takto
+berie `pmtiles_do_rozpoctu` z `pmtiles-budget.sh` a `PM_Z` po ňom nie je
+premenná z prostredia, ale výsledok funkcie.
 
 Použitie:
     python3 workers/lint-worker-env.py
@@ -70,8 +73,16 @@ def nastavene(s):
     for m in re.findall(r"^\s*(?:local|declare|typeset)\s+(.+)$", s, re.M):
         for tok in m.split():
             out.add(re.split(r"=", tok)[0])
-    # `source súbor` – čo z neho príde, sa staticky zistiť nedá
-    if re.search(r"^\s*(?:source|\.)\s+\S", s, re.M):
+    # `source workers/x.sh` – ten súbor vieme prečítať, tak sa doňho pozrieme.
+    # Bez toho by kontrola hlásila premennú, ktorú nastavuje sourcovaný skript
+    # (`PM_Z` z `pmtiles-budget.sh`), ako chýbajúcu z prostredia.
+    for cesta in re.findall(r"^\s*(?:source|\.)\s+(workers/[\w.-]+\.sh)",
+                            s, re.M):
+        if os.path.exists(cesta):
+            out |= nastavene(open(cesta).read())
+    # Čokoľvek iné sourcované sa staticky zistiť nedá.
+    if re.search(r"^\s*(?:source|\.)\s+(?!workers/[\w.-]+\.sh\s*$)\S",
+                 s, re.M):
         out.add("__SOURCED__")
     return {v for v in out if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v)}
 

@@ -234,32 +234,20 @@ else
   # 5×5 ich zmaže spolu s krami. Vrstevnica potom nie je zubatá, ale ani sa
   # nedrží terénu – vedie oblým oblúkom tam, kde má mať zálom.
   #
-  # Merané na simulovanom teréne, ktorý má okrem šumu (σ = 0,15 m na 1 m
-  # mriežke) aj REÁLNE TVARY s vlnovou dĺžkou 60, 25 a 12 m; „odchýlka" je
-  # vzdialenosť od izolínie toho istého terénu bez šumu a posledný stĺpec
-  # hovorí, koľko z 12 m tvaru na čiare ostalo (celá tabuľka v pipeline.md):
+  # Merané na simulovanom teréne so šumom AJ reálnymi tvarmi: okno 5×5 nechalo
+  # z 12 m tvaru 27 % a odchýlku 1,52 m, okno 3×3 nechá 63 % a 0,70 m – a lomy
+  # sú pritom MENŠIE, čiže menšie okno nie je ústupok zubatosti. Tabuľka je
+  # v docs/pipeline.md, prepočíta ju `workers/measure-smoothing.py`.
   #
-  #   okno 5×5, 1/2 bunky, 2× Chaikin (doteraz)  436 b., lom 10,6°, 1,52 m, 27 %
-  #   okno 3×3, 1/4 bunky, 2× Chaikin (teraz)    860 b., lom  8,2°, 0,70 m, 63 %
-  #   okno 7×7, 1/2 bunky, 2× Chaikin            336 b., lom 10,8°, 2,23 m,  5 %
+  # OKNO SA ZADÁVA V METROCH, NIE V BUNKÁCH, a to je celé, prečo sa smie zapnúť
+  # predvolene. Dva metre sú na 1 m LiDARe okno 3×3 (zmaže kry a šum, rebro
+  # nechá), na 5 m dlaždiciach DMR 5.0 aj na Sonnyho 20 m vyjde jedna bunka –
+  # hrubý model mikroreliéf neobsahuje, je v ňom spriemerovaný už zo zdroja,
+  # a okno „3×3 buniek" by tam zmazalo desiatky metrov terénu. `0` to vypne.
   #
-  # Menšie okno teda NIE JE ústupok zubatosti: lomy sú menšie (8,2° oproti
-  # 10,6°) a odchýlka od skutočnej izolínie klesla z 1,52 na 0,70 m, čiže
-  # čiara je zároveň hladšia AJ vernejšia. Platí sa bodmi (2×), stále je ich
-  # však o 55 % menej než pred augustom, keď sa DEM nehladil vôbec.
-  #
-  # OKNO SA ZADÁVA V METROCH, NIE V BUNKÁCH, a to je celé, prečo sa to smie
-  # zapnúť predvolene. Dva metre sú na 1 m LiDARe okno 3×3 (zmaže kry a šum,
-  # rebro nechá), na 5 m dlaždiciach DMR 5.0 vyjde jedna bunka a na Sonnyho
-  # 20 m mriežke tiež – hrubý model mikroreliéf neobsahuje, ten je v ňom
-  # spriemerovaný už zo zdroja, a okno „3×3 buniek" by tam zmazalo desiatky
-  # metrov terénu. `0` to vypne.
-  #
-  # Ako sa to počíta: priemer v okne sa robí dvoma gdalwarpmi – zmenšením
-  # s `-r average` (to je ten priemer) a zväčšením späť na pôvodnú mriežku
-  # s `-r cubicspline` (hladká rekonštrukcia medzi vzorkami). Je to lacnejšie
-  # a pamäťovo bezpečnejšie než ťahať gigabajtový raster cez numpy, a na
-  # mierke, o ktorú tu ide, to robí to isté.
+  # Priemer robia dva gdalwarpy – zmenšenie s `-r average` a zväčšenie späť
+  # s `-r cubicspline` – lacnejšie a pamäťovo bezpečnejšie než gigabajtový
+  # raster cez numpy, a na tejto mierke to robí to isté.
   CONTOUR_RASTER=work/clip.tif
   LOWPASS_M="${CONTOUR_DEM_LOWPASS:-2}"
   case "$LOWPASS_M" in ''|*[!0-9.]*) LOWPASS_M=2 ;; esac
@@ -345,10 +333,7 @@ PY
   # ŠTVRTINA BUNKY, nie polovica – a je to tá istá otázka ako pri okne vyššie.
   # Zjednodušenie nerobí čiaru oblou samo, ale predlžuje segmenty, a Chaikin
   # potom reže rohy dlhé štvrtinu SEGMENTU: čím dlhší segment, tým väčší kus
-  # tvaru sa odreže. Merané na tom istom teréne (okno 3×3, 2× Chaikin):
-  #
-  #   1/2 bunky   604 b., lom 10,7°, odchýlka 0,95 m, tvar 25 m 90 %, 12 m 52 %
-  #   1/4 bunky   860 b., lom  8,2°, odchýlka 0,70 m, tvar 25 m 93 %, 12 m 63 %
+  # tvaru sa odreže (pri 1/2 bunky prežije z 12 m tvaru 52 %, pri 1/4 už 63 %).
   C_SIMPLIFY="${CONTOUR_SIMPLIFY:--1}"
   # Vypíše dve čísla: toleranciu v stupňoch (tá ide do ogr2ogr) a tú istú
   # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
@@ -418,18 +403,10 @@ PY
   # tom, čo sa vrstevnice zaobľujú menej. Chaikin totiž nie je to, čo ich
   # zaobľovalo priveľmi: nad krátkymi segmentmi (štvrtina bunky) reže rohy
   # dlhé štvrtinu segmentu, takže z tvaru terénu ubral 2 percentuálne body,
-  # kým vyhladenie DEM ich brávalo desiatky. Merané na tom istom teréne
-  # (okno 3×3, zjednodušenie 1/4 bunky):
-  #
-  #   bez zaoblenia   215 b., lom 33,1°, >30° 44,1 %, odchýlka 0,61 m, tvar 71 %
-  #   1× Chaikin      430 b., lom 16,5°, >30° 16,8 %, odchýlka 0,68 m, tvar 65 %
-  #   2× Chaikin      860 b., lom  8,2°, >30°  1,6 %, odchýlka 0,70 m, tvar 63 %
-  #   3× Chaikin     1720 b., lom  4,1°, >30°  0,1 %, odchýlka 0,70 m, tvar 63 %
-  #
-  # Jeden prechod nechá každý šiesty lom nad 30° – to je presne tá zubatosť,
-  # ktorú na čiare pri max zoome vidno. Tretí je dvojnásobok bodov za rohy,
-  # ktoré už ostré nie sú (1,6 % → 0,1 %), tak sa nerobí.
-  # `CONTOUR_SMOOTH=0` to vypne.
+  # kým vyhladenie DEM ich brávalo desiatky. Jeden prechod nechá každý šiesty
+  # lom nad 30° (to je tá zubatosť, ktorú pri max zoome vidno), tretí je
+  # dvojnásobok bodov za 1,6 % → 0,1 %. Tabuľka je v docs/pipeline.md, zmerať
+  # sa dá `workers/measure-smoothing.py`. `CONTOUR_SMOOTH=0` to vypne.
   C_SMOOTH="${CONTOUR_SMOOTH:-2}"
   case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=1 ;; esac
   if [ "$C_SMOOTH" -gt 0 ]; then
@@ -707,29 +684,11 @@ RBUDGET_MB=$(( LIMIT_MB * BUDGET_ROCKS_PCT / 100 ))
 # Planetiler s rozpočtom: keď je výsledok nad stropom, skúsi o zoom
 # nižšie. Použitý maxzoom ostane v `PM_Z` – návratová hodnota by sa
 # miešala s výstupom Planetilera, ktorý ide na stdout.
-pmtiles_do_rozpoctu() { # $1 schéma $2 výstup $3 maxzoom $4 strop MB $5 dno $6 popis $7 rada
-  PM_Z="$3"
-  while : ; do
-    java -Xmx5g -jar planetiler.jar generate-custom \
-      --schema="$1" \
-      --output="$2" \
-      --maxzoom="$PM_Z" --render_maxzoom="$PM_Z" \
-      --simplify_tolerance_at_max_zoom=0 \
-      --min_feature_size_at_max_zoom=0 \
-      --force
-
-    PM_MB=$(( $(stat -c%s "$2") / 1048576 ))
-    echo "$6 maxzoom $PM_Z → ${PM_MB} MB (strop ${4} MB)"
-    [ "$PM_MB" -le "$4" ] && break
-
-    if [ "$PM_Z" -le "$5" ]; then
-      echo "::warning::$6 majú ${PM_MB} MB ani pri maxzoome ${5} – $7"
-      break
-    fi
-    PM_Z=$(( PM_Z - 1 ))
-    echo "::warning::$6 sú nad stropom ${4} MB – skúšam maxzoom ${PM_Z}."
-  done
-}
+# Hľadanie zoomu, ktorý sa zmestí do rozpočtu stránky, je vo vlastnom súbore:
+# je to iná otázka než „ako vzniká vrstevnica" a `contours-build.sh` narazil na
+# strop 800 riadkov. Funkcia po sebe nechá `PM_Z` (použitý zoom) a `PM_MB`.
+# shellcheck source=workers/pmtiles-budget.sh
+. workers/pmtiles-budget.sh
 
 T_PM=$(date +%s)
 # Balí sa len tá polovica, ktorú tento job počítal. Druhá má vlastný job
@@ -737,13 +696,18 @@ T_PM=$(date +%s)
 # ten skutočný, ktorý prišiel z toho druhého (a mapa by ticho prišla
 # o vrstvu, ktorá sa spočítala správne).
 if [ "$ONLY" != 'rocks' ]; then
+  # Ôsmy parameter je STROP ZOOMU, po ktorý sa smie ísť hore, keď v rozpočte
+  # ostane miesto (rozpis pri funkcii). `contour_maxzoom` je teda želanie aj
+  # dno: pod ňu sa ide len kvôli rozpočtu, nad ňu po 16 – tvrdý strop
+  # Planetilera, kde má mriežka dlaždice 0,098 m.
   pmtiles_do_rozpoctu workers/contours.yml contours-out/contours.pmtiles \
     "$CZ" "$CBUDGET_MB" 10 "Vrstevnice" \
-    "zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni."
+    "zvýš contour_interval (napr. 20 m) alebo ich pre toto územie vypni." 16
   CZ="$PM_Z"
 fi
 
 if [ "$ONLY" != 'contours' ]; then
+  # Skaly majú `rock_maxzoom` predvolene 16 (strop Planetilera) – dvíhať niet kam.
   pmtiles_do_rozpoctu workers/rocks.yml contours-out/rocks.pmtiles \
     "$RZ" "$RBUDGET_MB" 12 "Skaly" \
     "zvýš rock_min_area alebo zmenši výrez."

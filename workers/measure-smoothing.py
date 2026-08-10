@@ -22,6 +22,15 @@ koľko z nich na čiare ostane.
   odchýlka  … vzdialenosť od izolínie toho istého terénu BEZ šumu (vernosť)
   tvar      … koľko % z amplitúdy reálneho tvaru na čiare ostalo
 
+A NAKONIEC TO ISTÉ PO MRIEŽKE DLAŽDICE. Vektorová dlaždica má súradnice
+v celých číslach na mriežke `extent` (4096, Planetiler ju meniť nevie), takže
+hotová čiara sa pri zápise zaokrúhli – pri z14 na 0,391 m, pri z16 na 0,098 m.
+Nad svojím maxzoomom sa vrstevnice už len naťahujú (overzoom), a práve tie
+zaokrúhlené súradnice vidno pri max zoome mapy ako schodíky: čiara, ktorá má
+sama 1,6 % ostrých lomov, ich má po mriežke z14 rovných 11,5 %. Bez tohto
+stĺpca tabuľka tvrdí, že je všetko hladké, kým v mape je vidieť zuby – a presne
+tak to raz dopadlo.
+
 MODEL PIPELINE. Vyhladenie DEM (priemer v okne a späť na mriežku),
 `gdal_contour` (marching squares s lineárnou interpoláciou na hrane bunky),
 `-simplify` (Douglas–Peucker) a Chaikin zo `smooth-shapes.py` – vrátane
@@ -39,6 +48,8 @@ import math
 import numpy as np
 
 NX, NY = 640, 320          # 1 m mriežka
+LAT = 49.1                 # zemepisná šírka (Tatry) – kvôli mriežke dlaždice
+EXTENT = 4096              # súradnicová mriežka vektorovej dlaždice
 SLOPE = 0.10               # 10 % svah – izolínia je potom graf y(x)
 # Reálne tvary terénu: (vlnová dĺžka v metroch, amplitúda výšky v metroch).
 # Na 10 % svahu robí amplitúda 1,2 m výkyv čiary 12 m do strany.
@@ -177,6 +188,16 @@ def chaikin(pts, passes):
 
 
 # ---------- metriky ----------
+def tile_step(z, lat=LAT):
+    """Krok mriežky dlaždice v metroch pri danom zoome."""
+    return 40075017 * math.cos(math.radians(lat)) / (2 ** z) / EXTENT
+
+
+def quantize(pts, step):
+    """Zaokrúhlenie na mriežku dlaždice – to isté, čo spraví zápis do MVT."""
+    return [(round(x / step) * step, round(y / step) * step) for x, y in pts]
+
+
 def bends(pts):
     out = []
     for (xa, ya), (xb, yb), (xc, yc) in zip(pts, pts[1:], pts[2:]):
@@ -212,29 +233,38 @@ def metrics(pts):
     return dev, tvary
 
 
-def run(Z, win, quarters, passes, label):
+def run(Z, win, quarters, passes, label, maxzoom):
     pts = chaikin(simplify(contour(lowpass(Z, win), LEVEL), quarters / 4.0),
                   passes)
     ang = bends(pts)
     dev, tvary = metrics(pts)
+    # A to isté po mriežke dlaždice – tak, ako to skončí v .pmtiles.
+    qang = bends(quantize(pts, tile_step(maxzoom)))
     print(f"{label:50s} {len(pts):5d} {ang.mean():6.1f}° "
           f"{100 * float(np.mean(ang > 30)):5.1f}% {dev:6.2f} m "
-          + " ".join(f"{t:4.0f}%" for t in tvary))
+          + " ".join(f"{t:4.0f}%" for t in tvary)
+          + f"  │ {qang.mean():6.1f}° {100 * float(np.mean(qang > 30)):5.1f}%")
 
 
 def main():
     ap = argparse.ArgumentParser(
         description="Meranie hladenia vrstevníc na simulovanom teréne.")
     ap.add_argument("--seed", type=int, default=20260810)
+    ap.add_argument("--maxzoom", type=int, default=14,
+                    help="maxzoom dlaždíc s vrstevnicami (mriežka 4096)")
     args = ap.parse_args()
 
     Z = terrain(np.random.default_rng(args.seed))
     lam = "  ".join(f"{int(l)} m" for l, _ in FEATS)
+    krok = tile_step(args.maxzoom)
     print(f"terén: svah {SLOPE:.0%}, šum σ = {NOISE} m, tvary {lam}, "
           f"seed {args.seed}")
+    print(f"dlaždice: maxzoom z{args.maxzoom} → mriežka {krok:.3f} m "
+          f"(extent {EXTENT}, šírka {LAT}°)")
     print(f"{'nastavenie':50s} {'bodov':>5s} {'lom':>7s} {'>30°':>6s} "
-          f"{'odchýlka':>8s}  tvary (λ 60 / 25 / 12 m)")
-    run(terrain(), 1, 0, 0, "referencia (terén bez šumu, bez úprav)")
+          f"{'odchýlka':>8s}  tvary (λ 60 / 25 / 12 m)"
+          f"  │ po mriežke z{args.maxzoom}")
+    run(terrain(), 1, 0, 0, "referencia (terén bez šumu, bez úprav)", args.maxzoom)
     print()
     for win, q, p, note in [
         (1, 1, 1, "  ← predtým"),
@@ -246,7 +276,7 @@ def main():
         (7, 2, 2, ""),
     ]:
         okno = f"okno {win}×{win}" if win > 1 else "bez vyhladenia"
-        run(Z, win, q, p, f"{okno}, {q}/4 bunky, {p}× Chaikin{note}")
+        run(Z, win, q, p, f"{okno}, {q}/4 bunky, {p}× Chaikin{note}", args.maxzoom)
 
 
 if __name__ == "__main__":

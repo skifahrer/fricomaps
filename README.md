@@ -280,6 +280,22 @@ build-map.yml: okno v metroch (`0` = nehladiť DEM), záporné číslo = koľko
 tolerancia v metroch; `CONTOUR_SMOOTH: 0` zaoblenie vypne. Všetky tri sú aj
 v kľúči cache, takže po ich zmene sa vrstevnice naozaj prepočítajú.
 
+**Pri max zoome nerozhoduje čiara, ale mriežka dlaždice.** Vektorová dlaždica
+má súradnice v celých číslach na mriežke `extent` (4096) a Planetiler ju meniť
+nevie, takže krok mriežky určuje maxzoom vrstevníc – pri z14 je to 0,391 m,
+pri z16 0,098 m. Nad svojím maxzoomom sa dlaždice už len naťahujú, a práve to
+zaokrúhlenie vidno pri najväčšom priblížení ako schodíky: čiara, ktorá má sama
+1,6 % ostrých lomov, ich má po mriežke z14 rovných **11,5 %**, po z15 4,3 %
+a po z16 2,1 %. Dočistiť čiaru po Chaikinovi nepomáha (zhoršuje to), takže
+jediná páka je maxzoom.
+
+Preto si vrstevnice zoom **hľadajú oboma smermi**: keď sa `.pmtiles` nezmestí
+do svojho podielu rozpočtu stránky, ide o úroveň nižšie (ako doteraz), a keď
+v rozpočte ostalo miesto aspoň na dvojnásobok, skúsi sa o úroveň vyššie – až
+po 16. Celý kraj tak ostane na z14 (187 MB), kým výrez jedného pohoria vyjde
+na z16 a pri max zoome je hladký. Voľba `contour_maxzoom` je teda želanie, od
+ktorého sa začína, nie strop.
+
 Vrstevnice sa trasujú z **plného rozlíšenia DEM** a do dlaždíc idú na
 najvyššom zoome bez zjednodušovania geometrie
 (`--simplify_tolerance_at_max_zoom=0`) a bez zahadzovania drobných prvkov
@@ -1642,7 +1658,7 @@ prevzatej z papierovej horskej mapy:
 |---|---|---|
 | podklad mapy (základná farba horského terénu) | **#f0efeb** bielosivá | `Pozadie mapy` |
 | skalnaté partie a sutiny | **#9c9286** teplá stredná sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
-| kamienky v skalnej ploche | **#6b6154** tmavšia sivohnedá, vzor s krytím 0,6 | `Kamienky v skalnej ploche (vzor)` |
+| kamienky v suti | **#6b6154** tmavšia sivohnedá, jemný vzor s krytím 0,75 | `Kamienky v suti (vzor)` |
 | vrstevnice | **#8b8676** tenké olivovosivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
 
 **Podklad je bielosivý, nie zelenkastý – a je to rozhodnutie o tom, čo v mape
@@ -1657,6 +1673,14 @@ rozoznať.
 Sivá pritom nie je neutrálna: má ten istý teplý zemitý nádych ako skaly
 a vrstevnice (odtieň okolo 45°, sýtosť do 6 %). Neutrálna sivá vedľa zemitých
 hnedých vyzerá domodra a mapa z toho vyjde studená.
+
+**Suť má vzor drobných kameňov, počítané skalné plochy nie.** `natural=scree`
+a `bare_rock` z OSM (`Skaly a suť`) sú popadané kamene pod stenou, kamenné more
+a holá skala – papierová horská mapa ich značí kamienkami odjakživa a plná
+farba to nepovie. Vzor je jemný (dlaždica 9 px, teda kamienok veľký dva-tri
+pixely na každom zoome; zadáva sa v pixeloch obrazovky, nie v metroch).
+**Počítané skalné plochy z DEM ho zámerne nemajú**: tie hovoria „tu je terén
+strmý", teda stena a bralo, a kresba popadaných kameňov by tvrdila opak.
 
 **Chodníky pre peších sú tmavosivé, nie hnedé** (`Turistické chodníky`,
 `Chodníky, priechody a nástupištia`). Hnedá je na mape farba zeme – poľná
