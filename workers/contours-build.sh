@@ -226,28 +226,33 @@ else
   # nie sú jej náhrada. Dôvod je v tom, odkiaľ zubatosť pochádza: `gdal_contour`
   # interpoluje priesečník na hrane bunky, takže z HLADKÉHO poľa výšok vyjde
   # hladká čiara aj bez akýchkoľvek úprav. Čo ju krčí, je mikroreliéf
-  # v LiDARovom DTM – kry, balvany, šum merania na úrovni decimetrov. Čiara sa
-  # okolo nich vlní a ZAOBLENIE TO VLNENIE LEN ZAOKRÚHLI, neodstráni:
-  # namerané na simulovanom teréne (1 m mriežka, šum σ = 0,15 m, interval 5 m;
-  # „odchýlka" je vzdialenosť od izolínie toho istého terénu bez šumu):
+  # v LiDARovom DTM – kry, balvany, šum merania na úrovni decimetrov.
   #
-  #   izolínia hladkého terénu (referencia)   296 b., lom  0,3°, >30°  0,0 %, —
-  #   z DEM so šumom, bez úprav               192 b., lom 24,4°, >30° 33,2 %, 0,55 m
-  #   + simplify a 2× Chaikin                 184 b., lom 11,9°, >30°  4,9 %, 0,55 m
-  #   vyhladený DEM 3×3 + simplify + Chaikin  212 b., lom  7,5°, >30°  0,0 %, 0,42 m
-  #   vyhladený DEM 5×5 + simplify + Chaikin  100 b., lom  3,2°, >30°  0,0 %, 0,37 m
-  #   vyhladený DEM 7×7 + simplify + Chaikin   68 b., lom  2,0°, >30°  0,0 %, 0,34 m
+  # LENŽE JE TO AJ TÁ PÁKA, KTORÁ VRSTEVNICE ZAOBLÍ PRIVIAC, a preto tu okno
+  # nie je také veľké, ako bolo. V okne totiž nie je len šum: rebro, žľab
+  # či terasa široká pár metrov sú tvary, ktoré v teréne NAOZAJ SÚ, a priemer
+  # 5×5 ich zmaže spolu s krami. Vrstevnica potom nie je zubatá, ale ani sa
+  # nedrží terénu – vedie oblým oblúkom tam, kde má mať zálom.
   #
-  # Všimni si stredný riadok: zaoblenie zrazí lomy z 24,4° na 11,9°, ale
-  # odchýlka ostane 0,55 m – čiara je oblá a stále vedie inokade než skutočná
-  # vrstevnica. Vyhladenie DEM zrazí OBOJE, a k tomu ubudne bodov (100 namiesto
-  # 184), čiže sú z toho aj menšie dlaždice.
+  # Merané na simulovanom teréne, ktorý má okrem šumu (σ = 0,15 m na 1 m
+  # mriežke) aj REÁLNE TVARY s vlnovou dĺžkou 60, 25 a 12 m; „odchýlka" je
+  # vzdialenosť od izolínie toho istého terénu bez šumu a posledný stĺpec
+  # hovorí, koľko z 12 m tvaru na čiare ostalo (celá tabuľka v pipeline.md):
+  #
+  #   okno 5×5, 1/2 bunky, 2× Chaikin (doteraz)  436 b., lom 10,6°, 1,52 m, 27 %
+  #   okno 3×3, 1/4 bunky, 2× Chaikin (teraz)    860 b., lom  8,2°, 0,70 m, 63 %
+  #   okno 7×7, 1/2 bunky, 2× Chaikin            336 b., lom 10,8°, 2,23 m,  5 %
+  #
+  # Menšie okno teda NIE JE ústupok zubatosti: lomy sú menšie (8,2° oproti
+  # 10,6°) a odchýlka od skutočnej izolínie klesla z 1,52 na 0,70 m, čiže
+  # čiara je zároveň hladšia AJ vernejšia. Platí sa bodmi (2×), stále je ich
+  # však o 55 % menej než pred augustom, keď sa DEM nehladil vôbec.
   #
   # OKNO SA ZADÁVA V METROCH, NIE V BUNKÁCH, a to je celé, prečo sa to smie
-  # zapnúť predvolene. Päť metrov je na 1 m LiDARe okno 5×5 (vyhladí kry
-  # a šum, tvar svahu nechá), na 5 m dlaždiciach DMR 5.0 vyjde nula a na
-  # Sonnyho 20 m mriežke tiež – hrubý model mikroreliéf neobsahuje, ten je
-  # v ňom spriemerovaný už zo zdroja, a okno „5×5 buniek" by tam zmazalo sto
+  # zapnúť predvolene. Dva metre sú na 1 m LiDARe okno 3×3 (zmaže kry a šum,
+  # rebro nechá), na 5 m dlaždiciach DMR 5.0 vyjde jedna bunka a na Sonnyho
+  # 20 m mriežke tiež – hrubý model mikroreliéf neobsahuje, ten je v ňom
+  # spriemerovaný už zo zdroja, a okno „3×3 buniek" by tam zmazalo desiatky
   # metrov terénu. `0` to vypne.
   #
   # Ako sa to počíta: priemer v okne sa robí dvoma gdalwarpmi – zmenšením
@@ -256,8 +261,8 @@ else
   # a pamäťovo bezpečnejšie než ťahať gigabajtový raster cez numpy, a na
   # mierke, o ktorú tu ide, to robí to isté.
   CONTOUR_RASTER=work/clip.tif
-  LOWPASS_M="${CONTOUR_DEM_LOWPASS:-5}"
-  case "$LOWPASS_M" in ''|*[!0-9.]*) LOWPASS_M=5 ;; esac
+  LOWPASS_M="${CONTOUR_DEM_LOWPASS:-2}"
+  case "$LOWPASS_M" in ''|*[!0-9.]*) LOWPASS_M=2 ;; esac
   set +e
   LP_OUT=$(python3 - "$LOWPASS_M" <<'PY'
 import json, subprocess, sys
@@ -336,7 +341,15 @@ PY
   # `0` = vypnuté. Kladné číslo sa berie v METROCH a prepočíta sa na stupne
   # na šírke tohto výrezu – metre sú to, v čom sa o teréne rozmýšľa, stupne
   # to, v čom je uložený.
-  C_SIMPLIFY="${CONTOUR_SIMPLIFY:--2}"
+  #
+  # ŠTVRTINA BUNKY, nie polovica – a je to tá istá otázka ako pri okne vyššie.
+  # Zjednodušenie nerobí čiaru oblou samo, ale predlžuje segmenty, a Chaikin
+  # potom reže rohy dlhé štvrtinu SEGMENTU: čím dlhší segment, tým väčší kus
+  # tvaru sa odreže. Merané na tom istom teréne (okno 3×3, 2× Chaikin):
+  #
+  #   1/2 bunky   604 b., lom 10,7°, odchýlka 0,95 m, tvar 25 m 90 %, 12 m 52 %
+  #   1/4 bunky   860 b., lom  8,2°, odchýlka 0,70 m, tvar 25 m 93 %, 12 m 63 %
+  C_SIMPLIFY="${CONTOUR_SIMPLIFY:--1}"
   # Vypíše dve čísla: toleranciu v stupňoch (tá ide do ogr2ogr) a tú istú
   # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
   # nepredstaví). Prepočet je na jednom mieste, nie dvakrát.
@@ -401,21 +414,21 @@ PY
          ELSE 'minor' END AS level
        FROM contours WHERE ele IS NOT NULL"
 
-  # Zaoblenie – dva prechody, rovnako ako pri skalách. Jeden nestačil:
-  # zmazal síce pravé uhly, ale priemerný lom ostal na 44,8° a každý šiesty
-  # bol nad 60°, čo je na čiare pri max zoome stále vidieť. Merané na
-  # schodíkovej vrstevnici nad rastrom (oblúk okolo žľabu, bunka = 1):
+  # Zaoblenie – dva prechody, rovnako ako pri skalách, a OSTÁVAJÚ DVA aj po
+  # tom, čo sa vrstevnice zaobľujú menej. Chaikin totiž nie je to, čo ich
+  # zaobľovalo priveľmi: nad krátkymi segmentmi (štvrtina bunky) reže rohy
+  # dlhé štvrtinu segmentu, takže z tvaru terénu ubral 2 percentuálne body,
+  # kým vyhladenie DEM ich brávalo desiatky. Merané na tom istom teréne
+  # (okno 3×3, zjednodušenie 1/4 bunky):
   #
-  #   surová izolínia (schodíky)      388 bodov, lom 46,9°, >60° 52,1 %
-  #   1/4 bunky + 1× Chaikin (doteraz) 406 bodov, lom 44,8°, >60° 17,8 %
-  #   1/2 bunky + 2× Chaikin (teraz)   692 bodov, lom 21,2°, >60°  0,7 %
-  #   1/2 bunky + 3× Chaikin          1384 bodov, lom 10,6°, >60°  0,2 %
+  #   bez zaoblenia   215 b., lom 33,1°, >30° 44,1 %, odchýlka 0,61 m, tvar 71 %
+  #   1× Chaikin      430 b., lom 16,5°, >30° 16,8 %, odchýlka 0,68 m, tvar 65 %
+  #   2× Chaikin      860 b., lom  8,2°, >30°  1,6 %, odchýlka 0,70 m, tvar 63 %
+  #   3× Chaikin     1720 b., lom  4,1°, >30°  0,1 %, odchýlka 0,70 m, tvar 63 %
   #
-  # Tretí prechod je dvojnásobok bodov za rohy, ktoré už aj tak nie sú ostré
-  # (0,7 % → 0,2 %), tak sa nerobí. Väčšie zjednodušenie vyváži tie body
-  # späť: 1,7× oproti doterajšiemu nastaveniu, nie 4×. A čiara pritom sedí
-  # na terén LEPŠIE než surová – odchýlka od skutočnej izolínie 0,58 bunky
-  # oproti 0,72, lebo Chaikin reže schodíky, ktoré do terénu nepatria.
+  # Jeden prechod nechá každý šiesty lom nad 30° – to je presne tá zubatosť,
+  # ktorú na čiare pri max zoome vidno. Tretí je dvojnásobok bodov za rohy,
+  # ktoré už ostré nie sú (1,6 % → 0,1 %), tak sa nerobí.
   # `CONTOUR_SMOOTH=0` to vypne.
   C_SMOOTH="${CONTOUR_SMOOTH:-2}"
   case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=1 ;; esac
