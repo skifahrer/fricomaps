@@ -312,8 +312,8 @@ nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia l
 územia, takže sa pri ďalšom builde mapy nepočítajú znova.
 
 Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default
-10 m; zvýrazňuje sa každá 10. čiara ako hlavná a každá 5. ako polovičná, čiže
-pri 10 m sú to doterajších 100 a 50 m), `contour_maxzoom` (default 14) a
+5 m; zvýrazňuje sa každá 10. čiara ako hlavná a každá 5. ako polovičná, čiže
+pri 5 m sú to 50 a 25 m), `contour_maxzoom` (default 14) a
 `contour_smoothing` (default 0 = bez zjemnenia). Bez zjemnenia je terén detailnejší, ale vrstevníc je viac – a keď
 prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 

@@ -93,7 +93,7 @@ on:
       contour_source:
         description: "Vrstevnice – z ktorého modelu terénu (ziadne = negenerovať)"
         required: false
-        default: sonny
+        default: dmr5
         type: choice
         options:
           - sonny
@@ -108,7 +108,7 @@ on:
       rock_source:
         description: "Skaly – zo sklonu modelu, alebo z tieňovania (ziadne = negenerovať)"
         required: false
-        default: sonny
+        default: dmr5
         type: choice
         options:
           - sonny
@@ -120,7 +120,7 @@ on:
       shading_source:
         description: "Tieňovanie a 3D terén – z ktorého modelu (ziadne = negenerovať)"
         required: false
-        default: sonny
+        default: dmr5
         type: choice
         options:
           - sonny
@@ -128,9 +128,9 @@ on:
           - dmr5
           - ziadne
       contour_interval:
-        description: "Interval vrstevníc v metroch (10 = štandard, 5 = hustejšie)"
+        description: "Interval vrstevníc v metroch (5 = hustejšie, 10 = redšie)"
         required: false
-        default: "10"
+        default: "5"
         type: string
       rock_slope:
         description: "Od akého sklonu (°) je terén skala (50 = steny, 40 = aj strmé svahy)"
@@ -1974,7 +1974,7 @@ jobs:
           CONTOURS_DEM_SOURCE: ${{ needs.contours.outputs.dem_source || 'sonny' }}
           CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
           CONTOURS_MAXZOOM: ${{ needs.contours.outputs.maxzoom || '14' }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval || '10' }}
+          CONTOUR_INTERVAL: ${{ inputs.contour_interval || '5' }}
           DEM_MAXZOOM: ${{ needs.terrain.outputs.maxzoom || 15 }}
           DEM_TILES_SOURCE: ${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}
           DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}
