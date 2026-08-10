@@ -48,7 +48,7 @@ runs:
         CACHE_RESTORE_KEYS: ${{ inputs.restore-keys }}
       run: |
         set -euo pipefail
-        python3 "$GITHUB_WORKSPACE/workers/drive-cache.py" --restore \
+        python3 "$GITHUB_WORKSPACE/workers/drive/cache.py" --restore \
           --key="$CACHE_KEY" \
           --path="$CACHE_PATH" \
           --restore-keys="$CACHE_RESTORE_KEYS"

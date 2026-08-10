@@ -85,7 +85,7 @@ on:
       # z hrubšieho, ktorý pokrýva celý región. `ziadne` vrstvu vypne –
       # zapínač je tým pádom v tom istom poli ako zdroj a nie vedľa neho,
       # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
-      # Zoznam zdrojov drží workers/dem-sources.json (stráži to Lint workflows).
+      # Zoznam zdrojov drží workers/data/dem-sources.json (stráži to Lint workflows).
       # sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m.
       # dmr5 = ÚGKK DMR 5.0 (LiDAR): s vyplneným `area` plné 1 m, bez neho
       # dlaždice na 5 m. Rozhoduje rozsah, nie ďalší výber: pri 1 m má jedna
@@ -154,10 +154,10 @@ on:
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
       # Veľkosť rýchleho testu: `test_km2=8` (default 4).
       # Mriežka na obrys skál: `rock_res=1` (default auto).
-      # Celý zoznam aj s predvolenými hodnotami je vo workers/parse-options.py
+      # Celý zoznam aj s predvolenými hodnotami je vo workers/plan/options.py
       # a neznámy kľúč je chyba, nie ticho ignorovaná hodnota.
       options:
-        description: "Zriedka menené nastavenia ako kľúč=hodnota (viď workers/parse-options.py)"
+        description: "Zriedka menené nastavenia ako kľúč=hodnota (viď workers/plan/options.py)"
         required: false
         default: ""
         type: string
@@ -176,7 +176,7 @@ env:
   # na štyroch miestach (DMR 5.0 vo výreze aj v dlaždiciach, Sonnyho priečinok,
   # sklon pre skaly) a odteraz je na ňom aj CACHE – to je ďalších dvadsať
   # krokov (`.github/actions/cache-restore` a `-save`, rozpis vo
-  # `workers/drive-cache.py`). Keby token stál pri každom jobe zvlášť, stačí na
+  # `workers/drive/cache.py`). Keby token stál pri každom jobe zvlášť, stačí na
   # jeden zabudnúť a ten sa ticho vráti k počítaniu všetkého odznova. Stráži to
   # „Lint workflows".
   GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
@@ -189,7 +189,7 @@ env:
   # (Zdroje ikoniek sú v poc/web/icon-sources.js.)
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
   # SKLADY NA DRIVE, nie GitHub releasy. Do releasov sa nepublikuje nič –
-  # celý formát skladu, prihlásenie aj „clobber" je vo `workers/drive-store.py`
+  # celý formát skladu, prihlásenie aj „clobber" je vo `workers/drive/store.py`
   # a mená súborov ostali tie isté, aké mali assety (meno je sľub o rozsahu).
   #
   # Sklad s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
@@ -230,7 +230,7 @@ env:
   #
   # Menšie okno teda nie je ústupok: odchýlka od skutočnej izolínie klesla
   # z 1,52 na 0,70 m a lomy sú MENŠIE než predtým. Platí sa bodmi (2×).
-  # Podrobne vo `workers/contours-build.sh`.
+  # Podrobne vo `workers/contours-rocks/build.sh`.
   #
   # V METROCH, nie v bunkách – preto sa to smie zapnúť predvolene. Okno je
   # vždy nepárny násobok bunky, takže „2" je na 1 m LiDARe okno 3×3, kým na
@@ -272,7 +272,7 @@ env:
   # workflow „Skaly z tieňovaných dlaždíc". Build ich nikdy nepočíta, len
   # si ich vypýta výberom `rock_source: tienovanie`.
   ROCK_IMG_STORE: dem-rocks-img
-  # Sklad častí rastra sklonu (workers/slope-chunks.py). Na rozdiel od cache
+  # Sklad častí rastra sklonu (workers/contours-rocks/slope-chunks.py). Na rozdiel od cache
   # nevyprší, takže hodina čítania z Drive sa nemá ako stratiť ani vtedy, keď
   # GitHub cache zahodí. Časti majú absolútnu mriežku, takže sa delia medzi
   # výrezmi: čo sa spočítalo pre vysoke_tatry, použijú aj tatry.
@@ -295,7 +295,7 @@ env:
   # schodíky, ale to, čo po ňom ostane, sú ostré rohy – priemerný lom medzi
   # segmentmi vyskočí zo 4,6° na 28,5° a presne tak vyzerá skala pri max
   # zoome zubatá. Dva prechody dajú 7,7° pri 43 % menej bodov, než má
-  # nezjednodušený originál. Podrobnosti a čísla vo workers/smooth-shapes.py.
+  # nezjednodušený originál. Podrobnosti a čísla vo workers/contours-rocks/smooth-shapes.py.
   ROCK_SMOOTH: "2"
   # Verzia algoritmu v mene uloženého assetu. Zmena algoritmu = iné skaly,
   # takže sa nesmú použiť tie staré uložené. v3 = zaoblený obrys + auto mriežka.
@@ -330,7 +330,7 @@ env:
   ROCK_BUDGET_MIN: "0"
   ROCK_MAX_RSS_GB: "12" # nad tým sa gdal_contour zastaví s hláškou, nie OOM
   # Ako často má byť počuť, že sa počíta. Percentá idú nezávisle od toho, po
-  # 2,5 % (`workers/watch.py`), tep k nim dopĺňa pamäť, CPU, disk a rast výstupu.
+  # 2,5 % (`workers/lib/watch.py`), tep k nim dopĺňa pamäť, CPU, disk a rast výstupu.
   ROCK_HEARTBEAT_S: "30"
   # Rozpočet stránky si joby delia podielom, nie „čo zvýšilo" – bežia
   # súbežne, takže v čase, keď Planetiler rozhoduje o zoome, ešte nikto
@@ -345,7 +345,7 @@ env:
   # Značené trasy sú len línie s pár atribútmi – celé Slovensko je jednotky
   # MB. 3 % z rozpočtu je s veľkou rezervou.
   BUDGET_TRAILS_PCT: "3"
-  # Krajinné prvky (workers/features.yml) sú línie, body a pár plôch. Plotov
+  # Krajinné prvky (workers/features/features.yml) sú línie, body a pár plôch. Plotov
   # je v OSM veľa, ale idú až od z15 a lepia sa – 4 % je s rezervou.
   BUDGET_FEATURES_PCT: "4"
   BUDGET_ASSETS_MB: "40"
@@ -378,7 +378,7 @@ jobs:
       # rôznych releasoch, takže si aj pri jedinom `dmr5` vo formulári môžu
       # chýbať oba naraz (vrstevnice chcú výrez, tieňovanie dlaždice).
       # `mirror_dmr5_area` je BBOX (to, čo si beh naozaj vypýtal), nie kľúč
-      # pohoria; meno assetu preto ide zvlášť. Prečo: workers/check-dem.sh.
+      # pohoria; meno assetu preto ide zvlášť. Prečo: workers/dem/check.sh.
       mirror_dmr5_area: ${{ steps.check.outputs.mirror_dmr5_area }}
       mirror_dmr5_asset: ${{ steps.check.outputs.mirror_dmr5_asset }}
       mirror_dmr5_tiles: ${{ steps.check.outputs.mirror_dmr5_tiles }}
@@ -392,10 +392,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      # Rozhodovanie je vo `workers/check-dem.sh`: build-map.yml je blízko
+      # Rozhodovanie je vo `workers/dem/check.sh`: build-map.yml je blízko
       # k stropu, nad ktorým ho GitHub neprijme, a hlavne – to isté
       # rozhodovanie („ktorý sklad, ktoré súbory") si robí aj
-      # `workers/fetch-dem.sh`, tak ho oba berú z `workers/dem-target.py`.
+      # `workers/dem/fetch.sh`, tak ho oba berú z `workers/dem/target.py`.
       # Kým to bolo napísané dvakrát, rozišlo sa to a beh 31307163093 spadol.
       - name: Sú v sklade dlaždice pre bbox?
         id: check
@@ -410,12 +410,12 @@ jobs:
           BBOX: ${{ needs.plan.outputs.dem_bbox }}
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
           # Výrez pretnutý s regiónom (v teste zmenšený na štvorec). Presne
-          # toto sa má z Drive prečítať – viď workers/check-dem.sh.
+          # toto sa má z Drive prečítať – viď workers/dem/check.sh.
           AREA_BBOX: ${{ needs.plan.outputs.area_bbox }}
           SRC_CONTOURS: ${{ needs.plan.outputs.opt_contour_source }}
           SRC_ROCKS: ${{ needs.plan.outputs.opt_rock_dem }}
           SRC_TERRAIN: ${{ needs.plan.outputs.opt_shading_source }}
-        run: workers/check-dem.sh
+        run: workers/dem/check.sh
 
   # ---------- doplnenie výškových dát ----------
   # Jeden job pre všetky zdroje. Sťahovaciu pipeline máme jedinú a rozdiel
@@ -511,7 +511,7 @@ jobs:
       # Bbox toho, čo si beh vypýtal, a meno, ktoré `check-dem` v sklade
       # hľadal a nenašiel. Kľúč pohoria sem NEchodí: `dmr5-drive.yml` by si
       # ho vyriešil z `areas.json` druhýkrát a prečítal celý obdĺžnik (test
-      # na pár km² tak čítal 541 km² Tatier). Rozpis: workers/check-dem.sh.
+      # na pár km² tak čítal 541 km² Tatier). Rozpis: workers/dem/check.sh.
       area: ${{ needs.check-dem.outputs.mirror_dmr5_area }}
       asset: ${{ needs.check-dem.outputs.mirror_dmr5_asset }}
       tiles: false
@@ -739,7 +739,7 @@ jobs:
         id: opts
         run: |
           set -euo pipefail
-          python3 workers/parse-options.py \
+          python3 workers/plan/options.py \
             --options='${{ inputs.options }}' \
             --rebuild='${{ inputs.rebuild }}' \
             --contour-source='${{ inputs.contour_source }}' \
@@ -775,7 +775,7 @@ jobs:
           # neorezáva nič, ale staré záznamy by ešte deň strašili.
           key: pbf-v2-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
 
-      # Stotridsať riadkov bashu je vo `workers/fetch-pbf.sh` – tento súbor
+      # Stotridsať riadkov bashu je vo `workers/plan/pbf.sh` – tento súbor
       # má strop 128 kB a nad ním ho GitHub ticho neprijme (stráži Lint
       # workflows). Sem chodia len hodnoty z formulára a z volieb.
       - name: Stiahni PBF iba daného regiónu
@@ -790,7 +790,7 @@ jobs:
           OPT_TEST_AT: ${{ steps.opts.outputs.opt_test_at }}
           OPT_TEST_KM2: ${{ steps.opts.outputs.opt_test_km2 }}
           REGION: ${{ inputs.region }}
-        run: workers/fetch-pbf.sh
+        run: workers/plan/pbf.sh
 
       - name: Vyrieš testovací výrez
         id: area
@@ -816,7 +816,7 @@ jobs:
             # stdout aj do premennej: kľúč výrezu treba hneď na kontrolu nižšie
             # a na vlastné výstupy sa krok odkazovať nemôže.
             # Bez testu sú `dem_bbox` a `bbox` to isté.
-            RESOLVED=$(python3 workers/resolve-area.py \
+            RESOLVED=$(python3 workers/plan/area.py \
               --region-bbox='${{ steps.region.outputs.dem_bbox }}' \
               --area="$AREA" --out="$GITHUB_OUTPUT")
           fi
@@ -852,7 +852,7 @@ jobs:
           set -euo pipefail
           python3 -m pip install --quiet pillow
           mkdir -p _site
-          python3 workers/test-locator.py \
+          python3 workers/plan/test-map.py \
             --bbox='${{ steps.region.outputs.test_bbox }}' \
             --full-bbox='${{ steps.region.outputs.full_bbox }}' \
             --name='${{ steps.region.outputs.name }}' \
@@ -926,7 +926,7 @@ jobs:
       # Kľúč potrebuje restore, save aj mazanie pri pregenerovaní. Keby bol
       # napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho
       # rozsype (uloží sa pod iným kľúčom, než sa hľadá).
-      # Skladanie kľúčov je vo `workers/cache-keys.sh` (strop súboru 128 kB).
+      # Skladanie kľúčov je vo `workers/plan/cache-keys.sh` (strop súboru 128 kB).
       # `hashFiles` je funkcia GitHubu, tak sa jej výsledok podá ako env.
       - name: Kľúče cache
         id: keys
@@ -956,9 +956,9 @@ jobs:
           # staré, zubaté vrstevnice – zelený a tichý (pravidlo 8).
           # Otlačok ale vidí len súbory, a ladenie hladkosti (CONTOUR_DEM_LOWPASS,
           # CONTOUR_SIMPLIFY, CONTOUR_SMOOTH) je v `env:` tohto workflowu –
-          # tie sú preto v kľúči zvlášť, viď `workers/cache-keys.sh`.
-          SCHEMA_HASH: ${{ hashFiles('workers/contours.yml', 'workers/rocks.yml', 'workers/rock-areas.py', 'workers/smooth-shapes.py', 'workers/contours-build.sh') }}
-        run: workers/cache-keys.sh
+          # tie sú preto v kľúči zvlášť, viď `workers/plan/cache-keys.sh`.
+          SCHEMA_HASH: ${{ hashFiles('workers/contours-rocks/contours.yml', 'workers/contours-rocks/rocks.yml', 'workers/contours-rocks/rock-areas.py', 'workers/contours-rocks/smooth-shapes.py', 'workers/contours-rocks/build.sh') }}
+        run: workers/plan/cache-keys.sh
 
       # Kým starý záznam existuje, nový sa pod ten istý kľúč neuloží (na Drive
       # platí to isté pravidlo ako v GitHube) – a beh, ktorý mal počítať
@@ -968,7 +968,7 @@ jobs:
         run: |
           set -uo pipefail
           drop() { # $1 = kľúč cache
-            python3 workers/drive-cache.py --delete --key="$1"
+            python3 workers/drive/cache.py --delete --key="$1"
           }
           if [ '${{ needs.plan.outputs.opt_contours_rebuild }}' = 'true' ] || [ '${{ needs.plan.outputs.opt_rocks_rebuild }}' = 'true' ]; then
             drop '${{ steps.keys.outputs.contours }}'
@@ -1028,7 +1028,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: workers/fetch-planetiler.sh
+        run: workers/lib/planetiler.sh
       # ---------- kľúče cache ----------
   # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
@@ -1087,7 +1087,7 @@ jobs:
       # starší záznam pre to isté pohorie je použiteľný aj po zmene ostatných
       # nastavení – čo sa v ňom nájde, to sa nepočíta. Čo chýba, dopočíta beh
       # a uloží aj do releasu `dem-slope`, ktorý na rozdiel od cache nevyprší.
-      # Dvadsať kilobajtov bashu je vo `workers/contours-build.sh` – workflow
+      # Dvadsať kilobajtov bashu je vo `workers/contours-rocks/build.sh` – workflow
       # súbor má strop, nad ktorým ho GitHub ticho neprijme (stráži to Lint
       # workflows). Sem chodia len hodnoty z formulára a z prípravy.
       - name: Vrstevnice a skaly z DEM
@@ -1135,7 +1135,7 @@ jobs:
           DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
           DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
           DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
-        run: bash workers/contours-build.sh
+        run: bash workers/contours-rocks/build.sh
       # Uloží sa hneď, ako vrstevnice a skaly existujú – aj keď by build ďalej
       # spadol, hodiny výpočtu ostanú v cache.
 
@@ -1165,7 +1165,7 @@ jobs:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}
 
-      # Vo `workers/contours-site.sh` – ten istý krok majú DVA joby
+      # Vo `workers/contours-rocks/site.sh` – ten istý krok majú DVA joby
       # (`contours` a `rocks`), takže tu stál dvakrát a dve kópie sa vždy
       # raz rozídu. Odteraz je jeden súbor.
       - name: Zaraď vrstevnice do webu
@@ -1179,10 +1179,10 @@ jobs:
           OPT_ROCKS: ${{ needs.plan.outputs.opt_rocks }}
           OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
-        run: workers/contours-site.sh
+        run: workers/contours-rocks/site.sh
 
       # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
-      # nič. Zoznam súborov je vo `workers/publish-results.sh`, lebo ten istý
+      # nič. Zoznam súborov je vo `workers/deploy/publish-results.sh`, lebo ten istý
       # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
       # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
       # tá retencia, ktorú mal artefakt.
@@ -1192,7 +1192,7 @@ jobs:
         env:
           CO: teren
           NAZOV: teren-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
       # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
@@ -1265,7 +1265,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: workers/fetch-planetiler.sh
+        run: workers/lib/planetiler.sh
       - name: Cache vrstevníc a skál (restore)
         id: contours-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' && needs.plan.outputs.opt_contours_rebuild != 'true' && needs.plan.outputs.opt_rocks_rebuild != 'true' }}
@@ -1330,7 +1330,7 @@ jobs:
           DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
           DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
           DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
-        run: bash workers/contours-build.sh
+        run: bash workers/contours-rocks/build.sh
 
       - name: Cache vrstevníc a skál (save)
         if: ${{ always() && needs.plan.outputs.opt_contours == 'true' && steps.contours-cache.outputs.cache-hit != 'true' && hashFiles('contours-out/**') != '' }}
@@ -1356,7 +1356,7 @@ jobs:
           path: dem
           key: ${{ needs.keys.outputs.demtiles_contours }}-rocks
 
-      # Vo `workers/contours-site.sh` – ten istý krok majú DVA joby
+      # Vo `workers/contours-rocks/site.sh` – ten istý krok majú DVA joby
       # (`contours` a `rocks`), takže tu stál dvakrát a dve kópie sa vždy
       # raz rozídu. Odteraz je jeden súbor.
       - name: Zaraď vrstevnice do webu
@@ -1370,10 +1370,10 @@ jobs:
           OPT_ROCKS: ${{ needs.plan.outputs.opt_rocks }}
           OPT_ROCK_MAXZOOM: ${{ needs.plan.outputs.opt_rock_maxzoom }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
-        run: workers/contours-site.sh
+        run: workers/contours-rocks/site.sh
 
       # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
-      # nič. Zoznam súborov je vo `workers/publish-results.sh`, lebo ten istý
+      # nič. Zoznam súborov je vo `workers/deploy/publish-results.sh`, lebo ten istý
       # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
       # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
       # tá retencia, ktorú mal artefakt.
@@ -1383,7 +1383,7 @@ jobs:
         env:
           CO: teren
           NAZOV: skaly-${{ needs.plan.outputs.key }}-s${{ inputs.rock_slope }}-g${{ needs.plan.outputs.opt_rock_res }}
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
@@ -1473,7 +1473,7 @@ jobs:
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           GH_TOKEN: ${{ github.token }}
           OPT_UGKK_FALLBACK: ${{ needs.plan.outputs.opt_ugkk_fallback }}
-        run: workers/terrain-build.sh
+        run: workers/terrain/build.sh
       - name: Cache výškových dlaždíc (save)
         if: ${{ always() && needs.plan.outputs.opt_terrain == 'true' && steps.terrain.outputs.fell_back != 'true' && steps.terrain-cache.outputs.cache-hit != 'true' && hashFiles('terrain-out/**') != '' }}
         continue-on-error: true
@@ -1565,7 +1565,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: workers/fetch-planetiler.sh
+        run: workers/lib/planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -1574,14 +1574,14 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
-      # Sedemdesiat riadkov bashu je vo `workers/trails-build.sh`.
+      # Sedemdesiat riadkov bashu je vo `workers/trails/build.sh`.
       - name: Trasy z OSM relácií → PMTiles
         id: trails
         env:
           OPT_TRAILS_MAXZOOM: ${{ needs.plan.outputs.opt_trails_maxzoom }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
-        run: workers/trails-build.sh
+        run: workers/trails/build.sh
 
       - name: Odlož trasy do skladu
         if: ${{ always() && hashFiles('data/trails.geojson') != '' }}
@@ -1589,7 +1589,7 @@ jobs:
         env:
           CO: trasy
           NAZOV: trasy-${{ needs.plan.outputs.key }}
-        run: workers/publish-results.sh
+        run: workers/deploy/publish-results.sh
 
       # Časti stránky si joby posielajú artefaktom – každý vyrobí svoj kus
       # `_site` a `deploy` ich zlepí dokopy. compression-level 0: .pmtiles
@@ -1655,7 +1655,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: workers/fetch-planetiler.sh
+        run: workers/lib/planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -1664,14 +1664,14 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
-      # Sedemdesiat riadkov bashu je vo `workers/features-build.sh`.
+      # Sedemdesiat riadkov bashu je vo `workers/features/build.sh`.
       - name: Krajinné prvky z OSM → PMTiles
         id: features
         env:
           OPT_FEATURES_MAXZOOM: ${{ needs.plan.outputs.opt_features_maxzoom }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
-        run: workers/features-build.sh
+        run: workers/features/build.sh
 
       - name: Odlož časť stránky
         if: ${{ always() && hashFiles('_site/**') != '' }}
@@ -1743,7 +1743,7 @@ jobs:
           key: planetiler-latest-${{ needs.plan.outputs.day }}
 
       - name: Stiahni Planetiler
-        run: workers/fetch-planetiler.sh
+        run: workers/lib/planetiler.sh
       - name: Cache Planetileru (save)
         if: ${{ always() && steps.planetiler-cache.outputs.cache-hit != 'true' && hashFiles('planetiler.jar') != '' }}
         continue-on-error: true
@@ -1752,7 +1752,7 @@ jobs:
           path: planetiler.jar
           key: ${{ steps.planetiler-cache.outputs.cache-primary-key }}
 
-      # Osemdesiat riadkov bashu je vo `workers/tiles-build.sh`; rozpočtové
+      # Osemdesiat riadkov bashu je vo `workers/tiles/build.sh`; rozpočtové
       # podiely (`BUDGET_*`) si berie z env workflowu.
       - name: PBF → PMTiles (Planetiler, OpenMapTiles schéma)
         id: tiles
@@ -1761,7 +1761,7 @@ jobs:
           OPT_MAXZOOM: ${{ needs.plan.outputs.opt_maxzoom }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
-        run: workers/tiles-build.sh
+        run: workers/tiles/build.sh
 
       # Zdrojové dáta si Planetiler stiahol počas behu vyššie (water polygons
       # majú ~700 MB) – odkladajú sa až teraz, keď existujú.
@@ -1817,16 +1817,16 @@ jobs:
           path: |
             _site/fonts
             _site/sprites
-          key: assets-${{ hashFiles('poc/web/icon-sources.js', 'workers/build-sdf-sprite.mjs') }}-${{ env.GLYPHS_ZIP }}
+          key: assets-${{ hashFiles('poc/web/icon-sources.js', 'workers/assets/sprite.mjs') }}-${{ env.GLYPHS_ZIP }}
 
-      # Sedemdesiat riadkov bashu je vo `workers/icons-build.sh`.
+      # Sedemdesiat riadkov bashu je vo `workers/assets/icons.sh`.
       - name: Stiahni a priprav sady ikoniek
         id: sprite
-        run: workers/icons-build.sh
+        run: workers/assets/icons.sh
 
-      # Vo `workers/glyphs-fetch.sh`; `GLYPHS_ZIP` si berie z env workflowu.
+      # Vo `workers/assets/glyphs.sh`; `GLYPHS_ZIP` si berie z env workflowu.
       - name: Stiahni glyfy (fonty) k sebe na Pages
-        run: workers/glyphs-fetch.sh
+        run: workers/assets/glyphs.sh
 
       - name: Cache glyfov a spritov (save)
         if: ${{ always() && steps.assets-cache.outputs.cache-hit != 'true' && hashFiles('_site/sprites/**') != '' }}
@@ -1915,7 +1915,7 @@ jobs:
 
       - name: Vygeneruj statické style.json (web + iOS)
         run: |
-          node workers/build-styles.mjs \
+          node workers/styles/build.mjs \
             --base-url='${{ steps.pages.outputs.base_url }}' \
             --region='${{ needs.plan.outputs.key }}' \
             --name='${{ needs.plan.outputs.name }}' \
@@ -1943,11 +1943,11 @@ jobs:
           # Web si ich dokreslí sám, statický štýl pre iOS ich potrebuje
           # priamo v sprite.
           for id in ${{ needs.assets.outputs.available }}; do
-            node workers/add-sprite-patterns.mjs \
+            node workers/styles/patterns.mjs \
               --sprite="_site/sprites/$id" --styles=_site/styles
           done
 
-      # Sto riadkov bashu a jq je vo `workers/build-site.sh` (strop súboru
+      # Sto riadkov bashu a jq je vo `workers/deploy/site.sh` (strop súboru
       # 128 kB). Sem chodia len výstupy ostatných jobov.
       - name: Poskladaj web (viewer + manifest)
         env:
@@ -1977,7 +1977,7 @@ jobs:
           TRAILS_COUNT: ${{ needs.trails.outputs.count || '0' }}
           TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
           TRAILS_MAXZOOM: ${{ needs.trails.outputs.maxzoom || '14' }}
-        run: workers/build-site.sh
+        run: workers/deploy/site.sh
 
       - name: Skontroluj, že štýl odkazuje len na existujúce súbory
         id: kontrola
@@ -1985,7 +1985,7 @@ jobs:
           SPRITE: ${{ needs.assets.outputs.name }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
-        run: workers/check-site.sh
+        run: workers/deploy/check.sh
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
@@ -2005,12 +2005,12 @@ jobs:
           TRAILS: ${{ needs.trails.outputs.enabled }}
           FEATURES: ${{ needs.features.outputs.enabled }}
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
-        run: workers/smoke-test.sh
+        run: workers/deploy/smoke-test.sh
 
       # ---------- hotová mapa na Drive ----------
       # Celý `_site` ako jeden ZIP do priečinka `/krajina/kraj/výsek`, s menom,
       # ktoré nesie výrez, zoom a KTORÉ vrstvy sú vnútri a z čoho (rozpis vo
-      # `workers/publish-map.py`). Vypína sa voľbou `publish=false`.
+      # `workers/deploy/publish-map.py`). Vypína sa voľbou `publish=false`.
       #
       # Až ZA nasadením zámerne: mapa je vtedy na Pages už aj tak, takže keď
       # Drive nepustí, nestratí sa nič – len to bude v logu červené a povie to
@@ -2046,7 +2046,7 @@ jobs:
           TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
         run: |
           set -euo pipefail
-          python3 workers/publish-map.py --site=_site \
+          python3 workers/deploy/publish-map.py --site=_site \
             --summary="$GITHUB_STEP_SUMMARY"
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
@@ -2055,7 +2055,7 @@ jobs:
       # lebo joby bežia súbežne a poradie v čase nič nehovorí.
       # Súhrn je deväť kilobajtov markdownu a workflow súbor má strop
       # 128 KiB – nad ním ho GitHub ticho neprijme. Text je preto
-      # vo `workers/summary.sh` a sem chodia len hodnoty, ktoré pozná
+      # vo `workers/deploy/summary.sh` a sem chodia len hodnoty, ktoré pozná
       # iba workflow (výsledky jobov, vybrané zdroje, URL nasadenia).
       - name: Súhrn buildu
         if: ${{ always() }}
@@ -2087,4 +2087,4 @@ jobs:
           # ako rozísť so zoznamom inputov, kdežto desať riadkov áno – a to
           # by v súhrne ticho chýbalo práve to pole, ktoré si zmenil.
           INPUTS_JSON: ${{ toJSON(inputs) }}
-        run: bash workers/summary.sh
+        run: bash workers/deploy/summary.sh

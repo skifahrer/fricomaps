@@ -66,7 +66,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
   (rezané po skutočných administratívnych hraniciach, denne aktualizované):
   `europe/slovakia/{kraj}-latest.osm.pbf` (36–63 MB na kraj), celé Slovensko
   `europe/slovakia-latest.osm.pbf` (~380 MB). Mapovanie a presné bboxy z
-  osm.fr rezacích polygónov sú vo [workers/regions.json](workers/regions.json).
+  osm.fr rezacích polygónov sú vo [workers/data/regions.json](workers/data/regions.json).
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
@@ -97,7 +97,7 @@ Uložiť úpravy štýlu          style-overrides.json z developer módu
 - **Ikonky bez podkladov, s farbou:** hotové sprity kreslia symboly na
   podklade (osm-liberty v bielom koliesku, osm-bright so svetlým halom) a
   farbu im meniť nejde. Pipeline z každého zdroja vyrobí vlastný **SDF sprite**
-  ([workers/build-sdf-sprite.mjs](workers/build-sdf-sprite.mjs)), kde je len
+  ([workers/assets/sprite.mjs](workers/assets/sprite.mjs)), kde je len
   samotný symbol a dá sa mu nastaviť `icon-color` aj `icon-halo-color`.
 - **Tri sady ikoniek** ([poc/web/icon-sources.js](poc/web/icon-sources.js)) sa
   nasadzujú všetky naraz, takže sa dajú v developer móde prepínať naživo.
@@ -155,10 +155,10 @@ limit). Preto je medzi tým **zrkadlo v releasi**:
 
 ```
 Google Drive (priečinok krajiny)
-  → workers/drive-folder.py   stiahne celý priečinok, prihlásene cez Drive API
+  → workers/drive/folder.py   stiahne celý priečinok, prihlásene cez Drive API
                               (bez tokenu gdown a s varovaním o limite)
   → 7z / unzip         rozbalí .zip
-  → workers/dem-tiles.py   GeoTIFF (aj celá krajina v metrickej projekcii)
+  → workers/dem/tiles.py   GeoTIFF (aj celá krajina v metrickej projekcii)
                            → dlaždice 1°×1° N49E019.tif vo WGS84
      (.hgt sa prevádza priamo – je to už 1° dlaždica, len bez hlavičky)
   → sklad `dem-sonny` + meta.json
@@ -204,7 +204,7 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
                (tolerancia: štvrtina bunky)
   → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
                       (Chaikin, 2 prechody)
-  → planetiler generate-custom --schema=workers/contours.yml
+  → planetiler generate-custom --schema=workers/contours-rocks/contours.yml
   → {región}-contours.pmtiles
 ```
 
@@ -231,9 +231,9 @@ okrem šumu (σ = 0,15 m na 1 m mriežke) aj **reálne tvary** s vlnovou dĺžko
 | **okno 3×3, 1/4 bunky, 2× Chaikin (teraz)** | **860** | **8,2°** | **1,6 %** | **0,70 m** | **93 %** | **63 %** |
 | okno 7×7, 1/2 bunky, 2× Chaikin | 336 | 10,8° | 3,0 % | 2,23 m | 58 % | **5 %** |
 
-Meria to [`workers/measure-smoothing.py`](workers/measure-smoothing.py) – nie
+Meria to [`workers/contours-rocks/measure-smoothing.py`](workers/contours-rocks/measure-smoothing.py) – nie
 je to časť pipeline, nevolá to žiadny workflow a stačí naň numpy, takže sa
-tabuľka dá kedykoľvek zopakovať (`python3 workers/measure-smoothing.py`).
+tabuľka dá kedykoľvek zopakovať (`python3 workers/contours-rocks/measure-smoothing.py`).
 
 Kľúčové je porovnanie tretieho a piateho riadku: **menšie okno nie je ústupok
 zubatosti**. Priemerný lom je menší (8,2° oproti 10,6°), ostrých lomov je
@@ -321,7 +321,7 @@ prekročia 40 % rozpočtu stránky, pipeline im sama zníži maxzoom.
 
 MapLibre nevie čítať výšky z GeoTIFFu – potrebuje pyramídu PNG dlaždíc, kde je
 výška zakódovaná do farby (*terrarium*). Robia sa z výškového modelu, ktorý
-vyberá **`shading_source`** ([workers/build-terrain.py](workers/build-terrain.py)),
+vyberá **`shading_source`** ([workers/terrain/tiles.py](workers/terrain/tiles.py)),
 takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
 
 - **Áno, dá sa aj z DMR 5.0** – `shading_source: dmr5`. Tieňovanie sa robí
@@ -337,7 +337,7 @@ takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
   prejaviť.
 - **Každý zoom navyše je štvornásobok dlaždíc**, takže z13 → z15 je
   šestnásťnásobok. Preto má tieňovanie svoj podiel rozpočtu stránky
-  (`BUDGET_TERRAIN_PCT`, 12 %) a `build-terrain.py` sa do neho zmestí sám:
+  (`BUDGET_TERRAIN_PCT`, 12 %) a `terrain/tiles.py` sa do neho zmestí sám:
   vypíše plán, počíta zoomy odspodu a ten, ktorý by rozpočet prekročil, ani
   nezačne – povie to warningom a čo s tým (menšie územie, vyšší
   `size_limit_mb`). Jemný reliéf celého kraja sa teda nedá dostať zadarmo,
@@ -390,7 +390,7 @@ státisíce bodov zredukuje (28,5°). Preto sa po zjednodušení rohy ešte zaob
 Chaikinovým orezávaním: dva prechody dajú 7,7°, čo je hladšie než pôvodný
 raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
 neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
-v `workers/smooth-shapes.py`.
+v `workers/contours-rocks/smooth-shapes.py`.
 
 **Jedna trieda, jedna sivá.** Skala je v mape jedna plocha v jednej sivej bez
 priehľadnosti — žiadna plocha vnútri inej. Priehľadnosť by totiž znamenala,
@@ -482,7 +482,7 @@ natvrdo (`options: rock_res=1`).
 Všetko vyššie počíta skaly **zo sklonu DEM**. Existuje aj druhá, pokusná
 cesta, ktorá sa výšok vôbec nedotkne: vezme hotový **hillshade** z freemap.sk
 a hľadá v ňom **tmavé plochy**. Robí to workflow **Skaly z tieňovaných
-dlaždíc** ([`workers/shading-rocks.py`](workers/shading-rocks.py)):
+dlaždíc** ([`workers/rocks-shading/build.py`](workers/rocks-shading/build.py)):
 
 ```
 XYZ dlaždice sk-hires-shading.tiles.freemap.sk/{z}/{x}/{y}.jpg
@@ -824,7 +824,7 @@ nie ArcGIS za mapovým klientom — a odpovedal na prvý pokus, kým `zbgis.` aj
 Model je starší a redší než 1 m LiDAR, ale **dvakrát jemnejší než Sonny**, a
 mriežka zdroja je jediné, čo stropuje skutočný detail skál. `rock_res: auto`
 si to zoberie sám: dolný strop je desatina bunky DEM, takže z 2 m spadne na
-1 m — v `rock-areas.py` netreba meniť nič.
+1 m — v `contours-rocks/rock-areas.py` netreba meniť nič.
 
 Dlaždice majú tú istú pomenúvaciu schému ako Sonny (`N49E019.tif`), takže sa
 sťahujú tou istou cestou — `sonny` a `dmr35` sa líšia len menom releasu
@@ -836,7 +836,7 @@ teréne. (Pri `dmr5` s vyplneným výrezom to platí tiež, len tieňovanie sa r
 na celý región, takže tam vyjde jeho 5 m podoba.)
 
 > **Dlaždice sú vo WGS84, nie v S-JTSK.** Zdrojový ZIP je v *S-JTSK / Krovak
-> East North* — to hlási súhrn ako „CRS zdroja“ — ale `fetch-dem-open.py` ho
+> East North* — to hlási súhrn ako „CRS zdroja“ — ale `dem/fetch-open.py` ho
 > pri krájaní prepočíta (`gdalwarp -t_srs EPSG:4326`). Overené na hotovej
 > dlaždici z releasu: `N49E017.tif`, `GEOGCRS["WGS 84"]`, roh presne
 > 17°E/50°N, 8826×8826 px, Float32, výšky 383–782 m.
@@ -871,7 +871,7 @@ Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
 1. **Drive klame o veľkosti.** Na `HEAD` vracia `content-length: 0`, takže
    GDAL súbor odmietne (`GetFileSize()=0` → „not recognized as a supported
    file format"). Na `Range` GET pritom odpovedá správne. Rieši to
-   [`workers/drive-serve.py`](workers/drive-serve.py) — malý HTTP server na
+   [`workers/drive/serve.py`](workers/drive/serve.py) — malý HTTP server na
    localhoste, ktorý tú jednu hlavičku opraví a Range requesty prepája ďalej.
    Podáva **oba** súbory pod jedným menom, takže si GDAL nájde `.ovr` ako
    sidecar sám: `gdalinfo` potom vypíše všetkých 8 úrovní, otvorenie 145 GiB
@@ -885,7 +885,7 @@ Georeferencia je priamo v GeoTIFF tagoch, nič sa nedopočítava:
    0,11 GB, 697 požiadaviek.**
 
 **Číta sa prihlásený ako vlastník dát, a inak sa nečíta vôbec.** Model leží
-v **priečinku** na Drive (`FOLDER_ID` vo [`workers/dmr5-drive.py`](workers/dmr5-drive.py))
+v **priečinku** na Drive (`FOLDER_ID` vo [`workers/drive/dmr5.py`](workers/drive/dmr5.py))
 a súbory sa v ňom hľadajú podľa mena — presun modelu inam je tak zmena jedného
 čísla. Čo v priečinku je, ale povie len Drive API prihlásenému účtu, takže
 verejný odkaz (s denným limitom sťahovania, ktorý zdieľajú všetci, kto naň
@@ -896,9 +896,9 @@ API s `Authorization: Bearer`.
 Vyrobí sa raz, na vlastnom počítači:
 
 ```bash
-python3 workers/drive-auth.py --login --client-id=… --client-secret=…
+python3 workers/drive/auth.py --login --client-id=… --client-secret=…
 # vypísaný JSON → Settings → Secrets and variables → Actions → GDRIVE_CREDENTIALS
-python3 workers/dmr5-drive.py --auth-check      # ktorým účtom sa číta a či naň vidí
+python3 workers/drive/dmr5.py --auth-check      # ktorým účtom sa číta a či naň vidí
 ```
 
 Klient je typu *Desktop app* z Google Cloud Console, rozsah práv `drive` —
@@ -938,7 +938,7 @@ area: cele_slovensko  ─► out/N49E019.tif …       ─► sklad dem-dmr5
                           ▲ to isté, ale rovno na celú krajinu
 ```
 
-Výstup je **presne ten istý formát**, aký `workers/fetch-dem.sh` čaká už
+Výstup je **presne ten istý formát**, aký `workers/dem/fetch.sh` čaká už
 dávno, takže Build map sa nemení ani o riadok.
 
 **Nespúšťaš to ručne.** Workflow je volateľný a `Build map` si ho zavolá sám
@@ -964,7 +964,7 @@ počítať **vrstevnice, skaly aj tieňovanie**:
 | pohorie | **1 m** | `ugkk-<pohorie>.tif` | `dem-ugkk` | `dmr5` vo výbere vrstevníc/skál + rovnaké `area` |
 
 Pomenúvacia schéma aj formát sú tie isté ako u Sonnyho a DMR 3.5, takže
-[`workers/fetch-dem.sh`](workers/fetch-dem.sh) sa pri čítaní vôbec nevetví —
+[`workers/dem/fetch.sh`](workers/dem/fetch.sh) sa pri čítaní vôbec nevetví —
 rozhoduje len meno releasu. Build mapy sa nemusí učiť nič nové. Presné
 nastavenia vypíše workflow do súhrnu behu, aby sa nemuseli hádať.
 
@@ -991,8 +991,8 @@ Build map
 ```
 
 Ktorý sklad a ktoré súbory ktorá vrstva potrebuje, hovorí jediné miesto –
-[`workers/dem-target.py`](workers/dem-target.py). Pýta sa doň aj kontrola
-(`workers/check-dem.sh`), aj sťahovanie (`workers/fetch-dem.sh`); kým to bolo
+[`workers/dem/target.py`](workers/dem/target.py). Pýta sa doň aj kontrola
+(`workers/dem/check.sh`), aj sťahovanie (`workers/dem/fetch.sh`); kým to bolo
 napísané dvakrát, rozišlo sa to a build kontroloval jeden sklad, kým sťahoval
 z druhého ([beh 31307163093](https://github.com/skifahrer/fricomaps/actions/runs/31307163093)).
 
@@ -1074,7 +1074,7 @@ to.
 > Drive ako dva holé BigTIFFy. Odtiaľ sa vziať dá. Viď [DMR 5.0 z
 > Drive](#dmr-50-z-drive-145-gb-cez-http-range).
 
-Build to preto **neskúša naslepo**: `fetch-dem-ugkk.py` sa najprv spýta na
+Build to preto **neskúša naslepo**: `dem/fetch-ugkk.py` sa najprv spýta na
 dostupnosť hostiteľa a keď neodpovedá, ImageServer ani WCS už nerozbieha —
 všetky sú na tej istej doméne a každý z nich stojí štyri profily prehliadača
 plus curl.
@@ -1107,7 +1107,7 @@ farieb nemá zmysel čakať polhodinu na celý kraj, keď ťa zaujíma jedno poh
 
 *(plochy sú po orezaní na Prešovský kraj)*
 
-Pomenované výrezy sú vo [`workers/areas.json`](workers/areas.json) – zatiaľ
+Pomenované výrezy sú vo [`workers/data/areas.json`](workers/data/areas.json) – zatiaľ
 Tatry (celé aj po častiach), Nízke Tatry, Slovenský raj, Pieniny, Malá aj
 Veľká Fatra, Súľovské skaly, Slovenský kras, Muránska planina, Vihorlat,
 Strážovské vrchy a Malé Karpaty. Namiesto názvu sa dá zadať aj bbox
@@ -1328,12 +1328,12 @@ v metri ~48 GB a voľných je ~60 GB.
 
 Čo sa tým **nezmenilo**: mená súborov (`N49E020.tif` ďalej hovorí „tento celý
 stupeň je tu"), ani to, ktorý sklad ktorá vrstva hľadá. Celý rozpis je vo
-[`workers/drive-store.py`](workers/drive-store.py).
+[`workers/drive/store.py`](workers/drive/store.py).
 
 Krátkodobé artefakty (`site-*`, `steps-*` s `retention-days: 1`) ostávajú a nie
 sú publikovanie — sú to prepravky, ktorými si joby jedného behu podávajú kusy
 `_site`. Čokoľvek s dlhšou retenciou ide do skladu `vysledky` cez
-[`workers/publish-results.sh`](workers/publish-results.sh) a *Lint workflows* to
+[`workers/deploy/publish-results.sh`](workers/deploy/publish-results.sh) a *Lint workflows* to
 kontroluje. Staré releasy, ich tagy aj artefakty zmaže *Upratať GitHub*
 ([`cleanup-actions.yml`](.github/workflows/cleanup-actions.yml)) v režime
 `releasy_a_artefakty`.
@@ -1352,12 +1352,12 @@ Kroky vo workflowoch vyzerajú rovnako ako predtým (`.github/actions/cache-rest
 a `cache-save` namiesto `actions/cache/*`) a **sémantika je tá istá**:
 `cache-hit` len pri presnej zhode kľúča, `restore-keys` ako predpony, existujúci
 kľúč sa neprepisuje. Celý rozpis je vo
-[`workers/drive-cache.py`](workers/drive-cache.py).
+[`workers/drive/cache.py`](workers/drive/cache.py).
 
 Dve veci, ktoré z toho plynú:
 
 - **Token na Drive musí vedieť zapisovať** (rozsah `drive`, nie
-  `drive.readonly`). `python3 workers/drive-cache.py --check` povie, či vie —
+  `drive.readonly`). `python3 workers/drive/cache.py --check` povie, či vie —
   aj koľko miesta na účte ešte je.
 - **Nič sa nemaže samo.** GitHub staré záznamy vyhadzoval sám, Drive nie.
   Preriedi ich workflow *Upratať cache*
@@ -1389,7 +1389,7 @@ nie čo bolo vo formulári. Vrstva, ktorá v mape nie je, sa píše tiež
 (`bez_skal`). Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa
 dva behy nikdy neprepíšu.
 
-Robí to [`workers/publish-map.py`](workers/publish-map.py) a vypnúť sa to dá
+Robí to [`workers/deploy/publish-map.py`](workers/deploy/publish-map.py) a vypnúť sa to dá
 voľbou `publish=false` v poli `options`.
 
 ### Súhrn buildu
@@ -1433,7 +1433,7 @@ Je to preto, že formulár *Run workflow* sa vždy otvorí s predvolenými
 hodnotami – GitHub si nepamätá, s čím si beh pustil naposledy, a v API to
 nikde nie je. Keď teda chceš beh zopakovať a zmeniť jedinú vec (typicky
 `rebuild`), z tohto bloku vidíš, čo treba nastaviť späť. Predvolené hodnoty
-si blok číta priamo z workflowu ([workers/summary-inputs.py](workers/summary-inputs.py)),
+si blok číta priamo z workflowu ([workers/deploy/summary-inputs.py](workers/deploy/summary-inputs.py)),
 takže sa s formulárom nemôžu rozísť.
 
 
@@ -1451,9 +1451,9 @@ Preto majú trasy vlastný krok pipeline a vlastný `.pmtiles`:
 ```
 data/region.osm.pbf
   → osmium tags-filter r/route=hiking,foot,…   len relácie trás a ich členovia
-  → workers/trail-routes.py (pyosmium)         relácie → línie s pruhmi
+  → workers/trails/routes.py (pyosmium)         relácie → línie s pruhmi
   → data/trails.geojson
-  → planetiler generate-custom --schema=workers/trails.yml
+  → planetiler generate-custom --schema=workers/trails/trails.yml
   → {región}-trails.pmtiles
 ```
 
@@ -1566,9 +1566,9 @@ Preto sa z toho istého PBF ťahajú druhýkrát, vlastnou schémou a do vlastn�
 
 ```
 data/region.osm.pbf
-  → osmium tags-filter --expressions=workers/features-filter.txt
+  → osmium tags-filter --expressions=workers/features/filter.txt
   → data/features.osm.pbf                      (Andorra: 3,4 MB → 198 kB)
-  → planetiler generate-custom --schema=workers/features.yml
+  → planetiler generate-custom --schema=workers/features/features.yml
   → {región}-features.pmtiles
 ```
 
@@ -1818,7 +1818,7 @@ hodnotou, vymazaním sa vráti pôvodná interpolácia.
 Vzory nie sú hotové obrázky: **názov obrázka je jeho predpis**
 (`pat:trees:2f5a28:22:12`), takže si ho prehliadač dokreslí sám cez
 `styleimagemissing`, a pipeline tie isté názvy nájde v hotovom štýle a
-dopečie ich do spritu ([workers/add-sprite-patterns.mjs](workers/add-sprite-patterns.mjs)),
+dopečie ich do spritu ([workers/styles/patterns.mjs](workers/styles/patterns.mjs)),
 aby fungovali aj v statickom `style.json` pre iOS.
 
 **Ikona a farby z palety priamo v riadku vrstvy.** Symbolová vrstva s pevne
@@ -1861,7 +1861,7 @@ mapa na Pages ─► 🛠 developer mode ─► „Stiahnuť style-overrides.jso
                                        ▼
               Actions ─► „Uložiť úpravy štýlu do zdrojáku" (vlož obsah súboru)
                                        │
-                       workers/apply-overrides.mjs – kontrola a prečistenie
+                       workers/styles/overrides.mjs – kontrola a prečistenie
                                        │
                        poc/web/style-overrides.json v repozitári
                                        │
@@ -1966,7 +1966,7 @@ krajinu, a keďže farba `pedestrian` je od podkladu na nerozoznanie, vyzeralo t
 ako diera do podkladu. Každá výplň nad vrstvou, ktorá nesie viac typov
 geometrie (`transportation`, `piste`, `aeroway`, `park`), preto ide cez
 `polygonOnly(…)` a stráži to kontrola
-[`workers/lint-style.mjs`](workers/lint-style.mjs). Rozpis:
+[`workers/lint/style.mjs`](workers/lint/style.mjs). Rozpis:
 [docs/pipeline.md](docs/pipeline.md#výplň-nad-zmiešanou-geometriou-prečo-boli-od-z13-čudné-polygóny).
 
 **Veľkosť vs. zoom.** GitHub Pages zvládne stránku do ~1 GB a do toho sa musia
@@ -2049,11 +2049,11 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
    `dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber: s vyplneným
    `area` plné 1 m, bez neho dlaždice na 5 m. Zoznamy vo formulári stráži
-   `Lint workflows` proti [workers/dem-sources.json](workers/dem-sources.json)
+   `Lint workflows` proti [workers/data/dem-sources.json](workers/data/dem-sources.json)
    – zdroj sa nedá pridať do jedného a zabudnúť v druhom.
 
    Zoznam pohorí v `area` sa berie z
-   [workers/areas.json](workers/areas.json) – keď tam pribudne pohorie, treba
+   [workers/data/areas.json](workers/data/areas.json) – keď tam pribudne pohorie, treba
    ho dopísať aj do výberu vo workflowe. Vlastný bbox ide cez
    `options: area_bbox=W,S,E,N`.
 
@@ -2065,7 +2065,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    ```
 
    Známe kľúče s predvolenými hodnotami sú vo
-   [workers/parse-options.py](workers/parse-options.py): `crop_bbox`,
+   [workers/plan/options.py](workers/plan/options.py): `crop_bbox`,
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails`, `trails_maxzoom`,
    `terrain_maxzoom`, `maxzoom`, `rock_img_asset`, `rock_img_zoom`,

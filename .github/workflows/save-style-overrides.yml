@@ -7,7 +7,7 @@ name: Uložiť úpravy štýlu do zdrojáku
 #                                       ▼
 #                        tento workflow (vlož obsah súboru)
 #                                       │
-#                     workers/apply-overrides.mjs (kontrola + prečistenie)
+#                     workers/styles/overrides.mjs (kontrola + prečistenie)
 #                                       │
 #                        poc/web/style-overrides.json v repozitári
 #                                       │
@@ -99,9 +99,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ '${{ steps.input.outputs.mode }}' = 'reset' ]; then
-            node workers/apply-overrides.mjs --reset
+            node workers/styles/overrides.mjs --reset
           else
-            node workers/apply-overrides.mjs --file=overrides-input.json
+            node workers/styles/overrides.mjs --file=overrides-input.json
           fi
 
       - name: Over, že sa štýl s úpravami vygeneruje
@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           # Bez base-url skript nebeží; použije sa fiktívna, ide len o to,
           # či sa štýl so zapečenými úpravami dá zložiť.
-          node workers/build-styles.mjs \
+          node workers/styles/build.mjs \
             --base-url=https://example.invalid/fricomaps \
             --region=slovensko \
             --overrides=poc/web/style-overrides.json \

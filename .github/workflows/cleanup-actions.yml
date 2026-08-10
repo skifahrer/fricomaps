@@ -19,7 +19,7 @@ name: Upratať GitHub
 #   • artefakty všetkých behov.
 #
 # NIČ SA TÝM NESTRATÍ. Výškové modely, skaly, tieňovanie aj medzivýsledky na
-# pozretie ležia v sklade na Google Drive (`workers/drive-store.py`) – to je
+# pozretie ležia v sklade na Google Drive (`workers/drive/store.py`) – to je
 # odteraz JEDINÉ miesto, kam pipeline publikuje. Že sa `gh release` ani
 # dlhodobý artefakt nevrátia, stráži `Lint workflows`.
 #
@@ -79,4 +79,4 @@ jobs:
           # releasy a artefakty. Behy a vetvy sú história a tú maže človek.
           MODE: ${{ inputs.co || 'releasy_a_artefakty' }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: python3 workers/cleanup-actions.py
+        run: python3 workers/tools/cleanup-actions.py

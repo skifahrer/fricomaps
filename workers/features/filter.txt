@@ -1,0 +1,46 @@
+# Predfilter PBF pre workers/features/features.yml (`osmium tags-filter --expressions`).
+#
+# PREČO: Planetiler by celý región prečítal aj bez toho, ale prečítal by ho
+# druhýkrát celý – 380 MB Slovenska a s tým index polôh uzlov. Po tomto
+# filtri z neho ostane zlomok a job beží minúty namiesto desiatok minút.
+#
+# Zoznam je zámerne ŠIRŠÍ než features.yml: filter má byť hrubé sito, presné
+# rozhodnutie robí schéma. Keď do schémy pribudne trieda, musí pribudnúť aj
+# sem – inak sa v dlaždiciach ticho neobjaví.
+#
+# `nwr/` = uzly, cesty aj relácie. Relácie kvôli multipolygónom (parkovisko
+# s dierou, skládka z viacerých obrysov); osmium k nim dotiahne aj členov.
+
+# --- násypy a zárezy (to, čo v mape chýbalo) ---
+nwr/man_made=embankment,cutline,pipeline,spoil_heap,tower,mast,water_tower,chimney,adit,mineshaft,survey_point
+nwr/embankment
+nwr/cutting
+
+# --- prekážky ako línie (bodové brány si berie POI vrstva OpenMapTiles) ---
+nwr/barrier=wall,city_wall,retaining_wall,fence,guard_rail,handrail,hedge
+
+# --- elektrické vedenie ---
+nwr/power=line,minor_line
+
+# --- terénne hrany a vegetácia ---
+nwr/natural=tree_row,gully,earth_bank,shingle,spring,cave_entrance,sinkhole
+
+# --- vodné stavby a vodopády ---
+nwr/waterway=dam,weir,lock_gate,waterfall
+
+# --- plochy, ktoré schéma nemá ---
+nwr/amenity=parking
+nwr/landuse=landfill,farmyard,greenhouse_horticulture,brownfield
+
+# --- pamiatky a banské dedičstvo mimo `historic` trojice OpenMapTiles ---
+nwr/historic=archaeological_site,battlefield,fort,manor,tomb,wayside_cross,wayside_shrine,memorial,boundary_stone,milestone,charcoal_pile,mine,mine_shaft,mineshaft,adit
+
+# --- útulne a horské priechody ---
+nwr/tourism=wilderness_hut
+nwr/mountain_pass
+
+# --- núdzové body horskej služby ---
+nwr/highway=emergency_access_point
+
+# --- zjazdovky, bežky, skialp ---
+nwr/piste:type

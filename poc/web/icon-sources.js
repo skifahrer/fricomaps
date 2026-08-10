@@ -3,7 +3,7 @@
  *
  * Každý zdroj je hotový MapLibre sprite (PNG + JSON index) z otvoreného
  * štýlu. Pipeline z každého vyrobí vlastný **SDF sprite** bez podkladov
- * (workers/build-sdf-sprite.mjs) a nasadí ich všetky, takže sa dajú
+ * (workers/assets/sprite.mjs) a nasadí ich všetky, takže sa dajú
  * v developer móde prepínať naživo a vybraná sada sa zapečie do štýlu
  * pre web aj iOS.
  *

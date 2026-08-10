@@ -8,7 +8,7 @@ name: Upratať cache
 # tieňovania), takže si záznamy vyhadzovali navzájom a hodinové výpočty sa
 # rátali odznova bez toho, aby bolo na čom to vidieť.
 #
-# Preto sa cache presťahovala na Drive (`workers/drive-cache.py`) a to, čo
+# Preto sa cache presťahovala na Drive (`workers/drive/cache.py`) a to, čo
 # v GitHube ostalo, už nikto nehľadá – len zaberá miesto. Tento workflow to
 # zmaže, a keďže build tam nič nové neukladá, ostane to prázdne.
 #
@@ -91,7 +91,7 @@ jobs:
       - name: Prístup k cache na Drive
         if: ${{ inputs.co != 'github' }}
         continue-on-error: true
-        run: python3 workers/drive-cache.py --check
+        run: python3 workers/drive/cache.py --check
 
       # Pri behu z plánu je `inputs.co` prázdne, takže sa spravia obe polovice
       # – presne to sa raz za týždeň chce.
@@ -100,7 +100,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: python3 workers/cleanup-cache.py
+        run: python3 workers/tools/cleanup-cache.py
 
       - name: Prerieď cache na Drive
         if: ${{ inputs.co != 'github' }}
@@ -112,7 +112,7 @@ jobs:
           set -euo pipefail
           ARGS=()
           if [ "${DRY_RUN:-false}" = "true" ]; then ARGS+=(--dry-run); fi
-          python3 workers/drive-cache.py --prune \
+          python3 workers/drive/cache.py --prune \
             --keep-days="${KEEP_DAYS:-30}" \
             --keep-gb="${KEEP_GB:-100}" \
             "${ARGS[@]}" \
@@ -131,7 +131,7 @@ jobs:
           set -euo pipefail
           ARGS=()
           if [ "${DRY_RUN:-false}" = "true" ]; then ARGS+=(--dry-run); fi
-          python3 workers/drive-store.py --prune --store=vysledky \
+          python3 workers/drive/store.py --prune --store=vysledky \
             --keep-days="${KEEP_DAYS:-90}" \
             "${ARGS[@]}" \
             --summary="$GITHUB_STEP_SUMMARY"

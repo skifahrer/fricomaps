@@ -81,7 +81,7 @@ konverzia `pmtiles → mbtiles` v pipeline.
 
 **Prepínanie tém** = iba zmena `styleURL` (dáta sa nesťahujú znova, dlaždice
 zostávajú v cache). Presne tie isté 4 témy ako na webe, lebo JSON generuje
-jeden zdroj pravdy: `poc/web/themes.js` → `workers/build-styles.mjs`.
+jeden zdroj pravdy: `poc/web/themes.js` → `workers/styles/build.mjs`.
 Hotové SwiftUI zdrojáky sú v [`app/ios`](../app/ios).
 
 ### B) Multiplatform (iOS + Android z jednej codebase)
