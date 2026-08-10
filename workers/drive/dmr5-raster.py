@@ -12,7 +12,7 @@ DMR 5.0 ako JEDEN GeoTIFF vo vzdialenom ZIPe – čítaný cez /vsizip//vsicurl/
 
 Čakali sme textové výškové body po blokoch. Nie sú. Je to jeden súvislý
 raster, takže sa nedá deliť po položkách archívu – a celé rozdeľovanie na
-časti (workers/dmr5-chunk.py) tu nemá čo deliť.
+časti po položkách archívu tu nemá čo deliť.
 
 ZATO SA DÁ ČÍTAŤ PRIAMO. GDAL vie `/vsizip//vsicurl/URL/cesta.tif`: ZIP číta
 cez HTTP Range a GeoTIFF je dlaždicovaný, takže si vypýta len tie dlaždice,

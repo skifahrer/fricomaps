@@ -18,8 +18,8 @@ zoznamom položiek a s ich presnými offsetmi. Keď server vie HTTP Range
      a rozbaliť ich za behu.
 
 Vďaka tomu sa dá z archívu prečítať len to, čo treba – bez toho, aby sa
-čokoľvek stiahlo na disk. Používa to `workers/dmr5-plan.py` (inventár archívu
-z jeho centrálneho adresára) a `workers/drive/dmr5-raster.py` (hlavičky súborov,
+čokoľvek stiahlo na disk. Používa to `workers/drive/dmr5-remote.py` (inventár
+archívu z jeho centrálneho adresára) a `workers/drive/dmr5-raster.py` (hlavičky súborov,
 z ktorých sa zisťuje, či sa raster dá vôbec rozumne otvoriť).
 
 ZIP64 JE POVINNÝ: pri 198 GB sú offsety väčšie než 4 GB, takže obyčajný
@@ -236,7 +236,7 @@ class RemoteZip:
     def head(self, entry, want=65536):
         """Začiatok jednej položky – bez sťahovania celého súboru.
 
-        Používa to kalibrácia v `dmr5-plan.py`: z prvých riadkov sa dá zistiť
+        Používa to kalibrácia v `dmr5-remote.py`: z prvých riadkov sa dá zistiť
         súradnicový systém a to, čo v mene súboru znamenajú ktoré čísla.
         Preto sa sťahuje len toľko komprimovaných bajtov, koľko na to treba.
         """
