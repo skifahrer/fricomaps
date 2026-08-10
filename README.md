@@ -1171,7 +1171,8 @@ obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
 `ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
 (verzia algoritmu v mene uloženého assetu).
 
-V mape z toho sú **tmavosivé plochy** kreslené *pod* tieňovaním aj *pod*
+V mape z toho sú **tmavšie sivohnedé plochy** (#8a8578, farba papierovej
+horskej mapy) kreslené *pod* tieňovaním aj *pod*
 vrstevnicami. Poradie je zámerné a v tomto poradí: skala je tvar terénu, takže
 cez ňu musí prejsť tieňovanie (inak je práve stena v mape plochá škvrna bez
 reliéfu), a vrstevnica musí prejsť cez oboje (inak nie sú výšky tam, kde je
@@ -1567,6 +1568,29 @@ Typ mapy sa vyberá v paneli ⚙ (výber **Typ mapy**) a pamätá si ho prehliad
 Pipeline generuje `styles/{región}-{typ mapy}-{téma}.json` pre každú
 kombináciu – teda 5 × 4 = 20 štýlov, plus predvolený typ aj pod pôvodným
 menom `{región}-{téma}.json`, aby fungovali staršie odkazy.
+
+### Terénna trojica
+
+Tri farby, ktoré robia z mapy horskú mapu, sú v každej téme z tej istej rodiny –
+prevzatej z papierovej horskej mapy:
+
+| čo | farba | kde je v palete |
+|---|---|---|
+| podklad mapy (základná farba horského terénu) | **#d8d5ca** svetlo béžovosivá | `Pozadie mapy` |
+| skalnaté partie a sutiny | **#8a8578** tmavšia sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
+| vrstevnice | tenké sivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
+
+Každá téma má **veľmi jemne iný** odtieň tej istej trojice, nie kópiu jednej
+hodnoty: *Svetlá* je neutrálna, *Outdoor* o odtieň teplejšia a tmavšia (je to
+turistická mapa), *Retro* o odtieň svetlejšia a *Tmavá* má tú istú rodinu
+preloženú do tmy – teda neutrálne teplú, nie domodra ako predtým. Rozdiel je
+pár krokov: dosť na to, aby sa témy dali rozoznať, málo na to, aby niektorá
+vyzerala ako iná mapa.
+
+Suť z OSM (`Skaly / suť`) sa kreslí s krytím 0,8, takže sa s podkladom mieša –
+hodnota v palete je preto tmavšia než to, čo je v mape vidieť, a výsledok je
+o odtieň svetlejší než počítané skalné plochy. To je zámer: suť je sypká
+a svetlejšia než stena.
 
 **Tematické body.** Každý typ mapy má skupinu bodov, ktorá je preň tá hlavná –
 `poi-historic` (hrady, zrúcaniny, pamätníky, archeológia), `poi-mining`
