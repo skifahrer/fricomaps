@@ -106,19 +106,25 @@ def folder_id(text):
                      f"https://drive.google.com/drive/folders/<id> alebo id.")
 
 
-def listing(creds, fid, depth=0, prefix=""):
+def listing(creds, fid, depth=0, prefix="", extra=""):
     """Súbory v priečinku (aj v podpriečinkoch), zoradené podľa mena.
 
-    Vracia zoznam dictov `{id, name, path, size, owned}`. Google-natívne
+    Vracia zoznam dictov `{id, name, path, size, owned, raw}`. Google-natívne
     dokumenty (tabuľky, prezentácie) sa preskakujú: `alt=media` ich nestiahne
     a v priečinku s dlaždicami nemajú čo hľadať.
+
+    `extra` sú polia navyše (napr. `createdTime`) – v `raw` ich potom nájde
+    volajúci. Je to tu preto, aby „vypíš priečinok na Drive" ostalo jedno
+    miesto: pýta sa ho aj cache (`drive-cache.py`, chce časy) aj DMR 5.0
+    (`dmr5-drive.py`, chce id súborov podľa mena).
     """
     out, skipped, token = [], [], ""
     while True:
         q = urllib.parse.quote(f"'{fid}' in parents and trashed = false")
         path = (f"/drive/v3/files?q={q}&pageSize=1000&orderBy=folder,name"
                 f"&supportsAllDrives=true&includeItemsFromAllDrives=true"
-                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe)")
+                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe"
+                + (f",{extra}" if extra else "") + ")")
         if token:
             path += "&pageToken=" + urllib.parse.quote(token)
         data = auth.api_get(creds, path)
@@ -129,7 +135,8 @@ def listing(creds, fid, depth=0, prefix=""):
                 if depth >= MAX_DEPTH:
                     skipped.append(f"{rel}/ (vnorené hlbšie než {MAX_DEPTH})")
                     continue
-                sub, sub_skipped = listing(creds, f["id"], depth + 1, rel + "/")
+                sub, sub_skipped = listing(creds, f["id"], depth + 1, rel + "/",
+                                           extra)
                 out += sub
                 skipped += sub_skipped
                 continue
@@ -137,7 +144,8 @@ def listing(creds, fid, depth=0, prefix=""):
                 skipped.append(f"{rel} ({f.get('mimeType', '?')})")
                 continue
             out.append({"id": f["id"], "name": name, "path": rel,
-                        "size": int(f["size"]), "owned": bool(f.get("ownedByMe"))})
+                        "size": int(f["size"]), "owned": bool(f.get("ownedByMe")),
+                        "raw": f})
         token = data.get("nextPageToken") or ""
         if not token:
             return out, skipped

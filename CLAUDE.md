@@ -18,6 +18,7 @@ poc/web/            web viewer (MapLibre GL JS + PMTiles) + dev mode
 workers/            výkonné časti pipeline (Python / bash / mjs)
 docs/               návrhy a podrobný popis pipeline
 .github/workflows/  CI: výškové modely, build mapy, deploy na Pages
+.github/actions/    cache-restore a cache-save (cache leží na Google Drive)
 ```
 
 ## Jazyk
@@ -101,7 +102,8 @@ použilo.
 
 ## DMR 5.0: jeden workflow, dva joby
 
-Model je na Google Drive ako dva holé BigTIFFy a berie sa **len odtiaľ**:
+Model je na Google Drive ako dva holé BigTIFFy v jednom priečinku a berie sa
+**len odtiaľ**:
 
 | súbor | meno v Actions | volá to Build map? |
 |---|---|---|
@@ -115,14 +117,22 @@ offsete a číta sa len to, čo výrez pretína. **Tá záloha je zrušená** �
 Drive púšťa spoľahlivo, neoplácalo sa udržiavať druhú cestu s opačnými
 pravidlami.
 
-**Číta sa prihlásený ako vlastník dát.** Verejný odkaz má denný limit
-sťahovania na súbor a ten zdieľajú všetci, kto naň siahnu; token vlastníka
-v secrete `GDRIVE_CREDENTIALS` (alebo po troch: `DRIVE_CLIENT`/`DRIVE_SECRET`/
-`DRIVE_REFRESH`) ho posúva rádovo vyššie. Drží ho `workers/drive-auth.py`
-(`--login` z počítača, `drive-login.yml` z telefónu – tam sa token nikde
-nevypíše, lebo log public repozitára vidí ktokoľvek; `dmr5-drive.py
---auth-check` overí). Bez secretu sa nemení nič, len sa výslovne vypíše, že
-platí verejný limit.
+**Zdroj je PRIEČINOK, nie dve file id.** Vo `workers/dmr5-drive.py` je jediné
+číslo (`FOLDER_ID`) a súbory sa v ňom hľadajú podľa mena – presun modelu inam
+je zmena jedného čísla namiesto dvoch id na štyroch miestach v hláškach.
+
+**Číta sa prihlásený ako vlastník dát, a inak sa nečíta vôbec.** Čo je
+v priečinku, povie len Drive API a to anonymné požiadavky neobsluhuje –
+verejný odkaz (denný limit na súbor, zdieľaný so všetkými, kto naň siahnu) už
+k DMR 5.0 nevedie. Token vlastníka je v secrete `GDRIVE_CREDENTIALS` (alebo po
+troch: `DRIVE_CLIENT`/`DRIVE_SECRET`/`DRIVE_REFRESH`), drží ho
+`workers/drive-auth.py` (`--login` z počítača, `drive-login.yml` z telefónu –
+tam sa token nikde nevypíše, lebo log public repozitára vidí ktokoľvek;
+`dmr5-drive.py --auth-check` overí). Bez secretu beh spadne hneď a s návodom.
+
+**Rozsah tokenu je `drive`, teda aj zápis** – nie preto, že by pipeline
+zapisovala dáta, ale preto, že na Drive leží aj cache buildu (nižšie).
+Readonly token DMR 5.0 číta ďalej, len sa pod ním nič neuloží.
 
 **Ten strop visí na VLASTNÍKOVI súboru, nie na tom, kto sťahuje.** Na DMR 5.0
 (naše vlastné súbory) prihlásenie strop dvíha; na cudzí priečinok zdieľaný
@@ -131,15 +141,20 @@ vypíše, koľko súborov účet nevlastní). Aj tam sa ale prihlásiť oplatí:
 API povie dôvod odmietnutia rovno, kým verejná cesta vráti HTTP 200 a HTML
 stránku. Proti Sonnyho stropu chráni zrkadlo v releasi, nie token.
 
-**Token sa musí dostať na všetky štyri miesta, kde sa z Drive číta** –
+**Token sa musí dostať na všetky miesta, kde sa z Drive číta** –
 `workflow_call` nededí secrets sám:
 
 | kde | čo | ako |
 |---|---|---|
 | `dmr5-drive.yml` | DMR 5.0 | `secrets: inherit` z `build-map.yml` |
 | `update-dem.yml` | Sonnyho priečinok | `secrets: inherit` z `build-map.yml` |
-| job `contours` | vrstevnice z `dmr5` | `env:` v jobe |
-| job `rocks` | sklon z `dmr5` rovno z Drive | `env:` v jobe |
+| `shading-rocks.yml` | cache stiahnutých dlaždíc | `secrets: inherit` z `build-map.yml` |
+| job `contours` | vrstevnice z `dmr5` | `env:` workflowu |
+| job `rocks` | sklon z `dmr5` rovno z Drive | `env:` workflowu |
+| každý krok s cache | cache buildu | `env:` workflowu |
+
+Odkedy je na Drive aj cache, je tých miest priveľa na to, aby stáli pri každom
+jobe – preto je prihlásenie v `env:` celého workflowu.
 
 `Lint workflows` to stráži staticky, z oboch strán, a hlási aj nekompletnú
 trojicu secretov (polovica údajov nie je „veď tam niečo je" – `drive-auth.py`
@@ -149,7 +164,7 @@ na nej padne).
 `drive-serve.py` vráti 502 s vysvetlením, beh spadne v sekundách a so zapnutým
 `ugkk_fallback` prejde na hrubší model, čo `dem-source.txt` aj atribúcia
 povedia. Prvá vec, čo s tým: prihlásiť sa ako vlastník. Až potom nahrať kópiu
-na iný účet a prepísať `TIF_ID`/`OVR_ID` vo `workers/dmr5-drive.py`.
+do iného priečinka a prepísať `FOLDER_ID` vo `workers/dmr5-drive.py`.
 
 Tie **dva joby** sú `mirror-dmr5-area` a `mirror-dmr5-tiles` – dve volania
 jedného workflowu, lebo DMR 5.0 má dve podoby a chýbať môžu naraz:
@@ -161,6 +176,34 @@ dlaždice  N49E020.tif      → dem-dmr5   5 m        tieňovanie (celý región
 
 Skaly z `dmr5` si DEM **nedopĺňajú vôbec**: `workers/slope-chunks.py` číta
 z Drive rovno tie časti, ktoré územie pretína, a odkladá si ich do skladu.
+
+## Cache je na Drive, nie v GitHube
+
+GitHubová cache má na repozitár **10 GB** a keď sa naplní, **nič nepovie** –
+ticho vyhodí najstaršie záznamy. Jeden výrez do nej ukladal desiatky GB (DEM
+dlaždice, sklad častí sklonu, vrstevnice, tieňovanie, dlaždice tieňovania),
+takže si záznamy vyhadzovali navzájom a hodiny výpočtu sa rátali odznova bez
+toho, aby to bolo na čom vidieť – build je zelený, len trvá hodinu namiesto
+minút. To je pravidlo 8 v čistej podobe.
+
+| čo | kde |
+|---|---|
+| `.github/actions/cache-restore` / `cache-save` | náhrada za `actions/cache/*` |
+| `workers/drive-cache.py` | celý formát a pravidlá (aj `--check`, `--list`, `--prune`) |
+| `cleanup-cache.yml` | zmaže GitHub cache a preriedi tú na Drive (týždenne) |
+
+**Sémantika ostala tá istá ako v GitHube**, nech platí to, čo je pri kľúčoch
+napísané: `cache-hit` len pri PRESNEJ zhode kľúča, `restore-keys` sú PREDPONY
+a berie sa NAJNOVŠÍ záznam, existujúci kľúč sa NEPREPISUJE (preto majú kľúče,
+ktoré sa majú dať dopĺňať, v sebe `github.run_id`). Zhoda sa hľadá podľa
+plného kľúča z `description`, nie podľa mena súboru – v mene sú znaky mimo
+`[A-Za-z0-9._-]` nahradené podčiarkovníkom a dva rôzne kľúče by mohli vyzerať
+rovnako.
+
+Dve veci, ktoré GitHub robil sám a Drive nie: **nič sa nemaže samo** (na to je
+`--prune` a týždenný workflow) a **bez prihlásenia to nefunguje** (krok vtedy
+spadne s návodom; `Lint workflows` stráži, že token dostane každý cache krok).
+Nový `uses: actions/cache…` tá istá kontrola odmietne.
 
 ## Než niečo pushneš
 
@@ -175,6 +218,16 @@ wc -c .github/workflows/*.yml
 # bash vo workers (shellcheck nie je v CI, actionlint ho volá len na `run:`)
 for f in workers/*.sh; do bash -n "$f" || echo "CHYBA $f"; done
 
+# kontroly z Lint workflows sa dajú spustiť aj lokálne (bez sťahovania actionlintu)
+python3 - <<'PY'
+import subprocess, sys, yaml
+d = yaml.safe_load(open(".github/workflows/lint-workflows.yml"))
+for st in d["jobs"]["lint"]["steps"]:
+    if st.get("run") and st.get("name") != "actionlint":
+        print("=====", st["name"])
+        subprocess.run(["bash", "-c", st["run"]])
+PY
+
 # workery sa dajú spustiť aj lokálne – hodnoty berú z prostredia práve preto
 python3 workers/resolve-area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tatry
 python3 workers/dem-target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
@@ -187,8 +240,9 @@ do `.github/workflows/**` a kontroluje aj veci, ktoré actionlint nevie: veľkos
 súboru, zdvojené zátvorky v `run:`, dĺžku popisov inputov, súlad výberov
 s `areas.json` a `dem-sources.json`, existenciu `needs.*.outputs.*`
 a `steps.*.outputs.*`, to, že každý `workers/*.sh` dostane env, ktoré číta,
-a že cesta k DMR 5.0 ostane celá. **Keď opravíš tichú chybu, pridaj naň
-kontrolu** – tak sú tam všetky ostatné.
+že cesta k DMR 5.0 ostane celá a že cache ostane na Drive (žiadne
+`actions/cache`, každý cache krok sa vie prihlásiť). **Keď opravíš tichú chybu,
+pridaj naň kontrolu** – tak sú tam všetky ostatné.
 
 ## Commity a PR
 

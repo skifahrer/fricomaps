@@ -7,9 +7,16 @@ name: Prihlásenie na Drive (jednorazové)
 # a loopback server na tom istom stroji, čiže z telefónu sa spustiť nedá.
 # Tento workflow tú rolu rozdelí: prehliadač je telefón, shell je runner.
 #
+# ROZSAH PRÁV JE ODTERAZ AJ ZÁPIS (`drive`, nie `drive.readonly`). Nie je to
+# rozmar: cache buildu leží na Drive (`workers/drive-cache.py` – tá GitHubová
+# má 10 GB na repozitár a ticho vyhadzovala najstaršie záznamy), takže sa tam
+# musí dať ukladať a prerieďovať. Starý readonly token ostáva platný na
+# čítanie DMR 5.0, len pod ním cache nič neuloží – posledný krok tohto
+# workflowu to overí a povie.
+#
 # PREČO SA TOKEN NIKDE NEVYPISUJE. Tento repozitár je PUBLIC, takže log behu,
-# súhrn aj artefakty vidí ktokoľvek na internete – a refresh token je čítací
-# prístup na CELÝ Drive vlastníka. Preto sa token z `drive-auth.py` nikdy
+# súhrn aj artefakty vidí ktokoľvek na internete – a refresh token je prístup
+# na CELÝ Drive vlastníka. Preto sa token z `drive-auth.py` nikdy
 # nedostane na výstup: zapíše sa do súboru s právami 600 a z neho rovno do
 # secretu cez `gh secret set`. V logu ostane len e-mail účtu a či na oba
 # súbory vidí. Ani ty ho neuvidíš – netreba ho vidieť.
@@ -165,6 +172,19 @@ jobs:
           DRIVE_REFRESH="$(cat refresh-token.txt)" \
             python3 workers/dmr5-drive.py --auth-check
 
+      # A druhá polovica: cache buildu sa na Drive UKLADÁ, takže tam token
+      # musí vedieť aj zapisovať. Readonly token vyzerá úplne rovnako a rozdiel
+      # by sa ukázal až tým, že sa cache prestane ukladať – preto sa to overí
+      # hneď tu, kým je čerstvé.
+      - name: Over, že tým účtom sa dá aj zapisovať (cache)
+        if: ${{ inputs.code != '' }}
+        env:
+          DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
+        run: |
+          set -euo pipefail
+          DRIVE_REFRESH="$(cat refresh-token.txt)" \
+            python3 workers/drive-cache.py --check
+
       - name: Ukliď a povedz, čo ešte
         if: ${{ always() && inputs.code != '' }}
         run: |
@@ -183,6 +203,9 @@ jobs:
               echo "1. **Zmaž secret \`DRIVE_PAT\`** – už netreba a je to právo zapisovať secrets."
               echo "2. Skús \`DMR 5.0 z Drive (ETRS89)\` v režime *len sonda*: krok"
               echo "   *Prihlásenie na Drive* má vypísať tvoj účet a pri oboch súboroch \`✓\`."
+              echo "3. Kroky *Over…* vyššie hovoria, či ten účet vidí na priečinok s DMR 5.0"
+              echo "   a či vie zapisovať do priečinka s cache. Bez zápisu sa cache neuloží"
+              echo "   a build počíta všetko odznova – vtedy spusti toto prihlásenie znova."
             else
               echo "**Token sa neuložil** – secret \`${{ inputs.secret_name }}\` je taký, aký bol."
               echo "Dôvod je v logu vyššie. Kód od Googlu je jednorazový, tak"

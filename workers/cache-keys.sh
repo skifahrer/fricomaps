@@ -51,8 +51,8 @@ TS="$OPT_SHADING_SOURCE"
   # sklad použije a preráta sa len tá lacná časť (minúty namiesto
   # hodiny čítania z Drive). Prefix musí sedieť s `restore-keys`
   # v jobe s vrstevnicami.
-  # Končí pomlčkou zámerne: je to PREFIX. Cache v GitHube sa nedá
-  # prepísať, takže keby bol kľúč pevný, prvý beh by ho zabral a
+  # Končí pomlčkou zámerne: je to PREFIX. Existujúci záznam cache
+  # sa neprepisuje, takže keby bol kľúč pevný, prvý beh by ho zabral a
   # časti dopočítané v ďalších behoch by sa už nikdy neuložili –
   # sklad by navždy ostal taký, aký bol po prvom behu. Ukladá sa
   # preto pod prefix + číslo behu a obnovuje sa cez `restore-keys`,

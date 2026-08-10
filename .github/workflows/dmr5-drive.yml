@@ -25,19 +25,19 @@ name: DMR 5.0 z Drive (ETRS89) – toto si volá Build map
 # to, čo výrez pretína – rádovo minúty namiesto hodín. Odkedy Drive púšťa
 # spoľahlivo, tá druhá cesta sa neoplácala udržiavať a bola zrušená.
 #
-# ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK DÁT, keď je čím. Verejný odkaz („ktokoľvek
-# s odkazom") má denný limit sťahovania na súbor a ten zdieľajú všetci, kto naň
-# siahnu – nielen naše behy. Token vlastníka zo secretu `GDRIVE_CREDENTIALS`
-# ten strop posúva rádovo vyššie; vyrobí ho `workers/drive-auth.py --login`
-# a krok „Prihlásenie na Drive" v každom behu vypíše, ktorým účtom sa čítalo.
-# Bez secretu sa nič nemení, len sa výslovne povie, že platí verejný limit.
+# ČÍTA SA PRIHLÁSENÝ AKO VLASTNÍK DÁT, a inak sa nečíta vôbec. Model leží
+# v PRIEČINKU na Drive (`FOLDER_ID` vo `workers/dmr5-drive.py`) a čo v ňom je,
+# povie len Drive API – to anonymné požiadavky neobsluhuje. Token vlastníka zo
+# secretu `GDRIVE_CREDENTIALS` vyrobí `workers/drive-auth.py --login` a krok
+# „Prihlásenie na Drive" v každom behu vypíše, ktorým účtom sa čítalo a či na
+# súbory vidí. Bez neho beh spadne hneď a s návodom.
 #
 # ČO TO ZNAMENÁ, KEĎ DRIVE NEPUSTÍ: DMR 5.0 sa v tom behu nedoplní vôbec.
 # Nie je to tichý stav – `drive-serve.py` vráti 502 s vysvetlením a beh spadne
 # v sekundách; so zapnutým `ugkk_fallback` prejde na hrubší model (sonny)
 # a atribúcia to povie. Prvá vec, čo s tým: prihlásiť sa ako vlastník
-# (`GDRIVE_CREDENTIALS`). Až potom nahrať kópiu modelu na iný účet a prepísať
-# `TIF_ID`/`OVR_ID` vo `workers/dmr5-drive.py`.
+# (`GDRIVE_CREDENTIALS`). Až potom nahrať kópiu modelu do iného priečinka
+# a prepísať `FOLDER_ID` vo `workers/dmr5-drive.py`.
 #
 # ZDROJ (namerané, nie odhad):
 #   dmr5_etrs89.tif      145,39 GiB  423 518 × 207 589 px, 1 m, LZW, dlaždice 128²
