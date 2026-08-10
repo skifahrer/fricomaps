@@ -1239,6 +1239,27 @@ Po nasadení si pipeline **sama overí, že mapa funguje**: `manifest.json`,
 `.pmtiles`, ktorý musí vrátiť **HTTP 206**. Keby hosting Range requesty
 nepodporoval, `.pmtiles` sa nedá čítať a mapa zostane prázdna.
 
+**Najprv sa ale počká, kým Pages začne podávať TOTO nasadenie.**
+`deploy-pages` skončí skôr, než sa web prepne, a bez toho čakania robí ten
+odstup dve chyby naraz:
+
+- **falošný pád** – cesta, ktorá v predošlom nasadení nebola, vracia 404. Meno
+  štýlu nesie kľúč regiónu, takže pri zmene regiónu je nová vždy: beh
+  [31368710705](https://github.com/skifahrer/fricomaps/actions/runs/31368710705)
+  spadol na `styles/presovsky-svetla.json` (predtým sa nasadzoval
+  `presovsky_test2`), hoci nasadenie bolo v poriadku – ten súbor je na webe
+  dodnes;
+- **falošné zelené** – cesty, ktoré sa medzi nasadeniami nemenia (manifest,
+  sprity, `style-overrides.json`), vráti 200 aj to STARÉ nasadenie. V tom
+  istom behu prešli za sekundu, kým nová cesta 75 s vracala 404. Kontrola,
+  ktorá vie prejsť na včerajších súboroch, je presne ten tichý omyl, ktorému sa
+  tu inak vyhýbame.
+
+Bránou je `built_at` z manifestu: skript si prečíta ten, ktorý beh práve
+postavil v `_site`, a čaká (do piatich minút), kým sa tá istá hodnota objaví
+na webe. Až potom kontroluje čokoľvek – a keď sa nedočká, povie to a ostatné
+kontroly ani nespustí, nech nezelenajú na starom.
+
 ### `deploy` – súhrn buildu
 
 Posledný krok napíše do záložky **Summary** prehľad celého behu. Beží
