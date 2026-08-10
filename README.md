@@ -1629,9 +1629,13 @@ prevzatej z papierovej horskej mapy:
 
 | čo | farba | kde je v palete |
 |---|---|---|
-| podklad mapy (základná farba horského terénu) | **#d8d5ca** svetlo béžovosivá | `Pozadie mapy` |
-| skalnaté partie a sutiny | **#8a8578** tmavšia sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
-| vrstevnice | tenké sivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
+| podklad mapy (základná farba horského terénu) | **#dedcd1** svetlo béžovosivá s jemným zeleným nádychom | `Pozadie mapy` |
+| skalnaté partie a sutiny | **#9c9286** teplá stredná sivohnedá | `Skaly / suť` (OSM) a `Skalné plochy (plná výplň)` (počítané z DEM) |
+| vrstevnice | **#8b8676** tenké olivovosivé línie s popiskom výšky | `Vrstevnica`, `Hlavná vrstevnica`, `Popisok výšky` |
+
+Nie sú to neutrálne sivé: celá trojica má ten istý teplý zemitý nádych (odtieň
+okolo 45°, sýtosť do 10 %). Neutrálna sivá vedľa béžového podkladu vyzerá
+domodra a mapa z toho vyjde studená.
 
 Každá téma má **veľmi jemne iný** odtieň tej istej trojice, nie kópiu jednej
 hodnoty: *Svetlá* je neutrálna, *Outdoor* o odtieň teplejšia a tmavšia (je to
