@@ -168,13 +168,22 @@ set -e
 LIARS=$(sed -n 's/^liars=//p' "$COV" 2>/dev/null || true)
 COV_PCT=$(sed -n 's/^covered_pct=//p' "$COV" 2>/dev/null || true)
 COV_MISS=$(sed -n 's/^missing=//p' "$COV" 2>/dev/null || true)
+COV_EMPTY=$(sed -n 's/^empty=//p' "$COV" 2>/dev/null || true)
+
+# Prázdny stupeň sa do pokrytia počíta – prečítaný je. Ale je to zároveň
+# jediné miesto, kde sa dá VOPRED prečítať, že tam vrstevnice, skaly ani
+# tieňovanie nebudú, takže to musí byť v logu (a nie až na mape).
+if [ -n "$COV_EMPTY" ]; then
+  echo "V mozaike sú prázdne stupne (prečítané, terén v nich nie je): $COV_EMPTY"
+  echo "  Ak niektorý z nich terén MÁ, je to chyba – zmaž ho zo skladu $SRC_STORE a spusti build znova."
+fi
 
 # SKLAD SA VYLIEČI SÁM. Nepoctivú dlaždicu nestačí v tomto behu preskočiť –
 # kým leží v sklade, kontrola v ďalšom behu opäť usúdi, že model má, a doplnenie
 # sa nespustí. Mažeme ju teda (je to zrkadlo, dá sa vyrobiť znova) a hovoríme
 # o tom nahlas; ďalší beh ju nájde ako chýbajúcu a doplní ju celú.
 for f in $LIARS; do
-  echo "::warning::Dlaždica $f v sklade $SRC_STORE nepokrýva celý svoj stupeň, hoci to jej meno tvrdí. Mažem ju zo skladu – ďalší beh ju doplní celú (job 'Doplniť DMR 5.0 (dlaždice)')."
+  echo "::warning::Dlaždica $f v sklade $SRC_STORE nesplnila, čo sľubuje jej meno (dôvod je vo výpise pokrytia vyššie: buď nepokrýva celý svoj stupeň, alebo je to prázdna dlaždica od kontroly, ktorej už neveríme). Mažem ju zo skladu – ďalší beh ju doplní celú (job 'Doplniť DMR 5.0 (dlaždice)')."
   python3 "$STORE_PY" --rm --store="$SRC_STORE" --name="$f" \
     || echo "  (zo skladu sa ju nepodarilo zmazať – zmaž ju na Drive ručne)"
   rm -f "$DIR/tiles/$f"
@@ -193,7 +202,7 @@ if [ "$COV_RC" -ne 0 ]; then
   if [ "$SOURCE" = "sonny" ]; then
     echo "::warning::Mozaika zo Sonnyho pokrýva len ${COV_PCT:-0} % územia – chýbajú stupne: ${COV_MISS:-?}. Vo zvyšku nebude terén."
   else
-    echo "::error::Mozaika $SRC_LABEL pokrýva len ${COV_PCT:-0} % územia (chýbajúce stupne: ${COV_MISS:-?}), takže vrstevnice, skaly ani tieňovanie by v zvyšku regiónu neboli – a mapa by vyzerala hotovo. Doplň ich (workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$HERE/target.py" --source="$SOURCE" --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m) alebo zvoľ zdroj, ktorý celé územie pokrýva."
+    echo "::error::Mozaika $SRC_LABEL pokrýva len ${COV_PCT:-0} % územia (chýbajúce stupne: ${COV_MISS:-?}), takže vrstevnice, skaly ani tieňovanie by v zvyšku regiónu neboli – a mapa by vyzerala hotovo. Keď sa vyššie mazali nepoctivé dlaždice, stačí spustiť build znova: chýbajúce si doplní sám. Inak ich doplň ručne (workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$HERE/target.py" --source="$SOURCE" --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m) alebo zvoľ zdroj, ktorý celé územie pokrýva."
     exit 3
   fi
 fi
