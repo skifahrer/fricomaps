@@ -117,17 +117,57 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
     [ -z "$assets" ] && need=true || true
     echo "$what ($src): bbox nie je známy; sklad $rel má $(printf '%s' "$assets" | grep -c . || true) súborov → doplniť: $need"
   else
-    local have=0 total=0 t
+    local have=0 total=0 t chybaju=""
     for t in $want; do
       total=$(( total + 1 ))
-      printf '%s\n' "$names" | grep -qx "$t" && have=$(( have + 1 )) || true
+      if printf '%s\n' "$names" | grep -qx "$t"; then
+        have=$(( have + 1 ))
+      else
+        chybaju="$chybaju $t"
+      fi
     done
-    # Doplňujeme, len keď nie je ani jedna použiteľná dlaždica. Bbox je
-    # obdĺžnik, ale produkt pokrýva krajinu – rohové bunky (u Slovenska napr.
-    # N47E016 v Maďarsku) v ňom nikdy nebudú, takže „chýba jedna, tak sťahuj
-    # znova" by mirrorovalo pri každom builde.
-    [ "$have" -eq 0 ] && need=true || true
+    # KOĽKO Z NICH MUSÍ BYŤ V SKLADE, ZÁVISÍ OD TOHO, ČI SA DÁ DOPLNIŤ PRÁVE
+    # TÁ CHÝBAJÚCA.
+    #
+    # `dmr5`: áno. Doplnenie číta z Drive presne tie stupne, ktoré mu podáme,
+    # a `workers/dem/tiles.py` uloží každý prečítaný stupeň – aj taký, v ktorom
+    # výšky nie sú (prázdna dlaždica je ZÁZNAM, ŽE SA TAM POZERALO). Chýbajúce
+    # meno teda znamená „toto sme nikdy nečítali“ a nie „za hranicou nič nie
+    # je“, takže sa smie žiadať KAŽDÁ. Kým tu stálo „doplň, len keď nie je ani
+    # jedna“, stačili tri dlaždice s pár set metrami dát (presah prevodu
+    # uložený pod menom celého stupňa) a kontrola pustila ďalej mozaiku so 48 %
+    # kraja – vrstevnice Prešovského kraja skončili v jednom štvorci a beh bol
+    # zelený (31476448895 → 31484544154).
+    #
+    # `sonny`/`dmr35`: nie. Tam sa sťahuje celý produkt naraz a prázdne
+    # dlaždice sa zahadzujú, takže chýbajúce meno môže znamenať aj „tam ten
+    # model nemá dáta“ (u Slovenska napr. N47E016 v Maďarsku) – a „chýba jedna,
+    # tak sťahuj znova“ by mirrorovalo pri každom builde. Že mozaika územie
+    # naozaj pokrýva, tam meria `workers/dem/coverage.py` až pri sťahovaní.
+    if [ "$src" = 'dmr5' ]; then
+      [ -n "$chybaju" ] && need=true || true
+    else
+      [ "$have" -eq 0 ] && need=true || true
+    fi
     echo "$what ($src): dlaždíc pre bbox $total, v sklade $rel $have → doplniť: $need"
+    [ -n "$chybaju" ] && echo "  chýbajú:$chybaju" || true
+    # Doplniť treba LEN chýbajúce stupne, nie celý bbox – jeden stupeň je pol
+    # hodiny čítania z Drive, takže obálka okolo chýbajúcich je rozdiel medzi
+    # „pol hodiny“ a „štyri hodiny“. Meno dlaždice hovorí svoj juhozápadný roh,
+    # takže obálka sa z mien spočíta bez ďalšieho zdroja pravdy.
+    if [ "$need" = true ] && [ "$src" = 'dmr5' ] && [ -n "$chybaju" ]; then
+      degrees=$(python3 - $chybaju <<'PY'
+import sys
+lons, lats = [], []
+for t in sys.argv[1:]:
+    t = t.split(".")[0]
+    lat, lon = int(t[1:3]), int(t[4:7])
+    lats.append(-lat if t[0] == "S" else lat)
+    lons.append(-lon if t[3] == "W" else lon)
+print(f"{min(lons)},{min(lats)},{max(lons) + 1},{max(lats) + 1}")
+PY
+)
+    fi
   fi
 
   if [ "$need" = true ]; then

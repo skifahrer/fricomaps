@@ -576,7 +576,11 @@ def stage_finish(args, state):
         f"{sum(os.path.getsize(p) for p in parts) / 1048576:.0f} MB na disku")
 
     if state["tiles"]:
-        country_tiles(parts, args.out, args.work, env, state["geoid"])
+        # Okno je to, čo si fáza `plan` rozšírila na celé stupne – a podáva sa
+        # ďalej, aby sa pod menom dlaždice neuložil presah prevodu do WGS84
+        # (rozpis pri `country_tiles`). `None` = celé Slovensko.
+        country_tiles(parts, args.out, args.work, env, state["geoid"],
+                      window=state["bbox"])
         made = sorted(f for f in os.listdir(args.out) if f.endswith(".tif"))
         log(f"Hotovo: {len(made)} dlaždíc v {args.out}")
     else:

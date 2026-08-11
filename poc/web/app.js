@@ -8,6 +8,7 @@ import {
   CLICKABLE_LAYERS,
   MAX_DISPLAY_Z,
   MAX_TILE_Z,
+  TERRAIN_MIN_Z,
   DEFAULT_DEM_TILES,
   DEFAULT_DEM_MAXZOOM,
   DEFAULT_DEM_SOURCE,
@@ -283,10 +284,10 @@ function applyStyle(manifest) {
     `Mapa: <b>${kind.label}</b> – ${kind.note}<br>` +
     `Dlaždice do z${tileZ}, zobrazenie do z${MAX_DISPLAY_Z} (overzoom)<br>` +
     (region.contours
-      ? `Vrstevnice po ${region.contour_interval || 10} m<br>`
+      ? `Vrstevnice po ${region.contour_interval || 10} m, od z${TERRAIN_MIN_Z}<br>`
       : "") +
     (region.rocks
-      ? `Skalné plochy do z${region.rocks_maxzoom || 16}` +
+      ? `Skalné plochy od z${TERRAIN_MIN_Z} do z${region.rocks_maxzoom || 16}` +
         (region.rock_slope ? `, od ${region.rock_slope}°` : "") +
         (region.rock_source ? ` (${region.rock_source})` : "") +
         "<br>"

@@ -39,18 +39,25 @@ sources:
     projection: EPSG:4326
 
 layers:
-  # min_zoom 1, nie 9 a už vôbec nie 13: skaly majú byť vidieť všade, kde sú –
-  # veľká stena je čitateľná aj z prehľadového zoomu a na malých mierkach je
-  # sivá škvrna v hrebeni presne tá informácia, kvôli ktorej sa mapa otvára.
-  # Malé plochy sa nižšími zoomami netreba báť, Planetiler zahodí všetko pod
-  # pixel sám (min_feature_size platí na každom zoome okrem najvyššieho, kde
-  # ho zámerne vypíname) a obrys si na každom zoome zjednoduší podľa veľkosti
-  # pixela. Zoomy 1–8 sú preto pár dlaždíc s hrubým obrysom, nie kópia z16.
+  # min_zoom 11, nie 1. Kedysi tu bolo z1 s odôvodnením „veľká stena je
+  # čitateľná aj z prehľadu"; na prehľadovej mierke je ale zo skál sivá škvrna
+  # bez informácie a dlaždice s ňou si prehliadač sťahuje tak či tak – mapové
+  # podklady tým rástli za niečo, čo netreba. Od z11 skaly v mape sú, pod ním
+  # nie sú vôbec, a je to to isté dno, aké majú vrstevnice
+  # (workers/contours-rocks/contours.yml).
+  #
+  # Nad z11 sa malých plôch netreba báť: Planetiler zahodí všetko pod pixel sám
+  # (min_feature_size platí na každom zoome okrem najvyššieho, kde ho zámerne
+  # vypíname) a obrys si na každom zoome zjednoduší podľa veľkosti pixela.
+  #
+  # TO ISTÉ ČÍSLO MUSÍ BYŤ V ŠTÝLE (`minzoom` vrstvy `rock-area`), inak by sa
+  # vyrábali dlaždice, ktoré nikto nekreslí – alebo naopak by v mape bola diera
+  # tam, kde dlaždice nie sú. Stráži to `workers/lint/zoom-floor.py`.
   - id: rock
     features:
       - source: rock
         geometry: polygon
-        min_zoom: 1
+        min_zoom: 11
         attributes:
           - key: class
           # sklon v stupňoch – len pri skalách z DEM

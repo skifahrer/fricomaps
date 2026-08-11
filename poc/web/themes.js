@@ -54,6 +54,22 @@ export const MAX_DISPLAY_Z = 20;
 export const MAX_TILE_Z = 16;
 
 /**
+ * Zoom, od ktorého sú v mape vrstevnice a skaly – a pod ktorým nie sú vôbec.
+ *
+ * Na prehľadovej mierke sa nedá prečítať ani jedna vrstevnica a zo skál je
+ * sivá škvrna, ale dlaždice s nimi si prehliadač aj tak sťahuje – čiže sa za
+ * ten závoj platí veľkosťou podkladov. Od tohto zoomu je z vrstevníc LEN
+ * hlavná trieda (`contour-major`), polovičná od z12 a základná od z13.
+ *
+ * To isté číslo je aj v schémach Planetilera (`min_zoom` vo
+ * `workers/contours-rocks/{contours,rocks}.yml`), lebo tam rozhoduje, čo sa
+ * vôbec VYROBÍ – tu len to, čo sa NAKRESLÍ. Keď sa tie dve čísla rozídu, nikto
+ * nič nepovie: buď platíme dlaždice, ktoré nikto nevidí, alebo je v mape diera.
+ * Stráži to `workers/lint/zoom-floor.py`.
+ */
+export const TERRAIN_MIN_Z = 11;
+
+/**
  * Zdroj výškových dát pre tieňovanie reliéfu (hillshade) a 3D terén.
  * OpenStreetMap terénny model neobsahuje – `ele` je len bodový tag na
  * vrcholoch a pod. Terén preto ide z AWS Terrain Tiles (Terrarium),
@@ -2024,12 +2040,12 @@ export function buildStyle({
         type: "fill",
         source: "rocks",
         "source-layer": "rock",
-        // Od z1: veľká stena je čitateľná aj z prehľadu a sivá škvrna
-        // v hrebeni je na malej mierke presne tá informácia, kvôli ktorej
-        // sa mapa otvára. Obrys je tam zjednodušený (Planetiler ho reže
-        // podľa veľkosti pixela), takže to nič nestojí – drobné plochy sa
-        // do nízkych dlaždíc ani nedostanú.
-        minzoom: 1,
+        // Od z11 (`TERRAIN_MIN_Z`), nie od z1. Na prehľadovej mierke je zo skál
+        // sivá škvrna, ktorá nič nepovie, a dlaždice s ňou sa aj tak sťahujú –
+        // mapové podklady tým rástli za niečo, čo netreba. Pod tým zoomom teda
+        // skaly v mape nie sú vôbec, presne ako vrstevnice; rozpis je pri tej
+        // konštante.
+        minzoom: TERRAIN_MIN_Z,
         paint: {
           "fill-color": c.rockArea,
           "fill-opacity": 1,
@@ -2161,15 +2177,19 @@ export function buildStyle({
       );
 
     // Tri triedy sa NEZAPÍNAJÚ naraz, a to je celé to „zjednodušene na
-    // malých mierkach": pod z12 je v mape LEN hlavná vrstevnica (po 100 m
-    // pri štandardnom intervale), od z12 pribudne polovičná a od z13
-    // základná. Hlavná ide až po z1 – tvar pohoria je čitateľný aj
-    // z prehľadu a Planetiler ju tam má zjednodušenú podľa veľkosti pixela.
+    // malých mierkach": od z11 je v mape LEN hlavná vrstevnica (po 100 m pri
+    // štandardnom intervale), od z12 pribudne polovičná a od z13 základná.
     // Čiara sa navyše na svojom prvom zoome vynára z nuly (`line-opacity`),
     // takže žiadna trieda „nenaskočí" naraz ako mreža.
+    //
+    // POD `TERRAIN_MIN_Z` NIE JE V MAPE ANI JEDNA. Na tej mierke sa nedá
+    // prečítať žiadna, takže z nich je len sivý závoj – a dlaždice s nimi si
+    // prehliadač aj tak stiahne, čiže sa za ten závoj platí. Rovnaké dno má aj
+    // `rock-area`; rozpis je pri tej konštante.
     contourLine("minor", "Vrstevnice po 10 m", "minor", 13, [[13, 0.4], [16, 0.7], [20, 1.4]], "contour");
     contourLine("mid", "Vrstevnice po 50 m", "mid", 12, [[12, 0.5], [16, 0.9], [20, 1.8]], "contour");
-    contourLine("major", "Vrstevnice po 100 m", "major", 1, [[1, 0.3], [10, 0.7], [16, 1.4], [20, 2.6]], "contourMajor");
+    contourLine("major", "Vrstevnice po 100 m", "major", TERRAIN_MIN_Z,
+                [[TERRAIN_MIN_Z, 0.5], [16, 1.4], [20, 2.6]], "contourMajor");
 
     // Popisky nadmorskej výšky pozdĺž hlavných vrstevníc.
     add(

@@ -152,6 +152,56 @@ if [ "$have" -lt "$WANT" ]; then
 fi
 echo "$SRC_LABEL: $have z $WANT dlaždíc zo skladu $SRC_STORE ✓"
 
+# ---------- POKRÝVA TO ÚZEMIE? ----------
+# POČET SÚBOROV NA TÚ OTÁZKU NEODPOVEDÁ. Dlaždica je sľub o celom stupni, ale
+# v sklade `dem-dmr5` ležali tri, ktoré mali pár set metrov dát (presah prevodu
+# do WGS84 uložený pod menom celého stupňa). Kontrola videla „6 z 8 dlaždíc“,
+# doplnenie sa nespustilo, `gdal_contour` prešiel po mozaike so 48 % kraja
+# a beh zazelenal – vrstevnice Prešovského kraja skončili v jednom štvorci
+# (31476448895 → 31484544154). Odteraz sa meria ROZSAH dlaždíc, nie ich počet.
+COV="$DIR/coverage.txt"
+set +e
+python3 "$HERE/coverage.py" --bbox="$BBOX" --dir="$DIR/tiles" \
+  --min-pct="${DEM_MIN_COVER_PCT:-95}" --out="$COV"
+COV_RC=$?
+set -e
+LIARS=$(sed -n 's/^liars=//p' "$COV" 2>/dev/null || true)
+COV_PCT=$(sed -n 's/^covered_pct=//p' "$COV" 2>/dev/null || true)
+COV_MISS=$(sed -n 's/^missing=//p' "$COV" 2>/dev/null || true)
+
+# SKLAD SA VYLIEČI SÁM. Nepoctivú dlaždicu nestačí v tomto behu preskočiť –
+# kým leží v sklade, kontrola v ďalšom behu opäť usúdi, že model má, a doplnenie
+# sa nespustí. Mažeme ju teda (je to zrkadlo, dá sa vyrobiť znova) a hovoríme
+# o tom nahlas; ďalší beh ju nájde ako chýbajúcu a doplní ju celú.
+for f in $LIARS; do
+  echo "::warning::Dlaždica $f v sklade $SRC_STORE nepokrýva celý svoj stupeň, hoci to jej meno tvrdí. Mažem ju zo skladu – ďalší beh ju doplní celú (job 'Doplniť DMR 5.0 (dlaždice)')."
+  python3 "$STORE_PY" --rm --store="$SRC_STORE" --name="$f" \
+    || echo "  (zo skladu sa ju nepodarilo zmazať – zmaž ju na Drive ručne)"
+  rm -f "$DIR/tiles/$f"
+done
+if [ -n "$LIARS" ]; then
+  tifs=("$DIR"/tiles/*.tif)
+  have=${#tifs[@]}
+fi
+
+if [ "$COV_RC" -ne 0 ]; then
+  # Dosť dlaždíc, málo územia. Pre volajúceho je to to isté ako „tento model
+  # pre toto územie nemáme" (kód 3): buď spadne, alebo prejde na hrubší model –
+  # a nech sa stane čokoľvek, nesmie to byť ticho. Pri Sonnym sa už nie je kam
+  # vrátiť, tak tam ostáva aspoň varovanie a mapa s dierou, ktorú vidno.
+  echo "Pokrytie územia $BBOX: ${COV_PCT:-0} % (chce sa aspoň ${DEM_MIN_COVER_PCT:-95} %)"
+  if [ "$SOURCE" = "sonny" ]; then
+    echo "::warning::Mozaika zo Sonnyho pokrýva len ${COV_PCT:-0} % územia – chýbajú stupne: ${COV_MISS:-?}. Vo zvyšku nebude terén."
+  else
+    echo "::error::Mozaika $SRC_LABEL pokrýva len ${COV_PCT:-0} % územia (chýbajúce stupne: ${COV_MISS:-?}), takže vrstevnice, skaly ani tieňovanie by v zvyšku regiónu neboli – a mapa by vyzerala hotovo. Doplň ich (workflow 'DMR 5.0 z Drive (ETRS89)', area: $(python3 "$HERE/target.py" --source="$SOURCE" --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m) alebo zvoľ zdroj, ktorý celé územie pokrýva."
+    exit 3
+  fi
+fi
+if [ "$have" -eq 0 ]; then
+  echo "::error::Po vyradení nepoctivých dlaždíc neostala ani jedna – doplň model a spusti build znova."
+  exit 3
+fi
+
 # -resolution highest: dlaždice môžu mať rôznu mriežku (20m model má
 # obdĺžnikové pixely) – mozaika ide na to jemnejšie.
 gdalbuildvrt -q -resolution highest "$DIR/all.vrt" "${tifs[@]}"

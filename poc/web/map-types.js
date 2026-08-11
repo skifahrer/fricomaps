@@ -91,9 +91,10 @@ export const MAP_TYPES = [
       // z okrajov obcí bola šeď.
       { match: { id: BARRIERS }, minzoomFloor: 16 },
       // Chodníky sa objavia skôr než na základnej mape. Skaly tu pravidlo
-      // NEMAJÚ: štýl ich kreslí od z1 a `minzoom: 8` by ich už len držalo
-      // späť – pravidlo, ktoré kedysi zoom znižovalo, by ho po zmene štýlu
-      // ticho zdvíhalo. Zoom skál je v jednom mieste, a to je themes.js.
+      // NEMAJÚ: štýl ich kreslí od z11 (a pod ním pre ne nie sú ani dlaždice),
+      // takže `minzoom: 8` by ich nezobrazilo skôr – len by tichým spôsobom
+      // prepisovalo číslo, ktoré má byť na jednom mieste. Zoom skál je
+      // v themes.js a v contours-rocks/rocks.yml, a tie dve sa musia rovnať.
       { match: { id: "road-path" }, minzoom: 10 },
       { match: { id: "road-track" }, minzoom: 10 },
       { match: { id: "road-cycleway" }, minzoom: 11 },
