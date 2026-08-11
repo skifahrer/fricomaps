@@ -237,6 +237,27 @@ function initialBounds(region) {
   return [[w, s], [e, n]];
 }
 
+/** Kam sa mapa smie posunúť: presne po hranicu stiahnutého regiónu.
+ *
+ * Dlaždice existujú len pre región, ktorý build vyrobil (Prešovský kraj,
+ * Žilinský…). Bez tohto sa dá odscrollovať kamkoľvek – a mimo regiónu nie je
+ * nič, takže mapa vyzerá ako prázdna sivá plocha. To je presne ten dojem
+ * „build nič nevyrobil", pred ktorým sa o pár riadkov nižšie chráni aj poloha
+ * z adresy; toto je to isté, len pre posúvanie a oddialenie po štarte.
+ *
+ * Berie sa VŽDY celý `bbox` regiónu, nie `test_bbox`: rýchly test zmenšuje len
+ * terénne vrstvy (vrstevnice, skaly, tieňovanie), kým mapa – cesty, trasy,
+ * prvky – ostáva celý kraj. Obmedziť ju na testovací štvorec by schovalo
+ * dlaždice, ktoré naozaj sú.
+ *
+ * MapLibre z `maxBounds` odvodí aj dolný strop zoomu, takže sa nedá ani
+ * oddialiť na celý svet.
+ */
+function regionMaxBounds(region) {
+  const [w, s, e, n] = region.bbox;
+  return [[w, s], [e, n]];
+}
+
 function applyStyle(manifest) {
   const region = manifest.regions[regionSelect.value];
   const themeKey = themeSelect.value;
@@ -304,6 +325,7 @@ function applyStyle(manifest) {
       style,
       bounds: initialBounds(region),
       fitBoundsOptions: { padding: 20 },
+      maxBounds: regionMaxBounds(region),
       maxZoom: MAX_DISPLAY_Z,
       maxPitch: 75,
       // Poloha v adrese: `#map=15/49.17/20.11`. Dve veci naraz – dá sa poslať
@@ -543,9 +565,13 @@ async function main() {
   regionSelect.addEventListener("change", () => {
     syncControls();
     applyStyle(manifest);
-    map.fitBounds(initialBounds(manifest.regions[regionSelect.value]), {
-      padding: 20
-    });
+    const region = manifest.regions[regionSelect.value];
+    // Staré hranice sa musia najprv PUSTIŤ: nový región je inde a `fitBounds`
+    // by sa doň nemal ako dostať – MapLibre by cieľ orezal na to, čo dovoľuje
+    // ešte stále nastavený bbox predošlého kraja.
+    map.setMaxBounds(null);
+    map.fitBounds(initialBounds(region), { padding: 20 });
+    map.setMaxBounds(regionMaxBounds(region));
   });
   devCheck.addEventListener("change", () =>
     setDevMode(devCheck.checked, manifest)
