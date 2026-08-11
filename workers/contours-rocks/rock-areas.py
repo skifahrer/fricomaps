@@ -412,11 +412,14 @@ def main():
                 # priechodu, ktorý sa prerušiť ani nadviazať nedá.
                 _, _, mbox_v, _ = mosaic_info(vrt)
                 ox, oy = (mbox_v[0], mbox_v[3]) if mbox_v else (0.0, 0.0)
+                # ŽIADNY strop času ani pamäte: blok je malý raster, takže
+                # pamäť je zhora ohraničená sama, a zastaviť sa tu netreba –
+                # čo je hotové, je na disku a ďalší beh dopočíta zvyšok.
+                # (`--heartbeat` a `--max-rss-gb` sa sem dovtedy podávali
+                # a spodná vrstva ich ticho zahadzovala.)
                 d, n_blokov = bloky_mod.po_blokoch(
                     vrt, os.path.join(tmp, "bloky"), urovne, atributy,
-                    args.block_px, (ox, oy, vec_res),
-                    heartbeat=args.heartbeat,
-                    max_rss_mb=args.max_rss_gb * 1024)
+                    args.block_px, (ox, oy, vec_res))
                 seq = os.path.join(tmp, "bloky.geojsonl")
                 n_utvarov = bloky_mod.zlej(d, seq)
                 print(f"  {n_blokov} blokov → {n_utvarov} útvarov", flush=True)

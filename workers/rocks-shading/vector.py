@@ -2,11 +2,11 @@
 """
 Skaly z tieňovania, 3/3: z rastra obrysy, švy a filter.
 
-ČO JE TU. `gdal_contour` po blokoch, značenie švov na hranici blokov, ich
-zlepenie cez `ST_Union`, filter podľa plochy a vyhladenie – teda všetko od
-hotového rastra tmavosti po vrstvu `rock` v GeoPackage. Dlaždice sú vo
-`shading-tiles.py`, raster vo `shading-raster.py`, plán a CLI
-v `shading-rocks.py`.
+ČO JE TU. Všetko od hotového rastra tmavosti po vrstvu `rock` v GeoPackage:
+prahy pásiem, filter podľa plochy, zjednodušenie a vyhladenie. Samotné obrysy
+po blokoch, značenie švov a ich zlepenie sú spoločné so skalami zo sklonu
+a robí ich `workers/lib/contour-blocks.py`. Dlaždice sú vo `shading-tiles.py`,
+raster vo `shading-raster.py`, plán a CLI v `shading-rocks.py`.
 
 PREČO ZVLÁŠŤ: `shading-rocks.py` mal 2023 riadkov (pravidlo 5 v CLAUDE.md).
 Rez je na hranici fázy, ktorá tam už bola vyznačená komentárom – a je to tá
@@ -50,7 +50,15 @@ CONTOUR_CELLS_PER_S = tiles.CONTOUR_CELLS_PER_S
 # workflowu), tak leží vo `workers/lib/` a nie vedľa jedného z nich.
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
-from watch import hms, dir_mb, run_watched  # noqa: E402
+from watch import hms, dir_mb  # noqa: E402
+
+# Obrysy po blokoch, značenie švov a ich zlepenie sú to isté, čo robia skaly
+# zo sklonu – preto ležia vo `workers/lib/` a nie tu (pravidlo 1). Boli tu
+# druhýkrát vlastným kódom a tie dve kópie sa už stihli rozísť: oprava
+# prázdnej únie (beh 31434520563) aj zhrnutie varovania o SRS vznikli len
+# v tej druhej.
+bloky_mod = load("contour_blocks", os.path.join(
+    os.path.dirname(_HERE), "lib", "contour-blocks.py"))
 
 
 # ------------------------------------------------------------------ vektor --
@@ -241,238 +249,17 @@ def hotove(path, label):
     return False
 
 
-def raster_size(vrt):
-    """Rozmer rastra v pixeloch, prečítaný z hlavičky VRT (bez bindings)."""
-    with open(vrt) as f:
-        head = f.read(4096)
-    m = re.search(r'rasterXSize="(\d+)"\s+rasterYSize="(\d+)"', head)
-    if not m:
-        m = re.search(r'rasterYSize="(\d+)"\s+rasterXSize="(\d+)"', head)
-        return (int(m.group(2)), int(m.group(1))) if m else (0, 0)
-    return int(m.group(1)), int(m.group(2))
+def urovne_pasiem(args, cliff_level):
+    """Prahy pre `-fl`. PLNÉ PLOCHY (`--plne`, predvolene) = jediné pásmo.
 
-
-def skontroluj_jednotky(src, x0, y0, x1, y1):
-    """Sú súradnice prvého bloku v metroch, ako ich čaká výpočet plochy?
-
-    PREČO: `filter_stream` počíta plochu zo súradníc, akoby boli metrické
-    (EPSG:3857). Keby ovládač GeoJSON medzitým prepočítal na stupne, každá
-    skala vyjde rádovo 1e-9 m², spadne pod `min_area` a výsledok je NULA
-    plôch – po hodine počítania a bez jedinej chybovej hlášky. Presne to sa
-    stalo behu 31245134321.
-
-    Overiť sa to dá lacno: prvý vrchol prvého bloku musí ležať v jeho
-    vlastnom rozsahu. Stupne (rádovo desiatky) sa do metrov (rádovo milióny)
-    nezmestia, takže sa to pozná hneď.
+    Dve pásma (`steep` a `cliff`) mali zmysel, kým sa kreslili rôzne tmavo –
+    `cliff` ležal v diere `steep`u a spolu dláždili územie bez prekryvu.
+    Odkedy sú všetky plochy jedna sivá bez priehľadnosti, je z toho len
+    dvojnásobok prstencov na obtiahnutie (a `gdal_contour` je tá najdrahšia
+    fáza celého behu). Jedno pásmo = jedna plocha, nič v ničom.
     """
-    with open(src) as f:
-        for line in f:
-            if not line.strip():
-                continue
-            g = (json.loads(line).get("geometry") or {})
-            polys = ([g["coordinates"]] if g.get("type") == "Polygon"
-                     else g.get("coordinates") or [])
-            if not polys or not polys[0]:
-                continue
-            x, y = polys[0][0][0][:2]
-            rez = max(abs(x1 - x0), abs(y1 - y0))
-            if (min(x0, x1) - rez <= x <= max(x0, x1) + rez
-                    and min(y0, y1) - rez <= y <= max(y0, y1) + rez):
-                return
-            raise RuntimeError(
-                f"obrysy prišli v iných súradniciach, než v akých sa počíta "
-                f"plocha: prvý vrchol [{x:.2f}, {y:.2f}], blok má byť "
-                f"[{x0:.0f}…{x1:.0f}, {y1:.0f}…{y0:.0f}] v metroch "
-                f"(EPSG:3857). Vyzerá to na prepočet do stupňov – pozri "
-                f"vyhodenie <SRS> z okna bloku.")
-
-
-def oznac_svy(src, dst, x0, y0, x1, y1, res):
-    """Označí útvary, ktoré sa dotýkajú hranice bloku (`sev=1`).
-
-    Plocha cez hranicu vypadne z dvoch blokov ako dva kusy. Zlepiť sa musia,
-    inak by v mape boli vidieť rovné rezy – skalné plochy sa kreslia
-    s obrysom. Zlepenie je drahé, tak sa robí len nad tými, ktorých sa to
-    naozaj týka; ostatné (drvivá väčšina) idú rovno ďalej.
-
-    Tolerancia je pol pixela: obrys `gdal_contour` končí presne na hrane
-    okna, ale v desatinnom čísle.
-    """
-    tol = abs(res) / 2.0
-    xmin, xmax = min(x0, x1), max(x0, x1)
-    ymin, ymax = min(y0, y1), max(y0, y1)
-    # Vlastné dočasné meno: `src` je už `dst + ".part"`, takže rovnaká
-    # prípona by znamenala, že si súbor prepisuje sám seba.
-    part = dst + ".sev"
-    with open(src) as fi, open(part, "w") as fo:
-        for line in fi:
-            line = line.strip()
-            if not line:
-                continue
-            feat = json.loads(line)
-            g = feat.get("geometry") or {}
-            polys = ([g["coordinates"]] if g.get("type") == "Polygon"
-                     else g.get("coordinates") or [])
-            sev = 0
-            for poly in polys:
-                for x, y, *_ in poly[0] if poly else []:
-                    if (abs(x - xmin) <= tol or abs(x - xmax) <= tol
-                            or abs(y - ymin) <= tol or abs(y - ymax) <= tol):
-                        sev = 1
-                        break
-                if sev:
-                    break
-            feat.setdefault("properties", {})["sev"] = sev
-            fo.write(json.dumps(feat, separators=(",", ":")) + "\n")
-    os.replace(part, dst)
-    os.remove(src)
-
-
-def contour_blocks(vrt, args, tmp, cliff_level, ox, oy, res):
-    """Obrysy po blokoch: každý blok zvlášť a hneď na disk.
-
-    PREČO PO BLOKOCH. `gdal_contour -p` skladá z izolínií uzavreté prstence
-    a robí to nad celým rastrom naraz. Nad mozaikou 3,62 mld. pixelov to
-    bežalo 2 h 41 min, nedopočítalo sa a zabil to timeout jobu – pamäť pritom
-    ostala na 0,7 GB, čiže to nebola pamäť, ale skladanie prstencov: tých je
-    v zrnitom JPEGu obrovské množstvo a spájanie segmentov rastie rýchlejšie
-    než lineárne. Blok je malý raster, takže sa v ňom prstence poskladajú
-    rýchlo, pamäť je zhora ohraničená a hlavne: čo je hotové, je na disku.
-
-    ZA ČO SA TO PLATÍ. Plocha cez hranicu bloku vypadne ako dva polygóny.
-    Spája ich `zlep_svy()` na konci – ten sa zaoberá len tými, ktoré sa
-    hranice naozaj dotýkajú, takže nejde o úniu všetkého so všetkým.
-    """
-    w_px, h_px = raster_size(vrt)
-    if not w_px:
-        raise RuntimeError(f"z {vrt} sa nedá prečítať rozmer rastra")
-    blok = max(1, args.block_tiles) * TILE
-    bloky = [(bx, by)
-             for by in range(0, h_px, blok)
-             for bx in range(0, w_px, blok)]
-    # PLNÉ PLOCHY (`--plne`, predvolene zapnuté): jediné pásmo [0,5; 256).
-    # Dve pásma (`steep` a `cliff`) mali zmysel, kým sa kreslili rôzne tmavo –
-    # `cliff` ležal v diere `steep`u a spolu dláždili územie bez prekryvu.
-    # Odkedy sú všetky plochy jedna sivá bez priehľadnosti, je z toho len
-    # dvojnásobok prstencov na obtiahnutie (a `gdal_contour` je tá najdrahšia
-    # fáza celého behu). Jedno pásmo = jedna plocha, nič v ničom.
-    levels = (["-fl", "0.5", "-fl", "256"] if args.plne else
-              ["-fl", "0.5", "-fl", repr(cliff_level), "-fl", "256"])
-    d = os.path.join(tmp, "bloky")
-    os.makedirs(d, exist_ok=True)
-
-    hotovych = sum(1 for i in range(len(bloky))
-                   if os.path.exists(os.path.join(d, f"b{i:05d}.geojsonl")))
-    print(f"  blok {args.block_tiles}×{args.block_tiles} dlaždíc "
-          f"({blok}×{blok} px), {len(bloky)} blokov"
-          + (f", {hotovych} už hotových z predošlého behu" if hotovych else ""),
-          flush=True)
-
-    t0 = time.time()
-    limit = args.budget_min * 60
-    for i, (bx, by) in enumerate(bloky):
-        cesta = os.path.join(d, f"b{i:05d}.geojsonl")
-        if os.path.exists(cesta):
-            continue
-        bw, bh = min(blok, w_px - bx), min(blok, h_px - by)
-        okno = os.path.join(tmp, "blok.vrt")
-        # `-of VRT` je len XML nad tým istým rastrom – neprepisuje ani bajt
-        # dát, takže výrez bloku nič nestojí.
-        run(["gdal_translate", "-q", "-of", "VRT", "-srcwin",
-             str(bx), str(by), str(bw), str(bh), vrt, okno])
-        # A TERAZ TO DÔLEŽITÉ: z okna sa vyhodí <SRS>.
-        #
-        # Ovládač GeoJSON prepočítava do WGS84 vždy, keď zdroj vie, v čom je.
-        # Contour nad rastrom s EPSG:3857 by teda vypísal STUPNE – a `filter`
-        # počíta plochu zo súradníc ako z metrov, takže by každá skala vyšla
-        # rádovo 1e-9 m² a spadla pod `min_area`. Presne to sa aj stalo:
-        # 976 725 plôch, z toho 0 ponechaných (beh 31245134321). Predtým to
-        # držal `-a_srs EPSG:4326` na `ogr2ogr`, ktorý súradnice len preznačí
-        # a neprepočíta; po prechode na bloky ten krok zmizol a s ním aj trik.
-        # Bez SRS nemá čo prepočítať a súradnice ostanú metrické.
-        with open(okno) as f:
-            xml = f.read()
-        with open(okno, "w") as f:
-            f.write(re.sub(r"\s*<SRS[^>]*>.*?</SRS>", "", xml, flags=re.S))
-        part = cesta + ".part"
-        run(["gdal_contour", "-p", "-q", "-amin", "dmin", "-amax", "dmax",
-             *levels, "-f", "GeoJSONSeq", "-nln", "band",
-             "-lco", "COORDINATE_PRECISION=2", okno, part])
-        x_od, y_od = ox + bx * res, oy - by * res
-        x_do, y_do = ox + (bx + bw) * res, oy - (by + bh) * res
-        if i == 0:
-            skontroluj_jednotky(part, x_od, y_od, x_do, y_do)
-        oznac_svy(part, cesta, x_od, y_od, x_do, y_do, res)
-
-        el = time.time() - t0
-        spravene = i + 1 - hotovych
-        if spravene > 0 and (i % max(1, len(bloky) // 50) == 0
-                             or i == len(bloky) - 1):
-            eta = el / spravene * (len(bloky) - i - 1)
-            print(f"  … obrysy: blok {i + 1}/{len(bloky)}, beží {hms(el)}, "
-                  f"ostáva {hms(eta)}, na disku {dir_mb(d):.0f} MB", flush=True)
-        # Rozpočet platí aj tu: keď to nestíha, povie sa to teraz – a čo je
-        # hotové, ostáva, takže ďalší beh nadviaže presne tu.
-        if limit and el > limit:
-            raise TimeoutError(f"obrysy: {i + 1}/{len(bloky)} blokov")
-    return d, len(bloky)
-
-
-def zlep_svy(seq, tmp, cliff_level, args):
-    """Spojí plochy rozseknuté hranicou bloku. Vráti cestu k výsledku.
-
-    Robí to `ST_Union` v SQLite dialekte, čo vyžaduje spatialite – a LEN nad
-    tými útvarmi, ktoré sa hranice bloku naozaj dotýkajú (`sev=1`). Tých je
-    zlomok, takže to nie je únia všetkého so všetkým; celé územie naraz by
-    bola presne tá fáza, ktorej sme sa blokmi zbavovali.
-    Zlučuje sa po triede (`dmin`), inak by sa stena zlepila so svahom.
-
-    Keby spatialite nebolo alebo príkaz zlyhal, beh POKRAČUJE s rozseknutými
-    plochami a povie to. Rozseknutá skala je horšia mapa, nie zlá mapa –
-    a zhodiť kvôli tomu trojhodinový výpočet by bola hlúposť.
-    """
-    svy = os.path.join(tmp, "svy.geojsonl")
-    zvysok = os.path.join(tmp, "bez-svov.geojsonl")
-    n_sev = n_ok = 0
-    with open(seq) as fi, open(svy, "w") as fs, open(zvysok, "w") as fz:
-        for line in fi:
-            if not line.strip():
-                continue
-            if '"sev":1' in line.replace(" ", ""):
-                fs.write(line)
-                n_sev += 1
-            else:
-                fz.write(line)
-                n_ok += 1
-    if not n_sev:
-        print("  švy: žiadna plocha nesiaha na hranicu bloku", flush=True)
-        return zvysok
-
-    print(f"  švy: {n_sev} plôch na hranici bloku, {n_ok} mimo – "
-          f"zlepujem tie prvé", flush=True)
-    zlep = os.path.join(tmp, "zlepene.geojsonl")
-    try:
-        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", zlep, svy,
-                     "-dialect", "SQLITE", "-explodecollections",
-                     "-sql", "SELECT dmin, ST_Union(geometry) AS geometry "
-                             "FROM svy GROUP BY dmin"],
-                    "zlepenie švov", tmp=zlep, every=args.heartbeat,
-                    max_s=args.budget_min * 60)
-    except Exception as exc:
-        print(f"::warning::Švy sa nepodarilo zlepiť ({type(exc).__name__}) – "
-              f"plochy cez hranicu bloku ostanú rozseknuté. Chýba "
-              f"spatialite? Mapa bude, len s rovnými rezmi v skalách.",
-              flush=True)
-        return seq
-
-    spolu = os.path.join(tmp, "bands-zlepene.geojsonl")
-    with open(spolu, "w") as fo:
-        for src in (zvysok, zlep):
-            with open(src) as fi:
-                for line in fi:
-                    if line.strip():
-                        fo.write(line)
-    return spolu
+    return (["0.5", "256"] if args.plne else
+            ["0.5", repr(cliff_level), "256"])
 
 
 def vrt_geo(vrt):
@@ -496,7 +283,14 @@ def obrysy(tifs, args, tmp, cliff_level):
     vrt = os.path.join(tmp, "score.vrt")
     run(["gdalbuildvrt", "-q", vrt] + tifs)
     ox, oy, res = vrt_geo(vrt)
-    _, n_blokov = contour_blocks(vrt, args, tmp, cliff_level, ox, oy, res)
+    # Blok sa tu meria v DLAŽDICIACH, nie v pixeloch: raster tmavosti je
+    # z dlaždíc poskladaný, takže `block_tiles` je tá jednotka, v ktorej sa
+    # o ňom uvažuje. Spodná vrstva pozná len pixely.
+    blok_px = max(1, args.block_tiles) * TILE
+    _, n_blokov = bloky_mod.po_blokoch(
+        vrt, os.path.join(tmp, "bloky"),
+        urovne_pasiem(args, cliff_level), ["-amin", "dmin", "-amax", "dmax"],
+        blok_px, (ox, oy, res), budget_s=args.budget_min * 60)
     return n_blokov
 
 
@@ -521,16 +315,7 @@ def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     seq = os.path.join(tmp, "bands.geojsonl")
     if not hotove(seq, "spojenie blokov"):
         part = seq + ".part"
-        n = 0
-        with open(part, "w") as fo:
-            for f in sorted(os.listdir(d_bloky)):
-                if not f.endswith(".geojsonl"):
-                    continue
-                with open(os.path.join(d_bloky, f)) as fi:
-                    for line in fi:
-                        if line.strip():
-                            fo.write(line)
-                            n += 1
+        n = bloky_mod.zlej(d_bloky, part)
         os.replace(part, seq)
         print(f"  spojenie blokov: {n} útvarov z {n_blokov} blokov", flush=True)
 
@@ -540,7 +325,14 @@ def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     # dotýka, a spatialite navyše – preto predvolene vypnuté (`zlepit=1` ho
     # vráti). Cena za to je, že `area` je plocha kusa, nie celej skaly.
     if args.zlepit:
-        seq = zlep_svy(seq, tmp, cliff_level, args)
+        # `dmin` je trieda pásma – zlučovať sa smie len v rámci nej, inak by
+        # sa stena zlepila so svahom. `srs` sa NEPODÁVA: súradnice sú metrické
+        # práve preto, že sa z okna bloku vyhodil `<SRS>`, a `filter_stream`
+        # ich tak aj počíta.
+        seq = bloky_mod.zlep_svy(seq, tmp, klucovy_atribut="dmin",
+                                 heartbeat=args.heartbeat,
+                                 max_s=args.budget_min * 60,
+                                 label="zlepenie švov")
     else:
         print("  švy: nezlepujem (`options: zlepit=1` to zapne) – rovnaká "
               "sivá bez priehľadnosti spoj aj tak nepotrebuje", flush=True)
