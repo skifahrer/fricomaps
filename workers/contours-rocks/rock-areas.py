@@ -596,12 +596,20 @@ def main():
             # mať skál naozaj málo.
             uzemie_km2 = bbox_km2(bbox)
             podiel = st["total"] / 1e6 / uzemie_km2 * 100 if uzemie_km2 else 0.0
-            if podiel < 0.01:
+            # PRAH 0,05 %, NIE 0,01 %. Bratislavský kraj vyšel na 0,014 %
+            # (0,63 km² zo 4568 km², 4538 omrviniek s priemerom 139 m²) – teda
+            # mapa, v ktorej skaly vyzerajú, že sa nevygenerovali vôbec, a beh
+            # o tom nepovedal ani slovo (beh 31526268289). Pre porovnanie:
+            # Prešovský kraj má pri tom istom prahu 0,24 %.
+            if podiel < 0.05:
                 print(f"::warning::Skaly zaberajú {podiel:.3f} % územia "
-                      f"({st['total']/1e6:.2f} km² z {uzemie_km2:.0f} km²) – "
-                      f"na horský výrez je to podozrivo málo. Pozri vyššie, či "
-                      f"zlepenie švov nevrátilo prázdno, alebo či nie je prah "
-                      f"`rock_slope` ({args.slope:g}°) privysoký.")
+                      f"({st['total']/1e6:.2f} km² z {uzemie_km2:.0f} km², "
+                      f"{int(st['n'])} plôch s priemerom {st['avg']:.0f} m²) – "
+                      f"v mape to bude vyzerať, že skaly nie sú. Na rovinatom "
+                      f"kraji je to normálne (prah `rock_slope` "
+                      f"{args.slope:g}° tam terén nepretína – skús 40°); na "
+                      f"horskom výreze to znamená, že sa niečo stratilo – "
+                      f"pozri vyššie, či zlepenie švov nevrátilo prázdno.")
             if "holes_km2" in st:
                 print(f"  dier (miest pod prahom vnútri skaly): "
                       f"{int(st['with_holes'])} plôch ich má, "
