@@ -381,6 +381,17 @@ jobs:
       # odznova. Rozpis: `workers/lint/drive-token.py`.
       - name: Token vlastníka Drive sa dostane všade, kde sa z Drive číta
         run: python3 workers/lint/drive-token.py
+
+      # „Ktoré sklady existujú" hovoria tri miesta: `KNOWN` vo
+      # `workers/drive/store.py`, `store`/`store_area` v `data/dem-sources.json`
+      # a `…_STORE:` v `env:` workflowov. Keď sa rozídu, padne to AŽ PO PRÁCI:
+      # `dem-sonny1` v `KNOWN` chýbal, doplnenie stiahlo z Drive 12 dlaždíc,
+      # rozuzlilo skratky, prevzorkovalo ich – a spadlo na poslednom kroku,
+      # nahratí do skladu. Hotová práca sa zahodila a joby, ktoré ten sklad
+      # čakali, spadli za ňou (beh 31533988137, štyri padnuté joby).
+      # Rozpis: `workers/lint/stores.py`.
+      - name: Sklady sedia s tým, čo pipeline pozná
+        run: python3 workers/lint/stores.py
       # CACHE PATRÍ NA DRIVE. GitHubová má na repozitár 10 GB a keď sa naplní,
       # NIČ NEPOVIE – ticho vyhodí najstaršie záznamy. Jeden výrez do nej
       # ukladal desiatky GB (DEM dlaždice, sklad častí sklonu, vrstevnice,
