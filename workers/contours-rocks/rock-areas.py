@@ -111,6 +111,13 @@ sys.path.insert(0, os.path.join(
 from watch import hms, run_watched  # noqa: E402
 
 
+def bbox_km2(bbox):
+    """Hrubá plocha bboxu v km² – na porovnanie „koľko z územia sú skaly"."""
+    w, s, e, n = bbox
+    stred = math.radians((s + n) / 2.0)
+    return abs(e - w) * 111.32 * math.cos(stred) * abs(n - s) * 110.54
+
+
 def skontroluj_polohu(path, bbox, layer="rock"):
     """Ležia hotové skaly tam, kde je územie? Vráti hlášku, alebo None.
 
@@ -415,7 +422,7 @@ def main():
                 print(f"  {n_blokov} blokov → {n_utvarov} útvarov", flush=True)
                 # Švy: plocha aj diera preseknutá hranicou bloku sa spoja späť.
                 seq = bloky_mod.zlep_svy(seq, tmp, klucovy_atribut="smin",
-                                         heartbeat=args.heartbeat)
+                                         srs=METRIC, heartbeat=args.heartbeat)
                 # `-a_srs`, nie `-t_srs`: súradnice sú UŽ metrické (z okna
                 # bloku sa vyhodil `<SRS>`, inak by ich GeoJSON prepočítal do
                 # stupňov). Toto ich len PREZNAČÍ, neprepočíta – a bez toho
@@ -578,6 +585,20 @@ def main():
             print(f"  spolu {st['total']/1e6:.2f} km², najväčšia "
                   f"{st['max']/10000:.1f} ha, najmenšia {st['min']:.0f} m², "
                   f"priemer {st['avg']:.0f} m²")
+            # PLÔCH MÔŽE BYŤ VEĽA A PLOCHY NIJAKÁ. Presne tak vyzeral beh
+            # 31434520563: 44 útvarov, spolu 0,00 km² nad celými Vysokými
+            # Tatrami – zlepenie švov ticho zahodilo 22 z 24 plôch a ostali
+            # len omrvinky. Počet teda o zdraví výsledku nehovorí nič, podiel
+            # na území áno. Je to VAROVANIE, nie chyba: rovinaté územie smie
+            # mať skál naozaj málo.
+            uzemie_km2 = bbox_km2(bbox)
+            podiel = st["total"] / 1e6 / uzemie_km2 * 100 if uzemie_km2 else 0.0
+            if podiel < 0.01:
+                print(f"::warning::Skaly zaberajú {podiel:.3f} % územia "
+                      f"({st['total']/1e6:.2f} km² z {uzemie_km2:.0f} km²) – "
+                      f"na horský výrez je to podozrivo málo. Pozri vyššie, či "
+                      f"zlepenie švov nevrátilo prázdno, alebo či nie je prah "
+                      f"`rock_slope` ({args.slope:g}°) privysoký.")
             if "holes_km2" in st:
                 print(f"  dier (miest pod prahom vnútri skaly): "
                       f"{int(st['with_holes'])} plôch ich má, "
