@@ -1703,8 +1703,43 @@ zvlášť a dostane vlastný **pruh**. Detaily, ktoré na tom závisia:
 | strana cesty | pešie (turistická, ferrata, bežky, jazdecká) `+1`, kolesové (cyklo, MTB) `−1` | po jednom chodníku vedie bežne turistická značka **aj** cyklotrasa; v jednom rade by sa druhá odsunula tak ďaleko, že by pri nej nebolo vidieť, ku ktorej ceste patrí |
 | číslovanie pruhov | na každej strane zvlášť, od cesty von: 0 · 1 · 2 … | keby boli vycentrované, koniec jednej trasy by posunul všetky ostatné |
 | poradie | sieť → druh → farba → id relácie | závisí len od trasy, takže si dve trasy na susedných úsekoch pruhy neprehodia; dôležitejšia je bližšie k ceste |
-| smer čiary | vždy od západnejšieho konca | `line-offset` posúva podľa smeru geometrie – inak by pásik preskakoval z jednej strany cesty na druhú podľa toho, ako kto cestu nakreslil |
+| smer čiary | podľa toho, na čo cesta **nadväzuje** (`orient_ways`) | `line-offset` posúva podľa smeru geometrie – viď nižšie |
 | duplikáty | nadradená trasa a jej časť sa zlúčia | superroute a jej člen sú dve relácie na tých istých cestách; dva rovnaké pásiky vedľa seba nie sú informácia, ale chyba |
+
+### Smer čiary: prečo sa reťazí a nenormalizuje
+
+`line-offset` posúva pásik podľa smeru geometrie, takže **smer rozhoduje o
+strane**. Kým sa normalizoval „od západnejšieho konca", rozhodovala o ňom pri
+severojužnom chodníku pár metrov široká kľukatina – a pásik preskakoval na
+druhú stranu na každom druhom úseku:
+
+```
+úsek A (mierne na východ)  → kreslí sa na sever → pásik vpravo
+úsek B (mierne na západ)   → kreslí sa na juh   → pásik VĽAVO
+úsek C (mierne na východ)  → kreslí sa na sever → pásik vpravo
+```
+
+Nepomôže ani „normalizuj podľa dlhšej osi": seam sa len presunie zo severojužného
+smeru na uhlopriečku. **Žiadne pravidlo nad jednou čiarou to nevyrieši** – smer
+čiary je vlastnosť dvojice susedov, nie jednej cesty.
+
+`orient_ways` preto berie cesty ako **hrany grafu** (vrcholy sú uzly OSM) a od
+každej neprebranej ide do šírky: susedovi pridelí smer tak, aby v spoločnom
+uzle jedna KONČILA a druhá ZAČÍNALA. Pásik potom drží stranu cez celý chodník
+bez ohľadu na to, ako kto ktorý úsek nakreslil. Vstupom sú len koncové uzly
+(`{cesta: (uzol, uzol)}`), takže druhý priechod nad PBF nepotrebuje index
+súradníc a je lacný.
+
+Čo to **nevyrieši a vedieť sa to má:** na križovatke troch a viac chodníkov
+„nadväzovať" nie je definované – dve vetvy z uzla vychádzajú a tretia doň
+vchádza, takže niektorá stranu prehodí. Je to ale križovatka, kde sa trasa aj
+tak vetví, nie prostriedok chodníka. Koľko takých miest v území ostalo, píše
+beh do logu aj do súhrnu (`side_flips`) a nad 5 % ciest to varuje – je to
+číslo, ktoré má byť malé, a keď skočí, smerovanie sa pokazilo.
+
+Fyzická strana (severná či južná) je pre každú reťaz ľubovoľná, ale **stála**:
+berie sa najmenšie id cesty a v nej menšie id uzla. Dôležité je, že sa strana
+nemení pozdĺž trasy, nie to, ktorá to je.
 
 ### Odstup od cesty: dve čísla, nie jedno
 
@@ -1726,9 +1761,9 @@ pri z16, takže v developer móde stačí prepísať jedno číslo.
 
 Že to drží spolu naprieč tromi súbormi (`routes.py` číslu je rady,
 `trails.yml` to pustí do dlaždíc, `themes.js` z toho ráta `line-offset`),
-stráži [`workers/lint/trails.mjs`](lint/trails.mjs) – rozídené strany alebo
-posunutý zlom krivky nespadnú, len sú cyklotrasy zrazu na tej istej strane
-ako turistické.
+stráži [`workers/lint/trails.mjs`](lint/trails.mjs) – rozídené strany, posunutý
+zlom krivky ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
+tej istej strane ako turistické, prípadne pásiky preskakujú.
 
 ### Farba ide z OSM, odtieň z palety
 

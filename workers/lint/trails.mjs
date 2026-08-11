@@ -27,6 +27,11 @@
  *      ktorý neexistuje, sa ticho zmení na plnú čiaru.
  *   5. `side`, `off` a `way` sú v schéme dlaždíc (`trails.yml`). Bez nich by
  *      výraz čítal prázdno a všetky pásiky by si sadli na jednu kopu.
+ *   6. SMER ČIAR sa naozaj reťazí. `orient_ways` sa musí zavolať a jeho
+ *      výsledok podať do `Ways` – keby sa niekde po ceste stratil, cesty by
+ *      sa kreslili v poradí, v akom ich nakreslil ten, kto ich zadával, a
+ *      pásik by preskakoval z jednej strany chodníka na druhú. Nespadne to,
+ *      len to vyzerá zle na mape.
  *
  * Spustenie (aj lokálne):
  *   node workers/lint/trails.mjs
@@ -129,6 +134,21 @@ for (const type of TRAIL_TYPES) {
         "patterns.js nepozná – v mape by z neho bola plná čiara."
     );
   }
+}
+
+// ---- 6. smer čiar sa reťazí a ten výsledok sa aj použije ----
+if (!/def orient_ways\(/.test(py)) {
+  bad.push(
+    "workers/trails/routes.py nemá `orient_ways` – smer čiar by sa potom bral " +
+      "z tvaru jednej čiary a pásik by pri severojužnom chodníku preskakoval " +
+      "na druhú stranu na každom druhom úseku."
+  );
+} else if (!/Ways\(\s*routes\.by_way\s*,\s*fh\s*,\s*flipped\s*\)/.test(py)) {
+  bad.push(
+    "workers/trails/routes.py nepodáva výsledok `orient_ways` do `Ways(...)` – " +
+      "smery sa spočítajú a zahodia, takže pásiky budú preskakovať tak ako " +
+      "predtým a nič to nepovie."
+  );
 }
 
 // ---- 5. atribúty v schéme dlaždíc ----
