@@ -84,5 +84,51 @@ for out in ("mirror_dmr5_area", "mirror_dmr5_asset"):
         print(f"::error file=workers/dem/check.sh::chýba výstup "
               f"`{out}`, ktorý build-map.yml podáva do dmr5-drive.yml")
         bad += 1
+
+# 4. DLAŽDICA JE SĽUB O CELOM STUPNI. Krájanie preto musí dostať OKNO, ktoré
+# sa naozaj prečítalo – prevod do WGS84 ho vydúva (`21,49…22,50` vyšlo ako
+# `21.000,48.996 … 22.013,49.628`), takže sa doň zmestili aj tri cudzie stupne
+# po pár set metroch. Uložili sa pod menami celých stupňov, kontrola ich
+# spočítala ako platné, doplnenie sa nespustilo – a vrstevnice Prešovského kraja
+# skončili v jednom štvorci, so zeleným behom (31476448895 → 31484544154).
+cut = open("workers/drive/dmr5-cut.py").read()
+m = re.search(r"def country_tiles\((.*?)\):(.*?)(?=\ndef |\Z)", cut, re.S)
+if not m or "window" not in m.group(1):
+    print("::error file=workers/drive/dmr5-cut.py::`country_tiles` musí brať "
+          "okno (`window`) – bez neho sa pod meno celého stupňa uloží presah "
+          "prevodu do WGS84 (behy 31476448895 → 31484544154).")
+    bad += 1
+elif "--window" not in m.group(2):
+    print("::error file=workers/drive/dmr5-cut.py::`country_tiles` okno "
+          "nepodáva do `workers/dem/tiles.py` (`--window=`), takže sa rez "
+          "znova riadi rozsahom rastra a dlaždica bude klamať o rozsahu.")
+    bad += 1
+dm = open("workers/drive/dmr5.py").read()
+if not re.search(r"country_tiles\([^)]*window\s*=", dm, re.S):
+    print("::error file=workers/drive/dmr5.py::fáza `finish` musí podať do "
+          "`country_tiles` okno z plánu (`window=state[\"bbox\"]`) – to je to "
+          "územie, ktoré sa naozaj prečítalo.")
+    bad += 1
+tl = open("workers/dem/tiles.py").read()
+if "--window" not in tl:
+    print("::error file=workers/dem/tiles.py::chýba voľba `--window`, ktorou "
+          "volajúci hovorí, ktoré stupne prečítal celé. Bez nej sa do skladu "
+          "dostanú dlaždice s pár set metrami dát pod menom celého stupňa.")
+    bad += 1
+
+# 5. A CHÝBAJÚCA DLAŽDICA DMR 5.0 SA MUSÍ DOPLNIŤ, nie prehliadnuť. Kým
+# kontrola dopĺňala len vtedy, „keď nie je ani jedna", stačilo, aby v sklade
+# ležali tri nepoctivé – a mozaika so 48 % kraja prešla ako hotová.
+if "coverage.py" not in open("workers/dem/fetch.sh").read():
+    print("::error file=workers/dem/fetch.sh::sťahovanie dlaždíc nemeria, či "
+          "mozaika územie naozaj pokrýva (`workers/dem/coverage.py`) – počet "
+          "súborov na to neodpovedá.")
+    bad += 1
+if not re.search(r"\$src\" = 'dmr5'.{0,200}?chybaju.{0,80}?need=true", chk, re.S):
+    print("::error file=workers/dem/check.sh::pri `dmr5` sa musí doplniť KAŽDÁ "
+          "chýbajúca dlaždica (`[ -n \"$chybaju\" ] && need=true`). Doplnenie "
+          "číta presne tie stupne, ktoré mu podáme, a prázdny stupeň sa uloží "
+          "prázdny – chýbajúce meno teda znamená „nikdy sme to nečítali\".")
+    bad += 1
 print(f"cesta k DMR 5.0: {bad} chýb")
 sys.exit(1 if bad else 0)

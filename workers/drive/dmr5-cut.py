@@ -247,12 +247,18 @@ def to_wgs84(parts, dest, bbox_wgs, grid_m, work, env, geoid):
     return dest
 
 
-def country_tiles(parts, out_dir, work, env, geoid):
+def country_tiles(parts, out_dir, work, env, geoid, window=None):
     """Mozaika → dlaždice 1°×1° vo WGS84, ako ich čaká build mapy.
 
-    Používa sa na celé Slovensko aj na `--tiles` s výrezom. Rez na stupne robí
-    `dem-tiles.py` podľa rozsahu rastra – preto sa okno pred čítaním rozširuje
-    na celé stupne, nech pod menom `N49E020.tif` nikdy neleží len jeho kúsok.
+    Používa sa na celé Slovensko aj na `--tiles` s výrezom. Okno sa pred
+    čítaním rozširuje na celé stupne a TO ISTÉ OKNO sa podáva do `dem/tiles.py`
+    – rez podľa rozsahu rastra totiž nestačí: prevod do WGS84 okno vydúva
+    (`21,49…22,50` vyšlo ako `21.000,48.996 … 22.013,49.628`), takže z neho
+    vypadli aj tri cudzie stupne po pár set metroch. Uložili sa pod menami
+    `N48E021.tif`, `N48E022.tif`, `N49E020.tif`, ktoré tvrdia, že tam je celý
+    stupeň – a vrstevnice Prešovského kraja potom skončili v jednom štvorci
+    (behy 31476448895 → 31484544154). `window=None` = celé Slovensko, kde je
+    pravdivá každá dlaždica z rastra.
     """
     vrt = os.path.join(work, "mozaika.vrt")
     run(["gdalbuildvrt", "-q", vrt, *parts], env)
@@ -268,6 +274,9 @@ def country_tiles(parts, out_dir, work, env, geoid):
          "-of", "GTiff", "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
          "-co", "TILED=YES", "-co", "BIGTIFF=YES", "-co", "NUM_THREADS=ALL_CPUS",
          vrt, merged], env, label="prevod do WGS84", watch=merged)
-    run(["python3", os.path.join(_WORKERS, "dem", "tiles.py"), "--out", out_dir, merged],
-        env, label="krájanie na 1° dlaždice")
+    cmd = ["python3", os.path.join(_WORKERS, "dem", "tiles.py"),
+           "--out", out_dir, merged]
+    if window is not None:
+        cmd.append("--window=" + ",".join(f"{v:g}" for v in window))
+    run(cmd, env, label="krájanie na 1° dlaždice")
     return merged
