@@ -113,11 +113,12 @@ DEFAULTS = {
     # presne nula. Nárast je 1,6× (Andorra 248 kB → 394 kB), čo je pri
     # jednotkách MB nič.
     "features_maxzoom": ("15", "max zoom dlaždíc s krajinnými prvkami"),
-    # Hotová mapa ide okrem Pages aj na Google Drive ako jeden ZIP
-    # (`workers/deploy/publish-map.py`) do priečinka podľa krajiny, kraja a výrezu.
-    # `publish=false` to vypne – napr. keď sa ladí prah a v priečinku by inak
-    # pribudlo dvadsať skoro rovnakých ZIPov.
-    "publish": ("true", "nahrať hotovú mapu ako ZIP na Google Drive"),
+    # Hotová mapa ide okrem Pages aj na Google Drive – tri ZIPy (celá mapa,
+    # vrstevnice so skalami, tieňovanie) do priečinka podľa krajiny, kraja
+    # a výrezu, so stálym menom, takže ďalší build tie isté súbory prepíše
+    # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
+    # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
+    "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.

@@ -316,6 +316,53 @@ def find_folder(creds, parent, name):
     return files[0]["id"] if files else None
 
 
+def files_named(creds, parent, name):
+    """Súbory s menom `name` v priečinku – Drive dovolí duplikáty.
+
+    Preto ich je zoznam a nie jeden: dva behy môžu nahrať to isté meno vedľa
+    seba a „ten starý" potom nie je jeden.
+    """
+    q = urllib.parse.quote(
+        f"'{parent}' in parents and trashed = false and name = '{name}'")
+    data = auth.api_get(creds, f"/drive/v3/files?q={q}&pageSize=100"
+                               f"&supportsAllDrives=true"
+                               f"&includeItemsFromAllDrives=true"
+                               f"&fields=files(id,name,size,mimeType)")
+    return [f for f in (data.get("files") or [])
+            if f.get("mimeType") != FOLDER_MIME]
+
+
+def upload_clobber(creds, path, name, parent, description=""):
+    """Nahraj a AŽ POTOM zmaž staré súbory toho istého mena.
+
+    To poradie je celé, o čom to je (viď `workers/drive/store.py`): Drive
+    dovolí dva súbory s tým istým menom vedľa seba, takže „najprv zmaž" by po
+    spadnutom nahrávaní nenechalo ani nové, ani staré – a v priečinku by nebolo
+    nič namiesto toho, čo tam pred minútou bolo.
+
+    Vracia, koľko starých verzií sa zmazalo.
+    """
+    stare = [f["id"] for f in files_named(creds, parent, name)]
+    upload(creds, path, name, parent, description)
+    for fid in stare:
+        auth.api_delete(creds, fid)
+    if stare:
+        print(f"    starú verziu ({len(stare)}×) som zmazal", flush=True)
+    return len(stare)
+
+
+def delete_named(creds, parent, name):
+    """Zmaž súbory daného mena – „toto v tomto builde nie je".
+
+    Bez toho by v priečinku vedľa novej mapy ostal starý balík vrstvy, ktorú
+    tento build nevyrobil, a nikto by na ňom nepoznal, že je z iného behu.
+    """
+    stare = files_named(creds, parent, name)
+    for f in stare:
+        auth.api_delete(creds, f["id"])
+    return len(stare)
+
+
 def ensure_folder(creds, parent, name):
     """Podpriečinok `name` v `parent` – nájdi, alebo vyrob. Vracia id.
 

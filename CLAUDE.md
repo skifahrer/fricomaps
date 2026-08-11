@@ -305,25 +305,35 @@ Dve veci, ktoré GitHub robil sám a Drive nie: **nič sa nemaže samo** (na to 
 spadne s návodom; `Lint workflows` stráži, že token dostane každý cache krok).
 Nový `uses: actions/cache…` tá istá kontrola odmietne.
 
-## Hotová mapa ide na Drive ako ZIP
+## Hotová mapa ide na Drive – tri ZIPy so stálym menom
 
-Okrem Pages sa každý build publikuje aj do priečinka na Drive – celý `_site`
-v jednom ZIPe (`workers/deploy/publish-map.py`, vypína to voľba `publish=false`):
+Okrem Pages sa každý build publikuje aj do priečinka na Drive
+(`workers/deploy/publish-map.py`, vypína to voľba `publish=false`):
 
 ```
-<koreň>/slovensko/presovsky/vysoke_tatry/<mapa>.zip
+<koreň>/slovensko/presovsky/vysoke_tatry/
          krajina  kraj      výsek        (úrovne, čo nedávajú zmysel, sa vynechajú)
+
+    presovsky-vysoke_tatry.zip                    celý `_site`
+    presovsky-vysoke_tatry-vrstevnice-skaly.zip   tie dve vrstvy (jeden balík)
+    presovsky-vysoke_tatry-tienovanie.zip         výškové dlaždice PNG
 ```
 
-**Meno je sľub o obsahu** (pravidlo 2 v inej podobe): nesie výrez, zoom, ktoré
-vrstvy v mape sú a Z ČOHO sú spočítané – a to podľa toho, čo joby NAOZAJ
-použili, nie čo bolo vo formulári. Vrstva, ktorá tam nie je, sa píše tiež
-(`bez_skal`), lebo mlčanie sa dá čítať aj ako „zabudlo sa to dopísať". Rýchly
-test má v mene `test4km2`, inak by mapa zo 4 km² vyzerala ako celá.
+**Meno je STÁLE, nie jedinečné** – rovnaký kraj a výsek má vždy to isté meno,
+takže ďalší build starý balík prepíše a v priečinku je jeden aktuálny súbor
+namiesto histórie behov. Prepis je „najprv nahraj, potom zmaž starý"
+(`folder.upload_clobber`) – to isté pravidlo ako v sklade. Balík vrstvy, ktorú
+beh nevyrobil, sa ZMAŽE: starý `-tienovanie.zip` vedľa novej mapy je tichý omyl.
 
-Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa dva behy
-nikdy neprepíšu. Publikuje sa len mapa, ktorá prešla kontrolou pred nasadením;
-rozbitý ZIP v priečinku vyzerá presne ako dobrý.
+**Čo v tom balíku je, hovorí `obsah.json` v ňom** – nie meno (pravidlo 2 sa
+neruší, len sa sľub presunul dovnútra): výrez, zoomy, ktoré vrstvy tam sú a
+Z ČOHO sú spočítané podľa toho, čo joby NAOZAJ použili, prah sklonu, bbox,
+dátum a číslo behu. Vrstva, ktorá tam nie je, sa píše tiež (`bez_skal`).
+Kopíruje sa to z `manifest.json`, ktorý tie fakty už nesie.
+
+**Rýchly test má v mene `test4km2`** – inak by mapa zo 4 km² vyzerala ako celá
+a navyše by tú celú prepísala. Publikuje sa len mapa, ktorá prešla kontrolou
+pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
 ## Než niečo pushneš
 
