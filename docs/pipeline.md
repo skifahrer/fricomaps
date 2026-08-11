@@ -1,7 +1,7 @@
 # Pipeline: od OSM dát po mapu v prehliadači
 
 Tento dokument popisuje, čo robí každý krok, aké formáty medzi sebou putujú
-a **prečo** je to práve takto. Stručný prehľad je v [README](../README.md);
+a **prečo** je to práve takto. Stručný prehľad je v [README](../workers/README.md);
 tu je detail.
 
 ---
@@ -30,7 +30,7 @@ obraz na displeji
 Kľúčové je, že **dáta a vzhľad sú oddelené**. Dlaždice hovoria „tu je cesta
 triedy `primary`", štýl hovorí „cesty `primary` kresli oranžovo, 6 px, od
 zoomu 6". Zmena farieb preto nevyžaduje prepočet dlaždíc – to je celý základ
-[developer módu](../README.md#developer-mode--ladenie-mapy-v-prehliadači).
+[developer módu](../workers/README.md#developer-mode--ladenie-mapy-v-prehliadači).
 
 ---
 
@@ -1448,7 +1448,7 @@ niekoľko MB. Predvolený typ (turistická) sa zapíše aj pod pôvodným menom
 napríklad smoke test a staršie verzie iOS aplikácie.
 
 Sem sa zároveň zapečú [úpravy z developer
-módu](../README.md#cesta-úprav-do-zdrojáku) (`poc/web/style-overrides.json`)
+módu](../workers/README.md#cesta-úprav-do-zdrojáku) (`poc/web/style-overrides.json`)
 – farby, viditeľnosť vrstiev, rozsahy zoomu, druhy čiar, vzory, okraje, sada
 ikoniek a tieňovanie reliéfu, a to aj tie, ktoré platia len pre jeden typ
 mapy (`maps.<typ>`).

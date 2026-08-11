@@ -6,7 +6,7 @@ Pokyny pre Clauda (a poznámky pre ľudí) k tomuto repozitáru.
 
 Mapová aplikácia: vektorové mapy Slovenska z OSM dát. Jedna pipeline, jeden
 formát (PMTiles), spoločné štýly pre web aj mobil. Detailne
-[`README.md`](README.md), a čo robí každý krok pipeline –
+[`workers/README.md`](workers/README.md), a čo robí každý krok pipeline –
 [`docs/pipeline.md`](docs/pipeline.md), 1700 riadkov. **Prečítaj tú kapitolu,
 ktorej sa dotýkaš, skôr než čokoľvek zmeníš.** Väčšina neintuitívnych vecí tam
 má napísané, prečo je taká, a k tomu číslo behu, ktorý ju spôsobil.
