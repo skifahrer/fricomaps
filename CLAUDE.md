@@ -379,6 +379,7 @@ PY
 python3 workers/plan/area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tatry
 python3 workers/dem/target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
 python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
+python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/drive/store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
@@ -394,7 +395,9 @@ existenciu `needs.*.outputs.*` a `steps.*.outputs.*`, to, že každý
 cache ostane na Drive (žiadne `actions/cache`, každý cache krok sa vie
 prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
 (`workers/lint/publishing.py`), že **každá výplň v štýle nad vrstvou so
-zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že sa
+zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že
+**„v tomto stupni terén nie je" nerozhodne vzorkovaná štatistika a že sa tá
+odpoveď podpíše** (`workers/lint/dem-empty.py`), že sa
 ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
 v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`
 by ticho vypol kontroly, ktoré cesty hľadajú vzorom). **Keď

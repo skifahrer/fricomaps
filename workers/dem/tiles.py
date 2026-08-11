@@ -37,6 +37,14 @@ Bez `--window` sa nič nemení: vstupom je celý produkt (Sonny 20 m má jeden
 GeoTIFF na krajinu), takže je pravdivá každá dlaždica, ktorú z neho vyrežeme,
 a prázdne sa zahadzujú ako doteraz.
 
+„PRÁZDNY STUPEŇ" SA NESMIE POVEDAŤ OD OKA. Je to odpoveď na celý život tej
+dlaždice – kým leží v sklade, nikto ten stupeň už neprečíta. Rozhoduje o nej
+preto `has_elevations` presným priechodom, nie vzorkovaním (`-approx_stats`
+prehliadlo Devín a Záhorie a odrezalo pol Bratislavského kraja rovnou líniou
+na 17. poludníku, beh 31526268289), a hotová prázdna dlaždica sa PODPÍŠE
+verziou tej kontroly (`EMPTY_CHECK` v metadátach). Odpoveď od kontroly, ktorej
+už neveríme, zahodí `workers/dem/coverage.py` a stupeň sa prečíta znova.
+
 Použitie:
     python3 workers/dem/tiles.py --out tiles/ Slovakia_20m.tif [ďalšie.tif …]
     python3 workers/dem/tiles.py --out tiles/ --window=21,49,22,50 nation.tif
@@ -53,22 +61,74 @@ import sys
 # súborov .aux.xml, ktoré by sa potom viezli do releasu ako smetie.
 NO_PAM = {**os.environ, "GDAL_PAM_ENABLED": "NO"}
 
+# PRÁZDNA DLAŽDICA NESIE, KTO JU VYHLÁSIL ZA PRÁZDNU. „V tomto stupni terén
+# nie je" je odpoveď, ktorej ďalšie behy VERIA – nikto ten stupeň už nikdy
+# neprečíta. Preto do nej ide pečiatka s verziou kontroly, ktorá tú vetu
+# vyslovila: keď sa kontrola zmení, zmení sa aj verzia a `dem/coverage.py`
+# staré prázdne dlaždice zo skladu vyhodí, nech sa ten stupeň prečíta znova.
+# Je to to isté pravidlo ako `v2` v kľúči cache alebo `_test4` v kľúči výrezu –
+# odpoveď z pravidiel, ktorým už neveríme, sa nesmie tváriť ako dnešná.
+EMPTY_PX = 60                  # strana prázdnej dlaždice v pixeloch
+EMPTY_TAG = "EMPTY_CHECK"      # meno položky v metadátach GDALu
+# v1 = `-approx_stats` (vzorkovanie), v2 = vzorkovanie overené presným
+# priechodom. Prečo sa v1 zahadzuje, hovorí `has_elevations` nižšie.
+EMPTY_CHECK = "v2-presne"
 
-def gdalinfo(path, stats=False):
-    cmd = ["gdalinfo", "-json"] + (["-approx_stats"] if stats else []) + [path]
+
+def gdalinfo(path, stats=""):
+    """`stats`: prázdne = bez štatistiky, `approx` = vzorkovaná, `exact` = presná."""
+    flag = {"": [], "approx": ["-approx_stats"], "exact": ["-stats"]}[stats]
+    cmd = ["gdalinfo", "-json"] + flag + [path]
     out = subprocess.run(
         cmd, capture_output=True, text=True, check=True, env=NO_PAM
     ).stdout
     return json.loads(out)
 
 
-def elevation_range(path):
-    """(min, max) výšok, alebo None, keď v rastri nie je ani jeden platný pixel."""
+def elevation_range(path, exact=False):
+    """(min, max) výšok, alebo None, keď sa ani jeden platný pixel nenašiel.
+
+    `exact=False` je vzorkovaná odpoveď – lacná, ale smie sa z nej robiť len
+    záver „výšky TU SÚ". Záver „nie sú" z nej robiť NEMOŽNO (viď
+    `has_elevations`).
+    """
     try:
-        b = gdalinfo(path, stats=True)["bands"][0]
+        b = gdalinfo(path, stats="exact" if exact else "approx")["bands"][0]
         return b["minimum"], b["maximum"]
     except Exception:
         return None
+
+
+def has_elevations(path):
+    """Je v rastri aspoň jedna platná výška? Odpoveď MUSÍ byť presná.
+
+    `-approx_stats` číta len každý n-tý blok (n ≈ √počet blokov), takže pri
+    štvorcovom rastri prejde po uhlopriečke. Keď terén leží mimo nej – a to je
+    presne pohraničný stupeň, kde krajina zaberá roh – vzorkovanie NENÁJDE NIČ
+    a GDAL povie „no valid pixels found in sampling". Vyzerá to ako prázdny
+    stupeň, hoci v ňom je terén.
+
+    Presne tak zmizla polovica Bratislavského kraja (beh 31526268289):
+    `N48E016.tif` má Slovensko len v páse pri lon 16,83–17,0 (Devín, Záhorie),
+    čo je 7,8 % dlaždice, a vzorkovanie z 5041 blokov trafilo samé rakúske.
+    Dlaždica s 25 miliónmi platných buniek sa zahodila a do skladu išla
+    prázdna – takže vrstevnice, skaly aj tieňovanie skončili rovnou líniou na
+    17. poludníku a beh bol zelený. Overené na napodobenine: 18 084² px,
+    ten istý pás, `approx` „no valid pixels", presný priechod nájde výšky.
+
+    Preto sa vzorkovanie používa ako RÝCHLA ODPOVEĎ „áno" a jeho „nie" sa vždy
+    overí presným priechodom. Ten je drahý (prečíta celý raster), ale platí sa
+    len za dlaždice, ktoré vyzerajú prázdne – a to je práve tam, kde by omyl
+    stál celú polovicu mapy.
+    """
+    rng = elevation_range(path)
+    if rng is not None:
+        return rng
+    rng = elevation_range(path, exact=True)
+    if rng is not None:
+        print(f"  (vzorkovanie v {os.path.basename(path)} výšky nenašlo, "
+              f"presný priechod áno: {rng[0]:.1f} … {rng[1]:.1f} m)")
+    return rng
 
 
 def wgs84_bounds(info):
@@ -185,13 +245,18 @@ def plan_tiles(bounds, window, dlon, dlat):
     return write, partial
 
 
-def empty_tile(dst, lon, lat, dtype, nodata, px=60):
+def empty_tile(dst, lon, lat, dtype, nodata, px=EMPTY_PX):
     """Prázdna dlaždica pre celý stupeň – „pozerali sme sa a nič tu nie je".
 
     Píše sa cez VRT bez zdroja (vrstva bez zdrojov číta svoje `NoDataValue`
     všade), takže vznikne bez ohľadu na to, kam raster dosiahol, a má kilobajty
     namiesto stoviek – mriežka je zámerne hrubá, v celej dlaždici aj tak nie je
     ani jedna výška.
+
+    PODPÍŠE SA POD TO. Do metadát ide `EMPTY_CHECK` s verziou kontroly, ktorá
+    o prázdnote rozhodla (rozpis pri konštantách hore). Bez podpisu sa nedá
+    povedať, či je to poctivá odpoveď, alebo omyl vzorkovania z v1 – a taká
+    dlaždica v sklade znamená stupeň, ktorý už nikto nikdy neprečíta.
 
     A OVERÍ SA, ŽE JE NAOZAJ PRÁZDNA. Keby VRT bez zdrojov vrátil nuly namiesto
     nodaty, ležala by v sklade dlaždica s výškou 0 m po celom stupni – a nula je
@@ -212,6 +277,7 @@ def empty_tile(dst, lon, lat, dtype, nodata, px=60):
     try:
         subprocess.run(
             ["gdal_translate", "-q", "-of", "GTiff", "-a_nodata", repr(nd),
+             "-mo", f"{EMPTY_TAG}={EMPTY_CHECK}",
              "-co", "COMPRESS=DEFLATE", vrt, dst],
             check=True, env=NO_PAM)
     except subprocess.CalledProcessError as exc:
@@ -221,7 +287,7 @@ def empty_tile(dst, lon, lat, dtype, nodata, px=60):
         return False
     finally:
         os.remove(vrt)
-    if elevation_range(dst) is not None:
+    if elevation_range(dst, exact=True) is not None:
         os.remove(dst)
         print(f"::warning::Prázdna dlaždica {os.path.basename(dst)} nevyšla "
               f"prázdna (GDAL do nej dal hodnoty namiesto nodaty) – radšej ju "
@@ -299,7 +365,7 @@ def main():
     # Keby boli výšky v iných jednotkách (decimetre, stopy) alebo by sa
     # nerozbalila škála, prejaví sa to tu – a nie až tak, že mapa bude samá
     # skala, lebo sklon vyjde desaťkrát väčší.
-    rng = elevation_range(src)
+    rng = has_elevations(src)
     if rng:
         lo, hi = rng
         print(f"Výšky v zdroji: {lo:.1f} … {hi:.1f} m")
@@ -333,7 +399,10 @@ def main():
         if nodata is not None:
             cmd += ["-dstnodata", repr(nodata)]
         subprocess.run(cmd + [src, dst], check=True)
-        if elevation_range(dst) is None:
+        # `has_elevations`, nie `elevation_range`: vzorkovanie tu smie povedať
+        # len „výšky sú". Jeho „nie sú" znamená zahodiť hotovú dlaždicu, a to
+        # sa musí overiť presne (rozpis pri tej funkcii, beh 31526268289).
+        if has_elevations(dst) is None:
             if window is None:
                 # celá dlaždica je nodata – do skladu nemá čo pridať
                 os.remove(dst)
@@ -343,9 +412,15 @@ def main():
             # doplnenie nepýta v každom builde znova – a prepíše sa za hrubú,
             # nech nezaberá stovky megabajtov nodaty.
             os.remove(dst)
+            # Koľko z toho stupňa raster vôbec pretínal: prázdny stupeň, do
+            # ktorého raster siahal na polovicu, je podozrivý – a z logu má
+            # byť vidieť rozdiel medzi „sme za hranicou" a „niečo je zle".
+            over = (max(0.0, min(lon + 1, e) - max(lon, w))
+                    * max(0.0, min(lat + 1, n) - max(lat, s))) * 100.0
             if empty_tile(dst, lon, lat, dtype, nodata):
                 empty.append(name)
-                print(f"  ○ {name} (prečítaný celý, výšky v ňom nie sú)")
+                print(f"  ○ {name} (prečítaný celý, výšky v ňom nie sú; "
+                      f"raster pretínal {over:.0f} % stupňa)")
             continue
         made.append(name)
         print(f"  ✓ {name}")

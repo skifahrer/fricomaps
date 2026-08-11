@@ -1045,6 +1045,50 @@ celého stupňa aj vtedy, keď je v nej terén len na pätine plochy (pohraničn
 stupeň alebo prázdna dlaždica). Lož má rozsah pár pixelov. Rozsah teda tie dva
 prípady oddelí presne, kým „koľko je v nej nodaty" ich zlieva.
 
+##### A ako sa porušil druhý raz: prázdny stupeň, ktorý prázdny nebol
+
+Bratislavský kraj (beh
+[31526268289](https://github.com/skifahrer/maptiles/actions/runs/31526268289))
+vyšiel s vrstevnicami, skalami aj tieňovaním **odrezanými rovnou líniou na 17.
+poludníku** – na Devíne, Devínskej Kobyle a celom Záhorí nebolo nič. Beh bol
+zelený, pokrytie hlásilo `100.0 %` a v sklade ležali obe dlaždice, ktoré kraj
+potrebuje. Len tá západná mala **500 bajtov**:
+
+```
+  ○ N48E016 (prečítaný celý, výšky v ňom nie sú)
+  ✓ N48E017
+  N48E016.tif   0 MB      N48E017.tif   548 MB
+```
+
+Terén v tom stupni pritom je. Rozhodovalo o tom `gdalinfo -approx_stats`, ktoré
+číta len **každý n-tý blok** (n ≈ √počet blokov) – v štvorcovej dlaždici teda
+prejde po uhlopriečke. Stupeň `N48E016` je od 16° do 17° v. d., ale Slovensko
+v ňom leží len v páse pri východnom okraji (16,83–17,0), čo je **7,8 % plochy**.
+Uhlopriečka cez 5041 blokov trafila samé rakúske; GDAL povedal „no valid pixels
+found in sampling", `elevation_range()` z toho urobilo `None` a hotová dlaždica
+s 25 miliónmi platných buniek sa zahodila a nahradila prázdnou.
+
+Overené na napodobenine (18 084² px, ten istý pás): `-approx_stats` nenájde nič
+na GDAL 3.8 aj 3.10, presný priechod nájde výšky – a `dem/tiles.py` z pred
+opravy z toho napíše tých istých 500 bajtov, po oprave 6 MB dlaždicu.
+
+A bolo to **doživotné**: prázdna dlaždica je legitímna odpoveď („pozerali sme
+sa a nič tu nie je“), takže má poctivý rozsah celého stupňa, pokrytie ju počíta
+a `dem/check.sh` ju v sklade vidí podľa mena. Ten stupeň by už nikto nikdy
+neprečítal.
+
+| kde | čo sa zmenilo |
+|---|---|
+| [`dem/tiles.py`](dem/tiles.py) `has_elevations()` | vzorkovanie smie povedať len „výšky SÚ“; jeho „nie sú“ (= zahodiť hotovú dlaždicu) sa vždy overí **presným** priechodom. Platí sa len za dlaždice, ktoré vyzerajú prázdne |
+| [`dem/tiles.py`](dem/tiles.py) `empty_tile()` | prázdna dlaždica sa **podpíše** verziou kontroly (`EMPTY_CHECK` v metadátach GDALu) – odpoveď z pravidiel, ktorým už neveríme, sa nesmie tváriť ako dnešná |
+| [`dem/coverage.py`](dem/coverage.py) | nepodpísaná (alebo staro podpísaná) prázdna dlaždica je **lož ako každá iná** → zmaže sa zo skladu a ďalší beh ten stupeň prečíta znova. Sklad sa tým vylieči sám, len to chce dva behy |
+| [`dem/fetch.sh`](dem/fetch.sh) | prázdne stupne sa vypisujú **vždy**, aj keď je pokrytie 100 % – inak sa „prečo tam nie sú vrstevnice“ hľadá v mape a nie v logu |
+| [`lint/dem-empty.py`](lint/dem-empty.py) | stráži, že o prázdnote nerozhoduje vzorkovanie, že sa podpis naozaj píše a že `coverage.py` má o prázdnej dlaždici tú istú predstavu ako `tiles.py` |
+
+Skál sa to netýkalo: pri `rock_source: dmr5` si sklon číta
+[`contours-rocks/slope-chunks.py`](contours-rocks/slope-chunks.py) z Drive po
+častiach a dlaždicovú podobu vôbec nepoužíva.
+
 #### Výstup je vstup pre Build map
 
 Toto je celý zmysel workflowu — čo z neho vypadne, z toho vie `Build map`

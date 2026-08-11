@@ -501,6 +501,15 @@ jobs:
       - name: Katalóg máp drží tvar a nikto ho neobchádza
         run: python3 workers/lint/catalog.py
 
+      # „V tomto stupni terén nie je" je doživotná odpoveď – kým prázdna
+      # dlaždica leží v sklade, ten stupeň už nikto neprečíta. Keď ju vysloví
+      # vzorkovaná štatistika, je beh zelený a v mape chýba pol kraja: presne
+      # tak zmizli vrstevnice, skaly aj tieňovanie západne od 17. poludníka
+      # v Bratislavskom kraji (beh 31526268289). Rozpis:
+      # `workers/lint/dem-empty.py`.
+      - name: Prázdny stupeň sa overuje presne a podpisuje sa
+        run: python3 workers/lint/dem-empty.py
+
       # Dno zoomu vrstevníc a skál je napísané dvakrát a inak to nejde: schéma
       # Planetilera rozhoduje, čo sa VYROBÍ, štýl, čo sa NAKRESLÍ. Keď sa tie
       # čísla rozídu, nikto nič nepovie – buď platíme dlaždice, ktoré nikto

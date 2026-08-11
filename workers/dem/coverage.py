@@ -17,13 +17,23 @@ rozsah presne celého stupňa aj vtedy, keď je v nej terén len na pätine ploc
 je"). Lož má rozsah pár pixelov. Rozsah teda tie dva prípady oddelí presne,
 kým „koľko je v nej nodaty" ich zlieva.
 
+DRUHÝ DRUH LŽI: PRÁZDNA DLAŽDICA OD KONTROLY, KTOREJ UŽ NEVERÍME. Rozsah má
+poctivý (celý stupeň), a predsa je to nepravda – `N48E016.tif` z behu
+31526268289 tvrdila, že v stupni s Devínom a Záhorím nie je terén, lebo ho
+vzorkovaná štatistika prehliadla. Vrstevnice, skaly aj tieňovanie Bratislavského
+kraja preto skončili rovnou líniou na 17. poludníku a pokrytie tu vyšlo 100 %.
+Prázdna dlaždica sa odvtedy podpisuje verziou kontroly (`EMPTY_CHECK`
+v `workers/dem/tiles.py`); nepodpísaná – alebo podpísaná verziou, ktorú sme
+zahodili – je LOŽ ako každá iná a zo skladu ide preč.
+
 Použitie:
     python3 workers/dem/coverage.py --bbox=19.865,48.745,22.585,49.48 \\
         --dir=dem/dmr5/tiles [--min-pct=95] [--out=cov.txt]
 
 Vypisuje `key=value` (aj do `--out`):
     covered_pct=97.5          koľko z bboxu pokrývajú rozsahy dlaždíc
-    liars=N48E021.tif …       dlaždice, ktoré nepokrývajú svoj stupeň
+    liars=N48E021.tif …       dlaždice, ktoré nesplnili, čo sľubuje ich meno
+    empty=N47E016 …           stupne, kde sa pozeralo a terén v nich nie je
     missing=N48E019 …         stupne bboxu, na ktoré nie je ani jedna dlaždica
 Návratový kód 1 = pokrytie je pod `--min-pct` (volajúci sa rozhodne, čo s tým).
 """
@@ -34,20 +44,48 @@ import os
 import subprocess
 import sys
 
+# Ako vyzerá prázdna dlaždica a ktorá kontrola ju smela vyhlásiť za prázdnu,
+# vie JEDNO miesto – ten, kto ju píše. Druhá predstava o tom istom by sa raz
+# rozišla a tu by z toho bolo „mažem zo skladu všetko" alebo „neverím ničomu".
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tiles  # noqa: E402
+
 # Koľko zo svojho stupňa musí dlaždica pokrývať, aby jej meno nebolo lož.
 # Poctivá dlaždica má 100 % (píše ju `workers/dem/tiles.py` s `-te` na celý
 # stupeň); tolerancia je na polpixel a na zaokrúhlenie v hlavičke.
 HONEST_PCT = 99.0
 
 
-def tile_extent(path):
-    """(w, s, e, n) dlaždice v stupňoch, alebo None keď sa to nedá zistiť."""
+def tile_info(path):
+    """`gdalinfo -json` dlaždice, alebo None keď sa nedá prečítať.
+
+    Jedno volanie na dlaždicu: rozsah aj podpis prázdnoty sú v tej istej
+    odpovedi a druhý `gdalinfo` by za ne len znova zaplatil.
+    """
     try:
-        info = json.loads(subprocess.run(
+        return json.loads(subprocess.run(
             ["gdalinfo", "-json", path], capture_output=True, text=True,
             check=True, env={**os.environ, "GDAL_PAM_ENABLED": "NO"}).stdout)
     except (subprocess.CalledProcessError, json.JSONDecodeError, OSError):
         return None
+
+
+def empty_stamp(info):
+    """Podpis prázdnej dlaždice, alebo None keď to prázdna dlaždica nie je.
+
+    Prázdnu dlaždicu poznať po mriežke: `workers/dem/tiles.py` jej dáva
+    zámerne hrubých `EMPTY_PX` pixelov na stranu, kým skutočná 1° dlaždica má
+    tisíce (Sonny 20 m ~5 500, DMR 5.0 na 5 m ~18 000). Čo je také malé, je
+    záznam „pozerali sme sa", nie výškový model – a vtedy sa pýtame na podpis.
+    Bez podpisu vráti prázdny reťazec, teda „napísala to kontrola v1".
+    """
+    if (info.get("size") or [])[:2] != [tiles.EMPTY_PX, tiles.EMPTY_PX]:
+        return None
+    return ((info.get("metadata") or {}).get("", {})).get(tiles.EMPTY_TAG, "")
+
+
+def extent_of(info):
+    """(w, s, e, n) dlaždice v stupňoch, alebo None keď sa to nedá zistiť."""
     ext = info.get("wgs84Extent") or {}
     pts = []
 
@@ -131,11 +169,24 @@ def main():
         print("::error::coverage.py nedostal ani jednu dlaždicu.")
         return 2
 
-    good, liars = [], []
+    good, liars, empty = [], [], []
     for p in sorted(set(paths)):
         name = os.path.basename(p)
-        ext = tile_extent(p)
+        info = tile_info(p)
+        ext = extent_of(info) if info else None
         deg = degree_of(name)
+        stamp = empty_stamp(info) if info else None
+        if stamp is not None and stamp != tiles.EMPTY_CHECK:
+            # Prázdna dlaždica od kontroly, ktorej už neveríme. Rozsah má
+            # v poriadku, takže inak by prešla – a stupeň, ktorý v skutočnosti
+            # terén má, by sa už nikdy neprečítal (beh 31526268289).
+            liars.append(name)
+            print(f"  ✗ {name} je prázdna dlaždica z kontroly "
+                  f"„{stamp or 'v1 (nepodpísaná)'}“, dnes platí "
+                  f"„{tiles.EMPTY_CHECK}“ – ten stupeň sa musí prečítať znova")
+            continue
+        if stamp is not None:
+            empty.append(name)
         if ext is None:
             # Rozsah sa nedá zistiť (gdalinfo zlyhal, chýba projekcia). Beriem
             # ju ako platnú – a to znamená aj započítať ju do pokrytia podľa
@@ -171,11 +222,17 @@ def main():
     pct = covered_pct(bbox, good)
     lines = [f"covered_pct={pct:.1f}",
              "liars=" + " ".join(liars),
+             "empty=" + " ".join(empty),
              "missing=" + " ".join(missing)]
     print(f"Pokrytie územia {args.bbox}: {pct:.1f} % z {len(good)} dlaždíc"
           + (f", {len(liars)} nepoctivých" if liars else ""))
     if missing:
         print(f"  bez dlaždice: {' '.join(missing)}")
+    if empty:
+        # Prázdna dlaždica sa do pokrytia počíta (stupeň JE prečítaný), takže
+        # inak by o nej v logu nebolo ani slovo – a „prečo tam nie sú
+        # vrstevnice" by sa hľadalo v mape, nie v behu. Preto sa vypisuje vždy.
+        print(f"  prečítané a bez terénu: {' '.join(empty)}")
     text = "\n".join(lines) + "\n"
     if args.out:
         with open(args.out, "w") as f:
