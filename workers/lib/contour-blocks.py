@@ -92,6 +92,51 @@ def _suradnice(geom):
                 yield from ring
 
 
+def _plocha(geom):
+    """Plocha geometrie v m² (shoelace nad metrickými súradnicami).
+
+    Bez GDAL a bez závislostí – potrebuje sa len na porovnanie „koľko plochy
+    išlo do únie a koľko z nej vyšlo". Diery sa odčítajú, takže to zhruba
+    sedí aj na plochy s vnútornými prstencami.
+    """
+    def ring(body):
+        s = 0.0
+        for i in range(len(body) - 1):
+            x0, y0 = body[i][0], body[i][1]
+            x1, y1 = body[i + 1][0], body[i + 1][1]
+            s += x0 * y1 - x1 * y0
+        return abs(s) / 2.0
+
+    t, c = geom.get("type"), geom.get("coordinates")
+    if t == "Polygon":
+        prst = c or []
+        return ring(prst[0]) - sum(ring(r) for r in prst[1:]) if prst else 0.0
+    if t == "MultiPolygon":
+        spolu = 0.0
+        for poly in c or []:
+            if poly:
+                spolu += ring(poly[0]) - sum(ring(r) for r in poly[1:])
+        return spolu
+    return 0.0
+
+
+def plocha_suboru(path):
+    """Súčet plôch všetkých útvarov v GeoJSONSeq (m²)."""
+    spolu = 0.0
+    try:
+        with open(path) as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                try:
+                    spolu += _plocha(json.loads(line).get("geometry") or {})
+                except ValueError:
+                    continue
+    except FileNotFoundError:
+        return 0.0
+    return spolu
+
+
 def _dotyka_sa(geom, x0, y0, x1, y1, tol):
     """Siaha geometria na okraj okna (v súradniciach rastra)?"""
     for x, y in _suradnice(geom):
@@ -222,12 +267,26 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
     return out_dir, len(bloky)
 
 
-def zlep_svy(seq, tmp, *, klucovy_atribut="smin", heartbeat=30, label="švy"):
+def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
+             label="švy"):
     """Spojí plochy rozseknuté hranicou bloku. Vráti cestu k výsledku.
 
     Unionuje LEN útvary s `sev=1`, po triedach – inak by sa stena zlepila so
-    svahom. Keď spatialite chýba alebo príkaz zlyhá, beh pokračuje
-    s rozseknutými plochami a povie to nahlas.
+    svahom.
+
+    ÚNIA SA MÔŽE NEPODARIŤ A NEPOVIE TO NÁVRATOVÝM KÓDOM. `ST_Union` nad
+    obrysmi z `gdal_contour` padá na neplatných geometriách („TopologyException:
+    unable to assign free hole to a shell") – ogr2ogr pritom skončí ÚSPECHOM
+    a napíše prázdny súbor. Kým sa výsledok nekontroloval, zmizli s ním všetky
+    plochy, ktoré sa dotýkali hranice bloku: v behu 31434520563 to bolo 22
+    z 24 útvarov a z celých Vysokých Tatier ostalo 44 plôch so súhrnnou
+    plochou 0,00 km². Beh bol zelený a mapa bez skál.
+
+    Preto sa tu robia tri veci navyše:
+      * `ST_MakeValid` pred úniou – tá topologická chyba je práve o tom,
+      * výsledok sa PREPOČÍTA a keď je prázdny, únia sa zahodí,
+      * pri zahodení sa vracajú PÔVODNÉ útvary. Rozseknutá skala je horšia
+        mapa; žiadna skala je rozbitá mapa.
     """
     svy = os.path.join(tmp, "svy.geojsonl")
     zvysok = os.path.join(tmp, "bez-svov.geojsonl")
@@ -249,20 +308,44 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", heartbeat=30, label="švy"):
     print(f"  švy: {n_sev} plôch na hranici bloku, {n_ok} mimo – "
           f"zlepujem tie prvé", flush=True)
     zlep = os.path.join(tmp, "zlepene.geojsonl")
+    # `-a_srs`: súradnice sú metrické, ale GeoJSONSeq o tom nevie (z okna bloku
+    # sa `<SRS>` zámerne vyhodil). Bez tohto to GEOS počíta ako stupne a hlási
+    # `No SRS set on layer`.
+    srs_args = ["-a_srs", srs] if srs else []
+    chyba = None
     try:
-        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", zlep, svy,
+        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", zlep, svy, *srs_args,
                      "-dialect", "SQLITE", "-explodecollections",
                      "-sql", f"SELECT {klucovy_atribut}, "
-                             f"ST_Union(geometry) AS geometry "
+                             f"ST_Union(ST_MakeValid(geometry)) AS geometry "
                              f"FROM svy GROUP BY {klucovy_atribut}"],
                     label, tmp=zlep, every=heartbeat)
     except Exception as exc:
-        print(f"::warning::Švy sa nepodarilo zlepiť ({type(exc).__name__}) – "
-              f"plochy cez hranicu bloku ostanú rozseknuté a diery na tej "
-              f"hranici otvorené. Chýba spatialite? Mapa bude, len s rovnými "
-              f"rezmi v skalách.", flush=True)
+        chyba = f"{type(exc).__name__}"
+
+    # ÚSPECH OGR2OGR NESTAČÍ – a nerozhoduje ani POČET útvarov: zlepiť 22
+    # kúskov do jedného je práve zmysel únie. Rozhoduje PLOCHA. Únia smie
+    # plochu mierne zmenšiť (prekryvy sa spoja), ale nikdy nie zmiesť.
+    n_zlep = 0
+    if not chyba and os.path.exists(zlep):
+        with open(zlep) as f:
+            n_zlep = sum(1 for line in f if line.strip())
+    plocha_pred = plocha_suboru(svy)
+    plocha_po = plocha_suboru(zlep) if n_zlep else 0.0
+    stratene = (plocha_pred > 0 and plocha_po < plocha_pred * 0.5)
+    if chyba or not n_zlep or stratene:
+        preco = (f"({chyba})" if chyba else
+                 "(únia skončila prázdna – hľadaj v logu `TopologyException`)"
+                 if not n_zlep else
+                 f"(z {plocha_pred/1e6:.2f} km² ostalo {plocha_po/1e6:.2f} km²)")
+        print(f"::warning::Zlepenie švov stratilo plochu {preco}"
+              + f". Vraciam {n_sev} pôvodných plôch nezlepených: budú rozseknuté "
+              f"na hraniciach blokov a diery na nich otvorené, ale BUDÚ. "
+              f"Chýba spatialite?", flush=True)
         return seq
 
+    print(f"  švy: {n_sev} plôch zlepených na {n_zlep} "
+          f"({plocha_pred/1e6:.2f} → {plocha_po/1e6:.2f} km²)", flush=True)
     spolu = os.path.join(tmp, "zlepene-spolu.geojsonl")
     with open(spolu, "w") as fo:
         for src in (zvysok, zlep):
