@@ -149,6 +149,14 @@ Rovnaká celková plocha skál, ale z metrových dát je z nej **2,5× viac
 polámaných kúskov s hrubším obrysom**. Viac polygónov tu teda neznamená viac
 detailu, ale viac šumu.
 
+**1″ model sa dá zvoliť** – je vo výberoch ako `sonny1` (sklad `dem-sonny1`,
+[priečinok na Drive](https://drive.google.com/drive/folders/1FCXPutDU6DvnTEA4PY6iFOQKiuVd11j4)).
+Predvolený nie je a podľa tabuľky vyššie ani nemá byť: na skaly je `sonny`
+lepší a `dmr5` ešte lepší. Zmysel dáva tam, kde 20m model nesiaha, alebo keď
+si chceš to porovnanie zopakovať. Doplní sa ako ktorýkoľvek iný zdroj – buď
+sám (`Build map` si ho vypýta), alebo ručne cez *Stiahnuť výškové dáta* so
+`what: sonny1`.
+
 Sonny distribuuje dáta cez **Google Drive**, z ktorého sa v každom builde
 sťahovať nedá (nemá stabilné priame URL a pri väčšom počte stiahnutí vracia
 limit). Preto je medzi tým **zrkadlo v releasi**:

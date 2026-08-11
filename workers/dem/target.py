@@ -63,8 +63,8 @@ _DATA = os.path.join(_WORKERS, "data")     # číselníky (areas, regions, zdroj
 
 # Meno skladu sa dá prebiť z prostredia – workflow si ich drží ako env, aby
 # sa dal celý build presmerovať na testovací sklad bez zmeny v JSONe.
-ENV_TILES = {"sonny": "DEM_STORE", "dmr35": "DMR35_STORE",
-             "dmr5": "DMR5_STORE"}
+ENV_TILES = {"sonny": "DEM_STORE", "sonny1": "SONNY1_STORE",
+             "dmr35": "DMR35_STORE", "dmr5": "DMR5_STORE"}
 ENV_AREA = {"dmr5": "UGKK_STORE"}
 
 # Zdroje, ktoré majú aj výrezovú podobu (jeden COG na pohorie v plnom
