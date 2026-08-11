@@ -506,8 +506,22 @@ if [ "$OPT_ROCKS" = 'true' ]; then
   # Výrez je v mene súboru: skaly len z Tatier sa nesmú nabudúce
   # vydávať za skaly celého kraja.
   ROCK_ASSET="rock-${REGION_KEY}-${AREA_KEY}-${ROCK_DEM_USED:-none}-s${ROCK_SLOPE}-g${RR}-${ROCK_ALGO}.gpkg.zst"
+  # TESTOVACÍ BEH SA SKLADU NESMIE DOTKNÚŤ. Pri `area: cely_region` totiž kľúč
+  # výrezu ostáva `cely` aj v teste (prípona `_test4` by prepla podobu DMR 5.0
+  # – viď workers/plan/area.py), takže by testovacie skaly zo 4 km² ležali
+  # v sklade pod menom skál CELÉHO KRAJA a ďalší ostrý beh by si ich stiahol
+  # ako hotové. To je ten istý druh tichého omylu ako dlaždica, ktorá sľubuje
+  # celý stupeň – meno musí hovoriť, čo v súbore naozaj je. Sklad častí sklonu
+  # to má rovnako (`--no-store` nižšie), lebo tam ide o to isté.
+  ROCK_STORE_OK=1
+  if [ "${OPT_TEST_KM2:-0}" != '0' ]; then
+    ROCK_STORE_OK=""
+    echo "Rýchly test (${OPT_TEST_KM2} km²): skaly sa do skladu $ROCK_STORE neukladajú ani sa z neho neberú – ostrý beh by ich inak vydával za celý výrez."
+  fi
   if [ -n "$ROCK_READY" ]; then
     : # skaly už sú (z tieňovania) – DEM sa na ne vôbec nečíta
+  elif [ -z "$ROCK_STORE_OK" ]; then
+    : # testovací beh – počíta sa nanovo a nikam sa to neodkladá
   elif [ "$OPT_ROCKS_REBUILD" = 'true' ]; then
     echo "rocks_rebuild=áno – zahadzujem uloženú verziu a počítam nanovo."
     python3 workers/drive/store.py --rm --store="$ROCK_STORE" \
@@ -596,7 +610,10 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       echo "::error::Výpočet skál sa nedal dokončiť – zadanie je nad možnosti runnera (viď hlášky vyššie: pamäť alebo počet častí). Uprav rock_res alebo area a spusti znova."
       exit 1
     fi
-    if [ "$RC" -eq 0 ]; then
+    if [ "$RC" -eq 0 ] && [ -z "$ROCK_STORE_OK" ]; then
+      ls -lh data/rock.gpkg
+      echo "Do skladu $ROCK_STORE sa neukladá – je to rýchly test."
+    elif [ "$RC" -eq 0 ]; then
       ls -lh data/rock.gpkg
       # Ulož ich, nech ich nabudúce netreba počítať znova. Zlyhanie
       # uloženia NESMIE zhodiť beh – skaly sú spočítané a v `rock.gpkg`.
