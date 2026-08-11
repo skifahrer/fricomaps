@@ -337,13 +337,23 @@ najvyššom zoome bez zjednodušovania geometrie
 v jamách teda ostávajú. Nižšie zoomy si Planetiler zjednodušuje sám, inak by
 z vrstevníc bola čierna plocha.
 
-`level` riadi, čo je vidieť kedy: hlavné vrstevnice od **z1**, polovičné od
+`level` riadi, čo je vidieť kedy: hlavné vrstevnice od **z11**, polovičné od
 z12, základné od z13, popisky výšky pozdĺž hlavných od z13. To je celé to
-„zjednodušene na malých mierkach": pod z12 je v mape len hlavná vrstevnica,
-a Planetiler ju má na každom zoome zjednodušenú podľa veľkosti pixela, takže
-z1–z9 je v súbore stotinou toho, čo zaberá jeden detailný zoom. Výsledok je
-nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice závisia len od
-územia, takže sa pri ďalšom builde mapy nepočítajú znova.
+„zjednodušene na malých mierkach": od z11 do z12 je v mape **len jedna trieda**
+(hlavná vrstevnica, pri intervale 5 m po 50 m) a Planetiler ju má na každom
+zoome zjednodušenú podľa veľkosti pixela.
+
+**Pod z11 nie sú vrstevnice v mape vôbec – ani sa nedláždia.** Kedysi šla hlavná
+trieda až od z1 („tvar pohoria je čitateľný aj z prehľadu"), lenže na tej mierke
+sa nedá prečítať ani jedna čiara, z celej vrstvy je sivý závoj a dlaždice s ním
+si prehliadač aj tak stiahne. To isté dno má aj vrstva skál. Číslo je na dvoch
+miestach – `min_zoom` v [`contours-rocks/contours.yml`](contours-rocks/contours.yml)
+(čo sa vyrobí) a `minzoom` vrstvy v `poc/web/themes.js` (čo sa nakreslí) – a keď
+sa rozídu, nikto nič nepovie: buď platíme dlaždice, ktoré nikto nevidí, alebo je
+v mape diera. Stráži to [`lint/zoom-floor.py`](lint/zoom-floor.py).
+
+Výsledok je nacacheovaný podľa bboxu, zdroja výšok a intervalu — vrstevnice
+závisia len od územia, takže sa pri ďalšom builde mapy nepočítajú znova.
 
 Ovládanie vo workflowe: `contours` (zap/vyp), `contour_interval` (default
 5 m; zvýrazňuje sa každá 10. čiara ako hlavná a každá 5. ako polovičná, čiže
@@ -772,6 +782,16 @@ dlaždice mimo neho ani nepýtajú.
 Kľúč dostane príponu `_test4`, takže si testovací beh **nesadne do tej istej
 cache ani na tie isté uložené výsledky** ako ostrý.
 
+**Pri `area: cely_region` tá prípona nie je** – kľúč ostáva `cely`, lebo je to
+sentinel („žiadny výrez") a prípona by prepla podobu DMR 5.0 z dlaždíc na výrez
+v plnom rozlíšení (rozpis v [`plan/area.py`](plan/area.py)). Cache to nemieša
+(v jej kľúči je bbox výpočtu, teda bbox štvorca), ale **sklad hotových skál by
+áno**: meno `rock-presovsky-cely-…gpkg.zst` by nieslo skaly zo 4 km² a ostrý
+beh by si ich stiahol ako hotové skaly celého kraja. Testovací beh preto do
+skladu skál ani sklonu **nesiaha** – ani neukladá, ani neberie
+([`contours-rocks/build.sh`](contours-rocks/build.sh)). Je to tá istá vec ako
+dlaždica, ktorá sľubuje celý stupeň: meno musí hovoriť, čo v súbore naozaj je.
+
 **Testovací beh pregenerúva vždy všetko**, aj keď je `rebuild: nic`. Ladíš
 ním prah, interval alebo kód – a keby sa výsledok vrátil z cache, videl by si
 to, čo vyšlo naposledy, a ladil by si ducha. Kľúč cache síce nesie nastavenia
@@ -995,6 +1015,35 @@ Dlaždice sa dopĺňajú **po celých stupňoch**: meno `N49E020.tif` je sľub o
 stupni a build si ju podľa mena hľadá, takže polovičná dlaždica by v ďalšom
 behu prešla kontrolou a tieňovanie by ticho skončilo v polovici mapy. Stojí to
 rádovo pol hodiny a ~2 GB z Drive na stupeň – ale raz.
+
+##### Ako sa ten sľub raz porušil (a čím sa to drží)
+
+Prevod do WGS84 okno **vydúva**: z okna `21,49…22,50` v EPSG:3046 vyšel raster
+`21.000,48.996 … 22.013,49.628`, takže doň spadli aj tri cudzie stupne po pár
+set metroch. Krájanie sa vtedy riadilo rozsahom rastra, takže z nich vyrobilo
+dlaždice a do skladu `dem-dmr5` išli ako `N48E021.tif` (6 MB), `N48E022.tif`
+(5 MB) a `N49E020.tif` (5 MB) – vedľa poctivej `N49E021.tif` (253 MB). Mená
+tvrdili celé stupne.
+
+Ďalší beh na celý Prešovský kraj potom videl „dlaždíc pre bbox 8, v sklade 6 →
+doplniť: false", zlepil mozaiku, ktorá pokrývala **48 % kraja**, a vrstevnice
+aj tieňovanie z nej vyšli v jednom štvorci (`lon 20,0–22,0`, `lat 49,0–49,5`).
+Beh bol zelený a v súhrne stálo „Vrstevnice: áno". Behy
+[31476448895](https://github.com/skifahrer/fricomaps/actions/runs/31476448895)
+→ [31484544154](https://github.com/skifahrer/fricomaps/actions/runs/31484544154).
+
+Držia to teraz tri veci, každá na inom mieste:
+
+| kde | čo |
+|---|---|
+| [`dem/tiles.py`](dem/tiles.py) `--window` | ukladá LEN stupne, ktoré volajúci prečítal celé; stupeň v okne bez výšok uloží **prázdny** (záznam „pozerali sme sa a nič tu nie je") |
+| [`dem/check.sh`](dem/check.sh) | pri `dmr5` dopĺňa **každú** chýbajúcu dlaždicu, nie „až keď nie je ani jedna" – a pýta si obálku chýbajúcich stupňov, nie celý bbox |
+| [`dem/coverage.py`](dem/coverage.py) | pri sťahovaní meria **rozsah** dlaždíc oproti územiu; nepoctivú dlaždicu vymaže zo skladu (ďalší beh ju doplní celú) a pod 95 % pokrytia vráti „tento model pre toto územie nemáme" (kód 3) namiesto polovičnej mapy |
+
+Prečo rozsah a nie počet platných buniek: poctivá dlaždica má rozsah presne
+celého stupňa aj vtedy, keď je v nej terén len na pätine plochy (pohraničný
+stupeň alebo prázdna dlaždica). Lož má rozsah pár pixelov. Rozsah teda tie dva
+prípady oddelí presne, kým „koľko je v nej nodaty" ich zlieva.
 
 #### Výstup je vstup pre Build map
 
@@ -1677,7 +1726,7 @@ generuje **päť máp**, každá s vlastným profilom
 
 | typ mapy | čo ukazuje | čo zámerne nie |
 |---|---|---|
-| **Turistická** (predvolená) | skaly od z8, turistické chodníky od z10, značené trasy od z8, vrcholy od z8, plný detail | lyžiarske trasy a strediská |
+| **Turistická** (predvolená) | skaly od z11, turistické chodníky od z10, značené trasy od z8, vrcholy od z8, plný detail | lyžiarske trasy a strediská |
 | **Lyžiarska** | lyžiarske a bežkárske trasy od z8, vleky a lanovky od z9, strediská a ich body, skaly | ostatné značené trasy až od z14 a stlmené |
 | **Cestná** | cesty, pumpy, nabíjačky, odpočívadlá, servis a parkoviská od z10; vrstevnice **len po 50 m** a stlmené | vrstevnice po 10 m, skaly, chodníky, značené trasy, tieňovanie; krajina je stlmená, bežné POI až od z15 |
 | **Historická** | hrady, zámky, pamiatky, bane, štôlne, haldy a lomy od z9, POI od z12, terén ako pri turistickej | turistické chodníky, schody a značené trasy |
@@ -1994,10 +2043,15 @@ vyzeral ostro, najvyšší zoom sa generuje bez zjednodušovania geometrie:
 | 16+ | **všetko bez filtra** – všetky body, línie aj plochy, 3D budovy |
 | 17+ | navyše súpisné čísla domov |
 
-Toto je základ; **typ mapy tieto hranice posúva** – turistická púšťa skaly,
-chodníky a trasy skôr (z8–z10), cestná naopak bežné POI až od z15 a chodníky
-vôbec. Konkrétne posuny sú v [poc/web/map-types.js](../poc/web/map-types.js)
-a dajú sa prekliknúť v developer móde.
+Toto je základ; **typ mapy tieto hranice posúva** – turistická púšťa chodníky
+a trasy skôr (z8–z10), cestná naopak bežné POI až od z15 a chodníky vôbec.
+Konkrétne posuny sú v [poc/web/map-types.js](../poc/web/map-types.js) a dajú sa
+prekliknúť v developer móde.
+
+**Dno z11 pre vrstevnice a skaly typ mapy neposúva a ani nemôže**: pod ním pre
+ne nie sú dlaždice (`min_zoom` v schémach), takže by profil ukazoval prázdno.
+Je to zámer – na prehľadovej mierke sa nedá prečítať ani jedna vrstevnica a zo
+skál je sivá škvrna, ale podklady s nimi sa sťahujú tak či tak.
 
 **Výplň nad zmiešanou geometriou (a čudné polygóny od z13).** `--transportation_z13_paths=true`
 vyššie má jeden dôsledok, ktorý stál opravu v štýle: od z13 sú v dlaždiciach
