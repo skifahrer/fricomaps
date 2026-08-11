@@ -1,4 +1,54 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": ""
+  "_updated_at": "2026-08-11T19:35:22Z",
+  "slovensko": {
+    "name": "Slovensko",
+    "regions": {
+      "bratislavsky": {
+        "bbox": [
+          16.829,
+          48.003,
+          17.533,
+          48.658
+        ],
+        "contour_interval": 5,
+        "contours_maxzoom": 16,
+        "dem_source": "dmr5",
+        "drive": "slovensko/bratislavsky",
+        "layers": [
+          "vrstevnice_dmr5_5m",
+          "skaly_dmr5",
+          "tienovanie_dmr5",
+          "trasy",
+          "prvky"
+        ],
+        "maps": {
+          "mapa": {
+            "download": "https://drive.google.com/uc?export=download&id=1d5l9KYC55GqN9p2V-AQJTgiVYGuxNNuP",
+            "file": "bratislavsky.zip",
+            "link": "https://drive.google.com/file/d/1d5l9KYC55GqN9p2V-AQJTgiVYGuxNNuP/view",
+            "size": 216472288
+          },
+          "tienovanie": {
+            "download": "https://drive.google.com/uc?export=download&id=1WXfgzDU8D1EJqAixtpDCkejGqxzrpS23",
+            "file": "bratislavsky-tienovanie.zip",
+            "link": "https://drive.google.com/file/d/1WXfgzDU8D1EJqAixtpDCkejGqxzrpS23/view",
+            "size": 45322859
+          },
+          "vrstevnice-skaly": {
+            "download": "https://drive.google.com/uc?export=download&id=14YKyZlGt-VX1WyaBd6xikkd8hzoKrjmy",
+            "file": "bratislavsky-vrstevnice-skaly.zip",
+            "link": "https://drive.google.com/file/d/14YKyZlGt-VX1WyaBd6xikkd8hzoKrjmy/view",
+            "size": 45854055
+          }
+        },
+        "maxzoom": 16,
+        "name": "Bratislavský kraj",
+        "rock_slope": 50,
+        "rocks_maxzoom": 16,
+        "run": "103",
+        "updated_at": "2026-08-11T19:35:22Z"
+      }
+    }
+  }
 }
