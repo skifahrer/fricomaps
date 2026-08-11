@@ -1,0 +1,80 @@
+/**
+ * Zdroje ikoniek pre POI, vrcholy a letiská.
+ *
+ * Každý zdroj je hotový MapLibre sprite (PNG + JSON index) z otvoreného
+ * štýlu. Pipeline z každého vyrobí vlastný **SDF sprite** bez podkladov
+ * (workers/assets/sprite.mjs) a nasadí ich všetky, takže sa dajú
+ * v developer móde prepínať naživo a vybraná sada sa zapečie do štýlu
+ * pre web aj iOS.
+ *
+ * Prečo práve tieto: schéma OpenMapTiles pomenúva POI cez `class`/`subclass`
+ * (`restaurant`, `cafe`, `fuel`, …) a štýl z toho skladá meno ikony. Zdroj je
+ * teda použiteľný len vtedy, keď jeho ikony nesú rovnaké mená. Preverené boli
+ * aj sprity ostatných štýlov OpenMapTiles (positron, dark-matter, klokantech,
+ * maptiler-basic, fiord) – tie majú v sprite 1–4 obrázky, teda žiadne POI
+ * ikony – a sprite Protomaps v4, ktorý má vlastné pomenovanie a z bežných
+ * tried OSM pokryje asi tretinu, navyše s rámčekom okolo symbolu.
+ */
+
+export const ICON_SOURCES = [
+  {
+    id: "osm-liberty",
+    label: "OSM Liberty (maki)",
+    sprite:
+      "https://raw.githubusercontent.com/maputnik/osm-liberty/gh-pages/sprites/osm-liberty",
+    source: "https://github.com/maputnik/osm-liberty",
+    license: "BSD-3-Clause, ikony maki (CC0)",
+    suffix: "_11",
+    note:
+      "Klasická sada maki – najširšie pokrytie tried a jediná so šípkou " +
+      "jednosmeriek. V origináli je každý symbol v bielom koliesku, ktoré " +
+      "pipeline odstráni."
+  },
+  {
+    id: "osm-liberty-topo",
+    label: "OSM Liberty Topo (turistická)",
+    sprite:
+      "https://raw.githubusercontent.com/nst-guide/osm-liberty-topo/gh-pages/sprites/osm-liberty-topo",
+    source: "https://github.com/nst-guide/osm-liberty-topo",
+    license: "BSD-3-Clause",
+    suffix: "_11",
+    note:
+      "Turistická odvodenina osm-liberty s doplnenými outdoorovými symbolmi. " +
+      "Nemá šípku jednosmeriek – tá vrstva sa jednoducho nevykreslí."
+  },
+  {
+    id: "osm-bright",
+    label: "OSM Bright (OpenMapTiles)",
+    sprite:
+      "https://raw.githubusercontent.com/openmaptiles/osm-bright-gl-style/gh-pages/sprite",
+    source: "https://github.com/openmaptiles/osm-bright-gl-style",
+    license: "BSD-3-Clause",
+    suffix: "_11",
+    note:
+      "Striedmejšia sada bez koliesok – symboly majú len svetlé halo, ktoré " +
+      "pipeline odlúpne. Menej tried, zato čistejšia kresba."
+  }
+];
+
+export const DEFAULT_ICON_SOURCE = "osm-liberty";
+
+export const ICON_SOURCE_IDS = ICON_SOURCES.map((s) => s.id);
+
+/** Zdroj podľa id; pri neznámom id vráti predvolený. */
+export function iconSource(id) {
+  return ICON_SOURCES.find((s) => s.id === id) || ICON_SOURCES[0];
+}
+
+/**
+ * Mená ikon, na ktoré sa štýl odkazuje priamo (nie cez `class`/`subclass`).
+ * Odvodzujú sa z prípony zdroja; ak ich sprite nemá, štýl ich vynechá.
+ */
+export function specialIcons(id) {
+  const { suffix } = iconSource(id);
+  return {
+    peak: `mountain${suffix}`,
+    volcano: `volcano${suffix}`,
+    airport: `airport${suffix}`,
+    arrow: "arrow"
+  };
+}

@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>FricoMaps – vektorová mapa Slovenska</title>
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <style>
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+    #map { position: absolute; inset: 0; }
+
+    /* Ovládanie je zbalené, aby bolo vidieť hlavne mapu. */
+    #toggle {
+      position: absolute; top: 10px; left: 10px; z-index: 12;
+      width: 36px; height: 36px; border: none; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.94); color: #333;
+      box-shadow: 0 1px 4px rgba(0,0,0,.3);
+      font-size: 17px; line-height: 1; cursor: pointer; padding: 0;
+    }
+    #toggle:hover { background: #fff; }
+    #toggle.has-warning::after {
+      content: ""; position: absolute; top: 5px; right: 5px;
+      width: 7px; height: 7px; border-radius: 50%; background: #e08030;
+    }
+
+    #panel {
+      position: absolute; top: 56px; left: 10px; z-index: 11;
+      background: rgba(255, 255, 255, 0.94); color: #222;
+      border-radius: 10px; padding: 12px 14px;
+      box-shadow: 0 2px 10px rgba(0,0,0,.25);
+      width: 232px; max-height: calc(100% - 80px); overflow: auto;
+    }
+    #panel[hidden] { display: none; }
+    #panel label { display: block; font-size: 12px; margin: 8px 0 3px; color: #555; }
+    #panel label:first-child { margin-top: 0; }
+    #panel select {
+      width: 100%; padding: 5px 6px; font-size: 14px;
+      border: 1px solid #ccc; border-radius: 6px; background: #fff;
+    }
+    #panel .row {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 12px; color: #555; margin-top: 10px;
+    }
+    #meta { font-size: 11px; color: #777; margin-top: 10px; line-height: 1.5; }
+
+    /* Nenápadný ukazovateľ zoomu – neprekáža v mape. */
+    #zoom {
+      position: absolute; left: 10px; bottom: 10px; z-index: 11;
+      background: rgba(255, 255, 255, 0.82); color: #444;
+      border-radius: 6px; padding: 3px 7px; font-size: 11px;
+      font-variant-numeric: tabular-nums; pointer-events: none;
+    }
+
+    #warn {
+      display: none; margin-top: 10px; padding: 8px 10px;
+      background: #fff4e5; border: 1px solid #f0c07a; border-radius: 6px;
+      font-size: 11px; color: #7a4a10; max-height: 150px; overflow: auto;
+    }
+    #warn ul { margin: 4px 0 0; padding-left: 16px; }
+    #warn li { margin-bottom: 3px; word-break: break-word; }
+
+    #error {
+      display: none; position: absolute; inset: 0; z-index: 20;
+      background: #fff; padding: 40px; font-size: 15px; line-height: 1.6;
+    }
+    #error code { background: #f2f2f2; padding: 2px 5px; border-radius: 4px; }
+
+    /* ===================== developer mode ===================== */
+    #dev {
+      position: absolute; top: 10px; right: 10px; bottom: 10px; z-index: 13;
+      width: min(420px, calc(100% - 20px));
+      display: flex; flex-direction: column;
+      background: rgba(252, 252, 253, 0.97); color: #222;
+      border-radius: 10px; box-shadow: 0 2px 14px rgba(0,0,0,.3);
+      font-size: 12px; overflow: hidden;
+    }
+    #dev[hidden] { display: none; }
+    .dev-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 9px 12px; border-bottom: 1px solid #e2e2e6; font-size: 13px;
+    }
+    .dev-x {
+      border: none; background: none; cursor: pointer;
+      font-size: 15px; color: #888; padding: 0 2px;
+    }
+    .dev-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #e2e2e6; }
+    .dev-tab {
+      border: none; background: none; cursor: pointer; padding: 6px 11px;
+      font-size: 12px; color: #666; border-radius: 6px 6px 0 0;
+    }
+    .dev-tab.on { background: #eceef2; color: #111; font-weight: 600; }
+    .dev-body { flex: 1; overflow: auto; padding: 8px 10px 14px; }
+    .dev-status {
+      padding: 6px 12px; border-top: 1px solid #e2e2e6;
+      font-size: 11px; color: #777;
+    }
+    .dev-hint { margin: 2px 0 8px; color: #666; line-height: 1.45; }
+    .dev-hint code { background: #eceef2; padding: 1px 4px; border-radius: 3px; }
+
+    .dev-search {
+      width: 100%; box-sizing: border-box; padding: 6px 8px; font-size: 12px;
+      border: 1px solid #ccc; border-radius: 6px; margin-bottom: 6px;
+    }
+    .dev-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 7px; }
+    .dev-chip {
+      border: 1px solid #d5d5db; background: #fff; color: #555;
+      border-radius: 999px; padding: 3px 9px; font-size: 11px; cursor: pointer;
+    }
+    .dev-chip.on { background: #3a6ea5; border-color: #3a6ea5; color: #fff; }
+
+    .dev-bulk {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+      padding: 7px; border-radius: 7px; background: #f0f1f4;
+      margin-bottom: 8px; opacity: .55;
+    }
+    .dev-bulk.on { opacity: 1; }
+    .dev-bulklabel { font-size: 11px; color: #555; margin-right: 3px; }
+    .dev-btn {
+      border: 1px solid #cfcfd6; background: #fff; color: #333;
+      border-radius: 5px; padding: 3px 8px; font-size: 11px; cursor: pointer;
+    }
+    .dev-btn:hover { background: #f6f6f8; }
+    .dev-btn.danger { color: #a03020; border-color: #e0b0a8; }
+
+    .dev-list { display: flex; flex-direction: column; }
+    .dev-group {
+      display: flex; align-items: center; gap: 4px;
+      margin: 9px 0 2px; padding-bottom: 3px; border-bottom: 1px solid #e6e6ea;
+    }
+    .dev-groupname {
+      flex: 1; text-align: left; border: none; background: none; cursor: pointer;
+      font-weight: 600; font-size: 12px; color: #333; padding: 0;
+    }
+    .dev-item { border-bottom: 1px solid #f0f0f3; padding: 3px 0; }
+    .dev-row, .dev-prow { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+    .dev-row.off .dev-name, .dev-prow.off .dev-name { opacity: .45; text-decoration: line-through; }
+    .dev-row.changed > .dev-name > span:first-child,
+    .dev-prow.changed .dev-name > span:first-child { color: #b06000; font-weight: 600; }
+    .dev-check { margin: 0; }
+    .dev-name {
+      flex: 1; display: flex; flex-direction: column; line-height: 1.25; min-width: 0;
+      border: none; background: none; padding: 0; text-align: left; cursor: pointer;
+      font: inherit; color: inherit;
+    }
+    .dev-name small { color: #999; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+    .dev-kind {
+      font-size: 10px; padding: 1px 5px; border-radius: 4px;
+      background: #e6e8ee; color: #556; white-space: nowrap;
+    }
+    .dev-kind.k-area { background: #dff0dc; color: #3a5a34; }
+    .dev-kind.k-line { background: #dde6f5; color: #33507a; }
+    .dev-kind.k-point { background: #f5e6dd; color: #7a4a33; }
+    .dev-kind.k-text { background: #eee2f2; color: #5a3a6a; }
+    .dev-kind.k-3d { background: #f2eedd; color: #6a5a20; }
+    .dev-kind.k-raster { background: #e2eef2; color: #35606a; }
+
+    /* inšpektor prvkov: nadpis sekcie, tabuľka atribútov, farebný štvorček */
+    .dev-h4 {
+      margin: 10px 0 2px; font-size: 12px; font-weight: 600; color: #333;
+      border-bottom: 1px solid #e6e6ea; padding-bottom: 3px;
+    }
+    .dev-kv {
+      display: flex; gap: 6px; align-items: baseline; padding: 1px 0;
+      font-size: 11px; word-break: break-word;
+    }
+    .dev-kv b { flex: none; width: 96px; color: #888; font-weight: 500; font-size: 10px; }
+    .dev-kv span, .dev-kv a { flex: 1; font-family: ui-monospace, monospace; min-width: 0; }
+    .dev-swatch {
+      width: 14px; height: 14px; flex: none; border-radius: 3px;
+      border: 1px solid rgba(0, 0, 0, .2);
+    }
+    .dev-row.inactive .dev-name > span:first-child { opacity: .45; }
+    /* Štítok s rozsahom zoomu je zároveň prepínač „na tomto zoome áno / nie". */
+    .dev-zrange {
+      font-size: 10px; color: #7a8a6a; background: #eef2e8;
+      border: 1px solid transparent; border-radius: 4px;
+      padding: 1px 5px; white-space: nowrap; cursor: pointer;
+      font-family: inherit; font-variant-numeric: tabular-nums;
+    }
+    .dev-zrange:hover { border-color: #b0c0a0; }
+    .dev-zrange.off { color: #999; background: #f0f0f2; }
+    .dev-zrange.off:hover { border-color: #bbb; }
+
+    .dev-zoombar {
+      background: #eef1f6; border-radius: 7px; padding: 7px 9px; margin-bottom: 8px;
+    }
+    .dev-zoomrow { display: flex; align-items: center; gap: 8px; }
+    .dev-zoomlabel { font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .dev-slider { flex: 1; min-width: 60px; accent-color: #3a6ea5; }
+    .dev-zoombar .dev-chips { margin: 6px 0 0; }
+    .dev-zoominfo {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-top: 5px; font-size: 11px; color: #666;
+    }
+    .dev-zoombar .dev-note { display: block; white-space: normal; margin-top: 5px; line-height: 1.4; }
+
+    /* Rozsah úprav: pre ktorý typ mapy sa práve ladí. */
+    .dev-scope {
+      background: #f0f1f4; border-radius: 7px; padding: 7px 9px; margin-bottom: 8px;
+      border-left: 3px solid #3a6ea5;
+    }
+    .dev-scoperow { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+    .dev-scope .dev-note {
+      display: block; white-space: normal; margin-top: 4px; line-height: 1.4;
+    }
+
+    /* Pásik zoomov z0–z20 – jedna bunka je jeden zoom. */
+    .dev-stripwrap { margin: 4px 0 2px; }
+    .dev-strip { display: flex; gap: 1px; }
+    .dev-cell {
+      flex: 1; height: 15px; min-width: 0; padding: 0; cursor: pointer;
+      border: 1px solid #d5d5db; border-radius: 2px; background: #fff;
+    }
+    .dev-cell.on { background: #3a6ea5; border-color: #33608f; }
+    .dev-cell.now { outline: 2px solid #e08030; outline-offset: -2px; }
+    .dev-cell:hover { border-color: #888; }
+    .dev-striplabels {
+      display: flex; justify-content: space-between;
+      font-size: 9px; color: #999; margin-top: 1px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Náhľad prerušovania vedľa výberu druhu čiary. */
+    .dev-dashrow { display: flex; align-items: center; gap: 5px; }
+    .dev-dash { color: #444; display: inline-flex; align-items: center; }
+    .dev-h5 {
+      display: flex; align-items: baseline; gap: 6px;
+      margin: 9px 0 2px; font-size: 11px; font-weight: 600; color: #444;
+      border-bottom: 1px solid #eceef2; padding-bottom: 2px;
+    }
+    .dev-h5 small { font-weight: 400; color: #999; font-size: 10px; }
+    .dev-field.changed .dev-num { background: #fff6e8; border-color: #d09030; }
+    /* Vrstva upravená práve v tom rozsahu, do ktorého sa zapisuje. */
+    .dev-row.scoped > .dev-name > span:first-child::after {
+      content: " •"; color: #3a6ea5;
+    }
+
+    .dev-details { padding: 2px 0 4px 24px; }
+    .dev-fields, .dev-sub {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0;
+    }
+    .dev-sub {
+      padding: 5px 6px; border-radius: 6px; background: #f4f5f8;
+    }
+    .dev-sub.changed, .dev-fields.changed .dev-num {
+      background: #fff6e8;
+    }
+    .dev-sub.changed { box-shadow: inset 0 0 0 1px #e6c68c; }
+    .dev-field { display: flex; align-items: center; gap: 4px; font-size: 10px; color: #888; }
+    .dev-field > span { white-space: nowrap; }
+    .dev-field .dev-num { width: 46px; }
+    /* V podsekciách má farba zaberať len toľko, koľko potrebuje – inak by
+       roztlačila popisky vedľajších polí. */
+    .dev-sub .dev-colorrow { flex: 0 0 auto; }
+    .dev-sub .dev-hex { width: 66px; }
+    .dev-select {
+      padding: 2px 4px; font-size: 11px; border: 1px solid #ccc;
+      border-radius: 4px; background: #fff; max-width: 150px;
+    }
+    .dev-prop { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+    .dev-propname { font-size: 10px; color: #888; width: 96px; flex: none; }
+    /* Hlavička nad farbami, ktoré vrstva berie z palety (nie zo svojho paint) */
+    .dev-prophead { margin-top: 7px; border-top: 1px solid #eee; padding-top: 5px; }
+    .dev-prophead .dev-propname { width: auto; font-style: italic; }
+    .dev-colorrow { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
+    .dev-colorrow.changed .dev-hex { border-color: #d09030; background: #fffaf0; }
+    .dev-color {
+      width: 26px; height: 22px; padding: 0; border: 1px solid #ccc;
+      border-radius: 4px; background: none; cursor: pointer; flex: none;
+    }
+    .dev-hex {
+      width: 78px; padding: 2px 5px; font-size: 11px; font-family: ui-monospace, monospace;
+      border: 1px solid #ccc; border-radius: 4px; flex: none;
+    }
+    .dev-mini {
+      border: none; background: none; cursor: pointer; font-size: 12px;
+      color: #777; padding: 1px 3px; line-height: 1;
+    }
+    .dev-mini:hover { color: #222; }
+    .dev-note { font-size: 10px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dev-num { width: 52px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; }
+    .dev-iconset {
+      display: block; border: 1px solid #e0e0e6; border-radius: 8px;
+      padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
+    }
+    .dev-iconset.on { border-color: #3a6ea5; background: #f4f8fd; }
+    .dev-iconset .dev-hint { margin: 4px 0 2px; }
+    .dev-iconset a { color: #3a6ea5; text-decoration: none; word-break: break-all; }
+    .dev-preview {
+      display: block; width: 100%; height: 26px; margin: 6px 0 2px;
+    }
+    .dev-json {
+      width: 100%; box-sizing: border-box; height: 220px; margin-top: 8px;
+      font-family: ui-monospace, monospace; font-size: 11px;
+      border: 1px solid #ccc; border-radius: 6px; padding: 6px;
+    }
+    .dev-file { display: block; margin: 4px 0 6px; font-size: 11px; }
+    .dev-clip { position: fixed; left: -9999px; top: 0; }
+
+    body.dark #toggle { background: rgba(24,24,36,.94); color: #ddd; }
+    body.dark #panel { background: rgba(24, 24, 36, 0.94); color: #ddd; }
+    body.dark #panel label, body.dark #panel .row { color: #aaa; }
+    body.dark #panel select { background: #222; color: #ddd; border-color: #444; }
+    body.dark #zoom { background: rgba(24,24,36,.8); color: #bbb; }
+    body.dark #warn { background: #3a2a12; border-color: #7a5a20; color: #f0c890; }
+
+    body.dark #dev { background: rgba(22, 22, 32, 0.97); color: #ddd; }
+    body.dark .dev-head, body.dark .dev-tabs, body.dark .dev-status { border-color: #33334a; }
+    body.dark .dev-status, body.dark .dev-hint, body.dark .dev-note,
+    body.dark .dev-bulklabel, body.dark .dev-propname { color: #999; }
+    body.dark .dev-tab { color: #aaa; }
+    body.dark .dev-tab.on { background: #2b2b40; color: #fff; }
+    body.dark .dev-bulk { background: #26263a; }
+    body.dark .dev-iconset { border-color: #33334a; }
+    body.dark .dev-iconset.on { border-color: #3a6ea5; background: #1e2636; }
+    body.dark .dev-zoombar { background: #24243a; }
+    body.dark .dev-zoominfo { color: #999; }
+    body.dark .dev-scope { background: #24243a; border-left-color: #3a6ea5; }
+    body.dark .dev-cell { background: #1e1e2c; border-color: #3a3a52; }
+    body.dark .dev-cell.on { background: #3a6ea5; border-color: #4a7eb5; }
+    body.dark .dev-striplabels { color: #777; }
+    body.dark .dev-dash { color: #ccc; }
+    body.dark .dev-h5 { color: #ccc; border-color: #2a2a3c; }
+    body.dark .dev-h5 small { color: #888; }
+    body.dark .dev-field.changed .dev-num { background: #342c1c; border-color: #7a5a2a; }
+    body.dark .dev-row.scoped > .dev-name > span:first-child::after { color: #7aa4ff; }
+    body.dark .dev-prophead { border-color: #2a2a3c; }
+    body.dark .dev-h4 { color: #ddd; border-color: #2a2a3c; }
+    body.dark .dev-kv b { color: #888; }
+    body.dark .dev-kv a { color: #7aa4ff; }
+    body.dark .dev-swatch { border-color: rgba(255, 255, 255, .3); }
+    body.dark .dev-sub { background: #222232; }
+    body.dark .dev-sub.changed { background: #342c1c; box-shadow: inset 0 0 0 1px #7a5a2a; }
+    body.dark .dev-field { color: #999; }
+    body.dark .dev-zrange { color: #9ab08a; background: #232d22; }
+    body.dark .dev-zrange.off { color: #777; background: #26263a; }
+    body.dark .dev-btn, body.dark .dev-chip, body.dark .dev-select,
+    body.dark .dev-search, body.dark .dev-hex, body.dark .dev-num, body.dark .dev-json {
+      background: #1e1e2c; color: #ddd; border-color: #3a3a52;
+    }
+    body.dark .dev-chip.on { background: #3a6ea5; border-color: #3a6ea5; color: #fff; }
+    body.dark .dev-groupname { color: #ddd; }
+    body.dark .dev-group { border-color: #33334a; }
+    body.dark .dev-item { border-color: #2a2a3c; }
+    body.dark .dev-hint code { background: #2b2b40; }
+    body.dark .dev-row.changed > .dev-name > span:first-child,
+    body.dark .dev-prow.changed .dev-name > span:first-child { color: #e0a850; }
+  </style>
+</head>
+<body>
+  <div id="map"></div>
+
+  <button id="toggle" type="button" title="Nastavenia" aria-expanded="false"
+          aria-controls="panel">⚙</button>
+
+  <div id="panel" hidden>
+    <label for="maptype">Typ mapy</label>
+    <select id="maptype"></select>
+    <label for="theme">Farebná téma</label>
+    <select id="theme"></select>
+    <label for="region">Región</label>
+    <select id="region"></select>
+    <div class="row" id="row-contours" hidden>
+      <input type="checkbox" id="contours" checked />
+      <label for="contours" style="margin:0">Vrstevnice</label>
+    </div>
+    <!-- Skaly majú vlastný .pmtiles (vlastný maxzoom), tak aj vlastný
+         prepínač – dajú sa zapnúť bez vrstevníc a naopak. -->
+    <div class="row" id="row-rocks" hidden>
+      <input type="checkbox" id="rocks" checked />
+      <label for="rocks" style="margin:0">Skalné plochy</label>
+    </div>
+    <div class="row" id="row-trails" hidden>
+      <input type="checkbox" id="trails" checked />
+      <label for="trails" style="margin:0">Značené trasy</label>
+    </div>
+    <!-- Násypy, múry, ploty, vedenia, prieseky, pramene, jaskyne, rozhľadne,
+         parkoviská a zjazdovky. Schéma OpenMapTiles ich nemá, takže majú
+         vlastný .pmtiles aj vlastný prepínač. -->
+    <div class="row" id="row-features" hidden>
+      <input type="checkbox" id="features" checked />
+      <label for="features" style="margin:0">Krajinné prvky</label>
+    </div>
+    <div class="row" id="row-hillshade" hidden>
+      <input type="checkbox" id="hillshade" />
+      <label for="hillshade" style="margin:0">Tieňovanie reliéfu</label>
+    </div>
+    <div class="row" id="row-terrain" hidden>
+      <input type="checkbox" id="terrain" />
+      <label for="terrain" style="margin:0">3D terén</label>
+    </div>
+    <div class="row">
+      <input type="checkbox" id="devmode" />
+      <label for="devmode" style="margin:0">🛠 Developer mode</label>
+    </div>
+    <div id="meta"></div>
+    <div id="warn"><b>Problém s načítaním:</b><ul></ul></div>
+  </div>
+
+  <div id="dev" hidden></div>
+
+  <div id="zoom">zoom –</div>
+
+  <div id="error">
+    <h2>Dlaždice sa nepodarilo načítať</h2>
+    <p>Pravdepodobne ešte nebola spustená pipeline, ktorá vygeneruje PMTiles.</p>
+    <p>Spusti workflow <b>„Build map (PBF → PMTiles) &amp; deploy Pages"</b> na GitHube
+       (Actions → Run workflow), vyber región a počkaj na nasadenie.</p>
+    <p id="error-detail"></p>
+  </div>
+
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/pmtiles@3/dist/pmtiles.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
