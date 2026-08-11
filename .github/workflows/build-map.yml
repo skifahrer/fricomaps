@@ -97,6 +97,7 @@ on:
         type: choice
         options:
           - sonny
+          - sonny1
           - dmr35
           - dmr5
           - ziadne
@@ -112,6 +113,7 @@ on:
         type: choice
         options:
           - sonny
+          - sonny1
           - dmr35
           - dmr5
           - tienovanie
@@ -124,6 +126,7 @@ on:
         type: choice
         options:
           - sonny
+          - sonny1
           - dmr35
           - dmr5
           - ziadne
@@ -194,6 +197,9 @@ env:
   #
   # Sklad s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
   DEM_STORE: dem-sonny
+  # Druhý Sonnyho model (1″ .hgt z Drive). Zvislý krok 1 m namiesto 0,1 m,
+  # takže skaly z neho vyjdú polámanejšie – rozpis v data/dem-sources.json.
+  SONNY1_STORE: dem-sonny1
   # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
   # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
   DMR35_STORE: dem-dmr35

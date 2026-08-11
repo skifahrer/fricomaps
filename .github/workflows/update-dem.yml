@@ -14,6 +14,7 @@ name: Stiahnuť výškové dáta
 # | source  | čo to je                    | sklad        | mriežka |
 # |---------|-----------------------------|--------------|---------|
 # | sonny   | Sonny's LiDAR DTM (Drive)   | dem-sonny    | 20 m    |
+# | sonny1  | Sonny's LiDAR DTM 1″ (Drive)| dem-sonny1   | 20×31 m |
 # | dmr35   | ÚGKK DMR 3.5 (opendata ZIP) | dem-dmr35    | ~10 m   |
 # | ugkk    | ÚGKK DMR 5.0 (1 m LiDAR)    | dem-ugkk     | 1 m     |
 #
@@ -44,11 +45,19 @@ name: Stiahnuť výškové dáta
 # pokrývajú jeho bbox.
 #
 # KTORÝ MODEL: Sonny ponúka viac produktov a pre nás je najlepší **20m**
-# (GeoTIFF, mriežka 20×20 m, výška po 0,1 m). Model 1″ (.hgt) má mriežku
-# 20×30 m a výšku len po celých metroch – a práve zvislý krok rozhoduje:
-# z metrových schodov vychádza zubatý sklon, ktorý súvislú skalnú stenu
-# roztrhá na kopu falošných úlomkov (namerané vo Vysokých Tatrách: 5 293
-# plôch z 1 m dát vs 2 138 z 0,1 m, pri rovnakej celkovej ploche skál).
+# (GeoTIFF, mriežka 20×20 m, výška po 0,1 m). Model 1″ (`sonny1`, .hgt) má
+# mriežku 20×31 m a výšku len po celých metroch – a práve zvislý krok
+# rozhoduje: z metrových schodov vychádza zubatý sklon, ktorý súvislú skalnú
+# stenu roztrhá na kopu falošných úlomkov (namerané vo Vysokých Tatrách:
+# 5 293 plôch z 1 m dát vs 2 138 z 0,1 m, pri rovnakej celkovej ploche skál).
+# Ostáva vo výbere ako druhý názor a pre územie za hranicou, nie ako voľba
+# na skaly. Čo v tom priečinku naozaj je, stojí vo `workers/data/
+# dem-sources.json` pri kľúči `sonny1` – prečítané z neho, nie z webu.
+#
+# 1″ PRIEČINOK CHCE PRIHLÁSENIE. Dlaždice v ňom sú skratky (shortcut) na
+# súbory inde na Drive; verejný odkaz skratku nestiahne a `gdown` na nej
+# padne hláškou o právach, ktorá s právami nesúvisí. Rozuzľuje ich
+# `workers/drive/folder.py` (funkcia `rozuzli`) a ide to len cez Drive API.
 #
 # Rezanie na dlaždice robí workers/dem/tiles.py – 20m model môže byť jeden
 # GeoTIFF na celú krajinu a v metrickej projekcii, kým build mapy potrebuje
@@ -72,6 +81,7 @@ on:
         options:
           - "dmr35 | https://opendata.skgeodesy.sk/static/DMR3_5/dmr3_5-10.zip"
           - "sonny | Google Drive (20 m, celé Slovensko)"
+          - "sonny1 | Google Drive (1″ .hgt, krok 1 m – hrubší, chce token)"
           - "ugkk  | DMR 5.0 1 m – vyplň custom_url odkazom z exportu ZBGIS"
           - "vlastné | vyplň custom_url"
       custom_url:
@@ -147,6 +157,9 @@ jobs:
       # Sonny distribuuje cez Google Drive a priečinok sa nemení – nemá čo
       # zaberať pole vo formulári. Iný priečinok sa dá dať cez `custom_url`.
       SONNY_DRIVE_FOLDER: https://drive.google.com/drive/folders/1qrGm0mPDwmZytOkYQup6TfhCw9ohlsMa
+      # Sonnyho 1″ model (.hgt). Zvislý krok 1 m namiesto 0,1 m – skaly z neho
+      # vyjdú polámanejšie; rozpis vo workers/data/dem-sources.json.
+      SONNY1_DRIVE_FOLDER: https://drive.google.com/drive/folders/1FCXPutDU6DvnTEA4PY6iFOQKiuVd11j4
       # Token vlastníka dát. Na súbory, ktoré ten účet naozaj vlastní, dvíha
       # denný strop sťahovania rádovo; na cudzí zdieľaný priečinok (Sonny) nie
       # – tam z anonymnej požiadavky spraví aspoň pomenovanú a hlavne dovolí
@@ -185,6 +198,11 @@ jobs:
               REL=dem-dmr35; LABEL="ÚGKK DMR 3.5 (otvorené dáta)" ;;
             sonny)
               URL=""; REL=dem-sonny; LABEL="Sonny's LiDAR DTM 20 m" ;;
+            sonny1)
+              # Druhý Sonnyho priečinok: 1″ .hgt. Rozbaľovanie aj prevod na
+              # GeoTIFF je ten istý krok ako pri `sonny` (`hgt_to_tif` vie aj
+              # neštandardné mriežky); líši sa len priečinok a sklad.
+              URL=""; REL=dem-sonny1; LABEL="Sonny's LiDAR DTM 1″ (.hgt)" ;;
             ugkk)
               URL="$CUSTOM"; REL=dem-ugkk; LABEL="ÚGKK DMR 5.0 (1 m LiDAR)" ;;
             dmr5)
@@ -204,15 +222,15 @@ jobs:
             vlastné|vlastne|custom)
               URL="$CUSTOM"; REL=dem-dmr35; LABEL="vlastné URL" ;;
             *)
-              echo "::error::Neznáme „$WHAT“. Známe: dmr35, sonny, ugkk, dmr5, vlastné."
+              echo "::error::Neznáme „$WHAT“. Známe: dmr35, sonny, sonny1, ugkk, dmr5, vlastné."
               exit 1 ;;
           esac
           # URL z výberu sa dá prebiť custom_url pri každom zdroji.
-          if [ -n "${CUSTOM//[[:space:]]/}" ] && [ "$KEY" != "sonny" ]; then
+          if [ -n "${CUSTOM//[[:space:]]/}" ] && [ "$KEY" != "sonny" ] && [ "$KEY" != "sonny1" ]; then
             URL="$CUSTOM"
           fi
           [ -n '${{ inputs.store }}' ] && REL='${{ inputs.store }}'
-          if [ "$KEY" != "sonny" ] && [ -z "${URL//[[:space:]]/}" ]; then
+          if [ "$KEY" != "sonny" ] && [ "$KEY" != "sonny1" ] && [ -z "${URL//[[:space:]]/}" ]; then
             echo "::error::Pre „$KEY“ treba URL – vyplň custom_url."
             exit 1
           fi
@@ -228,7 +246,7 @@ jobs:
 
       - name: Stiahni dlaždice
         id: fetch
-        if: ${{ steps.src.outputs.key == 'sonny' }}
+        if: ${{ contains(fromJSON('["sonny","sonny1"]'), steps.src.outputs.key) }}
         run: |
           set -uo pipefail
           mkdir -p dl
@@ -247,7 +265,10 @@ jobs:
                 || echo "::warning::$u sa nepodarilo stiahnuť"
             done
           else
+            # Dva Sonnyho priečinky, jeden krok: 20m GeoTIFF vs 1″ .hgt.
             FOLDER="${SONNY_DRIVE_FOLDER}"
+            [ "${{ steps.src.outputs.key }}" = "sonny1" ] \
+              && FOLDER="${SONNY1_DRIVE_FOLDER}"
             echo "Sťahujem Google Drive priečinok: $FOLDER"
             # „Vieme sa prihlásiť?" má JEDNU odpoveď a je vo `workers/
             # drive-folder.py --mode`. Nezisťuje sa to tu z toho, či je
@@ -260,6 +281,19 @@ jobs:
             # vyšla ako prázdny reťazec a beh by ticho prepadol do vetvy
             # s verejným limitom – čiže presne to, čomu sa vyhýbame.
             MODE=$(python3 workers/drive/folder.py --mode) || exit 1
+            # 1″ PRIEČINOK SA NEPRIHLÁSENE STIAHNUŤ NEDÁ, a nie je to otázka
+            # limitu. Všetkých 15 dlaždíc v ňom sú SKRATKY (shortcut) na
+            # súbory inde na Drive a verejné `uc?export=download` na skratku
+            # odpovie „Only the owner and editors can download this file" –
+            # hoci cieľ zdieľaný je. Overené 2026-08-11: `gdown --folder`
+            # stiahne `_Readme.txt` a `_Region.jpg` a na prvej dlaždici padne
+            # presne touto hláškou. Nechať ho to skúsiť by znamenalo poslať
+            # človeka riešiť práva, ktoré sú v poriadku.
+            if [ "${{ steps.src.outputs.key }}" = "sonny1" ] \
+               && [ "$MODE" != "auth" ]; then
+              echo "::error::Sonnyho 1″ priečinok sa dá stiahnuť LEN prihlásene: dlaždice v ňom sú skratky (shortcut) na súbory inde na Drive a tie verejný odkaz nesťahuje (odpovie „Only the owner and editors can download this file“, aj keď je cieľ zdieľaný). Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH – vyrobí ich workflow „Prihlásenie na Drive (jednorazové)“. Alebo zvoľ zdroj „sonny“ (20 m), ktorý je zároveň jemnejší vo zvislej osi."
+              exit 1
+            fi
             if [ "$MODE" = "auth" ]; then
               DRIVE_MODE="Drive API, prihlásený ako vlastník tokenu"
               python3 workers/drive/folder.py --folder="$FOLDER" --out=dl || exit 1
@@ -290,7 +324,7 @@ jobs:
 
       - name: Rozbaľ archívy a preveď na GeoTIFF dlaždice
         id: convert
-        if: ${{ steps.src.outputs.key == 'sonny' }}
+        if: ${{ contains(fromJSON('["sonny","sonny1"]'), steps.src.outputs.key) }}
         run: |
           set -uo pipefail
           mkdir -p unpacked tiles
@@ -390,7 +424,7 @@ jobs:
       # DO SKLADU NA DRIVE, nie do releasu – do releasov sa nepublikuje nič.
       # Formát skladu, „clobber" aj prihlásenie má `workers/drive/store.py`.
       - name: Publikuj dlaždice do skladu
-        if: ${{ steps.src.outputs.key == 'sonny' }}
+        if: ${{ contains(fromJSON('["sonny","sonny1"]'), steps.src.outputs.key) }}
         env:
           STORE: ${{ steps.src.outputs.store }}
         run: |
@@ -405,10 +439,21 @@ jobs:
               --store="$STORE" --name="$BOLO" || true
           fi
 
+          # Priečinok do `meta.json` musí byť TEN, z ktorého sa naozaj ťahalo.
+          # Kým tu bolo natvrdo `$SONNY_DRIVE_FOLDER`, niesli by dlaždice
+          # z 1″ modelu odkaz na 20m priečinok – a `meta.json` je jediné, čo
+          # o obsahu skladu potom hovorí (to isté pravidlo ako
+          # `dem-source.txt`: musí niesť, čo sa NAOZAJ použilo).
+          FOLDER="$SONNY_DRIVE_FOLDER"
+          MODEL="Sonny's LiDAR DTM 20 m"
+          if [ '${{ steps.src.outputs.key }}' = 'sonny1' ]; then
+            FOLDER="$SONNY1_DRIVE_FOLDER"
+            MODEL="Sonny's LiDAR DTM 1″ (.hgt)"
+          fi
           jq -n \
-            --arg src "Sonny's LiDAR DTM (https://sonny.4lima.de/)" \
+            --arg src "$MODEL (https://sonny.4lima.de/)" \
             --arg license "CC BY 4.0" \
-            --arg folder "$SONNY_DRIVE_FOLDER" \
+            --arg folder "$FOLDER" \
             --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson tiles "$(cd tiles && find . -maxdepth 1 -name '*.tif' -printf '%f\n' | sed 's/\.tif$//' | jq -R . | jq -s .)" \
             '{source: $src, license: $license, drive_folder: $folder, built_at: $built, tiles: $tiles}' \
