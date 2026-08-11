@@ -1457,32 +1457,58 @@ Dve veci, ktoré z toho plynú:
   alebo ručne. Ten istý workflow vyprázdni aj GitHub cache, ktorú už nikto
   nehľadá.
 
-### Hotová mapa ide aj na Drive ako ZIP
+### Hotová mapa ide aj na Drive – tri ZIPy so stálym menom
 
-Okrem GitHub Pages sa každý build publikuje do priečinka na Google Drive: celý
-web (dlaždice, štýly, vrstevnice, skaly, tieňovanie, fonty, sprity) ako **jeden
-ZIP**. Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
+Okrem GitHub Pages sa každý build publikuje do priečinka na Google Drive.
+Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
 
 ```
-<koreň>/slovensko/presovsky/vysoke_tatry/…zip
+<koreň>/slovensko/presovsky/vysoke_tatry/
          krajina  kraj      výsek   (úrovne, čo nedávajú zmysel, sa vynechajú)
+
+    presovsky-vysoke_tatry.zip                    celá mapa – web, ako sa nasadil
+    presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy (.pmtiles)
+    presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (PNG)
 ```
 
-**Meno nesie, čo v tej mape je** — do jedného priečinka padajú desiatky behov
-s rôznymi nastaveniami:
+**Vrstevnice a skaly sú v jednom balíku** zámerne: sú z toho istého výpočtu nad
+tým istým DEM a jedna bez druhej sa nepoužíva. Tieňovanie je zvlášť, lebo je to
+jedna pyramída PNG dlaždíc a váži rádovo inak.
+
+**Meno je stále** — rovnaký kraj (a rovnaký výsek) má vždy to isté meno, takže
+ďalší build starý balík **prepíše** a v priečinku je jeden aktuálny súbor
+namiesto histórie behov. Poradie je „najprv nahraj, potom zmaž starý"
+(`folder.upload_clobber`): Drive dovolí dva súbory s tým istým menom vedľa
+seba, takže „najprv zmaž" by po spadnutom nahrávaní nenechalo ani nové, ani
+staré. Balík vrstvy, ktorú tento build **nevyrobil**, sa zmaže – inak by vedľa
+novej mapy ostal starý `-tienovanie.zip` z iného behu a na súbore by to nikto
+nepoznal.
+
+**Čo je v balíku, hovorí `obsah.json` v ňom.** Kým bolo meno jedinečné, nieslo
+zoom, vrstvy a ich zdroje:
 
 ```
-presovsky-vysoke_tatry-test4km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+presovsky-vysoke_tatry-test4km2-z16-vrstevnice_dmr5_10m-skaly_dmr5-…-20260810-0748-r73.zip
 ```
 
-Teda výrez, rýchly test a jeho veľkosť, zoom dlaždíc, ktoré vrstvy sú vnútri
-a **z ktorého modelu sú spočítané** — a to podľa toho, čo build naozaj použil,
-nie čo bolo vo formulári. Vrstva, ktorá v mape nie je, sa píše tiež
-(`bez_skal`). Dátum, čas a číslo behu na konci robia meno jedinečným, takže sa
-dva behy nikdy neprepíšu.
+To isté je teraz súborom vnútri: výrez, zoomy vrstiev, **z ktorého modelu sú
+spočítané** (podľa toho, čo build naozaj použil, nie čo bolo vo formulári), prah
+sklonu, bbox, dátum, číslo a id behu. Vrstva, ktorá v mape nie je, je tam
+napísaná tiež (`bez_skal`) – mlčanie sa dá čítať aj ako „zabudlo sa to
+dopísať". Fakty o mape sa neopisujú, kopírujú sa z `manifest.json`, ktorý ich
+už nesie (pravidlo 1).
 
-Robí to [`workers/deploy/publish-map.py`](deploy/publish-map.py) a vypnúť sa to dá
-voľbou `publish=false` v poli `options`.
+**Rýchly test má v mene `test4km2`** a je to nutné dvakrát: aby sa mapa z pár
+km² nedala pomýliť s ostrou, a aby ju **neprepísala**.
+
+Robí to [`workers/deploy/publish-map.py`](deploy/publish-map.py), vypnúť sa to dá
+voľbou `publish=false` v poli `options` a pozrieť si balíky lokálne ide bez
+Drive:
+
+```bash
+REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
+  python3 workers/deploy/publish-map.py --site=_site --out=/tmp --zip-only
+```
 
 ### Súhrn buildu
 

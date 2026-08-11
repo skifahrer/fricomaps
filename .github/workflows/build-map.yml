@@ -2035,8 +2035,10 @@ jobs:
         run: workers/deploy/smoke-test.sh
 
       # ---------- hotová mapa na Drive ----------
-      # Celý `_site` ako jeden ZIP do priečinka `/krajina/kraj/výsek`, s menom,
-      # ktoré nesie výrez, zoom a KTORÉ vrstvy sú vnútri a z čoho (rozpis vo
+      # TRI ZIPy do priečinka `/krajina/kraj/výsek`: celý `_site`, vrstevnice so
+      # skalami a tieňovanie. Mená sú STÁLE (`<kraj>[-<výsek>][-testNkm2]`),
+      # takže ďalší build tie isté súbory prepíše – najprv nahrá, potom zmaže
+      # starý. Čo v balíku je, hovorí `obsah.json` v ňom (rozpis vo
       # `workers/deploy/publish-map.py`). Vypína sa voľbou `publish=false`.
       #
       # Až ZA nasadením zámerne: mapa je vtedy na Pages už aj tak, takže keď
@@ -2052,7 +2054,7 @@ jobs:
       #
       # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
       # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
-      # model by inak meno tvrdilo niečo iné, než v tej mape je.
+      # model by inak `obsah.json` tvrdil niečo iné, než v tej mape je.
       - name: Publikuj mapu na Drive
         if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
         env:

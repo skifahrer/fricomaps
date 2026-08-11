@@ -1,37 +1,44 @@
 #!/usr/bin/env python3
 """
-Hotová mapa ako ZIP do priečinka na Google Drive.
+Hotová mapa na Google Drive – TRI ZIPy so stálym menom.
 
-ČO TO ROBÍ. Vezme `_site` (celý web: dlaždice, štýly, vrstevnice, skaly,
-tieňovanie, fonty a sprity), zabalí ho do jedného ZIPu a nahrá na Drive do
+ČO TO ROBÍ. Z `_site` (celý web: dlaždice, štýly, vrstevnice, skaly,
+tieňovanie, fonty a sprity) sa zabalia tri balíky a nahrajú na Drive do
 priečinka podľa toho, čoho sa mapa týka:
 
-    <koreň>/slovensko/presovsky/vysoke_tatry/<mapa>.zip
-             krajina  kraj      výsek
+    <koreň>/slovensko/presovsky/vysoke_tatry/
+        presovsky-vysoke_tatry.zip                    celá mapa
+        presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy
+        presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice
 
-Úrovne, ktoré nedávajú zmysel, sa vynechajú: build celej krajiny nemá kraj
-a build celého kraja nemá výsek. Chýbajúce priečinky sa vyrobia.
+Úrovne cesty, ktoré nedávajú zmysel, sa vynechajú: build celej krajiny nemá
+kraj a build celého kraja nemá výsek. Chýbajúce priečinky sa vyrobia.
 
-MENO NESIE, ČO V TEJ MAPE JE – a to je celý zmysel. Do jedného priečinka
-padajú desiatky behov s rôznymi nastaveniami a „mapa.zip" o žiadnom z nich
-nehovorí nič:
+MENO JE STÁLE – rovnaký kraj (a rovnaký výsek) má vždy to isté meno, takže
+ďalší build starý balík PREPÍŠE a v priečinku je jeden aktuálny súbor namiesto
+histórie behov. Poradie je „najprv nahraj, potom zmaž starý" (`folder.
+upload_clobber`): Drive dovolí dva súbory s tým istým menom vedľa seba, takže
+„najprv zmaž" by po spadnutom nahrávaní nenechalo ani nové, ani staré.
 
-    presovsky-vysoke_tatry-z16-vrstevnice_dmr5_10m-skaly_dmr5-
-    tienovanie_sonny-trasy-prvky-20260810-0748-r73.zip
+ČO V TOM BALÍKU JE, HOVORÍ `obsah.json` V ŇOM. Kým bolo meno jedinečné, nieslo
+zoom, vrstvy a ich zdroje (`…-z16-vrstevnice_dmr5_5m-skaly_dmr5-…-r73.zip`);
+stále meno to nesie ako súbor vnútri – dátum, číslo behu, výrez, zoomy, zdroje
+výšok, prah sklonu. Vrstva, ktorá v mape NIE JE, je tam napísaná tiež
+(`bez_skal`): mlčanie sa dá čítať aj ako „zabudlo sa to dopísať".
 
-Je v ňom výrez, zoom dlaždíc, KTORÉ vrstvy sú vnútri a Z ČOHO sú spočítané,
-dátum, čas a číslo behu. Posledné tri robia meno jedinečným, takže sa dva behy
-nikdy neprepíšu.
+BALÍK VRSTVY, KTORÚ TENTO BUILD NEVYROBIL, SA ZMAŽE. Inak by vedľa novej mapy
+ostal starý `-tienovanie.zip` z iného behu a na súbore by to nikto nepoznal –
+tá istá trieda tichého omylu ako dlaždica, ktorá sľubuje celý stupeň.
 
 TESTOVACÍ BEH TO MUSÍ POVEDAŤ. Rýchly test počíta terén len na pár km² zo
 stredu výrezu; mapa z neho vyzerá ako každá iná, len jej väčšina chýba. V mene
-je preto `test4km2` – to isté pravidlo ako pri assetoch výškového modelu
-(meno je sľub o rozsahu, viď `docs/pipeline.md`).
+je preto `test4km2` – a je to nutné dvakrát: aby sa nedalo pomýliť, a aby test
+NEPREPÍSAL ostrú mapu (meno je sľub o rozsahu, ako pri assetoch DEM).
 
 Použitie (hodnoty berie z prostredia, tak ako ostatné workery):
     REGION_KEY=presovsky AREA_KEY=vysoke_tatry TILES_MAXZOOM=16 \\
         python3 workers/deploy/publish-map.py --site=_site
-    python3 workers/deploy/publish-map.py --site=_site --dry-run   # len povie meno a cestu
+    python3 workers/deploy/publish-map.py --site=_site --dry-run   # len mená a cesta
 """
 import argparse
 import importlib.util
@@ -185,8 +192,13 @@ def vrstvy():
     return out
 
 
-def meno():
-    """Meno ZIPu. Jedinečné (dátum, čas a číslo behu) a hovoriace."""
+def zaklad():
+    """Stále meno bez prípony: `<kraj>[-<výsek>][-testNkm2]`.
+
+    Zoom, vrstvy, ich zdroje, dátum ani číslo behu v ňom NIE SÚ – práve preto
+    je stále a ďalší build ten istý súbor prepíše. Všetko to nesie `obsah.json`
+    vnútri balíka.
+    """
     region = bez_testu(env("REGION_KEY")) or "mapa"
     area = bez_testu(env("AREA_KEY"))
     kusy = [safe(region)]
@@ -195,33 +207,113 @@ def meno():
     test_km2 = env("TEST_KM2", "0")
     if test_km2 not in ("", "0"):
         # Rýchly test má terén len na pár km². Bez tohto by mapa vyzerala ako
-        # ostrá a chýbala by jej väčšina.
+        # ostrá, chýbala by jej väčšina – a PREPÍSALA by tú ostrú.
         kusy.append(f"test{safe(test_km2)}km2")
-    kusy.append("z" + safe(env("TILES_MAXZOOM", "?")))
-    kusy += vrstvy()
-    kusy.append(time.strftime("%Y%m%d-%H%M", time.gmtime()))
-    run = env("GITHUB_RUN_NUMBER")
-    if run:
-        kusy.append("r" + safe(run))
-    return "-".join(kusy) + ".zip"
+    return "-".join(kusy)
+
+
+def meno(kind=""):
+    """Meno ZIPu jedného balíka: základ + druh (`` = celá mapa)."""
+    return zaklad() + (f"-{kind}" if kind else "") + ".zip"
+
+
+# ---------- čo je v ktorom balíku ----------
+# Tri balíky, lebo sa aj inak používajú: celú mapu si človek rozbalí a otvorí,
+# vrstevnice so skalami sú to, čo sa nosí do inej mapy, a tieňovanie je jedna
+# pyramída PNG. Vrstevnice a skaly sú SPOLU zámerne – sú z toho istého výpočtu
+# nad tým istým DEM a jedna bez druhej sa nepoužíva.
+
+def manifest_data(site):
+    """`_site/tiles/manifest.json` – jediné miesto, ktoré vie, čo v mape je.
+
+    Berie sa odtiaľ, a nie z ďalších premenných prostredia: manifest skladá
+    `workers/deploy/site.sh` a vrstva, ktorá v ňom nie je, v mape nie je
+    (pravidlo 1 – jedna otázka, jedna odpoveď, jedno miesto).
+    """
+    path = os.path.join(site, "tiles", "manifest.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError) as exc:
+        log(f"::warning::{path} sa nedá prečítať ({exc}) – balíky vrstiev sa "
+            f"skladajú podľa mien súborov v `_site`.")
+        return {}
+
+
+def region_entry(man):
+    key = man.get("default_region")
+    return ((man.get("regions") or {}).get(key) or {}) if key else {}
+
+
+def vrstvy_subory(site, man):
+    """Súbory balíka `vrstevnice-skaly` – z manifestu, inak podľa mena."""
+    reg = region_entry(man)
+    rel = [reg[k] for k in ("contours", "rocks") if reg.get(k)]
+    if not rel:
+        tiles = os.path.join(site, "tiles")
+        rel = [os.path.join("tiles", n) for n in sorted(os.listdir(tiles))
+               if n.endswith(("-contours.pmtiles", "-rocks.pmtiles"))] \
+            if os.path.isdir(tiles) else []
+    return [os.path.join(site, p) for p in rel
+            if os.path.exists(os.path.join(site, p))]
+
+
+def tienovanie_subory(site, man):
+    """Súbory balíka `tienovanie` – pyramída výškových PNG dlaždíc.
+
+    Balí sa len vlastná pyramída v `_site/terrain`. Keď sa tieňovanie
+    nevyrobilo, štýl padá na cudzie dlaždice (AWS Terrain Tiles) a tie do
+    nášho balíka nepatria – nie sú naše a nie sú v `_site`.
+    """
+    base = os.path.join(site, "terrain")
+    out = []
+    for root, _dirs, names in os.walk(base):
+        out += [os.path.join(root, n) for n in names]
+    return out
+
+
+def obsah(kind, man):
+    """`obsah.json` do balíka – to, čo kedysi nieslo meno súboru."""
+    reg = region_entry(man)
+    return {
+        "balik": kind or "mapa",
+        "subor": meno(kind),
+        "region": bez_testu(env("REGION_KEY")),
+        "vyrez": bez_testu(env("AREA_KEY")) or "cely",
+        "test_km2": env("TEST_KM2", "0"),
+        "tiles_maxzoom": env("TILES_MAXZOOM"),
+        "vrstvy": vrstvy(),
+        "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "run": env("GITHUB_RUN_NUMBER"),
+        "run_id": env("GITHUB_RUN_ID"),
+        # Čo o mape hovorí manifest: bbox, zoomy vrstiev, zdroje výšok, prah
+        # sklonu, testovací štvorec. Neopisuje sa – kopíruje sa.
+        "manifest": {"dem": man.get("dem"),
+                     "dem_maxzoom": man.get("dem_maxzoom"),
+                     "dem_source": man.get("dem_source"),
+                     "region": reg},
+    }
 
 
 # ---------- balenie ----------
 
-def zabal(site, dest, koren):
-    """`_site` → jeden ZIP, v ktorom je všetko pod priečinkom `koren`.
-
-    Ten priečinok navyše je zámerný: rozbalenie do stiahnutých súborov inak
-    vysype dvadsať položiek do `~/Downloads`. Volá sa rovnako ako ZIP, takže
-    je po rozbalení vidieť, ktorá mapa to je.
-    """
+def vsetky_subory(site):
     subory = []
     for root, _dirs, names in os.walk(site):
         for n in names:
             subory.append(os.path.join(root, n))
-    if not subory:
-        raise SystemExit(f"::error::V {site} nie je ani jeden súbor – nie je čo "
-                         f"publikovať. (Zbehol job `deploy` až po zloženie webu?)")
+    return subory
+
+
+def zabal(site, dest, koren, subory, info=None):
+    """Súbory → jeden ZIP, v ktorom je všetko pod priečinkom `koren`.
+
+    Ten priečinok navyše je zámerný: rozbalenie do stiahnutých súborov inak
+    vysype dvadsať položiek do `~/Downloads`. Volá sa rovnako ako ZIP, takže
+    je po rozbalení vidieť, ktorá mapa to je. Cesty vnútri ostávajú tie z
+    `_site`, takže `-vrstevnice-skaly.zip` má dlaždice v `tiles/` – rovnako
+    ako celá mapa, nech sa dá rozbaliť jeden cez druhý.
+    """
     surovo = sum(os.path.getsize(p) for p in subory)
     log(f"Balím {len(subory)} súborov ({folder.human(surovo)}) do {dest}")
 
@@ -230,6 +322,11 @@ def zabal(site, dest, koren):
     posledny = t0
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED,
                          compresslevel=ZIP_LEVEL) as z:
+        if info is not None:
+            # Čo kedysi nieslo meno súboru. Ide dovnútra ako prvý, nech je po
+            # rozbalení hneď na očiach.
+            z.writestr(os.path.join(koren, "obsah.json"),
+                       json.dumps(info, ensure_ascii=False, indent=2) + "\n")
         for p in sorted(subory):
             z.write(p, os.path.join(koren, os.path.relpath(p, site)))
             hotovo += os.path.getsize(p)
@@ -257,7 +354,9 @@ def main():
     ap.add_argument("--keep-zip", action="store_true",
                     help="nechať ZIP na disku aj po nahratí")
     ap.add_argument("--dry-run", action="store_true",
-                    help="povedz meno a cestu, ale nič nebaľ ani nenahrávaj")
+                    help="povedz mená a cestu, ale nič nebaľ ani nenahrávaj")
+    ap.add_argument("--zip-only", action="store_true",
+                    help="zabaľ do --out a na Drive nesiahaj (lokálna skúška)")
     ap.add_argument("--summary", default="", help="kam dopísať súhrn")
     args = ap.parse_args()
 
@@ -265,9 +364,42 @@ def main():
         regions = json.load(f)
 
     parts = cesta(regions)
-    name = meno()
-    log(f"Mapa sa publikuje ako:  {'/'.join(parts)}/{name}")
+    man = manifest_data(args.site)
+    # Tri balíky v jednom zozname: druh, čo do neho patrí, a popis do logu.
+    # Zoznam preto, že sa s nimi robí to isté – zabaliť, nahrať, prepísať
+    # starý – a tri kópie toho istého by sa raz rozišli.
+    baliky = [
+        ("", "celá mapa – web tak, ako sa nasadil",
+         vsetky_subory(args.site)),
+        ("vrstevnice-skaly", "vrstevnice a skalné plochy (.pmtiles)",
+         vrstvy_subory(args.site, man)),
+        ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (PNG)",
+         tienovanie_subory(args.site, man)),
+    ]
+    if not baliky[0][2]:
+        raise SystemExit(f"::error::V {args.site} nie je ani jeden súbor – nie je "
+                         f"čo publikovať. (Zbehol job `deploy` až po zloženie "
+                         f"webu?)")
+    for kind, popis, subory in baliky:
+        stav = (f"{len(subory)} súborov, "
+                f"{folder.human(sum(os.path.getsize(p) for p in subory))}"
+                if subory else "NIE JE V TOMTO BUILDE – starý balík sa zmaže")
+        log(f"  {meno(kind):<48} {popis} – {stav}")
+    log(f"Priečinok na Drive: {'/'.join(parts)}")
     if args.dry_run:
+        return 0
+
+    if args.zip_only:
+        # Lokálna skúška: to isté balenie, len bez Drive – nech sa dá pozrieť,
+        # čo v balíkoch je, bez tokenu a bez nahrávania.
+        out = args.out or os.environ.get("RUNNER_TEMP", "/tmp")
+        for kind, popis, subory in baliky:
+            if not subory:
+                log(f"{meno(kind)}: {popis} v tomto builde nie je – vynechávam.")
+                continue
+            dest = os.path.join(out, meno(kind))
+            zabal(args.site, dest, meno(kind)[:-4], subory,
+                  info=obsah(kind, man))
         return 0
 
     creds = auth.from_env()
@@ -283,30 +415,53 @@ def main():
     if auth.can_write(creds) is False:
         raise SystemExit(f"::error::Mapa sa nepublikovala: {auth.scope_hint()}")
 
-    dest = os.path.join(args.out or os.environ.get("RUNNER_TEMP", "/tmp"), name)
-    velkost = zabal(args.site, dest, name[:-4])
-    try:
-        root = folder.folder_id(args.folder)
-        log(f"Priečinok na Drive: {'/'.join(parts)}")
-        fid = folder.ensure_path(creds, root, parts)
-        log(f"Nahrávam {folder.human(velkost)} …")
-        t0 = time.time()
-        folder.upload(creds, dest, name, fid,
-                      f"{'/'.join(parts)}/{name}")
-        el = max(time.time() - t0, 1e-6)
-        log(f"Hotovo za {el / 60:.1f} min ({velkost / el / 1e6:.1f} MB/s): "
-            f"{folder.folder_link(fid)}")
-    finally:
-        if not args.keep_zip and os.path.exists(dest):
-            os.remove(dest)
+    root = folder.folder_id(args.folder)
+    fid = folder.ensure_path(creds, root, parts)
+    hotove = []
+    for kind, popis, subory in baliky:
+        name = meno(kind)
+        if not subory:
+            # Vrstva v tomto builde nie je. Starý balík toho istého mena by
+            # vedľa novej mapy tvrdil, že je – a na súbore by to nikto
+            # nepoznal.
+            kolko = folder.delete_named(creds, fid, name)
+            if kolko:
+                log(f"::warning::{popis} v tomto builde nie je – zmazal som "
+                    f"{kolko}× starý {name}, aby v priečinku nezostal balík "
+                    f"z iného behu.")
+            else:
+                log(f"{name}: {popis} v tomto builde nie je – nepublikujem.")
+            continue
+        dest = os.path.join(args.out or os.environ.get("RUNNER_TEMP", "/tmp"),
+                            name)
+        velkost = zabal(args.site, dest, name[:-4], subory,
+                        info=obsah(kind, man))
+        try:
+            log(f"Nahrávam {name} ({folder.human(velkost)}) …")
+            t0 = time.time()
+            prepisane = folder.upload_clobber(
+                creds, dest, name, fid, f"{'/'.join(parts)}/{name}")
+            el = max(time.time() - t0, 1e-6)
+            log(f"  hotovo za {el / 60:.1f} min "
+                f"({velkost / el / 1e6:.1f} MB/s)"
+                + (" – starý súbor toho mena prepísaný" if prepisane else ""))
+        finally:
+            if not args.keep_zip and os.path.exists(dest):
+                os.remove(dest)
+        hotove.append((name, popis, velkost, prepisane))
+    log(f"Hotovo: {len(hotove)} balíkov v {folder.folder_link(fid)}")
 
     if args.summary:
         with open(args.summary, "a") as f:
             f.write("## Mapa na Google Drive\n\n")
-            f.write("| vec | hodnota |\n|---|---|\n")
-            f.write(f"| priečinok | [{'/'.join(parts)}]({folder.folder_link(fid)}) |\n")
-            f.write(f"| súbor | `{name}` |\n")
-            f.write(f"| veľkosť | {folder.human(velkost)} |\n\n")
+            f.write(f"Priečinok [{'/'.join(parts)}]({folder.folder_link(fid)}) – "
+                    f"mená sú stále, takže ďalší build tie isté súbory prepíše. "
+                    f"Čo je v balíku, hovorí `obsah.json` v ňom.\n\n")
+            f.write("| balík | čo je v ňom | veľkosť | starý |\n|---|---|--:|---|\n")
+            for name, popis, velkost, prepisane in hotove:
+                f.write(f"| `{name}` | {popis} | {folder.human(velkost)} | "
+                        f"{'prepísaný' if prepisane else '–'} |\n")
+            f.write("\n")
     return 0
 
 
