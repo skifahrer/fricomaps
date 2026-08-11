@@ -638,8 +638,17 @@ sa, pričom pamäť ostala na 0,7 GB.
 
 Plocha cez hranicu bloku vypadne ako dva kusy; tie sa na konci zlepia cez
 `ST_Union` (spatialite), a to len tie, ktoré sa hranice naozaj dotýkajú.
-Keď spatialite chýba, beh pokračuje a povie to — v skalách budú vidieť
-rovné rezy.
+Keď spatialite chýba **alebo únia stratí plochu**, beh pokračuje s pôvodnými
+kusmi a povie to — v skalách budú vidieť rovné rezy. To druhé nie je
+teoretické: `ST_Union` nad neplatnou geometriou skončí ÚSPECHOM a napíše
+prázdny súbor, takže bez prepočítania plochy zmizli všetky skaly na hraniciach
+blokov (beh 31434520563) a mapa bola zelená a bez skál.
+
+Obe cesty ku skalám — zo sklonu (`contours-rocks/rock-areas.py`) aj
+z tieňovania (`rocks-shading/vector.py`) — robia toto isté, a preto to robia
+**jedným kódom**: `workers/lib/contour-blocks.py` (obrysy po blokoch, značenie
+a zlepovanie švov, kontrola metrických súradníc). Kým to boli dve kópie,
+oprava prázdnej únie aj zhrnutie varovania o SRS skončili len v jednej z nich.
 
 **Zoom vyberá `auto` a nie je to štvornásobok na zoom.** Sťahovanie áno, ale
 obrysy nie — a tie sú to drahé. Namerané na Vysokých Tatrách:

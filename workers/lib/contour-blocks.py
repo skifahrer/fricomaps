@@ -23,10 +23,13 @@ nie je tá istá drahá fáza, ktorej sme sa blokmi zbavovali.
 Bez spatialite sa švy zlepiť nedajú – vtedy beh POKRAČUJE s rozseknutými
 plochami a povie to. Rozseknutá skala je horšia mapa, nie žiadna mapa.
 
-Používa to `contours-rocks/rock-areas.py` (skaly zo sklonu). Tú istú vec robí
-zatiaľ vlastným kódom aj `rocks-shading/vector.py` (skaly z tieňovania) – ten
-je starší a mal by sa sem presťahovať, nech to nie sú dve implementácie
-jedného (pravidlo 1).
+Používajú to OBE cesty ku skalám: `contours-rocks/rock-areas.py` (zo sklonu)
+a `rocks-shading/vector.py` (z tieňovania). Boli to dve implementácie jednej
+veci a rozišli sa presne tak, ako pravidlo 1 sľubuje: oprava, ktorá stála beh
+31434520563 (prázdna únia švov sa zahodí a plochy sa vrátia nezlepené), aj
+zhrnutie varovania o chýbajúcom SRS vznikli len v jednej z nich. Preto sú tu
+raz a preto tu majú aj zostať – čo je rozdielne (prahy, atribúty, rozpočet),
+sa podáva parametrom.
 """
 import json
 import os
@@ -36,7 +39,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from watch import hms, run_watched  # noqa: E402
+from watch import dir_mb, hms, run_watched  # noqa: E402
 
 
 # Varovanie, ktoré GDAL vypíše NAD KAŽDÝM blokom a je tu OČAKÁVANÉ: z okna
@@ -217,7 +220,10 @@ def skontroluj_metricke(seq, minimum=1000.0, vzoriek=200):
     except FileNotFoundError:
         return True
     if videl and najvacsia < minimum:
-        raise ValueError(
+        # `RuntimeError`, nie `ValueError`: volajúci ju chytá a vypisuje ako
+        # `::error::` s hláškou (`rocks-shading/build.py`). Hláška je
+        # zrozumiteľná, traceback nie.
+        raise RuntimeError(
             f"súradnice vyzerajú ako stupne (najväčšia {najvacsia:.6f}), nie "
             f"ako metre – z okna bloku sa nevyhodil `<SRS>` a GDAL ich "
             f"prepočítal do WGS84. Plocha by potom vyšla rádovo 1e-9 m² "
@@ -226,14 +232,17 @@ def skontroluj_metricke(seq, minimum=1000.0, vzoriek=200):
     return True
 
 
-def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
-               heartbeat=30, max_rss_mb=0, label="gdal_contour"):
+def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *, budget_s=0):
     """Obrysy po blokoch do `out_dir/b*.geojsonl`. Vráti (priečinok, počet).
 
     `urovne`   – zoznam prahov pre `-fl`
     `atributy` – napr. `["-amin", "smin", "-amax", "smax"]`
     `geo`      – (ox, oy, res): ľavý horný roh a veľkosť bunky v metroch,
                  aby sa okno dalo prepočítať na súradnice
+    `budget_s` – strop času, VYPNUTÝ kým ho niekto nezapne. Patrí sem práve
+                 preto, že sa po zastavení dá nadviazať: hotové bloky ostávajú
+                 na disku, takže `TimeoutError` nie je zahodená práca, ale
+                 „na tomto zoome sa to nestihne, povedzme to teraz".
     """
     w_px, h_px = raster_size(vrt)
     if not w_px:
@@ -315,7 +324,12 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
         if spravene and (i % max(1, len(bloky) // 50) == 0 or i == len(bloky) - 1):
             zvysok = el / spravene * (len(bloky) - i - 1)
             print(f"  … obrysy: blok {i + 1}/{len(bloky)}, beží {hms(el)}, "
-                  f"zostáva ~{hms(zvysok)}", flush=True)
+                  f"zostáva ~{hms(zvysok)}, na disku {dir_mb(out_dir):.0f} MB",
+                  flush=True)
+        # Rozpočet sa kontroluje až po zapísanom bloku: čo je hotové, ostáva
+        # na disku a ďalší beh nadviaže presne tu.
+        if budget_s and el > budget_s:
+            raise TimeoutError(f"obrysy: {i + 1}/{len(bloky)} blokov")
     # Koľko blokov to varovanie vypísalo, sa POVIE. Keď ho zrazu nemá jeden
     # blok z 364, je to rozdiel oproti zvyšku a stojí za to, aby bol vidieť –
     # zhrnutie nemá znamenať, že sa prestalo pozerať.
@@ -326,7 +340,7 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
 
 
 def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
-             label="švy"):
+             max_s=0, label="švy"):
     """Spojí plochy rozseknuté hranicou bloku. Vráti cestu k výsledku.
 
     Unionuje LEN útvary s `sev=1`, po triedach – inak by sa stena zlepila so
@@ -377,7 +391,7 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
                      "-sql", f"SELECT {klucovy_atribut}, "
                              f"ST_Union(ST_MakeValid(geometry)) AS geometry "
                              f"FROM svy GROUP BY {klucovy_atribut}"],
-                    label, tmp=zlep, every=heartbeat)
+                    label, tmp=zlep, every=heartbeat, max_s=max_s)
     except Exception as exc:
         chyba = f"{type(exc).__name__}"
 
