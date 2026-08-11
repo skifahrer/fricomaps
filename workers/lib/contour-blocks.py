@@ -39,6 +39,44 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from watch import hms, run_watched  # noqa: E402
 
 
+# Varovanie, ktoré GDAL vypíše NAD KAŽDÝM blokom a je tu OČAKÁVANÉ: z okna
+# bloku sa `<SRS>` vyhadzuje zámerne (viď `po_blokoch`), takže vrstva naozaj
+# žiadny SRS nemá a ovládač to poslušne hlási.
+#
+# PREČO SA TO FILTRUJE. Pri 364 blokoch je toho 364 riadkov – a je to TEN ISTÝ
+# text, akým sa ohlásila skutočná chyba: v behu 31428413843 skončili skaly na
+# zlých súradniciach a v PMTiles bolo 0 dlaždíc, a jediné, čo to v logu
+# povedalo, bolo práve „No SRS set on layer". Varovanie, ktoré na jednom mieste
+# znamená „všetko v poriadku" a na druhom „mapa je rozbitá", si človek odvykne
+# čítať – a to je pravidlo 8 zadnými dverami. Preto sa vypíše RAZ, aj s tým,
+# prečo je v poriadku, a ostatné sa spočítajú. Čokoľvek iné zo stderr ide von
+# vždy a celé.
+OCAKAVANE_VAROVANIE = "No SRS set on layer"
+
+
+def _stderr_von(text, *, prve, kde):
+    """Vypíše stderr z GDALu; očakávané varovanie zhrnie, zvyšok pustí celý.
+
+    Vracia počet riadkov očakávaného varovania, nech ich vie volajúci spočítať
+    a na konci povedať, koľko ich bolo – zamlčať sa nesmie ani to, čo je
+    v poriadku.
+    """
+    ocakavane = 0
+    for riadok in (text or "").splitlines():
+        if not riadok.strip():
+            continue
+        if OCAKAVANE_VAROVANIE in riadok:
+            ocakavane += 1
+            if prve:
+                print(f"    (GDAL: „{riadok.strip()}“ – tak to má byť, "
+                      f"z okna bloku sa `<SRS>` vyhadzuje zámerne, aby "
+                      f"súradnice ostali metrické. Ďalšie výskyty sa už "
+                      f"nevypisujú, spočítajú sa.)", flush=True)
+            continue
+        print(f"    {kde}: {riadok.rstrip()}", flush=True)
+    return ocakavane
+
+
 def raster_size(vrt):
     """(šírka, výška) rastra v pixeloch."""
     try:
@@ -211,6 +249,7 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
 
     t0 = time.time()
     spravene = 0
+    bez_srs = 0
     for i, (bx, by) in enumerate(bloky):
         cesta = os.path.join(out_dir, f"b{i:05d}.geojsonl")
         if os.path.exists(cesta):
@@ -240,11 +279,24 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
         part = cesta + ".part"
         if os.path.exists(part):
             os.remove(part)
-        subprocess.run(["gdal_contour", "-p", "-q", "-fl", *urovne, *atributy,
-                        "-f", "GeoJSONSeq", "-nln", "band",
-                        # Súradnice sú metrické, dve desatiny = centimeter.
-                        "-lco", "COORDINATE_PRECISION=2", okno, part],
-                       check=True)
+        # stderr sa CHYTÁ, nie potláča: očakávané varovanie o chýbajúcom SRS
+        # sa zhrnie (viď `_stderr_von`), čokoľvek iné ide do logu tak, ako
+        # prišlo. Pri páde sa vypíše všetko a až potom sa chyba prehodí ďalej –
+        # inak by po `check=True` ostal dôvod pádu iba v zahodenom stderr.
+        hotovo = subprocess.run(
+            ["gdal_contour", "-p", "-q", "-fl", *urovne, *atributy,
+             "-f", "GeoJSONSeq", "-nln", "band",
+             # Súradnice sú metrické, dve desatiny = centimeter.
+             "-lco", "COORDINATE_PRECISION=2", okno, part],
+            capture_output=True, text=True)
+        # `prve` sa viaže na PRVÝ VÝSKYT, nie na prvý blok: keby varovanie
+        # prišlo až od druhého bloku, vysvetlenie by sa inak nevypísalo vôbec
+        # a zvyšok by sa len ticho počítal.
+        bez_srs += _stderr_von(hotovo.stderr, prve=(bez_srs == 0),
+                               kde="gdal_contour")
+        if hotovo.stdout.strip():
+            print(f"    gdal_contour: {hotovo.stdout.strip()}", flush=True)
+        hotovo.check_returncode()
         # STRÁŽCA: prvý blok sa pozrie, či sú súradnice naozaj metrické.
         # Keď sa sem raz vráti prepočet do stupňov, nespadne nič – len
         # z filtra plochy vypadne všetko a mapa bude ticho bez skál.
@@ -264,6 +316,12 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *,
             zvysok = el / spravene * (len(bloky) - i - 1)
             print(f"  … obrysy: blok {i + 1}/{len(bloky)}, beží {hms(el)}, "
                   f"zostáva ~{hms(zvysok)}", flush=True)
+    # Koľko blokov to varovanie vypísalo, sa POVIE. Keď ho zrazu nemá jeden
+    # blok z 364, je to rozdiel oproti zvyšku a stojí za to, aby bol vidieť –
+    # zhrnutie nemá znamenať, že sa prestalo pozerať.
+    if bez_srs:
+        print(f"  (GDAL hlásil „{OCAKAVANE_VAROVANIE}“ pri {bez_srs} "
+              f"z {spravene} počítaných blokov – očakávané)", flush=True)
     return out_dir, len(bloky)
 
 
