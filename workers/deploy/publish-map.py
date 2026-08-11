@@ -305,8 +305,15 @@ def obsah(kind, man):
 # istá odpoveď na otázku „čoho sa tá mapa týka", akú dáva `cesta()`. Dve rôzne
 # hierarchie tých istých máp by sa raz rozišli (pravidlo 1).
 #
-#   countries.slovensko.regions.presovsky.maps                 celý kraj
-#   countries.slovensko.regions.presovsky.subregions.vysoke_tatry.maps
+# KRAJINA JE HLAVNÝ KĽÚČ – rovno v koreni, bez obálky:
+#
+#   slovensko.regions.presovsky.maps                          celý kraj
+#   slovensko.regions.presovsky.subregions.vysoke_tatry.maps  výsek
+#
+# Metadáta katalógu ležia vedľa nich a poznať ich je po čom: začínajú
+# podčiarkovníkom (`_comment`, `_updated_at`). Je to tá istá konvencia ako
+# vo `workers/data/areas.json`, kde sú kľúče pohorí tiež v koreni a `_comment`
+# medzi nimi – kto katalóg číta, preskočí kľúče na `_`.
 #
 # ZÁPIS JE „NAHRAĎ CELÚ POLOŽKU". Keď mapa v zozname nie je, pridá sa; keď je,
 # prepíše sa celá – vrátane balíkov, ktoré tento build nevyrobil, aby v nej
@@ -336,13 +343,15 @@ def zapis_katalog(path, parts, regions, baliky, man):
         data = {}
     data.setdefault("_comment",
                     "Katalóg hotových máp na Google Drive – ktoré sú a kde. "
-                    "Dopisuje ho na konci buildu workers/deploy/publish-map.py "
-                    "(krok „Zapíš mapu do maps.json“); ručne sa needituje. "
-                    "Odkazy otvorí ten, kto má prístup k priečinku s mapami.")
-    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    countries = data.setdefault("countries", {})
+                    "Hlavný kľúč je krajina, pod ňou `regions` (kraj) a "
+                    "`subregions` (výsek); kľúče na `_` sú metadáta katalógu, "
+                    "nie krajiny. Dopisuje ho na konci buildu "
+                    "workers/deploy/publish-map.py (krok „Zapíš mapu do "
+                    "maps.json“); ručne sa needituje. Odkazy otvorí ten, kto "
+                    "má prístup k priečinku s mapami.")
+    data["_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-    krajina = countries.setdefault(parts[0], {})
+    krajina = data.setdefault(parts[0], {})
     krajina.setdefault("name", katalog_meno(regions, parts[0], "region"))
     uzol = krajina                      # build celej krajiny končí tu
     if len(parts) > 1:
@@ -358,7 +367,7 @@ def zapis_katalog(path, parts, regions, baliky, man):
     polozka = {
         "name": uzol.get("name"),
         "drive": "/".join(parts),
-        "updated_at": data["updated_at"],
+        "updated_at": data["_updated_at"],
         "run": env("GITHUB_RUN_NUMBER"),
         "layers": vrstvy(),
         "maps": {kind or "mapa": {

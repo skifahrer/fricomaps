@@ -1522,22 +1522,22 @@ a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
 
 ```json
 {
-  "countries": {
-    "slovensko": {
-      "name": "Slovensko",
-      "regions": {
-        "zilinsky": {
-          "name": "Žilinský kraj",
-          "maps": { "mapa": { "file": "zilinsky.zip", "link": "…", "download": "…", "size": 900000000 },
-                    "vrstevnice-skaly": { … }, "tienovanie": { … } },
-          "bbox": [18.305, 48.72, 20.08, 49.635], "maxzoom": 16,
-          "contours_maxzoom": 16, "contour_interval": 5, "rocks_maxzoom": 16,
-          "rock_slope": 50, "dem_source": "dmr5", "layers": ["vrstevnice_dmr5_5m", "…"],
-          "drive": "slovensko/zilinsky", "run": "105", "updated_at": "…",
-          "subregions": {
-            "sulovske_skaly": { "name": "Súľovské skaly",
-                                "area_bbox": [18.53, 49.11, 18.72, 49.22], "maps": { … } }
-          }
+  "_comment": "…", "_updated_at": "2026-08-11T18:35:52Z",
+
+  "slovensko": {
+    "name": "Slovensko",
+    "regions": {
+      "zilinsky": {
+        "name": "Žilinský kraj",
+        "maps": { "mapa": { "file": "zilinsky.zip", "link": "…", "download": "…", "size": 900000000 },
+                  "vrstevnice-skaly": { … }, "tienovanie": { … } },
+        "bbox": [18.305, 48.72, 20.08, 49.635], "maxzoom": 16,
+        "contours_maxzoom": 16, "contour_interval": 5, "rocks_maxzoom": 16,
+        "rock_slope": 50, "dem_source": "dmr5", "layers": ["vrstevnice_dmr5_5m", "…"],
+        "drive": "slovensko/zilinsky", "run": "105", "updated_at": "…",
+        "subregions": {
+          "sulovske_skaly": { "name": "Súľovské skaly",
+                              "area_bbox": [18.53, 49.11, 18.72, 49.22], "maps": { … } }
         }
       }
     }
@@ -1545,9 +1545,17 @@ a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
 }
 ```
 
-**Štruktúra sedí s cestou na Drive** (krajina → kraj → výsek), a to zámerne: je
-to tá istá odpoveď na otázku „čoho sa tá mapa týka", akú dáva `cesta()`. Dve
-rôzne hierarchie tých istých máp by sa raz rozišli.
+**Hlavný kľúč je krajina** – rovno v koreni, bez obálky. Metadáta katalógu ležia
+vedľa nej a poznať ich je po čom: začínajú podčiarkovníkom (`_comment`,
+`_updated_at`). Je to tá istá konvencia ako vo
+[`workers/data/areas.json`](data/areas.json), kde sú kľúče pohorí tiež v koreni
+a `_comment` medzi nimi – kto katalóg číta, preskočí kľúče na `_`.
+
+**Zvyšok štruktúry sedí s cestou na Drive** (krajina → kraj `regions` → výsek
+`subregions`), a to zámerne: je to tá istá odpoveď na otázku „čoho sa tá mapa
+týka", akú dáva `cesta()`. Dve rôzne hierarchie tých istých máp by sa raz
+rozišli. Build celej krajiny (`admin_level: 2`) nemá kraj, takže má `maps` rovno
+pri krajine – vedľa `regions` s krajmi, ktoré sa stavali zvlášť.
 
 Zápis je **„nahraď celú položku"**: keď mapa v zozname nie je, pridá sa; keď je,
 prepíše sa celá – vrátane balíkov, ktoré tento build nevyrobil, aby v nej
