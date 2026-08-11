@@ -9,9 +9,16 @@
 #   osmium tags-filter (r/route=…) → workers/trails/routes.py → data/trails.geojson
 #
 # Jedna línia = jedna trasa na jednej ceste. Po ceste ich vedie aj päť naraz,
-# takže každá dostane svoj **pruh** `off` (0,5 · 1,5 · 2,5 …) a štýl ju
-# podľa neho posunie (`line-offset`) vedľa cesty. Samotná cesta tak zostane
-# vidieť aj s tým, aká je.
+# takže každá dostane svoj **pruh** (`side` = na ktorú stranu, `off` = koľká
+# je v rade na tej strane) a štýl ju podľa neho posunie (`line-offset`) vedľa
+# cesty. Samotná cesta tak zostane vidieť aj s tým, aká je. Pešie trasy idú na
+# jednu stranu, kolesové na druhú – po jednom chodníku vedie bežne turistická
+# značka aj cyklotrasa a takto obe začínajú hneď pri ňom.
+#
+# `way` (`path` / `road`) hovorí, po čom trasa vedie. Odstup pásika od čiary
+# pod ním totiž nie je jedno číslo: asfaltka je v mape niekoľkonásobne širšia
+# než chodník, takže odstup, pri ktorom sa pásik lepí na chodník, leží
+# uprostred cesty. Aký odstup pre ktorý prípad, si drží štýl.
 #
 # `tier` je dôležitosť trasy podľa siete (iwn/nwn/rwn/lwn). Riadi, od akého
 # zoomu je trasa v dlaždiciach: diaľkovú trasu má zmysel vidieť aj
@@ -47,11 +54,16 @@ layers:
           - key: tier
           - key: name
           - key: ref
-          # pruh vedľa cesty a koľko ich na tej ceste je
+          # pruh vedľa cesty: strana (+1 pešie, −1 kolesové), poradie v rade
+          # na tej strane (od nuly) a koľko trás na tej ceste celkovo je
+          - key: side
+            type: integer
           - key: off
             type: double
           - key: cnt
             type: integer
+          # po čom trasa vedie – `path` (chodník, lesná cesta) alebo `road`
+          - key: way
           # id relácie – v mape sa dá kliknúť a dohľadať trasu v OSM
           - key: rel
             type: long

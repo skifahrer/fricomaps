@@ -1682,13 +1682,17 @@ data/region.osm.pbf
 ### Pásiky vedľa cesty, nie namiesto nej
 
 Trasa sa kreslí ako farebný pásik **vedľa** cesty (`line-offset`), takže pod
-ním zostane vidieť, aká je to vlastne cesta – chodník, lesná cesta, asfaltka:
+ním zostane vidieť, aká je to vlastne cesta – chodník, lesná cesta, asfaltka.
+**Pešie trasy idú na jednu stranu, kolesové na druhú** a druhá trasa v rade sa
+nalepí na prvú bez medzery:
 
 ```
-── cesta ────────────────    zostane vidieť, aká to je cesta
-━━ červená (off 0,5) ━━━━
-━━ modrá   (off 1,5) ━━━━    druhá trasa po tej istej ceste
-━╍ cyklotrasa (off 2,5) ╍    a tretia, prerušovane
+╍╍ MTB        (side −1, off 1) ╍╍
+╍╍ cyklotrasa (side −1, off 0) ╍╍
+── chodník ──────────────────────    zostane vidieť, aká to je cesta
+━━ červená    (side +1, off 0) ━━
+━━ modrá      (side +1, off 1) ━━    nalepená na červenú, bez medzery
+━━ zelená     (side +1, off 2) ━━
 ```
 
 Po jednej ceste vedie bežne viac trás naraz, takže sa každá zapíše do dlaždíc
@@ -1696,11 +1700,35 @@ zvlášť a dostane vlastný **pruh**. Detaily, ktoré na tom závisia:
 
 | vec | ako to je | prečo |
 |---|---|---|
-| číslovanie pruhov | od cesty von: 0,5 · 1,5 · 2,5 … | keby boli vycentrované, koniec jednej trasy by posunul všetky ostatné |
+| strana cesty | pešie (turistická, ferrata, bežky, jazdecká) `+1`, kolesové (cyklo, MTB) `−1` | po jednom chodníku vedie bežne turistická značka **aj** cyklotrasa; v jednom rade by sa druhá odsunula tak ďaleko, že by pri nej nebolo vidieť, ku ktorej ceste patrí |
+| číslovanie pruhov | na každej strane zvlášť, od cesty von: 0 · 1 · 2 … | keby boli vycentrované, koniec jednej trasy by posunul všetky ostatné |
 | poradie | sieť → druh → farba → id relácie | závisí len od trasy, takže si dve trasy na susedných úsekoch pruhy neprehodia; dôležitejšia je bližšie k ceste |
 | smer čiary | vždy od západnejšieho konca | `line-offset` posúva podľa smeru geometrie – inak by pásik preskakoval z jednej strany cesty na druhú podľa toho, ako kto cestu nakreslil |
 | duplikáty | nadradená trasa a jej časť sa zlúčia | superroute a jej člen sú dve relácie na tých istých cestách; dva rovnaké pásiky vedľa seba nie sú informácia, ale chyba |
-| krok pruhu | 1,6 px (z9) až 20 px (z20) | musí byť aspoň polovica šírky cesty pod ním, a tá s približovaním rastie |
+
+### Odstup od cesty: dve čísla, nie jedno
+
+Odstup pásika **nemôže byť jedno číslo**: miestna cesta je pri z16 v mape
+široká 9 px plus obrys, chodník 2,2 px. Odstup, pri ktorom sa pásik lepí na
+chodník, by ležal uprostred cesty. Preto ide do dlaždíc aj `way` – po čom
+trasa vedie – a štýl má dva odstupy:
+
+| po čom vedie | `way` | odstup pri z16 | ako to vyzerá |
+|---|---|---:|---|
+| cesta (asfaltka, spevnená) | `road` | 6,6 px | pásik ide **tesne za okraj** cesty aj s jej obrysom: žiadna medzera, ale ani prekryv |
+| chodník, lesná a poľná cesta | `path` | 3,6 px | **jemný odstup**, nech je pod pásikom vidieť aj samotný chodník a to, že je prerušovaný |
+| rozostup dvoch trás | – | 2,6 px | presne šírka pásika, čiže sú nalepené na sebe; tri značky na jednom chodníku vyzerajú ako jeden trojfarebný pás |
+
+Čísla nie sú odhad – sú spočítané zo šírok čiar v štýle (polovica čiary +
+obrys + polovica pásika) a sedia pri **miestnej ceste**, po ktorej trasy
+chodia najčastejšie. Celá krivka (z9 až z20) sa škáluje pomerom voči hodnote
+pri z16, takže v developer móde stačí prepísať jedno číslo.
+
+Že to drží spolu naprieč tromi súbormi (`routes.py` číslu je rady,
+`trails.yml` to pustí do dlaždíc, `themes.js` z toho ráta `line-offset`),
+stráži [`workers/lint/trails.mjs`](lint/trails.mjs) – rozídené strany alebo
+posunutý zlom krivky nespadnú, len sú cyklotrasy zrazu na tej istej strane
+ako turistické.
 
 ### Farba ide z OSM, odtieň z palety
 
@@ -1724,16 +1752,23 @@ v skupine **Značené trasy**, takže sa dajú v developer móde doladiť ako
 
 ### Druhy trás
 
-| druh | `route` v OSM | predvolená ikona | čiara |
-|---|---|---|---|
-| turistická | `hiking`, `foot`, `walking` | vrch | plná |
-| cyklotrasa | `bicycle` | bicykel | čiarkovaná |
-| horská cyklotrasa | `mtb` | bicykel | krátke čiarky |
-| lyžiarska / bežkárska | `ski`, `nordic`, `skitour` | lyžiar | dlhé čiarky |
-| jazdecká | `horse` | koliesko | bodkovaná |
+| druh | `route` v OSM | predvolená ikona | čiara | strana |
+|---|---|---|---|---|
+| turistická | `hiking`, `foot`, `walking` | vrch | plná | +1 |
+| ferrata | `via_ferrata` | lezec | krátke čiarky | +1 |
+| cyklotrasa | `bicycle` | bicykel | **bodkovaná, ružovo-fialová** | −1 |
+| horská cyklotrasa | `mtb` | bicykel | bodkovaná hustá | −1 |
+| lyžiarska / bežkárska | `ski`, `nordic`, `skitour` | lyžiar | dlhé čiarky | +1 |
+| jazdecká | `horse` | koliesko | krátke čiarky | +1 |
 
-Každý druh má vlastnú vrstvu pre čiaru, ikonu aj názov – v developer móde sa
-im dá zvlášť meniť farba, ikona, hrúbka, prerušovanie aj rozsah zoomu.
+**Cyklotrasa má farbu od nás, nie z OSM.** Cykloznačka v teréne farbu nenesie
+(na rozdiel od turistickej), takže je to naša voľba – a musí sa odlíšiť od
+turistických značiek, ktoré zaberajú červenú, modrú, zelenú aj žltú. Preto
+ružovo-fialová a bodkovaná.
+
+Každý druh má vlastnú vrstvu pre čiaru, ikonu aj názov. Nastavuje sa to ale
+v **záložke Trasy** v developer móde, nie po vrstvách – jeden druh trasy sú tri
+vrstvy naraz a odstup od cesty je vlastnosť všetkých.
 
 ### Názov pozdĺž trasy
 
@@ -1941,9 +1976,31 @@ prepínačom **🛠 Developer mode** v paneli ⚙ (alebo cez `?dev=1` v URL).
 | **Vrstvy** | všetkých ~140 vrstiev po skupinách, s druhom (plocha / línia / bod / popisok / 3D / reliéf). Filtre podľa druhu a hľadanie, zapnutie a vypnutie vrstvy aj celej skupiny, rozsah zoomu (pásik z0–z20 aj `od z` / `do z`), farby všetkých `*-color` vlastností, **ikona** pri symbolových vrstvách, **druh čiary**, hrúbka a krytie, **vzor** a **okraj**. Riadok sa rozklikne kliknutím na názov |
 | **Prvky** | inšpektor: klik do mapy vypíše **všetko, čo je pod kurzorom** – naraz zo všetkých vrstiev, s celým obsahom dlaždice. Viď nižšie |
 | **Paleta** | ~90 farieb aktuálnej témy po skupinách. Zmena farby prefarbí naraz všetky vrstvy, ktoré ju používajú |
+| **Trasy** | značené trasy: **odstup pásika od cesty** (zvlášť pri ceste, pri chodníku a rozostup dvoch trás vedľa seba), a pre každý druh trasy **farba**, **vzor čiary** (plná / čiarkovaná / bodkovaná / čiarka-bodka…) a **ikona**. Plus všetkých desať farieb turistických značiek |
 | **Ikony** | sada ikoniek pre POI, vrcholy a letiská – s náhľadom, počtom obrázkov a licenciou |
 | **POI** | ktoré triedy bodov sa zobrazujú (zoznam sa načíta z dlaždíc v aktuálnom výreze) |
 | **Súbor** | stiahnutie, nahratie a vymazanie úprav |
+
+### Trasy: prečo vlastná záložka a nie zoznam vrstiev
+
+Značené trasy sa cez záložku Vrstvy ladiť nedajú, hoci sú to vrstvy ako každé
+iné. Sú na to tri dôvody a každý z nich je vidieť až pri pokuse:
+
+- **jeden druh trasy sú TRI vrstvy** (pásik, ikona, názov) – zmeniť farbu
+  cyklotrasy by znamenalo nájsť a upraviť tri riadky v troch skupinách,
+- **farba nie je v `paint`, ale vo výraze**: pásik si ju vyberá podľa značky
+  z OSM (`colour=red` → farba z palety), takže políčko „farba vrstvy" by ju
+  prebilo pre všetky značky naraz,
+- **odstup od cesty je vlastnosť všetkých naraz**, nie jednej vrstvy.
+
+Záložka je preto o **druhu trasy**, nie o vrstve: riadok = druh (`hiking`,
+`bicycle`, …), v ňom farba, vzor čiary s náhľadom a ikona zo sady, ktorá je
+práve nasadená (aj s možnosťou *žiadna*). Odstupy sú hore, v pixeloch pri z16;
+ostatné zoomy sa škálujú s nimi.
+
+Farba sa zapisuje do **palety** (`trailCycling`, `trailRed`…), nie vedľa nej –
+z tej istej farby žije aj pásik, aj ikona, aj názov trasy, a druhá cesta k nej
+by sa raz rozišla. Vzor a ikona idú do `trails.types.<druh>` v úpravách štýlu.
 
 ### Každá mapa zvlášť
 

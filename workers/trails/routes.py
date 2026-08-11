@@ -11,15 +11,25 @@ nezistíš, či po nej vedie červená turistická, dve cyklotrasy, alebo nič.
 **Jedna línia na dvojicu (cesta, trasa).** Po jednej ceste vedie bežne
 viac trás naraz (napr. červená aj modrá turistická + cyklotrasa). Preto sa
 každá cesta zapíše toľkokrát, koľko trás po nej vedie, a každá kópia dostane
-svoj **pruh** (`off`) – v štýle je to `line-offset`, takže sa trasy kreslia
-ako farebné pásiky **vedľa** cesty a samotná cesta zostane vidieť aj s tým,
-aká je (chodník, lesná cesta, asfaltka).
+svoj **pruh** (`side` + `off`) – v štýle je to `line-offset`, takže sa trasy
+kreslia ako farebné pásiky **vedľa** cesty a samotná cesta zostane vidieť aj
+s tým, aká je (chodník, lesná cesta, asfaltka).
 
-Pruhy sú číslované od cesty von (0,5 · 1,5 · 2,5 …), vždy na tú istú stranu:
+**Pešie trasy sú na jednej strane, kolesové na druhej.** Po jednom chodníku
+vedie bežne turistická značka aj cyklotrasa; keby boli v jednom rade, tlačili
+by sa od cesty ďalej a ďalej. `side` je preto +1 (pešie: turistická, ferrata,
+bežky, jazdecké) alebo −1 (kolesové: cyklo, MTB), `off` je poradie v rade **na
+tej svojej strane**, číslované od cesty von od nuly:
 
-    ── cesta ────────────────────────
-    ━━ červená (off 0,5) ━━━━━━━━━━━━
-    ━━ modrá   (off 1,5) ━━━━━━━━━━━━
+    ━━ cyklotrasa (side −1, off 0) ━━
+    ── chodník ──────────────────────
+    ━━ červená    (side +1, off 0) ━━
+    ━━ modrá      (side +1, off 1) ━━
+
+Ako ďaleko od cesty ten rad začne a aký je krok, rozhoduje štýl – nie tieto
+dáta. Preto sa sem posiela aj `way`: `road` (asfaltka, ktorá je v mape široká,
+takže pásik musí ísť za jej okraj) alebo `path` (chodník a lesná cesta, kde
+stačí jemný odstup, nech je pod pásikom vidieť aj samotný chodník).
 
 Poradie pruhov závisí len od vlastností trasy (sieť → druh → farba → id),
 nikdy nie od poradia členov v relácii. Vďaka tomu si trasy na susedných
@@ -72,6 +82,33 @@ ROUTE_TYPES = {
 # Poradie druhov v pruhoch – pešie značky najbližšie k ceste, potom kolesá.
 ROUTE_ORDER = {"hiking": 0, "ferrata": 1, "bicycle": 2, "mtb": 3, "ski": 4,
                "horse": 5}
+
+# NA KTORÚ STRANU CESTY IDE PÁSIK. Kolesové trasy na opačnú než pešie: po
+# jednom chodníku vedie bežne turistická značka aj cyklotrasa a v jednom rade
+# by sa druhá z nich odsunula od cesty tak ďaleko, že by pri nej už nebolo
+# vidieť, ku ktorej ceste patrí. Takto obe začínajú hneď pri ceste, každá zo
+# svojej strany. +1 je vpravo v smere čiary (a ten je normalizovaný), −1 vľavo.
+SIDE_BY_ROUTE = {"hiking": 1, "ferrata": 1, "ski": 1, "horse": 1,
+                 "bicycle": -1, "mtb": -1}
+
+# ------------------------------------------------------ po čom trasa vedie
+# Odstup pásika od čiary pod ním nie je jedno číslo: asfaltka je v mape
+# niekoľkonásobne širšia než chodník, takže odstup, pri ktorom sa pásik lepí
+# na chodník, leží uprostred cesty. Do dlaždíc preto ide, po čom trasa vedie,
+# a odstup pre každý z tých dvoch prípadov si drží štýl.
+#
+# `path` sú chodníky a lesné/poľné cesty (tenká prerušovaná čiara, kde pásik
+# potrebuje jemný odstup, nech je pod ním vidieť aj samotný chodník),
+# `road` je všetko ostatné (široká čiara s obrysom – pásik musí za jej okraj).
+PATH_HIGHWAYS = {
+    "path", "footway", "bridleway", "steps", "track", "cycleway", "corridor",
+}
+
+
+def way_class(tags):
+    """Po čom trasa vedie: `path` (chodník, lesná cesta) alebo `road`."""
+    return "path" if (tags.get("highway") or "").strip().lower() \
+        in PATH_HIGHWAYS else "road"
 
 # ------------------------------------------------------------------- siete
 # `network` hovorí, aká je trasa dôležitá: i = medzinárodná, n = národná,
@@ -262,6 +299,7 @@ class Ways(osmium.SimpleHandler):
         self.by_type = Counter()
         self.by_colour = Counter()
         self.by_tier = Counter()
+        self.by_way_class = Counter()
         self.lanes = Counter()
         self.named = set()
 
@@ -285,9 +323,17 @@ class Ways(osmium.SimpleHandler):
             coords.reverse()
 
         lanes = self.lane_order(routes)
+        way = way_class({t.k: t.v for t in w.tags})
         self.ways += 1
         self.lanes[len(lanes)] += 1
-        for idx, info in enumerate(lanes):
+        self.by_way_class[way] += 1
+        # Rady sa číslujú zvlášť pre každú stranu, takže prvá pešia aj prvá
+        # kolesová trasa ležia hneď pri ceste – každá zo svojej.
+        taken = Counter()
+        for info in lanes:
+            side = SIDE_BY_ROUTE.get(info["route"], 1)
+            idx = taken[side]
+            taken[side] += 1
             self.by_type[info["route"]] += 1
             self.by_colour[info["colour"] or "bez farby"] += 1
             self.by_tier[info["tier"]] += 1
@@ -299,7 +345,9 @@ class Ways(osmium.SimpleHandler):
                 # Pruhy sa číslujú od cesty von a vždy na tú istú stranu.
                 # Keby boli vycentrované, koniec jednej trasy by posunul
                 # všetky ostatné – takto ostanú, kde boli.
-                "off": idx + 0.5,
+                "side": side,
+                "off": idx,
+                "way": way,
                 "cnt": len(lanes),
                 "rel": info["rel"],
             }
@@ -393,6 +441,10 @@ def main():
     print("  druhy:  " + ", ".join(f"{k} {v}" for k, v in order))
     print("  farby:  " + ", ".join(f"{k} {v}" for k, v in ways.by_colour.most_common()))
     print("  siete:  " + ", ".join(f"{k} {v}" for k, v in ways.by_tier.most_common()))
+    print("  vedú po: " + ", ".join(
+        f"{k} {v}" for k, v in ways.by_way_class.most_common())
+        + "  (`path` = chodník a lesná cesta, `road` = ostatné; štýl podľa "
+          "toho volí odstup pásika)")
     multi = sum(n for lanes, n in ways.lanes.items() if lanes > 1)
     print(f"  ciest s viac než jednou trasou: {multi} "
           f"(najviac naraz: {max(ways.lanes, default=0)})")

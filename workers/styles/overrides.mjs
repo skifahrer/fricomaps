@@ -26,6 +26,8 @@ import {
   THEMES,
   PALETTE_LABELS,
   DEFAULT_ICON_SOURCE,
+  TRAIL_GAP_DEFAULTS,
+  TRAIL_GAP_ZOOM,
   mapTypeDef
 } from "../../poc/web/themes.js";
 
@@ -102,6 +104,22 @@ if (reiconed.length) {
 }
 if (overrides.poi.hidden.length) {
   summary.push(`  skryté POI triedy: ${overrides.poi.hidden.join(", ")}`);
+}
+
+// Značené trasy. Nie sú to úpravy jednej vrstvy (jeden druh trasy má v štýle
+// tri), tak majú v súhrne vlastný riadok – inak by z neho zmizli.
+const gaps = Object.entries(overrides.trails?.gap || {});
+if (gaps.length) {
+  summary.push(
+    `  odstup trás od cesty (px pri z${TRAIL_GAP_ZOOM}): ` +
+      gaps.map(([k, v]) => `${k} ${v} (pôvodne ${TRAIL_GAP_DEFAULTS[k]})`).join(", ")
+  );
+}
+for (const [id, def] of Object.entries(overrides.trails?.types || {})) {
+  const parts = [];
+  if (def.dash) parts.push(`čiara ${def.dash}`);
+  if (def.icon != null) parts.push(`ikona ${def.icon || "žiadna"}`);
+  summary.push(`  trasa ${id}: ${parts.join(" · ")}`);
 }
 
 // Úpravy, ktoré platia len pre jeden typ mapy. Všetko vyššie je spoločné –
