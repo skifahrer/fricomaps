@@ -1510,6 +1510,58 @@ REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
   python3 workers/deploy/publish-map.py --site=_site --out=/tmp --zip-only
 ```
 
+#### `maps.json` – zoznam hotových máp v repozitári
+
+Na Drive sa **bez tokenu a bez klikania** nedá zistiť, ktoré mapy vlastne
+existujú: priečinky sú tri úrovne hlboko a mená balíkov si nikto nepamätá.
+Preto je v koreni repozitára [`maps.json`](../maps.json) – jediný zoznam toho,
+ktoré mapy sú hotové a kde ležia. Dopisuje ho **build**, hneď po nahratí
+balíkov (`publish-map.py --maps=maps.json`, lebo len ten pozná id súborov),
+a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
+([`workers/deploy/catalog.sh`](deploy/catalog.sh)).
+
+```json
+{
+  "countries": {
+    "slovensko": {
+      "name": "Slovensko",
+      "regions": {
+        "zilinsky": {
+          "name": "Žilinský kraj",
+          "maps": { "mapa": { "file": "zilinsky.zip", "link": "…", "download": "…", "size": 900000000 },
+                    "vrstevnice-skaly": { … }, "tienovanie": { … } },
+          "bbox": [18.305, 48.72, 20.08, 49.635], "maxzoom": 16,
+          "contours_maxzoom": 16, "contour_interval": 5, "rocks_maxzoom": 16,
+          "rock_slope": 50, "dem_source": "dmr5", "layers": ["vrstevnice_dmr5_5m", "…"],
+          "drive": "slovensko/zilinsky", "run": "105", "updated_at": "…",
+          "subregions": {
+            "sulovske_skaly": { "name": "Súľovské skaly",
+                                "area_bbox": [18.53, 49.11, 18.72, 49.22], "maps": { … } }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Štruktúra sedí s cestou na Drive** (krajina → kraj → výsek), a to zámerne: je
+to tá istá odpoveď na otázku „čoho sa tá mapa týka", akú dáva `cesta()`. Dve
+rôzne hierarchie tých istých máp by sa raz rozišli.
+
+Zápis je **„nahraď celú položku"**: keď mapa v zozname nie je, pridá sa; keď je,
+prepíše sa celá – vrátane balíkov, ktoré tento build nevyrobil, aby v nej
+nezostal odkaz na súbor, ktorý sa medzitým zmazal. `subregions` pri tom ostávajú
+(build jedného pohoria neruší mapu celého kraja a naopak). Pri `bbox` treba
+čítať pozorne: to je bbox **mapy**, teda celého regiónu aj pri builde na výrez –
+kde v tej mape naozaj sú vrstevnice a skaly, hovorí `area_bbox`.
+
+Dve veci, ktoré katalóg zámerne **nerobí**: rýchly test doň nezapisuje vôbec
+(mapa je len na pár km² a prepísala by položku ostrej mapy) a po neúspešnom
+nahratí sa nezapíše tiež (`if: steps.publish.outcome == 'success'`) – zoznam,
+ktorý ukazuje na súbory, čo na Drive nie sú, je horší než žiadny. Že to tak
+ostane, stráži [`workers/lint/catalog.py`](lint/catalog.py).
+
 ### Súhrn buildu
 
 Každý beh napíše do záložky **Summary** prehľad: čo sa robilo, ako dlho to

@@ -1898,7 +1898,12 @@ jobs:
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # `write`, a je to jediné miesto v celom builde, kde do repozitára niečo
+      # ide: `maps.json` (katalóg hotových máp) sa po nahratí balíkov na Drive
+      # commitne do vetvy, z ktorej beh vyšel. Nie je to publikovanie dát – tie
+      # sú na Drive; je to zoznam, ktorý sa inak nedá zistiť bez tokenu.
+      # Nezacyklí sa to: `Build map` sa spúšťa len ručne (`workflow_dispatch`).
+      contents: write
       pages: write
       id-token: write
       actions: read     # súhrn číta joby a ich logy, keď niečo spadne
@@ -2056,9 +2061,13 @@ jobs:
       # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
       # model by inak `obsah.json` tvrdil niečo iné, než v tej mape je.
       - name: Publikuj mapu na Drive
+        id: publish
         if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
         env:
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          # Bbox výrezu ide do katalógu vedľa bboxu mapy: mapa je celý región,
+          # ale vrstevnice a skaly sú len tu.
+          AREA_BBOX: ${{ needs.plan.outputs.area_bbox }}
           CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
           CONTOURS_SOURCE: ${{ needs.contours.outputs.dem_source }}
           CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
@@ -2076,7 +2085,27 @@ jobs:
         run: |
           set -euo pipefail
           python3 workers/deploy/publish-map.py --site=_site \
+            --maps=maps.json \
             --summary="$GITHUB_STEP_SUMMARY"
+
+      # ---------- katalóg hotových máp ----------
+      # `maps.json` v koreni repozitára je jediný zoznam toho, KTORÉ mapy sú
+      # hotové a kde na Drive ležia (krajina → kraj → výsek → odkazy na tri
+      # balíky). Na Drive sa to inak nedá zistiť bez tokenu a bez klikania,
+      # takže ho dopisuje krok vyššie – hneď po nahratí, lebo len ten pozná id
+      # súborov – a tu sa to už len uloží do repozitára.
+      #
+      # Až za publikovaním a `if: success()` na ňom: katalóg nesmie ukazovať na
+      # súbory, ktoré sa nenahrali. Rýchly test doň nezapisuje vôbec (mapa je
+      # len na pár km²) – rozhoduje o tom `publish-map.py`, tu by to bola druhá
+      # pravda o tom istom.
+      - name: Zapíš mapu do maps.json
+        if: ${{ steps.publish.outcome == 'success' }}
+        env:
+          MAPS_JSON: maps.json
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: workers/deploy/catalog.sh
       # ---------- súhrn ----------
       # Čo build spravil, ako dlho to trvalo a s akým detailom – na jednom
       # mieste v záložke Summary. Riadky si každý job odložil do svojho

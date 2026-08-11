@@ -340,15 +340,25 @@ def upload_clobber(creds, path, name, parent, description=""):
     spadnutom nahrávaní nenechalo ani nové, ani staré – a v priečinku by nebolo
     nič namiesto toho, čo tam pred minútou bolo.
 
-    Vracia, koľko starých verzií sa zmazalo.
+    Vracia `(id nahratého súboru, koľko starých verzií sa zmazalo)`.
     """
     stare = [f["id"] for f in files_named(creds, parent, name)]
-    upload(creds, path, name, parent, description)
-    for fid in stare:
-        auth.api_delete(creds, fid)
+    fid = upload(creds, path, name, parent, description)
+    for old in stare:
+        auth.api_delete(creds, old)
     if stare:
         print(f"    starú verziu ({len(stare)}×) som zmazal", flush=True)
-    return len(stare)
+    return fid, len(stare)
+
+
+def file_link(fid):
+    """Odkaz na súbor – ten, čo sa dá poslať človeku (vidí ho, kto má prístup)."""
+    return f"https://drive.google.com/file/d/{fid}/view"
+
+
+def download_link(fid):
+    """Odkaz, ktorý súbor rovno stiahne (pri veľkých pýta Drive potvrdenie)."""
+    return f"https://drive.google.com/uc?export=download&id={fid}"
 
 
 def delete_named(creds, parent, name):
