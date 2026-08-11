@@ -339,9 +339,11 @@ pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 sa to bez tokenu a bez klikania nezistí. Dopisuje ho build hneď po nahratí
 (`publish-map.py --maps=`, pozná id súborov) a commitne `deploy/catalog.sh`; je
 to JEDINÉ miesto, kde beh zapisuje do repozitára, a preto má job `deploy`
-`contents: write`. Štruktúra je tá istá ako cesta na Drive (krajina → kraj →
-výsek → tri odkazy), zápis je „nahraď celú položku" a `subregions` pri tom
-ostávajú. Rýchly test doň nezapisuje (prepísal by ostrú mapu) a po neúspešnom
+`contents: write`. Štruktúra je tá istá ako cesta na Drive – **hlavný kľúč je
+krajina** (rovno v koreni), pod ňou `regions` (kraj) a `subregions` (výsek) a
+v každej úrovni `maps` s tromi odkazmi; metadáta katalógu majú v koreni prefix
+`_` (`_comment`, `_updated_at`), tak ako `_comment` v `data/areas.json`. Zápis je
+„nahraď celú položku" a `subregions` pri tom ostávajú. Rýchly test doň nezapisuje (prepísal by ostrú mapu) a po neúspešnom
 nahratí sa nezapíše tiež – zoznam, ktorý ukazuje na neexistujúce súbory, je
 horší než žiadny. Stráži to `workers/lint/catalog.py`.
 

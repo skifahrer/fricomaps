@@ -37,12 +37,25 @@ bad = []
 def polozky(node, kde):
     """Rekurzívne prejde katalóg a vráti (cesta, položka s mapami)."""
     out = []
-    if isinstance(node, dict) and isinstance(node.get("maps"), dict):
+    if not isinstance(node, dict):
+        return out
+    if isinstance(node.get("maps"), dict):
         out.append((kde, node))
-    for kluc in ("countries", "regions", "subregions"):
-        for k, v in (node.get(kluc) or {}).items() if isinstance(node, dict) else []:
+    for kluc in ("regions", "subregions"):
+        for k, v in (node.get(kluc) or {}).items():
             out += polozky(v, f"{kde}/{k}" if kde else k)
     return out
+
+
+def krajiny(data):
+    """Krajiny sú kľúče v KORENI – metadáta katalógu začínajú podčiarkovníkom.
+
+    Tá istá konvencia ako vo `workers/data/areas.json` (`_comment` medzi kľúčmi
+    pohorí). Kto to číta, preskočí `_*`; kontrola musí robiť to isté, inak by
+    `_comment` hlásila ako krajinu bez máp.
+    """
+    return {k: v for k, v in data.items()
+            if not k.startswith("_") and isinstance(v, dict)}
 
 
 try:
@@ -59,10 +72,14 @@ except ValueError as exc:
     data = None
 
 if data is not None:
-    if not isinstance(data.get("countries"), dict):
-        bad.append(f"{CATALOG} nemá objekt `countries` – štruktúra je "
-                   f"krajina → kraj (`regions`) → výsek (`subregions`).")
-    for kde, p in polozky(data, ""):
+    if not isinstance(data, dict):
+        bad.append(f"{CATALOG} nie je objekt – hlavný kľúč je KRAJINA "
+                   f"(`slovensko`), pod ňou `regions` a `subregions`.")
+        data = None
+    elif [k for k in data if not k.startswith("_") and not isinstance(data[k], dict)]:
+        bad.append(f"{CATALOG}: v koreni je kľúč, ktorý nie je ani krajina "
+                   f"(objekt), ani metadáta (`_…`). Hlavný kľúč je krajina.")
+    for kde, p in polozky({"regions": krajiny(data or {})}, ""):
         for druh, m in p["maps"].items():
             if druh not in DRUHY:
                 bad.append(f"{CATALOG}: {kde} má balík `{druh}`, ktorý "
