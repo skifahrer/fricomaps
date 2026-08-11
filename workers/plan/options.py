@@ -95,6 +95,10 @@ DEFAULTS = {
     # nemal ako prejaviť. Každý zoom navyše je ale ŠTVORNÁSOBOK dlaždíc, tak
     # `terrain-build.sh` výsledok ešte zreže na rozpočet stránky.
     "terrain_maxzoom": ("auto", "max zoom výškových dlaždíc (auto = podľa mriežky modelu)"),
+    # 3D terén v štýle. `auto` = zapnúť tam, kde máme VLASTNÉ výškové
+    # dlaždice (teda keď `shading_source` nie je `ziadne`); na verejné
+    # AWS dlaždice sa 3D nezapína, sú globálne a hrubé.
+    "terrain_3d": ("auto", "3D terén v štýle (auto = keď máme vlastné výškové dlaždice)"),
     # Značené trasy sú jediná vrstva bez výberu zdroja – berú sa z toho istého
     # PBF ako mapa, takže niet z čoho vyberať. Zapínač je preto tu a nie
     # štvrtý výber vo formulári, na ktorý už aj tak nie je miesto.
