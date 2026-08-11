@@ -493,6 +493,13 @@ jobs:
       - name: "Štýl: výplne chcú plochy, vzory držia s predlohou"
         run: node workers/lint/style.mjs
 
+      # Dno zoomu vrstevníc a skál je napísané dvakrát a inak to nejde: schéma
+      # Planetilera rozhoduje, čo sa VYROBÍ, štýl, čo sa NAKRESLÍ. Keď sa tie
+      # čísla rozídu, nikto nič nepovie – buď platíme dlaždice, ktoré nikto
+      # nevidí, alebo je v mape diera. Rozpis: `workers/lint/zoom-floor.py`.
+      - name: "Štýl: vrstevnice a skaly majú v schéme a v štýle to isté dno"
+        run: python3 workers/lint/zoom-floor.py
+
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
       # vedieť spamätať z jedného stratného spojenia. Oboje je tiché a beh
       # 31338803278 na tom padol dve časti pred koncom. Rozpis:

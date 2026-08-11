@@ -31,19 +31,22 @@ sources:
 layers:
   - id: contour
     features:
-      # Hlavné vrstevnice (100 m) – viditeľné už z diaľky, a to až od z1.
+      # Hlavné vrstevnice (100 m) – jediná trieda, ktorá ide pod z12.
       #
-      # PREČO AŽ OD z1, KEĎ SA TO NA PREHĽADE NEDÁ ČÍTAŤ: nedá sa čítať
-      # KAŽDÁ, ale tvar pohoria áno – a stojí to skoro nič. Planetiler
-      # zjednodušuje geometriu na každom zoome zvlášť podľa veľkosti pixela,
-      # takže čím nižší zoom, tým menej bodov na čiaru, a dlaždíc je tam
-      # rádovo menej (z1 je JEDNA dlaždica na celý región, z10 ich je tisíc).
-      # Zoomy 1–9 sú preto v súbore stotinou toho, čo zaberá jeden detailný.
-      # Nižšie triedy (`mid`, `minor`) sa nižšie NEPÚŠŤAJÚ – tam by to už
-      # skutočne bola len tmavá šmuha, viď ich `min_zoom`.
+      # PREČO AŽ OD z11 A NIE OD z1. Do z10 sa vrstevnice v mape NEKRESLIA
+      # vôbec: na tej mierke sa nedá čítať ani jedna a mapa z nich má len
+      # sivý závoj, kým dlaždice s nimi si treba stiahnuť. Od z11 je z nich
+      # tvar pohoria a je to LEN TÁTO trieda – hlavná (pri štandardnom
+      # intervale po 100 m). Druhá by pri sebe na tejto mierke splynula do
+      # šmuhy a súbor by zdvojnásobila.
+      #
+      # `min_zoom` v schéme a `minzoom` v štýle musia dať to isté číslo –
+      # keby schéma dlaždice vyrábala a štýl ich nekreslil, platili by sme
+      # dáta, ktoré nikto nevidí (a naopak by v mape bola prázdna diera).
+      # Stráži to `workers/lint/zoom-floor.py`.
       - source: contours
         geometry: line
-        min_zoom: 1
+        min_zoom: 11
         include_when:
           level: major
         attributes:
