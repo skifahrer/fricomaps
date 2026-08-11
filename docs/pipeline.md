@@ -429,7 +429,7 @@ vrcholoch a sedlách. Terén preto musí prísť odinakiaľ:
 | zdroj | kľúč vo výberoch | čo to je | odkiaľ | stav |
 |---|---|---|---|---|
 | **Sonny's LiDAR DTM 20m** | `sonny` | *model terénu* z LiDARu – bez stromov a striech, mriežka 20×20 m, výška po 0,1 m | náš sklad `dem-sonny` (zrkadlo, viď [Stiahnuť výškové dáta](#druhý-workflow-update-dem)) | overené |
-| **Sonny's LiDAR DTM 1″** | `sonny1` | ten istý LiDAR, ale `.hgt` s **1 m zvislým krokom** (20×30 m vodorovne) – skaly z neho vyjdú 2,5× polámanejšie, viď [workers/README.md](../workers/README.md) | náš sklad `dem-sonny1` (zrkadlo Drive priečinka) | nenaplnené |
+| **Sonny's LiDAR DTM 1″** | `sonny1` | 15 dlaždíc `.hgt` v ZIPoch (3601², ~146 MB); **1 m zvislý krok** a 20,3×30,9 m vodorovne – skaly z neho vyjdú 2,5× polámanejšie, viď [workers/README.md](../workers/README.md). Prevzorkované DMR 5.0; dlaždice sú skratky, takže **chce token na Drive** | náš sklad `dem-sonny1` (zrkadlo Drive priečinka) | nenaplnené |
 | **ÚGKK DMR 3.5** | `dmr35` | otvorené dáta ÚGKK, mriežka presne 10×10 m | náš sklad `dem-dmr35` (jeden 2,3 GB ZIP z `opendata.skgeodesy.sk`) | overené |
 | **ÚGKK DMR 5.0** | `dmr5` (default) | slovenský **LiDAR** – najpodrobnejší model terénu. S výrezom (`area`) plné **1 m** z releasu `dem-ugkk`, bez neho dlaždice na **5 m** z `dem-dmr5`. Rozhoduje rozsah, nie ďalší výber | plní [DMR 5.0 z Drive](#štvrtý-workflow-dmr-50-z-drive-etrs89) | naplniť |
 

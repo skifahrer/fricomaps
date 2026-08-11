@@ -76,6 +76,15 @@ auth = load("drive_auth", "auth.py")
 
 FOLDER_MIME = "application/vnd.google-apps.folder"
 
+# SKRATKA (shortcut) je položka, ktorá len UKAZUJE na súbor inde na Drive.
+# Nemá `size` ani obsah – `alt=media` na ňu vráti prázdno a verejné
+# `uc?export=download` odpovie „the owner hasn't given you permission to
+# download this file", hoci cieľ zdieľaný je. Sonnyho priečinok s 1″ modelom
+# je celý z nich (15 dlaždíc = 15 skratiek, zmerané 2026-08-11), takže bez
+# ich rozuzlenia by `listing` vrátila dva obrázky a ani jednu dlaždicu –
+# a hláška by pritom vinila zdieľanie priečinka, ktoré je v poriadku.
+SHORTCUT_MIME = "application/vnd.google-apps.shortcut"
+
 # Bloky po 16 MiB: dosť veľké na to, aby réžia okolo požiadavky nebola vidieť,
 # a dosť malé na to, aby sa zrušený beh vrátil najviac o 16 MiB dozadu.
 CHUNK = 16 * 1024 * 1024
@@ -114,6 +123,41 @@ def folder_id(text):
                      f"https://drive.google.com/drive/folders/<id> alebo id.")
 
 
+def rozuzli(creds, f, rel):
+    """Skratka → súbor, na ktorý ukazuje. Vracia `(položka, dôvod preskočenia)`.
+
+    Meno ostáva to zo SKRATKY – to je, čo priečinok ukazuje, a pri dlaždiciach
+    je meno sľub o rozsahu (`N49E020` hovorí „tento celý stupeň"). Keď sa cieľ
+    volá inak, je to buď premenovaná skratka, alebo skratka na cudziu dlaždicu;
+    ani jedno sa nesmie prehltnúť ticho, lebo z toho vyjde dlaždica s dátami
+    z iného miesta.
+
+    Cieľ sa dopytuje po jednom, nie dávkovo: priečinkov s tisíckami skratiek
+    tu nie je (Sonny ich má 15) a jednoduchosť je tu viac než ušetrené volania.
+    """
+    det = f.get("shortcutDetails") or {}
+    tid = det.get("targetId")
+    if not tid:
+        return f, (f"{rel} (skratka bez cieľa – cieľ zmazaný alebo "
+                   f"neprístupný tomuto účtu)")
+    if det.get("targetMimeType") == FOLDER_MIME:
+        return dict(f, id=tid, mimeType=FOLDER_MIME), ""
+    try:
+        ciel = auth.file_info(creds, tid)
+    except Exception as exc:                        # noqa: BLE001
+        return f, f"{rel} (na cieľ skratky {tid} sa nedá dopýtať: {exc})"
+    if ciel.get("name") and ciel["name"] != f.get("name"):
+        print(f"::warning::Skratka „{rel}“ ukazuje na súbor s iným menom "
+              f"„{ciel['name']}“. Meno dlaždice je sľub o tom, ktoré územie "
+              f"v nej je – over, či je to naozaj tá dlaždica, alebo priečinok "
+              f"vynechaj.", flush=True)
+    # `size`, `ownedByMe` aj id sa berú z CIEĽA: strop sťahovania visí na
+    # vlastníkovi cieľa a sťahuje sa tiež cieľ. Skratka nemá ani jedno.
+    return dict(f, id=tid, size=ciel.get("size"),
+                ownedByMe=ciel.get("ownedByMe"),
+                mimeType=ciel.get("mimeType", ""), shortcutDetails=det), ""
+
+
 def listing(creds, fid, depth=0, prefix="", extra=""):
     """Súbory v priečinku (aj v podpriečinkoch), zoradené podľa mena.
 
@@ -125,13 +169,19 @@ def listing(creds, fid, depth=0, prefix="", extra=""):
     volajúci. Je to tu preto, aby „vypíš priečinok na Drive" ostalo jedno
     miesto: pýta sa ho aj cache (`drive-cache.py`, chce časy) aj DMR 5.0
     (`dmr5-drive.py`, chce id súborov podľa mena).
+
+    SKRATKY sa rozuzľujú TU, nie u volajúceho. Volajúci sa pýta „čo je
+    v priečinku a odkiaľ to stiahnem" a odpoveď na to má byť jedna – keby si
+    každý (cache, DMR 5.0, doplnenie modelu) riešil skratky sám, raz by sa
+    rozišli, a tri zo štyroch by to nerobili vôbec.
     """
     out, skipped, token = [], [], ""
     while True:
         q = urllib.parse.quote(f"'{fid}' in parents and trashed = false")
         path = (f"/drive/v3/files?q={q}&pageSize=1000&orderBy=folder,name"
                 f"&supportsAllDrives=true&includeItemsFromAllDrives=true"
-                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe"
+                f"&fields=nextPageToken,files(id,name,size,mimeType,ownedByMe,"
+                f"shortcutDetails(targetId,targetMimeType)"
                 + (f",{extra}" if extra else "") + ")")
         if token:
             path += "&pageToken=" + urllib.parse.quote(token)
@@ -139,6 +189,11 @@ def listing(creds, fid, depth=0, prefix="", extra=""):
         for f in data.get("files") or []:
             name = f.get("name") or f["id"]
             rel = f"{prefix}{name}"
+            if f.get("mimeType") == SHORTCUT_MIME:
+                f, problem = rozuzli(creds, f, rel)
+                if problem:
+                    skipped.append(problem)
+                    continue
             if f.get("mimeType") == FOLDER_MIME:
                 if depth >= MAX_DEPTH:
                     skipped.append(f"{rel}/ (vnorené hlbšie než {MAX_DEPTH})")
@@ -491,9 +546,16 @@ def main():
 
     files, skipped = listing(creds, fid)
     if not files:
-        print(f"::error::V priečinku {fid} nie je ani jeden stiahnuteľný súbor. "
-              f"Vidí naň účet {who.get('emailAddress', '?')}? Priečinok musí "
-              f"byť zdieľaný aspoň „ktokoľvek s odkazom – čitateľ“.")
+        # Čo sa preskočilo, patrí do TEJ ISTEJ hlášky. Kým tu bolo len
+        # „vidí naň účet?", posielala hláška hľadať chybu do zdieľania
+        # priečinka aj vtedy, keď bolo zdieľanie v poriadku a preskočili sa
+        # napríklad nerozuzlené skratky.
+        for f in skipped:
+            print(f"  preskočené: {f}")
+        print(f"::error::V priečinku {fid} nie je ani jeden stiahnuteľný súbor "
+              f"({len(skipped)} položiek preskočených, viď vyššie). Vidí naň "
+              f"účet {who.get('emailAddress', '?')}? Priečinok musí byť "
+              f"zdieľaný aspoň „ktokoľvek s odkazom – čitateľ“.")
         return 1
     total = sum(f["size"] for f in files)
     foreign = [f for f in files if not f["owned"]]
@@ -515,7 +577,8 @@ def main():
     if args.list:
         for f in files:
             print(f"  {'vlastné' if f['owned'] else 'cudzie '}  "
-                  f"{human(f['size']):>9}  {f['path']}")
+                  f"{human(f['size']):>9}  {f['path']}"
+                  + ("  (skratka)" if f["raw"].get("shortcutDetails") else ""))
         return 0
 
     pool = drive.Pool(creds=creds)

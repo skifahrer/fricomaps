@@ -563,6 +563,17 @@ jobs:
       # cesty. Rozpis: `workers/lint/worker-paths.py`.
       - name: Cesty medzi workermi ukazujú na existujúce súbory
         run: python3 workers/lint/worker-paths.py
+
+      # Výpis priečinka na Drive musí rozuzliť SKRATKY, nie ich preskočiť.
+      # `listing` zahadzovala všetko bez `size` – správne na Google-natívne
+      # dokumenty, lenže skratka `size` tiež nemá a ozajstný súbor za ňou JE.
+      # Sonnyho 1″ priečinok je z nich celý (15 dlaždíc = 15 skratiek), takže
+      # by z neho vypadli dva obrázky a ani jedna dlaždica – a hláška by pritom
+      # vinila zdieľanie priečinka, ktoré je v poriadku. Staticky sa to overiť
+      # nedá (odpovedá až Drive), preto sa `listing` pustí nad napodobeninou.
+      # Rozpis: `workers/lint/drive-shortcuts.py`.
+      - name: Skratky na Drive sa rozuzľujú na cieľ
+        run: python3 workers/lint/drive-shortcuts.py
       # actionlint kontroluje schému a výrazy, ale nie to, či `needs.X.outputs.Y`
       # naozaj existuje ako výstup jobu X. To je vlastná kontrola – práve na
       # tomto sa dá po rozdelení na joby ticho pomýliť.

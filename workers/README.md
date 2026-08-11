@@ -134,7 +134,7 @@ Sonny ponúka pre Slovensko dva použiteľné modely a **berieme 20m**:
 | model | formát | vodorovne | **zvisle** |
 |---|---|---|---|
 | **20m** | GeoTIFF | 20 × 20 m | **0,1 m** |
-| 1″ | `.hgt` | 20 × 30 m | 1 m |
+| 1″ | `.hgt` | 20,3 × 30,9 m | 1 m |
 
 Rozhoduje ten zvislý krok. Z metrových schodov vychádza schodíkovitý sklon,
 ktorý súvislú skalnú stenu roztrhá na kopu falošných úlomkov – namerané na
@@ -149,6 +149,10 @@ Rovnaká celková plocha skál, ale z metrových dát je z nej **2,5× viac
 polámaných kúskov s hrubším obrysom**. Viac polygónov tu teda neznamená viac
 detailu, ale viac šumu.
 
+Vidno to aj na jednom bode: v dlaždici `N49E020` vyjde Gerlachovský štít
+**2 646 m** oproti oficiálnym 2 654,4 m (−8,4 m), kým DMR 5.0 cez pipeline dá
+2 653,92 m (−0,5 m). Bunka 20 × 31 m vrchol jednoducho zroluje.
+
 **1″ model sa dá zvoliť** – je vo výberoch ako `sonny1` (sklad `dem-sonny1`,
 [priečinok na Drive](https://drive.google.com/drive/folders/1FCXPutDU6DvnTEA4PY6iFOQKiuVd11j4)).
 Predvolený nie je a podľa tabuľky vyššie ani nemá byť: na skaly je `sonny`
@@ -156,6 +160,28 @@ lepší a `dmr5` ešte lepší. Zmysel dáva tam, kde 20m model nesiaha, alebo k
 si chceš to porovnanie zopakovať. Doplní sa ako ktorýkoľvek iný zdroj – buď
 sám (`Build map` si ho vypýta), alebo ručne cez *Stiahnuť výškové dáta* so
 `what: sonny1`.
+
+**Čo v tom priečinku naozaj je** (prečítané 2026-08-11, nie odhadnuté): 15
+dlaždíc `N47E017` … `N49E022`, každá ako `<dlaždica>.zip` s jedným
+`<dlaždica>.hgt` s 25 934 402 B = 3601 × 3601 × int16 (čiže 1″), spolu ~146 MB
+na stiahnutie. K tomu `_Readme.txt` a mapka pokrytia `_Region.jpg`. Výšky sú
+nad morom v národnom systéme (Bpv), nie elipsoidické, takže sa neprepočítavajú.
+
+Dve veci, ktoré z toho readme stoja za zapamätanie. Priečinok sa volá
+„…1asec **v1**", ale readme v ňom je od **verzie 2** – meno priečinka o verzii
+nehovorí. A **zdroj tých dát je DMR 5.0**: readme uvádza „ÚGKK: DTM v5.0
+(1 Meter)", prevzorkované na 1″ a zaokrúhlené na celé metre. Na Slovensku je
+`sonny1` teda ten istý LiDAR, aký si pipeline berie priamo z Drive v 1 m
+(výrez) alebo 5 m (región) – len zahodený. Za hranicou je výplň zo SRTM v3
+alebo Viewfinder Panoramas, čiže nie LiDAR.
+
+**Chce prihlásenie na Drive**, a nie kvôli limitu: všetkých 15 dlaždíc je
+v priečinku ako **skratka** (shortcut) na súbor inde. Verejné
+`uc?export=download` na skratku odpovie „Only the owner and editors can
+download this file", hoci cieľ zdieľaný je, a `gdown --folder` na tom padne –
+stiahne len readme a mapku. Skratky rozuzľuje `workers/drive/folder.py`
+(funkcia `rozuzli`) cez Drive API a bez tokenu krok skončí hláškou, ktorá to
+povie rovno, namiesto aby posielal riešiť práva, ktoré sú v poriadku.
 
 Sonny distribuuje dáta cez **Google Drive**, z ktorého sa v každom builde
 sťahovať nedá (nemá stabilné priame URL a pri väčšom počte stiahnutí vracia
