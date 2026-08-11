@@ -295,6 +295,116 @@ def obsah(kind, man):
     }
 
 
+# ---------- katalóg máp v repozitári ----------
+# `maps.json` je JEDINÝ zoznam toho, ktoré mapy sú hotové a kde ležia. Na Drive
+# sa to inak nedá zistiť bez tokenu a bez klikania: priečinky sú tri úrovne
+# hlboko a mená balíkov si človek nepamätá. Preto ho zapisuje ten, kto tie
+# súbory práve nahral – vie ich id, veľkosť aj to, čo v nich je.
+#
+# ŠTRUKTÚRA SEDÍ S CESTOU NA DRIVE, a to zámerne: `krajina → kraj → výsek` je tá
+# istá odpoveď na otázku „čoho sa tá mapa týka", akú dáva `cesta()`. Dve rôzne
+# hierarchie tých istých máp by sa raz rozišli (pravidlo 1).
+#
+#   countries.slovensko.regions.presovsky.maps                 celý kraj
+#   countries.slovensko.regions.presovsky.subregions.vysoke_tatry.maps
+#
+# ZÁPIS JE „NAHRAĎ CELÚ POLOŽKU". Keď mapa v zozname nie je, pridá sa; keď je,
+# prepíše sa celá – vrátane balíkov, ktoré tento build nevyrobil, aby v nej
+# nezostal odkaz na súbor, ktorý sa medzitým zmazal.
+
+def katalog_meno(regions, key, kind):
+    """Ľudské meno kraja/výseku/krajiny – z číselníkov, nie vymyslené."""
+    if kind == "area":
+        try:
+            with open(os.path.join(_DATA, "areas.json")) as f:
+                return (json.load(f).get(key) or {}).get("name") or key
+        except (OSError, ValueError):
+            return key
+    r = regions.get(key) or {}
+    return r.get("name") or key
+
+
+def zapis_katalog(path, parts, regions, baliky, man):
+    """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
+
+    `baliky` je zoznam `(druh, meno, veľkosť, id)` – to, čo sa naozaj nahralo.
+    """
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        data = {}
+    data.setdefault("_comment",
+                    "Katalóg hotových máp na Google Drive – ktoré sú a kde. "
+                    "Dopisuje ho na konci buildu workers/deploy/publish-map.py "
+                    "(krok „Zapíš mapu do maps.json“); ručne sa needituje. "
+                    "Odkazy otvorí ten, kto má prístup k priečinku s mapami.")
+    data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    countries = data.setdefault("countries", {})
+
+    krajina = countries.setdefault(parts[0], {})
+    krajina.setdefault("name", katalog_meno(regions, parts[0], "region"))
+    uzol = krajina                      # build celej krajiny končí tu
+    if len(parts) > 1:
+        regs = krajina.setdefault("regions", {})
+        uzol = regs.setdefault(parts[1], {})
+        uzol.setdefault("name", katalog_meno(regions, parts[1], "region"))
+    if len(parts) > 2:
+        subs = uzol.setdefault("subregions", {})
+        uzol = subs.setdefault(parts[2], {})
+        uzol.setdefault("name", katalog_meno(regions, parts[2], "area"))
+
+    reg = region_entry(man)
+    polozka = {
+        "name": uzol.get("name"),
+        "drive": "/".join(parts),
+        "updated_at": data["updated_at"],
+        "run": env("GITHUB_RUN_NUMBER"),
+        "layers": vrstvy(),
+        "maps": {kind or "mapa": {
+            "file": name,
+            "size": velkost,
+            "link": folder.file_link(fid),
+            "download": folder.download_link(fid),
+        } for kind, name, velkost, fid in baliky},
+    }
+    # Čo o mape treba vedieť pri výbere, nie až po rozbalení. Zoomy a zdroje
+    # nesie manifest, tak sa berú z neho. `bbox` je bbox MAPY, teda celého
+    # regiónu – aj pri builde na výrez, lebo mapa je celý región a orezané sú
+    # len vrstvy z výškového modelu. Práve preto je pri výreze vedľa neho aj
+    # `area_bbox`: to je to, kde v tej mape vrstevnice a skaly naozaj sú.
+    for k in ("bbox", "maxzoom", "contours_maxzoom", "contour_interval",
+              "rocks_maxzoom", "rock_slope", "dem_source"):
+        if reg.get(k) is not None:
+            polozka[k] = reg[k]
+    area_bbox = env("AREA_BBOX")
+    if len(parts) > 2 and area_bbox:
+        try:
+            polozka["area_bbox"] = [float(v) for v in area_bbox.split(",")]
+        except ValueError:
+            pass
+    # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
+    # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
+    zachovaj = {k: uzol[k] for k in ("regions", "subregions") if k in uzol}
+    uzol.clear()
+    uzol.update(polozka)
+    uzol.update(zachovaj)
+
+    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                log(f"{path}: tá istá mapa s tými istými odkazmi – bez zmeny.")
+                return False
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(text)
+    log(f"{path}: zapísaná mapa {'/'.join(parts)} "
+        f"({len(polozka['maps'])} balíkov)")
+    return True
+
+
 # ---------- balenie ----------
 
 def vsetky_subory(site):
@@ -358,6 +468,8 @@ def main():
     ap.add_argument("--zip-only", action="store_true",
                     help="zabaľ do --out a na Drive nesiahaj (lokálna skúška)")
     ap.add_argument("--summary", default="", help="kam dopísať súhrn")
+    ap.add_argument("--maps", default="maps.json",
+                    help="katalóg hotových máp v repozitári (prázdne = nezapisuj)")
     args = ap.parse_args()
 
     with open(os.path.join(_DATA, "regions.json")) as f:
@@ -439,7 +551,7 @@ def main():
         try:
             log(f"Nahrávam {name} ({folder.human(velkost)}) …")
             t0 = time.time()
-            prepisane = folder.upload_clobber(
+            file_id, prepisane = folder.upload_clobber(
                 creds, dest, name, fid, f"{'/'.join(parts)}/{name}")
             el = max(time.time() - t0, 1e-6)
             log(f"  hotovo za {el / 60:.1f} min "
@@ -448,8 +560,25 @@ def main():
         finally:
             if not args.keep_zip and os.path.exists(dest):
                 os.remove(dest)
-        hotove.append((name, popis, velkost, prepisane))
+        hotove.append((kind, name, popis, velkost, prepisane, file_id))
     log(f"Hotovo: {len(hotove)} balíkov v {folder.folder_link(fid)}")
+
+    # ---------- katalóg ----------
+    if args.maps:
+        if env("TEST_KM2", "0") not in ("", "0"):
+            # Rýchly test má terén na pár km². Do katalógu nepatrí a hlavne
+            # nesmie PREPÍSAŤ položku ostrej mapy toho istého kraja – bol by
+            # to zoznam, ktorý na tie ZIPy ukazuje, ale tvrdí o nich niečo iné.
+            log(f"Rýchly test: do {args.maps} nezapisujem (mapa je len na "
+                f"{env('TEST_KM2')} km²; balíky na Drive to nesú v mene).")
+        else:
+            zmenene = zapis_katalog(
+                args.maps, parts, regions,
+                [(k, n, v, i) for k, n, _p, v, _pr, i in hotove], man)
+            if args.summary and zmenene:
+                with open(args.summary, "a") as f:
+                    f.write(f"Katalóg `{args.maps}` v repozitári je "
+                            f"doplnený.\n\n")
 
     if args.summary:
         with open(args.summary, "a") as f:
@@ -458,7 +587,7 @@ def main():
                     f"mená sú stále, takže ďalší build tie isté súbory prepíše. "
                     f"Čo je v balíku, hovorí `obsah.json` v ňom.\n\n")
             f.write("| balík | čo je v ňom | veľkosť | starý |\n|---|---|--:|---|\n")
-            for name, popis, velkost, prepisane in hotove:
+            for _kind, name, popis, velkost, prepisane, _fid in hotove:
                 f.write(f"| `{name}` | {popis} | {folder.human(velkost)} | "
                         f"{'prepísaný' if prepisane else '–'} |\n")
             f.write("\n")

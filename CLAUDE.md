@@ -335,6 +335,16 @@ Kopíruje sa to z `manifest.json`, ktorý tie fakty už nesie.
 a navyše by tú celú prepísala. Publikuje sa len mapa, ktorá prešla kontrolou
 pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
+**Ktoré mapy vôbec existujú, hovorí `maps.json` v koreni repozitára** – na Drive
+sa to bez tokenu a bez klikania nezistí. Dopisuje ho build hneď po nahratí
+(`publish-map.py --maps=`, pozná id súborov) a commitne `deploy/catalog.sh`; je
+to JEDINÉ miesto, kde beh zapisuje do repozitára, a preto má job `deploy`
+`contents: write`. Štruktúra je tá istá ako cesta na Drive (krajina → kraj →
+výsek → tri odkazy), zápis je „nahraď celú položku" a `subregions` pri tom
+ostávajú. Rýchly test doň nezapisuje (prepísal by ostrú mapu) a po neúspešnom
+nahratí sa nezapíše tiež – zoznam, ktorý ukazuje na neexistujúce súbory, je
+horší než žiadny. Stráži to `workers/lint/catalog.py`.
+
 ## Než niečo pushneš
 
 ```bash

@@ -1,0 +1,5 @@
+{
+  "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
+  "countries": {},
+  "updated_at": ""
+}

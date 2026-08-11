@@ -493,6 +493,14 @@ jobs:
       - name: "Štýl: výplne chcú plochy, vzory držia s predlohou"
         run: node workers/lint/style.mjs
 
+      # `maps.json` je zoznam hotových máp, ktorý dopisuje BEH – a to je presne
+      # ten druh veci, čo sa rozíde ticho: mená v katalógu prestanú sedieť s
+      # menami balíkov, katalóg sa zapíše aj po neúspešnom nahratí, alebo build
+      # stratí právo zapisovať a zoznam sa prestane dopĺňať. Rozpis:
+      # `workers/lint/catalog.py`.
+      - name: Katalóg máp drží tvar a nikto ho neobchádza
+        run: python3 workers/lint/catalog.py
+
       # Dno zoomu vrstevníc a skál je napísané dvakrát a inak to nejde: schéma
       # Planetilera rozhoduje, čo sa VYROBÍ, štýl, čo sa NAKRESLÍ. Keď sa tie
       # čísla rozídu, nikto nič nepovie – buď platíme dlaždice, ktoré nikto
