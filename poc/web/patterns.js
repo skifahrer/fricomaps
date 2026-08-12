@@ -10,10 +10,14 @@
  *   - pipeline tie isté názvy nájde v hotovom štýle a dopečie ich do spritu,
  *     takže rovnaký štýl funguje aj na iOS.
  *
- * Vzory sú kreslené v jednotkových súradniciach (0–1) a dlaždicujú sa – pri
- * rasterizácii sa počíta vzdialenosť aj k susedným kópiám, takže na hranách
- * dlaždice nič nepreskočí. Otáčanie sa zámerne neponúka: v štvorcovej dlaždici
- * by rozbilo napojenie; namiesto toho má každý smer vlastný vzor.
+ * Vzory sú kreslené v jednotkových súradniciach a dlaždicujú sa – pri
+ * rasterizácii sa počíta vzdialenosť aj k 3×3 susedným kópiám, takže tvar
+ * SMIE prečnievať za hranu (súradnice mimo 0–1) a druhá polovica sa objaví na
+ * opačnej strane sama. Pri vzore, ktorý má vyzerať ako rozsyp, je to povinné:
+ * inak má dlaždica po obvode prázdny okraj a z opakovania je mriežka prázdnych
+ * uličiek, ktorú oko vidí ako raster (stráži to `workers/lint/style.mjs`).
+ * Otáčanie sa zámerne neponúka: v štvorcovej dlaždici by rozbilo napojenie;
+ * namiesto toho má každý smer vlastný vzor.
  */
 
 const seg = (ax, ay, bx, by) => ({ t: "s", ax, ay, bx, by });
@@ -80,26 +84,53 @@ export const PATTERNS = [
   },
   {
     // Skalné pole – rozsypané kamene, nie pravidelné šrafovanie. Kamene sú
-    // PÄŤ RÔZNYCH: každý inak veľký a inak natočený, žiadne dva rovnaké.
-    // Rovnaký tvar v pravidelnom rastri prestane byť suťou a začne byť
-    // bodkovaná mriežka – vidno to hneď, ako sa vzor poskladá do plochy,
-    // a nie na jednej dlaždici.
+    // ŠESŤ RÔZNYCH: každý inak veľký, inak natočený a inak zúbkovaný, žiadne
+    // dva rovnaké. Rovnaký tvar v pravidelnom rastri prestane byť suťou
+    // a začne byť bodkovaná mriežka.
     //
-    // Ležia celé vnútri dlaždice, takže na jej hrane nie je nič preseknuté;
-    // dojem nepravidelnosti robí ich rozloženie a veľkosť, nie presah.
+    // KAMENE ZÁMERNE PREČNIEVAJÚ ZA HRANU (súradnice mimo 0–1) a je to celý
+    // dôvod, prečo tie čísla vyzerajú takto. Kým ležali všetky vnútri, mala
+    // dlaždica po celom obvode prázdny okraj – a z dlaždicovania bola mriežka
+    // prázdnych uličiek každých `size` pixelov, ktorú oko vidí ako raster.
+    // Namerané rasterizérom (18 px, weight 1,2), krytie inkom:
+    //
+    //           celkovo   na šve   najprázdnejší pás   rozptyl 3×3 blokov
+    //   predtým   25,8 %    3,4 %        0,0 %              21 b.
+    //   teraz     25,0 %   27,1 %       12,5 %               5 b.
+    //
+    // Rozloženie nie je od oka: stredy vyšli zo zlatého rezu (rovnomerné
+    // pokrytie torusu bez mriežky) a doladili sa hľadaním, ktoré minimalizuje
+    // práve tie štyri čísla vyššie – hustota má ostať tá istá (aby plocha
+    // vyzerala rovnako sypko), ale bez uličiek a bez dier. Rasterizér počíta
+    // vzdialenosť aj k 3×3 susedným kópiám, takže presahujúca polovica kameňa
+    // sa objaví na opačnej strane sama a nič sa nemusí zdvojovať ručne.
+    //
+    // Otáčanie celého vzoru sa neponúka: v štvorcovej dlaždici by rozbilo
+    // napojenie – preto má každý smerový vzor vlastnú položku.
     id: "rocks",
     label: "Kamienky (skalné pole)",
+    // ROZSYP: tento vzor má vyzerať nepravidelne. Kontrola
+    // `workers/lint/style.mjs` na ňom preto trvá, aby mal ink aj na šve
+    // dlaždice – pravidelné motívy v bunke (bodky, krúžky, krížiky,
+    // stromčeky) ho tam zámerne nemajú a tie sa nekontrolujú.
+    scatter: true,
     shapes: [
-      ...poly([[0.06, 0.34], [0.19, 0.13], [0.38, 0.20], [0.40, 0.38],
-               [0.24, 0.47], [0.09, 0.44], [0.06, 0.34]]),
-      ...poly([[0.60, 0.58], [0.78, 0.50], [0.93, 0.66], [0.80, 0.82],
-               [0.62, 0.75], [0.60, 0.58]]),
-      ...poly([[0.63, 0.10], [0.79, 0.05], [0.88, 0.20], [0.72, 0.28],
-               [0.63, 0.10]]),
-      ...poly([[0.17, 0.66], [0.33, 0.62], [0.40, 0.78], [0.24, 0.86],
-               [0.17, 0.66]]),
-      ...poly([[0.46, 0.36], [0.55, 0.33], [0.57, 0.44], [0.47, 0.46],
-               [0.46, 0.36]])
+      // cez pravý dolný kút (objaví sa aj vľavo hore)
+      ...poly([[1.05, 0.89], [1.10, 0.97], [1.07, 1.08], [0.93, 1.04],
+               [0.83, 0.95], [0.94, 0.87], [1.05, 0.89]]),
+      // pri ľavej hrane
+      ...poly([[0.19, 0.63], [0.14, 0.70], [0.03, 0.71], [0.03, 0.60],
+               [0.08, 0.50], [0.18, 0.55], [0.19, 0.63]]),
+      // najväčší, vnútri
+      ...poly([[0.32, 0.14], [0.42, 0.12], [0.54, 0.20], [0.45, 0.31],
+               [0.33, 0.38], [0.25, 0.25], [0.32, 0.14]]),
+      ...poly([[0.60, 0.83], [0.54, 0.88], [0.43, 0.85], [0.48, 0.77],
+               [0.58, 0.74], [0.60, 0.83]]),
+      ...poly([[0.63, 0.54], [0.58, 0.46], [0.62, 0.34], [0.75, 0.39],
+               [0.84, 0.48], [0.73, 0.56], [0.63, 0.54]]),
+      // cez horný šev (objaví sa aj dolu)
+      ...poly([[0.90, -0.01], [0.90, 0.08], [0.80, 0.14], [0.75, 0.03],
+               [0.79, -0.07], [0.90, -0.01]])
     ]
   },
   {
@@ -166,7 +197,12 @@ export const DASH_PRESETS = [
   { id: "dotted-sparse", label: "Bodkovaná riedka", dash: [1, 4] },
   { id: "dash-dot", label: "Čiarka-bodka", dash: [5, 1.5, 1, 1.5] },
   { id: "dash-dot-dot", label: "Čiarka-bodka-bodka (náučný chodník)", dash: [6, 1.5, 1, 1.5, 1, 1.5] },
-  { id: "rail", label: "Šrafovanie (železnica)", dash: [0.3, 2.5] },
+  // Železnica: svetlé a tmavé diely ROVNAKO DLHÉ – to je ten klasický
+  // „vlakový" pás. `line-dasharray` je v NÁSOBKOCH ŠÍRKY ČIARY, takže `[1, 1]`
+  // drží pomer 1 : 1 na každom zoome samo; keby to boli pixely, museli by sa
+  // dopisovať pri každej zmene šírky. Predtým tu bolo `[0.3, 2.5]` – krátke
+  // svetlé zúbky na dlhom tmavom, čiže priečky, nie čiarkovaná čiara.
+  { id: "rail", label: "Čiarkovaná 1 : 1 (železnica)", dash: [1, 1] },
   { id: "ties", label: "Priečky", dash: [1, 3] },
   { id: "ladder", label: "Rebrík (lanovka)", dash: [6, 2] }
 ];
