@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-11T19:35:22Z",
+  "_updated_at": "2026-08-12T22:20:49Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -48,6 +48,51 @@
         "rocks_maxzoom": 16,
         "run": "103",
         "updated_at": "2026-08-11T19:35:22Z"
+      },
+      "presovsky": {
+        "bbox": [
+          19.865,
+          48.745,
+          22.585,
+          49.48
+        ],
+        "contour_interval": 5,
+        "contours_maxzoom": 15,
+        "dem_source": "dmr5",
+        "drive": "slovensko/presovsky",
+        "layers": [
+          "vrstevnice_dmr5_5m",
+          "skaly_dmr5",
+          "tienovanie_dmr5",
+          "trasy",
+          "prvky"
+        ],
+        "maps": {
+          "mapa": {
+            "download": "https://drive.google.com/uc?export=download&id=1W5XrhoagWEl6F59s-CBTMn_tZbfcDBKd",
+            "file": "presovsky.zip",
+            "link": "https://drive.google.com/file/d/1W5XrhoagWEl6F59s-CBTMn_tZbfcDBKd/view",
+            "size": 454466139
+          },
+          "tienovanie": {
+            "download": "https://drive.google.com/uc?export=download&id=1vVoOUZScKg9W36IcU3Wv75yy9w-J1hEL",
+            "file": "presovsky-tienovanie.zip",
+            "link": "https://drive.google.com/file/d/1vVoOUZScKg9W36IcU3Wv75yy9w-J1hEL/view",
+            "size": 55699300
+          },
+          "vrstevnice-skaly": {
+            "download": "https://drive.google.com/uc?export=download&id=1vPE2cMF4EDliXGxm0-9UI6Qa5drlZTgQ",
+            "file": "presovsky-vrstevnice-skaly.zip",
+            "link": "https://drive.google.com/file/d/1vPE2cMF4EDliXGxm0-9UI6Qa5drlZTgQ/view",
+            "size": 183142732
+          }
+        },
+        "maxzoom": 16,
+        "name": "Prešovský kraj",
+        "rock_slope": 50,
+        "rocks_maxzoom": 16,
+        "run": "109",
+        "updated_at": "2026-08-12T22:20:49Z"
       }
     }
   }
