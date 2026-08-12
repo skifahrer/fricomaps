@@ -653,6 +653,12 @@ jobs:
       opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_features: ${{ steps.opts.outputs.opt_features }}
+      # Články z Wikipédie – job `wiki`. Nie sú vrstvou mapy, tak nemajú
+      # výber zdroja: berú sa z toho istého PBF ako trasy a prvky.
+      opt_wikipedia: ${{ steps.opts.outputs.opt_wikipedia }}
+      opt_wiki_langs: ${{ steps.opts.outputs.opt_wiki_langs }}
+      opt_wiki_format: ${{ steps.opts.outputs.opt_wiki_format }}
+      opt_wiki_max: ${{ steps.opts.outputs.opt_wiki_max }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
@@ -1721,6 +1727,72 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # ---------- články z Wikipédie ----------
+  # KTO V REGIÓNE ODKAZUJE NA WIKI, DOSTANE ČLÁNOK. Body, čiary aj plochy majú
+  # v OSM tagy `wikipedia` a `wikidata`; tento job z nich poskládá zoznam
+  # článkov, stiahne ich (každý do samostatného súboru) a odloží ako artefakt.
+  # Balík `-wikipedia.zip` z neho urobí job `deploy` – tam, kde sa balí mapa,
+  # nech je jeden packer a jeden zápis do katalógu.
+  #
+  # NEIDE TO NA PAGES, a to je zámer: články sú desiatky MB textu, ktoré by
+  # zjedli rozpočet stránky (`size_limit_mb`) a v mape ich nikto nekreslí.
+  # Preto vlastný artefakt s dennou retenciou (prepravka, nie publikovanie)
+  # a nie `site-*`.
+  #
+  # Beží súbežne s dlaždicami a nepotrebuje ani DEM, ani Planetiler – len PBF
+  # z prípravy a `osmium`, ktorým si trasy filtrujú relácie.
+  wiki:
+    name: Články z Wikipédie
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.opt_wikipedia == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.wiki.outputs.count }}
+      mb: ${{ steps.wiki.outputs.mb }}
+      enabled: ${{ steps.wiki.outputs.enabled }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+      - name: Stiahni PBF z prípravy
+        uses: actions/download-artifact@v8
+        with:
+          name: pbf
+          path: data
+
+      # Rozpis je vo `workers/wiki/collect.py`; tu sú len voľby z formulára.
+      - name: Odkazy na wiki → stiahnuté články
+        id: wiki
+        env:
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          OPT_WIKI_LANGS: ${{ needs.plan.outputs.opt_wiki_langs }}
+          OPT_WIKI_FORMAT: ${{ needs.plan.outputs.opt_wiki_format }}
+          OPT_WIKI_MAX: ${{ needs.plan.outputs.opt_wiki_max }}
+        run: workers/wiki/build.sh
+
+      # Prepravka pre job `deploy`, nie publikovanie: `retention-days: 1`.
+      # Uložený výsledok je ten ZIP na Drive.
+      - name: Odlož články pre deploy
+        if: ${{ always() && hashFiles('wiki-out/index.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: wiki-articles
+          path: wiki-out
+          retention-days: 1
+          compression-level: 6
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: steps-wiki
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
   # ---------- mapové dlaždice ----------
   # Beží súbežne s vrstevnicami, trasami aj tieňovaním – z nich nič
   # nepotrebuje, len PBF z prípravy.
@@ -1894,7 +1966,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets]
+    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets, wiki]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -2060,6 +2132,18 @@ jobs:
       # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
       # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
       # model by inak `obsah.json` tvrdil niečo iné, než v tej mape je.
+      # Články z Wikipédie prídu ako vlastný artefakt (do `_site` nepatria –
+      # zjedli by rozpočet stránky). Keď job `wiki` nebežal alebo nič nenašiel,
+      # artefakt nie je a `publish-map.py` ten balík nepublikuje; starý zmaže,
+      # aby vedľa mapy neostal balík z iného behu.
+      - name: Stiahni články z Wikipédie
+        if: ${{ always() && needs.wiki.outputs.enabled == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: wiki-articles
+          path: _wiki
+
       - name: Publikuj mapu na Drive
         id: publish
         if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
@@ -2085,6 +2169,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 workers/deploy/publish-map.py --site=_site \
+            --wiki="$([ -f _wiki/index.json ] && echo _wiki)" \
             --maps=maps.json \
             --summary="$GITHUB_STEP_SUMMARY"
 

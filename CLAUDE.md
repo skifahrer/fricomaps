@@ -39,6 +39,7 @@ workers/contours-rocks/  joby `contours` a `rocks` – jeden skript, dve polovic
 workers/rocks-shading/   `shading-rocks.yml`: dlaždice → raster → vektor
 workers/terrain/         job `terrain` (tieňovanie a 3D)
 workers/trails/          job `trails`      workers/features/  job `features`
+workers/wiki/            job `wiki`: články z Wikipédie k objektom v regióne
 workers/tiles/           job `tiles`       workers/assets/    job `assets`
 workers/styles/          štýly pre web aj iOS (deploy + save-style-overrides)
 workers/deploy/          job `deploy`: zloženie, kontrola, súhrn, publikovanie
@@ -317,7 +318,17 @@ Okrem Pages sa každý build publikuje aj do priečinka na Drive
     presovsky-vysoke_tatry.zip                    celý `_site`
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   tie dve vrstvy (jeden balík)
     presovsky-vysoke_tatry-tienovanie.zip         výškové dlaždice PNG
+    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
 ```
+
+**Články z Wikipédie sú štvrtý balík a na Pages NEIDÚ.** Job `wiki` vyberie
+z regionálneho PBF všetko, čo má tag `wikipedia` alebo `wikidata` (body, čiary
+aj plochy), stiahne články KAŽDÝ DO SAMOSTATNÉHO SÚBORU a pridá `index.json`,
+ktorý hovorí, ktorý článok patrí ktorému OSM objektu. Desiatky MB textu by
+v `_site` zjedli rozpočet stránky, takže idú vlastným artefaktom do `deploy`
+a odtiaľ na Drive. Plný text sa **nedá vypýtať dávkovo** (`prop=extracts` vydá
+viac článkov naraz len s `exintro`), takže je to požiadavka na článok – rozpis
+vo `workers/wiki/collect.py`.
 
 **Meno je STÁLE, nie jedinečné** – rovnaký kraj a výsek má vždy to isté meno,
 takže ďalší build starý balík prepíše a v priečinku je jeden aktuálny súbor

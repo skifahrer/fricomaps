@@ -107,6 +107,21 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
+    # Články z Wikipédie ku všetkému, čo v regióne odkazuje na wiki (job
+    # `wiki`). Nie sú súčasťou mapy na Pages – idú na Drive ako samostatný
+    # balík `-wikipedia.zip`, takže rozpočet stránky neovplyvňujú. Stoja
+    # niekoľko minút siete na kraj, preto sa dajú vypnúť.
+    "wikipedia": ("true", "stiahnuť články z Wikipédie k objektom v regióne"),
+    # Poradie jazykov: berie sa prvý, ktorý pre daný objekt existuje. Slovenský
+    # článok je pri slovenskej mape lepší než anglický, aj keď je kratší.
+    "wiki_langs": ("sk,en", "jazyky článkov v poradí, prvý ktorý je"),
+    # `text` je čistý text z `prop=extracts` – desiatky kB na článok, jedna
+    # požiadavka na článok. `intro` je len úvod, ale po dvadsiatich na
+    # požiadavku (rýchly prehľad celého kraja). `html` je celý článok z REST
+    # API: krajší, ale balík je rádovo väčší. Neznámu hodnotu `wiki/build.sh`
+    # odmietne, nenahradí ju predvolenou.
+    "wiki_format": ("text", "podoba článku: `text`, `intro` alebo `html`"),
+    "wiki_max": ("5000", "strop počtu článkov na jeden beh"),
     # 15, nie 14: schéma má triedy s `min_zoom: 15` (ploty, živé ploty,
     # geodetické body, hraničné kamene). Čo má min_zoom nad maxzoomom
     # archívu, Planetiler ZAHODÍ BEZ SLOVA – pri 14 ich v dlaždiciach bola

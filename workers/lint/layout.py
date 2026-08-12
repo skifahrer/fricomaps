@@ -40,6 +40,7 @@ ZNAME = {
     "trails": "job `trails`",
     "features": "job `features`",
     "tiles": "job `tiles`",
+    "wiki": "job `wiki` (články z Wikipédie k objektom v regióne)",
     "assets": "job `assets`",
     "styles": "štýly pre web aj iOS",
     "deploy": "job `deploy` a publikovanie",
