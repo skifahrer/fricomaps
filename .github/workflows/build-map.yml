@@ -164,6 +164,12 @@ on:
           - vrstevnice
           - skaly
           - teren
+          # Články sa inak berú z cache na Drive a sťahuje sa len to, čomu sa
+          # zmenil `lastrevid` – to je predvolené správanie. Toto je páka na
+          # „stiahni ich odznova", keď sa zmenil sám zberač (iné podoby odkazu,
+          # iný prevod wikitextu): vtedy je `lastrevid` ten istý, takže cache
+          # by sadla a vrátila by články spracované PO STAROM.
+          - clanky
           - vsetko
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
       # Veľkosť rýchleho testu: `test_km2=8` (default 4).
@@ -671,6 +677,7 @@ jobs:
       opt_wiki_format: ${{ steps.opts.outputs.opt_wiki_format }}
       opt_wiki_max: ${{ steps.opts.outputs.opt_wiki_max }}
       wiki_cache: ${{ steps.wikikey.outputs.prefix }}
+      wiki_cache_key: ${{ steps.wikikey.outputs.key }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
@@ -707,6 +714,7 @@ jobs:
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
+      opt_wiki_rebuild: ${{ steps.opts.outputs.opt_wiki_rebuild }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -908,16 +916,23 @@ jobs:
       # neprepisuje, takže pevný by po prvom behu už nikdy nič nedoplnil).
       # V predpone je región, jazyky a podoba článku, čiže presne to, čo mení
       # obsah – dátum v nej NIE JE: sviežosť rieši `lastrevid`, nie kalendár.
+      # Vypíše OBOJE – predponu aj plný kľúč – práve preto, aby ich nikto
+      # neskladal druhýkrát: `restore` berie oboje, `save` plný kľúč, a pri
+      # `rebuild: clanky` sa restore preskočí, takže `save` sa nemôže oprieť
+      # o `cache-primary-key` z preskočeného kroku (bol by prázdny a cache by
+      # sa ticho neuložila).
       - name: Predpona kľúča cache pre články
         id: wikikey
         env:
           REGION_KEY: ${{ steps.region.outputs.key }}
           LANGS: ${{ steps.opts.outputs.opt_wiki_langs }}
           FMT: ${{ steps.opts.outputs.opt_wiki_format }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           S=$(printf '%s-%s-%s' "$REGION_KEY" "$LANGS" "$FMT" | tr -c 'a-zA-Z0-9._-' '_')
           echo "prefix=wiki-v1-$S-" >> "$GITHUB_OUTPUT"
+          echo "key=wiki-v1-$S-$RUN_ID" >> "$GITHUB_OUTPUT"
 
       # Testovací štvorec má pár km² – z čísel sa nedá povedať, či padol na
       # hrebeň so stenami alebo na lúku, a keď padne na lúku, „nenašlo ani
@@ -1810,12 +1825,20 @@ jobs:
       # článkov s obsahom je 197,4 kB, teda 10× viac, a k tomu prevod wikitextu.
       # Počet požiadaviek sa NEZNÍŽI (dávka je dávka); ušetria sa bajty, čas
       # prevodu a pri `wiki_format=html`, kde dávka neexistuje, celé minúty.
+      #
+      # `rebuild: clanky` (alebo `vsetko`) restore PRESKOČÍ – nič sa nesťahuje
+      # z Drive, aby sa to potom zahodilo, a `collect.py` na prázdnom priečinku
+      # stiahne všetko odznova. Mazať starý záznam pritom netreba (na rozdiel od
+      # vrstevníc a terénu, kde má kľúč pevné meno): tento má na konci číslo
+      # behu, takže nový sa vždy uloží, a ďalší beh si cez predponu vezme
+      # najnovší – čiže ten čerstvý.
       - name: Cache článkov z Wikipédie (restore)
         id: wiki-cache
+        if: ${{ needs.plan.outputs.opt_wiki_rebuild != 'true' }}
         uses: ./.github/actions/cache-restore
         with:
           path: wiki-cache
-          key: ${{ needs.plan.outputs.wiki_cache }}${{ github.run_id }}
+          key: ${{ needs.plan.outputs.wiki_cache_key }}
           restore-keys: ${{ needs.plan.outputs.wiki_cache }}
 
       # Rozpis je vo `workers/wiki/collect.py`; tu sú len voľby z formulára.
@@ -1837,7 +1860,10 @@ jobs:
         uses: ./.github/actions/cache-save
         with:
           path: wiki-cache
-          key: ${{ steps.wiki-cache.outputs.cache-primary-key }}
+          # Plný kľúč z plánu, nie `cache-primary-key` z restore: pri
+          # `rebuild: clanky` je restore preskočený a jeho výstup prázdny –
+          # cache by sa vtedy ticho neuložila a ďalší beh by ťahal odznova.
+          key: ${{ needs.plan.outputs.wiki_cache_key }}
 
       # Prepravka pre job `deploy`, nie publikovanie: `retention-days: 1`.
       # Uložený výsledok je ten ZIP na Drive.

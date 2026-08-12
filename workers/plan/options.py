@@ -191,8 +191,20 @@ REBUILD = {
     "vrstevnice": ("contours_rebuild",),
     "skaly": ("rocks_rebuild",),
     "teren": ("terrain_rebuild",),
-    "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"),
+    # Články: obísť cache na Drive a stiahnuť ich odznova. Predvolene sa
+    # RECYKLUJÚ – cache sa neplatí kalendárom, ale `lastrevid`, takže sa ťahá
+    # len to, čo sa na Wikipédii zmenilo. Táto páka je na ten druhý prípad:
+    # zmenil sa ZBERAČ (iné podoby odkazu, iný prevod wikitextu), a vtedy je
+    # `lastrevid` ten istý – cache by sadla a vrátila články po starom.
+    "clanky": ("wiki_rebuild",),
+    "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild",
+               "wiki_rebuild"),
 }
+# Príznaky, ktoré `rebuild` prepína. Zoznam je jeden, nech sa nedá pridať
+# hodnota do REBUILD a zabudnúť ju vypísať na výstup (príznak by ostal
+# prázdny a pregenerovanie by ticho nič neurobilo).
+REBUILD_FLAGS = ("contours_rebuild", "rocks_rebuild", "terrain_rebuild",
+                 "wiki_rebuild")
 
 
 def dem_sources(path=None):
@@ -421,7 +433,7 @@ def main():
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
               f"{', '.join(REBUILD)}", file=sys.stderr)
         return 1
-    for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
+    for flag in REBUILD_FLAGS:
         values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
 
     # RÝCHLY TEST PREGENERÚVA VŽDY VŠETKO, aj pri `rebuild: nic`.
@@ -435,6 +447,12 @@ def main():
     # Cache ostrého behu je pritom v bezpečí: kľúče vrstevníc, skál
     # a tieňovania nesú `dem_bboxkey` a ten je pri teste bboxom testovacieho
     # štvorca, takže sa maže a prepisuje len cache toho testu.
+    #
+    # ČLÁNKY SÚ Z TOHO VYNECHANÉ, a je to zámer: nezávisia od testovacieho
+    # štvorca ani od prahov, ktoré sa ním ladia – job `wiki` číta celý
+    # regionálny PBF tak či tak. Sťahovať pri každom kole ladenia terénu
+    # tisíc článkov odznova by bola len daň za to, že sa ladí niečo iné.
+    # Kto ich naozaj chce nanovo, má na to `rebuild: clanky`.
     if test_on:
         for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
             values[flag] = "true"

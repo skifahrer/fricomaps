@@ -1424,17 +1424,37 @@ zmenia nastavenia, zmení sa aj kľúč a prepočíta sa to samo. Keď chceš to
 prepočítať **nanovo aj pri rovnakých nastaveniach**, spusť *Build map*
 so zaškrtnutým inputom:
 
-| input | čo pregeneruje |
+| `rebuild` | čo pregeneruje |
 |---|---|
-| `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `rocks_rebuild` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
+| `vrstevnice` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
+| `skaly` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `teren` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
+| `clanky` | články z Wikipédie – **obíde cache** `wiki-…` a stiahne ich odznova |
+| `vsetko` | všetko z tejto tabuľky |
 
 Prečo to musí najprv mazať: **existujúci záznam cache sa nedá prepísať.**
 Kľúč, ktorý raz existuje, si drží starý obsah, takže bez zmazania by sa
 prepočítaná verzia zahodila a ďalší build by dostal späť tú starú. Preto každý
 `*_rebuild` začne tým, že príslušný záznam zmaže (aj jeho variant `-rocks`,
 lebo skaly majú vlastný job a tým aj vlastný záznam).
+
+**Články sú jediná výnimka z toho mazania a nie je to nedôslednosť:** ich kľúč
+má na konci číslo behu (`wiki-v1-…-<run_id>`), takže nový záznam vždy vznikne
+a ďalší beh si cez predponu vezme najnovší – čiže ten čerstvý. `rebuild:
+clanky` preto len **preskočí obnovenie**: nesťahuje z Drive nič, čo by potom
+zahodil.
+
+**Kedy to naozaj treba.** Cache článkov sa neplatí kalendárom, ale `lastrevid`
+(viď kapitolu o jobe `wiki`), takže zmenu na Wikipédii zachytí sama – na to
+`rebuild: clanky` netreba. Treba ho na ten druhý prípad: **zmenil sa zberač**
+(pribudla podoba odkazu, iný prevod wikitextu, iné jazyky). Vtedy je
+`lastrevid` ten istý, cache sadne a vrátila by články spracované po starom –
+zelený beh so starým obsahom, čiže pravidlo 8.
+
+**Testovací beh články NEpregenerúva**, hoci terén áno. Nezávisia od
+testovacieho štvorca ani od prahov, ktoré sa ním ladia – job `wiki` číta celý
+regionálny PBF tak či tak – a sťahovať pri každom kole ladenia terénu tisíc
+článkov odznova by bola len daň za to, že sa ladí niečo iné.
 
 Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
@@ -1668,6 +1688,10 @@ Cache je ten istý `articles.ndjson`, aký ide do balíka, takže sa nemá ako
 rozísť s tým, čo je v mape. Nedopísaný posledný riadok (beh, ktorý niekto
 zrušil v polovici zápisu) sa **preskočí**, nie odmietne – jeden pokazený riadok
 nesmie zahodiť 900 článkov pred ním.
+
+**Cachovanie je predvolené; obísť sa dá voľbou `rebuild: clanky`** (alebo
+`vsetko`) – to je na prípad, keď sa zmenil zberač a `lastrevid` o tom nevie.
+Podrobnosti v kapitole [Pregenerovanie](#pregenerovanie).
 
 Rozpis: [`workers/wiki/collect.py`](wiki/collect.py) a
 [`workers/wiki/build.sh`](wiki/build.sh).
@@ -2365,7 +2389,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `wikipedia` | **switch** | stiahnuť **články z Wikipédie** k objektom v regióne (vlastný ZIP na Drive; predvolene zapnuté) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
-   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
+   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `clanky` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
    **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké

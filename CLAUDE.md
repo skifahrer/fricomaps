@@ -335,7 +335,13 @@ chytí actionlint. **Cache článkov je na Drive** a neplatí ju kalendár, ale
 `lastrevid`: keď je z čoho recyklovať, predradí sa dávková otázka `prop=info`
 (50 článkov za 19,9 kB proti 197,4 kB s obsahom) a stiahne sa len to, čo sa
 zmenilo. Počet požiadaviek to nezníži, bajty a prevod áno – a pri `html`, kde
-dávka neexistuje, celé minúty.
+dávka neexistuje, celé minúty. **Cachovanie je predvolené**, obchádza ho
+`rebuild: clanky` – a to je páka na zmenený ZBERAČ (iné podoby odkazu, iný
+prevod), lebo vtedy je `lastrevid` ten istý a cache by vrátila články po
+starom. Rýchly test články zámerne NEpregenerúva: nezávisia od testovacieho
+štvorca ani od prahov, ktoré sa ním ladia. Kľúč článkov sa pri pregenerovaní
+nemaže (na rozdiel od vrstevníc a terénu) – má na konci číslo behu, takže nový
+záznam vždy vznikne a predpona vyberie najnovší.
 
 **Jeden NDJSON, nie súbor na článok, a dávky po päťdesiatich.** Oboje má
 namerané dôvody: ZIP má na každý záznam ~320 B hlavičky a deflate si na každom
