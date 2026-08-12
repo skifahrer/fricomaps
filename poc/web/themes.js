@@ -212,7 +212,7 @@ export const THEMES = {
     cycleway: "#6a8fd0",
     steps: "#c05a3a",
     track: "#b09060",
-    rail: "#9a9a9a",
+    rail: "#454545",
     railHatch: "#ffffff",
     ferry: "#8aa8c8",
     aerialway: "#8a8a8a",
@@ -332,8 +332,8 @@ export const THEMES = {
     cycleway: "#41618f",
     steps: "#7a4030",
     track: "#5a4a35",
-    rail: "#3f3f52",
-    railHatch: "#5a5a70",
+    rail: "#26263a",
+    railHatch: "#c2c2d4",
     ferry: "#3a4a66",
     aerialway: "#55556a",
     pier: "#2a2833",
@@ -449,7 +449,7 @@ export const THEMES = {
     cycleway: "#3060b0",
     steps: "#a02818",
     track: "#96703c",
-    rail: "#787868",
+    rail: "#42423a",
     railHatch: "#f4f1e4",
     ferry: "#5f93b5",
     aerialway: "#5a5a5a",
@@ -565,7 +565,7 @@ export const THEMES = {
     cycleway: "#7a9fb8",
     steps: "#b06048",
     track: "#b58e6a",
-    rail: "#b0a598",
+    rail: "#5e5348",
     railHatch: "#fdf6ec",
     ferry: "#8fb8a8",
     aerialway: "#a89c90",
@@ -769,7 +769,7 @@ export const PALETTE_GROUPS = [
     label: "Železnica a ostatná doprava",
     keys: [
       ["rail", "Železnica"],
-      ["railHatch", "Šrafovanie železnice"],
+      ["railHatch", "Čiarkovanie železnice (svetlý diel)"],
       ["ferry", "Kompa"],
       ["aerialway", "Lanovka / vlek"],
       ["pier", "Mólo"],
@@ -2615,6 +2615,13 @@ export function buildStyle({
   );
 
   // --- železnica ---
+  // Dve vrstvy nad sebou: plná tmavá čiara a na nej čiarkovaná svetlá. Svetlé
+  // diely majú byť ROVNAKO DLHÉ ako tmavé, čo drží vzor `rail` ([1, 1]
+  // v násobkoch šírky) – a preto musí byť horná čiara ROVNAKO ŠIROKÁ ako
+  // spodná: keby bola tenšia (bola, na tretinu), tmavá by po stranách
+  // presvitala a z čiarkovanej čiary by boli priečky na tmavom páse.
+  // Šírka je preto jedna a tá istá pre obe vrstvy.
+  const railWidth = [[7, 0.4], [10, 0.8], [14, 2.4], [16, 4], [20, 12]];
   add(
     {
       id: "rail-bg",
@@ -2624,7 +2631,7 @@ export function buildStyle({
       filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
       paint: {
         "line-color": c.rail,
-        "line-width": zw([[7, 0.4], [10, 0.8], [14, 2.4], [16, 4], [20, 12]])
+        "line-width": zw(railWidth)
       }
     },
     ["doprava", "Železnica", "line", { "line-color": "rail" }]
@@ -2634,15 +2641,21 @@ export function buildStyle({
       id: "rail-hatch",
       type: "line",
       "source-layer": "transportation",
+      // Až od z13: pod ním je čiara užšia než pixel a čiarkovanie by z nej
+      // urobilo len prerušovanú šmuhu.
       minzoom: 13,
       filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
+      layout: { "line-cap": "butt" },
       paint: {
         "line-color": c.railHatch,
-        "line-width": zw([[13, 0.8], [16, 2], [20, 6]]),
-        "line-dasharray": [0.3, 2.5]
+        "line-width": zw(railWidth),
+        // Vzor z `patterns.js`, nie číslo tu: to isté prerušovanie ponúka
+        // developer mode a ukladá sa do `style-overrides.json`, takže dve
+        // kópie by sa raz rozišli.
+        "line-dasharray": dashArray("rail")
       }
     },
-    ["doprava", "Železnica – šrafovanie", "line", { "line-color": "railHatch" }]
+    ["doprava", "Železnica – čiarkovanie", "line", { "line-color": "railHatch" }]
   );
 
   // --- mosty (nad všetkým ostatným) ---

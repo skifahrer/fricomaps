@@ -2154,7 +2154,7 @@ Detail vrstvy je rozdelený na sekcie **Zoom → Farby → Ikona → Štýl čia
 **Štýl čiary** (línie): výber druhu čiary s **náhľadom** vedľa rozbaľovačky –
 12 predvolieb: plná, čiarkovaná, dlhé čiarky, krátke čiarky, bodkovaná,
 bodkovaná hustá, bodkovaná riedka, čiarka-bodka, **čiarka-bodka-bodka
-(náučný chodník)**, šrafovanie železnice, priečky, rebrík lanovky. K tomu
+(náučný chodník)**, čiarkovaná 1 : 1 (železnica), priečky, rebrík lanovky. K tomu
 hrúbka a krytie čiary. Malý chodník sa teda spraví bodkovaný a náučný
 chodník čiarka-bodka-bodka jedným výberom – a keďže úprava vie ísť len do
 jednej mapy, môže to platiť napríklad iba na turistickej.
@@ -2163,6 +2163,20 @@ jednej mapy, môže to platiť napríklad iba na turistickej.
 predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, **kamienky**,
 tehly, krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
 ťahu a krytím.
+
+**Vzor, ktorý má vyzerať ako rozsyp, musí prečnievať za hranu dlaždice.**
+Vzory sa dlaždicujú, takže keď v nich všetky tvary ležia vnútri (súradnice
+0–1), má dlaždica po obvode prázdny okraj – a z opakovania je **mriežka
+prázdnych uličiek každých `size` pixelov**, ktorú oko na hotovej ploche vidí
+ako raster. Jedna dlaždica pritom vyzerá úplne v poriadku a MapLibre nepovie
+nič, čiže je to tichý omyl. Kamienky (`rocks`) to raz mali: namerané krytie
+inkom na šve bolo 3,4 % proti 25,8 % v celej dlaždici a najprázdnejší pás 0 %.
+Odvtedy časť kameňov presahuje za hranu (rasterizér počíta vzdialenosť aj
+k 3×3 susedným kópiám, takže druhá polovica sa objaví na opačnej strane sama)
+a na šve je 27,1 %. Kontroluje to `workers/lint/style.mjs` pri každom vzore,
+ktorý sa hlási ako `scatter: true`; pravidelné motívy v bunke (bodky, krúžky,
+krížiky na cintoríne, stromčeky v lese) majú prázdny okraj zámerne a tie sa
+nekontrolujú.
 
 **Vzor môže mať plocha aj priamo zo štýlu**, nie len z naklikanej úpravy –
 skalné plochy majú predvolene kamienky (`rocks`). Developer mode vtedy
