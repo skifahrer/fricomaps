@@ -1940,7 +1940,7 @@ data/region.osm.pbf
 
 | vrstva | čo v nej je | od zoomu |
 |---|---|--:|
-| `feature_line` | **násyp**, zárez, múr, hradby, plot, živý plot, elektrické vedenie, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
+| `feature_line` | **násyp**, zárez, múr, hradby, plot, živý plot, elektrické vedenie, **plánovaná cesta**, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
 | `feature_area` | parkovisko, skládka, halda, hospodársky dvor, skleníky, opustený priemysel, kamenné pole | 11–14 |
 | `feature_point` | prameň, vodopád, jaskyňa, závrt, rozhľadňa, stožiar, vodojem, kríž pri ceste, pomník, archeologické nálezisko, štôlňa, útulňa, horský priechod, núdzový bod, geodetický bod | 11–15 |
 | `piste` | zjazdovka, bežkárska trať, skialp, sánkarská dráha – čiara aj plocha, s obťažnosťou | 11 |
@@ -1949,6 +1949,19 @@ data/region.osm.pbf
 všetkých ciest dokopy, takže idú až od z15; vedenie vysokého napätia je
 v otvorenej krajine orientačný bod na kilometre, takže od z11. Nie je to vkus,
 je to priamo veľkosť súboru.
+
+**Plánované cesty (`highway=proposed`) sú tu, nie v základných dlaždiciach.**
+OpenMapTiles má pre rozostavané cesty vlastné triedy (`motorway_construction`
+až `raceway_construction`, `highway=construction`), ale pre `proposed` v celej
+vrstve `transportation` **žiadnu** – overené v jej zozname tried. Trasa, na
+ktorej sa ešte ani nekope, sa teda ťahá z PBF druhýkrát ako každý iný prvok tu:
+od z11 (plánovaná diaľnica je čiara cez celý kraj a práve na tom zoome má
+zmysel vedieť, kade pôjde), s `name`, `ref` a `subclass`. Čo sa plánuje, hovorí
+`proposed=motorway` alebo `proposed:highway=motorway` – berú sa oba, cez
+`coalesce`, takže z plánovanej diaľnice a plánovanej lesnej cesty nie je tá istá
+čiara. V mape je **bodkovaná a šedšia** než rozostavaná cesta, ktorá je
+čiarkovaná a farebná: „stavia sa" a „je to zatiaľ na papieri" sa musia dať
+odlíšiť na prvý pohľad. Klik povie meno, označenie aj čo sa plánuje.
 
 **Násyp a bralo sa kreslia zúbkami.** Kolmé čiarky MapLibre nevie, takže sa
 robia druhou čiarou: širokou, prerušovanou a odsunutou nabok (`line-offset`),

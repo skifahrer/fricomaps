@@ -397,7 +397,10 @@ function applyStyle(manifest) {
           .addTo(map);
         return;
       }
-      const title = p["name:sk"] || p.name || "(bez názvu)";
+      // `ref` je záloha za meno: plánovaná diaľnica meno väčšinou nemá, ale
+      // `D3` je presne to, čo od nej človek chce vedieť. Bez tejto zálohy by
+      // popup na nej hlásil „(bez názvu)“, hoci označenie v dátach je.
+      const title = p["name:sk"] || p.name || p.ref || "(bez názvu)";
       // `difficulty` je pri zjazdovkách to hlavné – modrá alebo čierna je
       // odpoveď na to, prečo si tam človek klikol.
       const detail = [p.subclass, p.class, p.difficulty].filter(Boolean).join(" · ");

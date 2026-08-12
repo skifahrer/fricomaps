@@ -6,7 +6,9 @@
 #
 # Zoznam je zámerne ŠIRŠÍ než features.yml: filter má byť hrubé sito, presné
 # rozhodnutie robí schéma. Keď do schémy pribudne trieda, musí pribudnúť aj
-# sem – inak sa v dlaždiciach ticho neobjaví.
+# sem – inak sa v dlaždiciach ticho neobjaví. Že sa tie dva súbory nerozišli,
+# kontroluje `workers/lint/features.py` (schéma proti tomuto filtru; širší
+# filter je v poriadku, chýbajúci kľúč alebo hodnota je chyba).
 #
 # `nwr/` = uzly, cesty aj relácie. Relácie kvôli multipolygónom (parkovisko
 # s dierou, skládka z viacerých obrysov); osmium k nim dotiahne aj členov.
@@ -39,8 +41,10 @@ nwr/historic=archaeological_site,battlefield,fort,manor,tomb,wayside_cross,waysi
 nwr/tourism=wilderness_hut
 nwr/mountain_pass
 
-# --- núdzové body horskej služby ---
-nwr/highway=emergency_access_point
+# --- núdzové body horskej služby a plánované cesty ---
+# `proposed` je cesta, ktorá zatiaľ neexistuje – OpenMapTiles pre ňu nemá
+# triedu (na rozdiel od `construction`), takže si ju berieme sami.
+nwr/highway=emergency_access_point,proposed
 
 # --- zjazdovky, bežky, skialp ---
 nwr/piste:type

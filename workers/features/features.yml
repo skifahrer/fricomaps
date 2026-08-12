@@ -17,7 +17,8 @@
 #   osmium tags-filter → data/features.osm.pbf
 # Predfilter je zámerne ŠIRŠÍ než tento súbor (vypúšťa napr. `barrier=gate`,
 # ktorý si berie POI vrstva OpenMapTiles). Keď sem pribudne trieda, filter vo
-# workflowe treba rozšíriť tiež – inak sa v dlaždiciach ticho neobjaví.
+# workflowe treba rozšíriť tiež – inak sa v dlaždiciach ticho neobjaví. Na to
+# sa už nemusí pamätať: stráži to `workers/lint/features.py`.
 #
 # ZOOMY sú tu to hlavné rozhodnutie. Plotov je v OSM viac než všetkých ciest
 # dokopy, takže idú až od z15; vedenie vysokého napätia je orientačný bod na
@@ -34,8 +35,8 @@
 schema_name: FricoMaps krajinné prvky
 schema_description: >-
   Násypy, zárezy, múry, ploty, elektrické vedenia, prieseky, stromoradia,
-  pramene, jaskyne, rozhľadne, parkoviská a zjazdovky – prvky OSM, ktoré
-  schéma OpenMapTiles neprenáša
+  pramene, jaskyne, rozhľadne, parkoviská, zjazdovky a plánované cesty – prvky
+  OSM, ktoré schéma OpenMapTiles neprenáša
 attribution: <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap prispievatelia</a>
 
 sources:
@@ -142,6 +143,39 @@ layers:
           - key: class
             value: power_minor
           - key: voltage
+
+      # --- plánovaná cesta ---
+      # `highway=proposed` je cesta, ktorá ZATIAĽ NEEXISTUJE – trasa schválená
+      # alebo navrhnutá, na ktorej sa ešte nekope. V OpenMapTiles NIE JE:
+      # schéma má triedy `*_construction` (to je `highway=construction`, teda
+      # rozostavané), ale pre `proposed` v celej vrstve `transportation`
+      # neexistuje žiadna – overené v jej zozname tried. Takže sa musí, ako
+      # všetko ostatné tu, vytiahnuť z PBF druhýkrát.
+      #
+      # Od z11, rovnako ako rozostavané cesty v štýle: plánovaná diaľnica je
+      # čiara cez celý kraj a práve na tom zoome má zmysel vedieť, kade pôjde.
+      #
+      # ČO SA PLÁNUJE, hovorí `proposed=motorway` (dokumentovaný spôsob) alebo
+      # `proposed:highway=motorway`. Berú sa OBA – cez `coalesce`, teda „prvá
+      # nenulová hodnota", a nie dvoma atribútmi s tým istým kľúčom: čo sa
+      # stane pri zdvojenom kľúči, Planetiler nemá nikde napísané, takže by to
+      # bolo spoliehanie sa na neurčené správanie. Bez tohto rozlíšenia by
+      # z plánovanej diaľnice a plánovanej lesnej cesty bola tá istá čiara.
+      - source: osm
+        geometry: line
+        min_zoom: 11
+        include_when:
+          highway: proposed
+        attributes:
+          - key: name
+          - key: ref
+          - key: class
+            value: road_proposed
+          - key: subclass
+            value:
+              coalesce:
+                - tag_value: proposed
+                - tag_value: "proposed:highway"
 
       # --- priesek ---
       # V lese je to výrazná rovná čiara, často hranica alebo trasa vedenia.
