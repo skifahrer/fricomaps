@@ -1513,6 +1513,7 @@ Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
     presovsky-vysoke_tatry.zip                    celá mapa – web, ako sa nasadil
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy (.pmtiles)
     presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (PNG)
+    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie + index.json
 ```
 
 **Vrstevnice a skaly sú v jednom balíku** zámerne: sú z toho istého výpočtu nad
@@ -1553,6 +1554,62 @@ Drive:
 REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
   python3 workers/deploy/publish-map.py --site=_site --out=/tmp --zip-only
 ```
+
+### Články z Wikipédie k objektom v regióne
+
+Kto v regióne odkazuje na wiki, dostane článok. Body, čiary aj plochy majú v OSM
+tagy `wikipedia` a `wikidata`; job **`wiki`** ich z regionálneho PBF vyberie,
+stiahne články a odloží ich tak, že **každý článok je samostatný súbor**:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter   len objekty s wiki odkazom (z 30 MB PBF ostane ~1 MB,
+                         takže ďalšie kroky sú sekundy)
+  → osmium cat -f opl    typ, id a tagy KAŽDÉHO takého objektu
+  → wikidata sitelinks   `Q…` → názov článku v požadovanom jazyku
+  → api.php prop=extracts
+  → wiki-out/sk/Devín_(hrad).txt … + wiki-out/index.json
+```
+
+**Odkaz má v dátach štyri podoby** a všetky sa čítajú: `wikipedia=sk:Devín
+(hrad)` (jazyk v hodnote), `wikipedia:sk=Devín (hrad)` (jazyk v kľúči),
+`wikipedia=https://sk.wikipedia.org/wiki/Devín` (celé URL) a `wikidata=Q123456`
+(článok sa dohľadá cez sitelinks). `brand:wikipedia` a `operator:wikipedia` sa
+zámerne neberú – to nie je článok o tom mieste, ale o firme, a v kraji by z toho
+boli stovky kópií článku o Lidli.
+
+**`index.json` je súčasť výsledku, nie príloha.** Hovorí, ktorý článok patrí
+ktorému OSM objektu (typ, id, meno, súradnice) – bez neho je to hromada textov,
+ktorú sa v mape nemá ako na čo napojiť. A článok, ktorý sa nestiahol (preklep
+v odkaze, premenovaný článok, jazyk bez článku), je tam v `chybne`, nie
+zamlčaný: „stiahlo sa 900 z 1000" musí byť napísané.
+
+**Plný text sa nedá vypýtať dávkovo, a to je vlastnosť API.** `prop=extracts`
+vráti viac článkov na jednu požiadavku len s `exintro`; bez neho dostaneš text
+prvého a na ostatné `continue`. Zmerané na `sk.wikipedia.org`: dávka troch
+názvov vrátila jeden text a dva „chýbajúce" články, ktoré pritom existujú.
+Preto:
+
+| `wiki_format` | čo stiahne | koľko požiadaviek |
+|---|---|--:|
+| `text` (default) | celý článok ako čistý text | jedna na článok |
+| `intro` | len úvod článku | jedna na 20 článkov |
+| `html` | celý článok v HTML z REST API | jedna na článok |
+
+Celý kraj je tak rádovo tisíc požiadaviek a pár minút – job to hovorí v pláne
+dopredu (rule 4) a na konci porovná odhad s nameraným. Voči Wikimedii sa chodí
+slušne: sériovo, s `User-Agent`, ktorý hovorí kto sme, a pri 429/503 sa čaká
+`Retry-After`.
+
+**Na Pages to NEIDE.** Desiatky MB textu by zjedli rozpočet stránky
+(`size_limit_mb`) a v mape ich nikto nekreslí, takže články idú vlastným
+artefaktom do jobu `deploy` a odtiaľ na Drive ako **štvrtý balík**
+`<kraj>[-<výsek>]-wikipedia.zip` (a do `maps.json` ako `wikipedia`). Vypína sa
+voľbou `wikipedia=false`, jazyky sa vyberajú `wiki_langs=sk,en`, strop počtu
+článkov je `wiki_max`.
+
+Rozpis: [`workers/wiki/collect.py`](wiki/collect.py) a
+[`workers/wiki/build.sh`](wiki/build.sh).
 
 #### `maps.json` – zoznam hotových máp v repozitári
 
