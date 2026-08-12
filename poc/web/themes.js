@@ -1127,6 +1127,143 @@ const clampZoom = (v) => {
 };
 
 /**
+ * „BEZ VÝPLNE" – plocha, ktorá nemá farbu pozadia, ale ostane jej vzor
+ * aj okraj.
+ *
+ * PREČO VLASTNÁ HODNOTA A NIE `krytie 0`. Krytie sa dá nastaviť na nulu už
+ * dlho, ale robí niečo iné: `fill-opacity` násobí VŠETKO, čo tá vrstva kreslí
+ * – teda aj obrys z `fill-outline-color` (má ho `pedestrian-area` a `building`).
+ * Nulou by teda z budovy zmizla aj jej hrana a ostalo by prázdno. Priehľadná
+ * FARBA vypne len výplň; `fill-outline-color` je vlastná vlastnosť a kreslí sa
+ * ďalej. A nie je to ani `visible: false`: tým by zmizla celá vrstva vrátane
+ * vzoru, ktorý na nej visí (odvodená vrstva drží viditeľnosť predlohy).
+ *
+ * V súbore úprav je to čitateľné slovo, nie `#00000000`, aby bolo pri čítaní
+ * jasné, že je to zámer.
+ */
+export const NO_FILL = "none";
+/** Kde má „bez výplne" zmysel – čiara sa vypína cez `visible`, nie farbou. */
+const NO_FILL_PROPS = new Set(["fill-color", "fill-extrusion-color"]);
+/** Strop počtu zoomových zlomov na jednu vlastnosť. */
+export const MAX_PAINT_STOPS = 8;
+
+/**
+ * Zoradí zoomové zlomy podľa zoomu. JEDNA funkcia pre všetky tri cesty, ktoré
+ * ich vyrábajú (import súboru, developer mode, skladanie štýlu) – poradie je
+ * jedna otázka a musí mať jednu odpoveď.
+ *
+ * PREČO NA TOM ZÁLEŽÍ VIAC, NEŽ SA ZDÁ: `interpolate` vyžaduje stopy v STRIKTNE
+ * RASTÚCOM poradí a MapLibre pri porušení odmietne CELÝ ŠTÝL, nie len tú
+ * vlastnosť – mapa sa nenačíta vôbec. Overené jeho vlastným validátorom:
+ * „Input/output pairs for "interpolate" expressions must be arranged with input
+ * values in strictly ascending order." V developer móde pritom zlomy vznikajú
+ * v poradí, v akom ich niekto naklikal (najprv z18, potom z12), takže
+ * nezoradené je NORMÁLNY stav vstupu, nie pokazený.
+ */
+export const sortStops = (list) => [...list].sort((a, b) => a[0] - b[0]);
+
+/**
+ * Hodnota z úprav → to, čo ide do štýlu.
+ *
+ * Skalár ostane skalárom, `none` sa zmení na priehľadnú farbu a POLE ZLOMOV
+ * `[[zoom, hodnota], …]` na `interpolate` podľa zoomu. Jeden zlom nie je
+ * krivka, takže z neho vyjde obyčajná hodnota – jedna hodnota je čitateľnejšia
+ * než `interpolate` s jediným stopom (ten by MapLibre prijal, ale nič nerobí).
+ *
+ * Zoradenie je tu ZÁMERNE, hoci ho robí aj kontrola pri importe a developer
+ * mode pri zápise: toto je posledné miesto pred štýlom a jediný nevzostupný
+ * pár tu zhodí celú mapu.
+ */
+export function paintValue(value) {
+  if (value === NO_FILL) return "rgba(0,0,0,0)";
+  if (!Array.isArray(value)) return value;
+  if (value.length === 1) return paintValue(value[0][1]);
+  return [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    ...sortStops(value).flatMap(([z, v]) => [z, paintValue(v)])
+  ];
+}
+
+/**
+ * Skontroluje jednu hodnotu vlastnosti (bez zoomu). Vracia `undefined`, keď
+ * nie je v poriadku – a vtedy už je dôvod v `problems`.
+ */
+function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
+  const kde = `${where}Vrstva "${id}": ${prop}${atZoom}`;
+  if (prop.endsWith("-color")) {
+    if (value === NO_FILL) {
+      if (!NO_FILL_PROPS.has(prop)) {
+        problems.push(`${kde} nemôže byť "${NO_FILL}" – bez výplne sa dá nechať `
+          + `len plocha (${[...NO_FILL_PROPS].join(", ")}). Čiaru alebo popisok `
+          + `vypni cez "visible", nie priehľadnou farbou.`);
+        return undefined;
+      }
+      return NO_FILL;
+    }
+    if (!isColor(value)) {
+      problems.push(`${kde} nie je hex farba (${value}).`);
+      return undefined;
+    }
+    return String(value).toLowerCase();
+  }
+  if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      problems.push(`${kde} musí byť nezáporné číslo.`);
+      return undefined;
+    }
+    return n;
+  }
+  problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
+  return undefined;
+}
+
+/**
+ * Skontroluje pole zoomových zlomov `[[zoom, hodnota], …]`.
+ *
+ * Zoomy musia RÁSŤ a nesmú sa opakovať: `interpolate` s neusporiadanými
+ * stopmi MapLibre odmietne a s ním celý štýl, takže by sa mapa nenačítala
+ * vôbec. Namiesto odmietnutia sa preto zoradia – z developer módu môžu prijsť
+ * v poradí, v akom ich niekto naklikal.
+ */
+function cleanPaintStops(prop, list, id, problems, where) {
+  const kde = `${where}Vrstva "${id}": ${prop}`;
+  if (!list.length) {
+    problems.push(`${kde} má prázdny zoznam zoomových zlomov – vymaž ho, alebo doplň zlom.`);
+    return undefined;
+  }
+  if (list.length > MAX_PAINT_STOPS) {
+    problems.push(`${kde} má ${list.length} zoomových zlomov, strop je ${MAX_PAINT_STOPS}.`);
+    return undefined;
+  }
+  const out = [];
+  for (const stop of list) {
+    if (!Array.isArray(stop) || stop.length !== 2) {
+      problems.push(`${kde}: zoomový zlom musí byť [zoom, hodnota].`);
+      return undefined;
+    }
+    const z = clampZoom(stop[0]);
+    if (z == null) {
+      problems.push(`${kde}: "${stop[0]}" nie je zoom.`);
+      return undefined;
+    }
+    const v = cleanPaintScalar(prop, stop[1], id, problems, where, ` pri z${z}`);
+    if (v === undefined) return undefined;
+    out.push([z, v]);
+  }
+  const zoradene = sortStops(out);
+  const zoomy = zoradene.map(([z]) => z);
+  if (new Set(zoomy).size !== zoomy.length) {
+    problems.push(`${kde}: dva zoomové zlomy na tom istom zoome `
+      + `(${zoomy.join(", ")}) – ponechaj jeden.`);
+    return undefined;
+  }
+  return zoradene;
+}
+
+/**
  * Prečistí (a skontroluje) objekt úprav – rovnaká funkcia beží v prehliadači
  * pri importe súboru aj v pipeline pred zápisom do zdrojáku, takže do repa
  * sa nikdy nedostane nezmysel.
@@ -1232,24 +1369,16 @@ function cleanLayers(rawLayers, target, problems, where) {
       problems.push(`${where}Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
       delete clean.maxzoom;
     }
+    // Hodnota smie byť SKALÁR alebo POLE ZOOMOVÝCH ZLOMOV `[[zoom, hodnota], …]`.
+    // Skalár nahradí to, čo štýl počíta podľa zoomu, pevnou hodnotou; pole ju
+    // nahradí vlastnou krivkou. Farba plochy môže byť navyše `none` – bez
+    // výplne (viď `NO_FILL`).
     const paint = {};
     for (const [prop, value] of Object.entries(def.paint || {})) {
-      if (prop.endsWith("-color")) {
-        if (!isColor(value)) {
-          problems.push(`${where}Vrstva "${id}": ${prop} nie je hex farba (${value}).`);
-          continue;
-        }
-        paint[prop] = String(value).toLowerCase();
-      } else if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 0) {
-          problems.push(`${where}Vrstva "${id}": ${prop} musí byť nezáporné číslo.`);
-          continue;
-        }
-        paint[prop] = n;
-      } else {
-        problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
-      }
+      const clean = Array.isArray(value)
+        ? cleanPaintStops(prop, value, id, problems, where)
+        : cleanPaintScalar(prop, value, id, problems, where);
+      if (clean !== undefined) paint[prop] = clean;
     }
     if (Object.keys(paint).length) clean.paint = paint;
 
@@ -1538,7 +1667,14 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     if (layer.minzoom != null && layer.maxzoom != null && layer.maxzoom <= layer.minzoom) {
       delete layer.maxzoom;
     }
-    if (o.paint) layer.paint = { ...(layer.paint || {}), ...o.paint };
+    // `paintValue` rozbalí to, čo úprava nesie: `none` na priehľadnú farbu
+    // a pole zlomov na `interpolate` podľa zoomu.
+    if (o.paint) {
+      layer.paint = { ...(layer.paint || {}) };
+      for (const [prop, value] of Object.entries(o.paint)) {
+        layer.paint[prop] = paintValue(value);
+      }
+    }
     if (o.dash && layer.type === "line") {
       layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
     }
