@@ -1558,17 +1558,17 @@ REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
 ### Články z Wikipédie k objektom v regióne
 
 Kto v regióne odkazuje na wiki, dostane článok. Body, čiary aj plochy majú v OSM
-tagy `wikipedia` a `wikidata`; job **`wiki`** ich z regionálneho PBF vyberie,
-stiahne články a odloží ich tak, že **každý článok je samostatný súbor**:
+tagy `wikipedia` a `wikidata`; job **`wiki`** ich z regionálneho PBF vyberie
+a stiahne články **po päťdesiatich na požiadavku do jedného súboru**:
 
 ```
 data/region.osm.pbf
   → osmium tags-filter   len objekty s wiki odkazom (z 30 MB PBF ostane ~1 MB,
                          takže ďalšie kroky sú sekundy)
   → osmium cat -f opl    typ, id a tagy KAŽDÉHO takého objektu
-  → wikidata sitelinks   `Q…` → názov článku v požadovanom jazyku
-  → api.php prop=extracts
-  → wiki-out/sk/Devín_(hrad).txt … + wiki-out/index.json
+  → wikidata sitelinks   `Q…` → názov článku v požadovanom jazyku (50/req)
+  → api.php prop=revisions  celý článok, PÄŤDESIAT NA POŽIADAVKU
+  → wiki-out/articles.ndjson + wiki-out/index.json
 ```
 
 **Odkaz má v dátach štyri podoby** a všetky sa čítajú: `wikipedia=sk:Devín
@@ -1578,28 +1578,66 @@ data/region.osm.pbf
 zámerne neberú – to nie je článok o tom mieste, ale o firme, a v kraji by z toho
 boli stovky kópií článku o Lidli.
 
-**`index.json` je súčasť výsledku, nie príloha.** Hovorí, ktorý článok patrí
-ktorému OSM objektu (typ, id, meno, súradnice) – bez neho je to hromada textov,
-ktorú sa v mape nemá ako na čo napojiť. A článok, ktorý sa nestiahol (preklep
-v odkaze, premenovaný článok, jazyk bez článku), je tam v `chybne`, nie
-zamlčaný: „stiahlo sa 900 z 1000" musí byť napísané.
+**Jeden súbor, nie súbor na článok.** Formát je **NDJSON** – riadok = jeden
+článok ako JSON (`key`, `lang`, `title`, `pageid`, `revid`, `url`, `text`). Tak
+to robí aj Wikimedia Enterprise so svojimi dumpmi a má to dva namerané dôvody
+(vzorka 153 článkov sk wiki, 267 kB textu):
 
-**Plný text sa nedá vypýtať dávkovo, a to je vlastnosť API.** `prop=extracts`
-vráti viac článkov na jednu požiadavku len s `exintro`; bez neho dostaneš text
-prvého a na ostatné `continue`. Zmerané na `sk.wikipedia.org`: dávka troch
-názvov vrátila jeden text a dva „chýbajúce" články, ktoré pritom existujú.
-Preto:
+| balenie | ZIP | záznamov v ZIPe |
+|---|--:|--:|
+| súbor na článok | 149,1 kB | 153 |
+| jeden NDJSON | **101,3 kB** | 1 |
+
+Za tým rozdielom je jedna vec dvakrát: ZIP má na každý záznam hlavičku
+(~320 B nameraných vrátane centrálneho adresára – pri 5000 článkoch 1,6 MB
+samej režie) a **deflate si na každom súbore začína slovník odznova**, takže
+tisíc krátkych článkov o tej istej doline sa komprimuje horšie než jeden prúd.
+K tomu praktické: rozbaliť 5000 súborov je citeľne pomalšie než jeden.
+
+**`index.json` je súčasť výsledku, nie príloha.** Hovorí, ktorý článok patrí
+ktorému OSM objektu (`osm`: `node/123` → kľúč článku, meno, súradnice) – bez
+neho je to hromada textov, ktorú sa v mape nemá ako na čo napojiť. Text článku
+v ňom **nie je** (ten je v NDJSON, pravidlo 1), len `offset` a `len` riadka,
+takže sa dá skočiť `seek`-om priamo na článok. A článok, ktorý sa nestiahol
+(preklep v odkaze, premenovaný článok, jazyk bez článku), je tam v `chybne`,
+nie zamlčaný: „stiahlo sa 900 z 1000" musí byť napísané.
+
+**Plný text sa dávkovať DÁ, ale nie cez `prop=extracts`** – a to je celý dôvod,
+prečo sa články berú z `prop=revisions` a wikitext sa prevádza u nás. Namerané
+na `sk.wikipedia.org`, 10 názvov v jednej požiadavke:
+
+```
+prop=extracts&explaintext=1&exlimit=20      1 z 10 článkov, k tomu warning
+    „exlimit was too large for a whole article extracts request, lowered to 1"
+    – ostatných deväť vyzerá ako neexistujúce
+prop=revisions&rvprop=content&rvslots=main  10 z 10, jedna požiadavka
+```
+
+Strop je **50 názvov na požiadavku** a nad ním API vráti chybu `toomanyvalues`,
+nie ticho zrezanú dávku. Prevod wikitextu robí `mwparserfromhell` (knižnica od
+Wikimedie) plus odstrihnutie tabuliek pred parsovaním – bez toho v texte ostanú
+riadky `| align=center` (namerané: 102 zvyškov na ôsmich článkoch, s ním jeden).
+Proti hotovému textu z `extracts` má takto prevedený článok 92–144 % dĺžky
+(medián ~106 %), takže o nič neprichádzame.
 
 | `wiki_format` | čo stiahne | koľko požiadaviek |
 |---|---|--:|
-| `text` (default) | celý článok ako čistý text | jedna na článok |
+| `text` (default) | celý článok ako čistý text | **jedna na 50 článkov** |
+| `wikitext` | celý článok bez prevodu | **jedna na 50 článkov** |
 | `intro` | len úvod článku | jedna na 20 článkov |
 | `html` | celý článok v HTML z REST API | jedna na článok |
 
-Celý kraj je tak rádovo tisíc požiadaviek a pár minút – job to hovorí v pláne
-dopredu (rule 4) a na konci porovná odhad s nameraným. Voči Wikimedii sa chodí
-slušne: sériovo, s `User-Agent`, ktorý hovorí kto sme, a pri 429/503 sa čaká
-`Retry-After`.
+Namerané: **153 článkov v 4 požiadavkách za 2,7 s** (18 ms na článok), kým po
+jednom to bolo 484 ms na článok – 27× viac. Kraj s tisíckou článkov je teda
+dvadsať požiadaviek a sekundy, nie tisíc požiadaviek a pár minút. Job to hovorí
+v pláne dopredu (pravidlo 4) a na konci porovná odhad s nameraným; pri `html`
+navyše rovno napíše, že dávka tam neexistuje. Voči Wikimedii sa chodí slušne:
+sériovo (tak to žiada API:Etiquette), s `User-Agent`, ktorý hovorí kto sme,
+s `maxlag=5`, a pri 429/503 sa čaká `Retry-After`.
+
+**Neznámy `wiki_format` alebo nečíselný `wiki_max` job odmietne** s návodom, čo
+zvoliť. Náhrada za predvolenú hodnotu by znamenala zelený beh s iným obsahom
+balíka, než si vypýtal – pravidlo 8.
 
 **Na Pages to NEIDE.** Desiatky MB textu by zjedli rozpočet stránky
 (`size_limit_mb`) a v mape ich nikto nekreslí, takže články idú vlastným

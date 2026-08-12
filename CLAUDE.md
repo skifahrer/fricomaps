@@ -323,11 +323,18 @@ Okrem Pages sa každý build publikuje aj do priečinka na Drive
 
 **Články z Wikipédie sú štvrtý balík a na Pages NEIDÚ.** Job `wiki` vyberie
 z regionálneho PBF všetko, čo má tag `wikipedia` alebo `wikidata` (body, čiary
-aj plochy), stiahne články KAŽDÝ DO SAMOSTATNÉHO SÚBORU a pridá `index.json`,
-ktorý hovorí, ktorý článok patrí ktorému OSM objektu. Desiatky MB textu by
-v `_site` zjedli rozpočet stránky, takže idú vlastným artefaktom do `deploy`
-a odtiaľ na Drive. Plný text sa **nedá vypýtať dávkovo** (`prop=extracts` vydá
-viac článkov naraz len s `exintro`), takže je to požiadavka na článok – rozpis
+aj plochy), stiahne články a pridá `index.json`, ktorý hovorí, ktorý článok
+patrí ktorému OSM objektu. Desiatky MB textu by v `_site` zjedli rozpočet
+stránky, takže idú vlastným artefaktom do `deploy` a odtiaľ na Drive.
+
+**Jeden NDJSON, nie súbor na článok, a dávky po päťdesiatich.** Oboje má
+namerané dôvody: ZIP má na každý záznam ~320 B hlavičky a deflate si na každom
+súbore začína slovník odznova (153 článkov: 149 kB v súboroch vs 101 kB
+v jednom NDJSON), a plný text sa dávkovať DÁ – len nie cez `prop=extracts`
+(ten nad `exlimit=1` vráti JEDEN článok a ostatné vyzerajú ako neexistujúce),
+ale cez `prop=revisions&rvslots=main`, kde je strop 50 názvov a nad ním hlasná
+chyba `toomanyvalues`. Wikitext prevádza `mwparserfromhell`. Namerané: 153
+článkov v 4 požiadavkách (18 ms/článok) proti 484 ms/článok po jednom. Rozpis
 vo `workers/wiki/collect.py`.
 
 **Meno je STÁLE, nie jedinečné** – rovnaký kraj a výsek má vždy to isté meno,

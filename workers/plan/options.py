@@ -115,12 +115,13 @@ DEFAULTS = {
     # Poradie jazykov: berie sa prvý, ktorý pre daný objekt existuje. Slovenský
     # článok je pri slovenskej mape lepší než anglický, aj keď je kratší.
     "wiki_langs": ("sk,en", "jazyky článkov v poradí, prvý ktorý je"),
-    # `text` je čistý text z `prop=extracts` – desiatky kB na článok, jedna
-    # požiadavka na článok. `intro` je len úvod, ale po dvadsiatich na
-    # požiadavku (rýchly prehľad celého kraja). `html` je celý článok z REST
-    # API: krajší, ale balík je rádovo väčší. Neznámu hodnotu `wiki/build.sh`
-    # odmietne, nenahradí ju predvolenou.
-    "wiki_format": ("text", "podoba článku: `text`, `intro` alebo `html`"),
+    # `text` a `wikitext` idú z `prop=revisions` po PÄŤDESIATICH na požiadavku
+    # (`text` sa tu ešte prevedie na čistý text), `intro` po dvadsiatich.
+    # `html` z REST API sa dávkovať nedá – jeden článok, jedna požiadavka –
+    # takže je to jediná drahá podoba a job to v pláne rovno napíše. Neznámu
+    # hodnotu `wiki/build.sh` odmietne, nenahradí ju predvolenou.
+    "wiki_format": ("text",
+                    "článok: `text`, `wikitext`, `intro` alebo `html`"),
     "wiki_max": ("5000", "strop počtu článkov na jeden beh"),
     # 15, nie 14: schéma má triedy s `min_zoom: 15` (ploty, živé ploty,
     # geodetické body, hraničné kamene). Čo má min_zoom nad maxzoomom
