@@ -60,6 +60,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -360,8 +361,64 @@ def rozuzli(query):
     return out
 
 
-def stiahni_texty(api, lang, nazvy, fmt):
-    """Články jedného jazyka. Vracia `({názov z OSM: záznam}, chybné)`.
+def nacitaj_cache(cesta):
+    """`{kľúč článku: záznam}` z minulého behu, alebo prázdno.
+
+    NEDOPÍSANÝ RIADOK SA PRESKOČÍ, nie odmietne: cache sa ukladá aj zo behu,
+    ktorý niekto zrušil v polovici zápisu, a jeden pokazený riadok na konci
+    nesmie znamenať, že sa zahodí aj tých 900 článkov pred ním.
+    """
+    out = {}
+    if not cesta:
+        return out
+    p = os.path.join(cesta, NDJSON)
+    if not os.path.exists(p):
+        return out
+    zlych = 0
+    with open(p, encoding="utf-8") as f:
+        for riadok in f:
+            try:
+                z = json.loads(riadok)
+            except ValueError:
+                zlych += 1
+                continue
+            if z.get("key") and z.get("text") and z.get("revid"):
+                out[z["key"]] = z
+    log(f"Cache: {len(out)} článkov z minulého behu"
+        + (f" ({zlych} nedopísaných riadkov preskočených)" if zlych else ""))
+    return out
+
+
+def sviezost(api, lang, nazvy):
+    """`{názov: (titul, lastrevid, url)}` – jedna otázka na 50 názvov.
+
+    `prop=info` povie `lastrevid` a rozuzlí presmerovania, takže sa z nej dá
+    rozhodnúť, ČO NETREBA sťahovať. Namerané na sk wiki, tých istých 50
+    názvov: `prop=info` 19,9 kB, `prop=revisions` s obsahom 197,4 kB – teda
+    desatina, a k tomu odpadne prevod wikitextu. `lastrevid` z `info` sedí
+    s `revid` obsahu (overené).
+    """
+    out = {}
+    for i in range(0, len(nazvy), CONTENT_BATCH):
+        davka = nazvy[i:i + CONTENT_BATCH]
+        url = (f"https://{lang}.wikipedia.org/w/api.php?action=query"
+               f"&prop=info&inprop=url&redirects=1&maxlag={MAXLAG}"
+               f"&format=json&formatversion=2&titles="
+               + "|".join(urllib.parse.quote(t) for t in davka))
+        data = api.json(url) or {}
+        query = data.get("query") or {}
+        prezvane = rozuzli(query)
+        podla_nazvu = {p.get("title"): p for p in query.get("pages") or []}
+        for nazov in davka:
+            page = podla_nazvu.get(prezvane.get(nazov, nazov))
+            if page and not page.get("missing") and page.get("lastrevid"):
+                out[nazov] = (page["title"], page["lastrevid"],
+                              page.get("fullurl") or "")
+    return out
+
+
+def stiahni_texty(api, lang, nazvy, fmt, cache=None):
+    """Články jedného jazyka. Vracia `({názov z OSM: záznam}, chybné, z cache)`.
 
     Štyri podoby, dve ceny. Dávkové (desiatky požiadaviek na kraj):
       `text`      celý článok ako čistý text – wikitext po 50 a prevod tu
@@ -369,11 +426,43 @@ def stiahni_texty(api, lang, nazvy, fmt):
       `intro`     len úvod, po 20 (jediná dávková podoba `prop=extracts`)
     Po jednom článku (tisíce požiadaviek na kraj):
       `html`      celý článok v HTML z REST API – batch tam neexistuje
+
+    Keď je zapnutá cache, predradí sa jej dávková otázka na `lastrevid`
+    a stiahne sa len to, čo sa medzitým zmenilo.
     """
     nazvy = sorted(set(nazvy))
+    hotove, recyklovane, info = {}, 0, {}
+    # Otázka na sviežosť má zmysel, len keď je z čoho recyklovať – na prázdnej
+    # cache je to čistá režija, lebo `prop=revisions` vracia `revid` samo.
+    # `html` je výnimka: REST žiadne `revid` nedá, takže bez tejto otázky by
+    # sa jeho články nemali čím porovnať a cache by pri ňom NIKDY nesadla –
+    # a je to práve ten formát, kde je najdrahšia (jedna požiadavka na článok).
+    if cache is not None and (cache or fmt == "html"):
+        info = sviezost(api, lang, nazvy)
+        zostava = []
+        for nazov in nazvy:
+            if nazov not in info:
+                zostava.append(nazov)          # neexistuje → nech to povie sťahovanie
+                continue
+            titul, revid, url = info[nazov]
+            z = cache.get(f"{lang}:{titul}")
+            if z and z.get("revid") == revid:
+                hotove[nazov] = dict(z, title=titul, url=url or z["url"])
+                recyklovane += 1
+            else:
+                zostava.append(nazov)
+        log(f"  {lang}: {recyklovane} článkov je v cache a nezmenilo sa, "
+            f"{len(zostava)} treba stiahnuť")
+        nazvy = zostava
+        if not nazvy:
+            return hotove, [], recyklovane
+
     if fmt == "html":
-        return _po_jednom_html(api, lang, nazvy)
-    return _po_davkach(api, lang, nazvy, fmt)
+        nove, chybne = _po_jednom_html(api, lang, nazvy, info)
+    else:
+        nove, chybne = _po_davkach(api, lang, nazvy, fmt)
+    hotove.update(nove)
+    return hotove, chybne, recyklovane
 
 
 def _po_davkach(api, lang, nazvy, fmt):
@@ -439,8 +528,13 @@ def _zaznam(lang, nazov, page, fmt):
             "text": text}
 
 
-def _po_jednom_html(api, lang, nazvy):
-    """`html` z REST API. Dávka tu NIE JE – REST vydá jednu stránku na volanie."""
+def _po_jednom_html(api, lang, nazvy, info):
+    """`html` z REST API. Dávka tu NIE JE – REST vydá jednu stránku na volanie.
+
+    `info` je výsledok `sviezost()`, keď bola: REST žiadne `revid` nevracia,
+    takže bez neho by sa článok nemal čím porovnať a cache by pri `html`
+    nikdy nesadla.
+    """
     hotove, chybne = {}, []
     for n, nazov in enumerate(nazvy, 1):
         url = (f"https://{lang}.wikipedia.org/api/rest_v1/page/html/"
@@ -454,11 +548,12 @@ def _po_jednom_html(api, lang, nazvy):
         if not telo:
             chybne.append(nazov)
             continue
+        titul, revid, plna_url = info.get(nazov, (nazov, None, ""))
         hotove[nazov] = {
-            "key": f"{lang}:{nazov}", "lang": lang, "title": nazov,
-            "pageid": None, "revid": None,
-            "url": f"https://{lang}.wikipedia.org/wiki/"
-                   + urllib.parse.quote(nazov.replace(" ", "_")),
+            "key": f"{lang}:{titul}", "lang": lang, "title": titul,
+            "pageid": None, "revid": revid,
+            "url": plna_url or f"https://{lang}.wikipedia.org/wiki/"
+                   + urllib.parse.quote(titul.replace(" ", "_")),
             "text": telo.decode("utf-8", "replace")}
     return hotove, chybne
 
@@ -480,6 +575,9 @@ def main():
                          "prevodu, `intro` len úvod, `html` z REST (po jednom)")
     ap.add_argument("--max", type=int, default=5000,
                     help="strop počtu článkov (0 = bez stropu)")
+    ap.add_argument("--cache", default="",
+                    help="priečinok cache (articles.ndjson z minulého behu); "
+                         "prázdne = necachovať")
     ap.add_argument("--stats", default="", help="kam dopísať meranie (TSV)")
     args = ap.parse_args()
 
@@ -563,11 +661,13 @@ def main():
     # Jeden článok má často viac OSM objektov (hrad ako bod aj ako plocha)
     # a viac názvov, ktoré na ten istý článok vedú cez presmerovanie. Preto sa
     # zbiera podľa `key` (`sk:Devín (hrad)`), nie podľa toho, čo bolo v tagu.
-    clanky, kde_je, chybne_vsetky = {}, {}, []
+    cache = nacitaj_cache(args.cache) if args.cache else None
+    clanky, kde_je, chybne_vsetky, z_cache = {}, {}, [], 0
     for lang in sorted(podla_jazyka):
         log(f"Sťahujem {len(podla_jazyka[lang])} článkov ({lang})…")
-        hotove, chybne = stiahni_texty(api, lang, podla_jazyka[lang],
-                                       args.format)
+        hotove, chybne, recyklovane = stiahni_texty(
+            api, lang, podla_jazyka[lang], args.format, cache)
+        z_cache += recyklovane
         for nazov in podla_jazyka[lang]:
             objekty_odkazu = kde[(lang, nazov)]
             z = hotove.get(nazov)
@@ -622,6 +722,17 @@ def main():
                                     key=lambda c: (c["lang"], c["title"]))},
                   f, ensure_ascii=False, indent=1)
 
+    # Kópia pre cache. Je to TEN ISTÝ obsah ako výsledok, a preto sa nemá ako
+    # rozísť s tým, čo je v balíku: ďalší beh toho istého regiónu dostane
+    # presne tie články, ktoré tu vznikli. Ukladá sa aj vtedy, keď sa nič
+    # nezmenilo – inak by záznam pod novým kľúčom (číslo behu) nevznikol
+    # a predpona by starla, kým ju `--prune` nezmaže.
+    if args.cache:
+        os.makedirs(args.cache, exist_ok=True)
+        kopia = os.path.join(args.cache, NDJSON)
+        if os.path.abspath(kopia) != os.path.abspath(nd):
+            shutil.copyfile(nd, kopia)
+
     took = time.time() - t0
     nd_mb = os.path.getsize(nd) / 1e6
     log(f"Hotovo: {len(index)} článkov ({znakov / 1e6:.1f} M znakov, "
@@ -631,6 +742,13 @@ def main():
         + f"); odhad bol ~{odhad / 60:.1f} min")
     log(f"  {len(kde_je)} OSM objektov má článok, "
         f"{api.pocet and len(index) / api.pocet:.0f} článkov na požiadavku")
+    if cache is not None:
+        # Bez tohto riadka sa nedá odlíšiť „cache funguje" od „cache je tam,
+        # ale kľúč nesedí a všetko sa ťahá odznova" – a to druhé je zelené
+        # a tiché (pravidlo 8), len o desiatky sekúnd dlhšie.
+        log(f"  z cache {z_cache} z {len(index)} článkov "
+            f"({100 * z_cache / max(1, len(index)):.0f} %), "
+            f"stiahnutých {len(index) - z_cache}")
     if chybne_vsetky:
         # NIE JE TO CHYBA BEHU, ale musí to byť napísané: odkaz v OSM môže
         # mieriť na článok, ktorý neexistuje (preklep, premenovaný článok,
@@ -643,6 +761,7 @@ def main():
             f.write(f"60\tČlánky z Wikipédie\t{int(took)}\t"
                     f"{len(index)} článkov, {nd_mb:.1f} MB, "
                     f"{api.pocet} požiadaviek, "
+                    f"{z_cache} z cache, "
                     f"{len(chybne_vsetky)} bez článku\n")
     if not index:
         log("::warning::Ani jeden článok – v regióne nie je objekt s odkazom "

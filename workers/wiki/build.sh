@@ -22,7 +22,7 @@ sudo apt-get install -y -qq osmium-tool
 # (`prop=extracts`) API dávkovo nevydá, viď komentár v `collect.py`.
 pip install --quiet mwparserfromhell
 
-mkdir -p wiki-out steps-out
+mkdir -p wiki-out wiki-cache steps-out
 
 LANGS="${OPT_WIKI_LANGS:-sk,en}"
 FMT="${OPT_WIKI_FORMAT:-text}"
@@ -45,9 +45,14 @@ case "$MAX" in
      exit 1 ;;
 esac
 
+# CACHE JE PRIEČINOK, ktorý pred týmto krokom obnovila `cache-restore`
+# z Drive – v ňom je `articles.ndjson` z minulého behu toho istého regiónu.
+# Podáva sa VŽDY, aj keď ešte neexistuje: `collect.py` si ho vyrobí a uloží
+# doň kópiu, takže `cache-save` má čo nahrať už po prvom behu.
 python3 workers/wiki/collect.py \
   --pbf=data/region.osm.pbf \
   --out=wiki-out \
+  --cache=wiki-cache \
   --langs="$LANGS" \
   --format="$FMT" \
   --max="$MAX" \
