@@ -17,6 +17,10 @@ set -euo pipefail
 
 sudo apt-get update -qq
 sudo apt-get install -y -qq osmium-tool
+# Prevod wikitextu na čistý text. Je to knižnica od Wikimedie a je to jediná
+# cesta, ako mať plný text A ZÁROVEŇ dávky po päťdesiatich: hotový čistý text
+# (`prop=extracts`) API dávkovo nevydá, viď komentár v `collect.py`.
+pip install --quiet mwparserfromhell
 
 mkdir -p wiki-out steps-out
 
@@ -28,9 +32,10 @@ MAX="${OPT_WIKI_MAX:-5000}"
 # s balíkom, v ktorom je niečo iné, než čakáš – a nemáš to na čom vidieť.
 # Radšej spadnúť tu, v druhej sekunde jobu, a povedať aj čo s tým.
 case "$FMT" in
-  text|intro|html) ;;
-  *) echo "::error::wiki_format=$FMT nepoznám – zvoľ \`text\` (celý článok)," \
-          "\`intro\` (len úvod, rýchle) alebo \`html\` (celý článok v HTML)."
+  text|wikitext|intro|html) ;;
+  *) echo "::error::wiki_format=$FMT nepoznám – zvoľ \`text\` (celý článok" \
+          "ako čistý text), \`wikitext\` (bez prevodu), \`intro\` (len úvod)" \
+          "alebo \`html\` (z REST API, ale po jednom článku)."
      exit 1 ;;
 esac
 case "$MAX" in

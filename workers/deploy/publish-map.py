@@ -497,7 +497,7 @@ def main():
     # báza: články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
     # rozpočet stránky), takže ich job `wiki` odloží ako samostatný artefakt
     # a `deploy` ich podá sem cez `--wiki`. Cesty v ZIPe sa počítajú od tej
-    # bázy, takže vnútri je `sk/Devín_(hrad).txt`, nie `_wiki/sk/…`.
+    # bázy, takže vnútri je `articles.ndjson`, nie `_wiki/articles.ndjson`.
     baliky = [
         ("", "celá mapa – web tak, ako sa nasadil",
          args.site, vsetky_subory(args.site)),
@@ -505,7 +505,7 @@ def main():
          args.site, vrstvy_subory(args.site, man)),
         ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (PNG)",
          args.site, tienovanie_subory(args.site, man)),
-        ("wikipedia", "články z Wikipédie k objektom v regióne (+ index.json)",
+        ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
          args.wiki, vsetky_subory(args.wiki) if args.wiki else []),
     ]
     if not baliky[0][3]:
