@@ -107,11 +107,12 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
-    # Články z Wikipédie ku všetkému, čo v regióne odkazuje na wiki (job
-    # `wiki`). Nie sú súčasťou mapy na Pages – idú na Drive ako samostatný
-    # balík `-wikipedia.zip`, takže rozpočet stránky neovplyvňujú. Stoja
-    # niekoľko minút siete na kraj, preto sa dajú vypnúť.
-    "wikipedia": ("true", "stiahnuť články z Wikipédie k objektom v regióne"),
+    # INTERVAL VRSTEVNÍC. Bol to input vo formulári a presťahoval sa sem, keď
+    # si miesto vzal switch `wikipedia` – `workflow_dispatch` dovolí najviac 10
+    # inputov. Je to ten istý výmenný obchod, aký kedysi spravil `test_km2`:
+    # z DMR 5.0 je 5 m dobrý default takmer všade a mení sa pri prechode do
+    # nížin, nie pri každom behu.
+    "contour_interval": ("5", "interval vrstevníc v metroch (10 = redšie)"),
     # Poradie jazykov: berie sa prvý, ktorý pre daný objekt existuje. Slovenský
     # článok je pri slovenskej mape lepší než anglický, aj keď je kratší.
     "wiki_langs": ("sk,en", "jazyky článkov v poradí, prvý ktorý je"),
@@ -163,6 +164,9 @@ MOVED = {
                    "nie voľba",
     "test": "je switch vo formulári (rýchly test na pár km²), nie voľba. "
             "Veľkosť štvorca je voľba `test_km2`",
+    "wikipedia": "je switch vo formulári (stiahnuť články z Wikipédie), nie "
+                 "voľba. Jazyky, podoba a strop ostali voľbami – `wiki_langs`, "
+                 "`wiki_format`, `wiki_max`",
     "dem_source": "sa rozpadol na tri inputy vo formulári – `contour_source`, "
                   "`rock_source` a `shading_source`, každá vrstva má svoj "
                   "zdroj",
@@ -249,6 +253,8 @@ def main():
     ap.add_argument("--test", default="false",
                     help="switch rýchleho testu: true = počítať len štvorec "
                          "s `test_km2` km²")
+    ap.add_argument("--wikipedia", default="true",
+                    help="switch článkov z Wikipédie: true = stiahnuť ich")
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
@@ -383,6 +389,34 @@ def main():
               f"nie „{values['publish']}“.", file=sys.stderr)
         return 1
 
+    # ČLÁNKY Z WIKIPÉDIE sú switch vo formulári, nie voľba – preto sa hodnota
+    # neberie z `values`, ale z `--wikipedia`, a do `values` sa až dopisuje
+    # (nech ju `opt_wikipedia` vypíše na výstup ako všetko ostatné). Čokoľvek
+    # iné než true/false je chyba: prázdny reťazec z nevyplneného switchu by
+    # články ticho vypol a zistilo by sa to až tým, že balík na Drive nie je.
+    wiki_on = (args.wikipedia or "true").strip().lower()
+    if wiki_on not in ("true", "false"):
+        print(f"::error::Switch „wikipedia“ musí byť true alebo false, "
+              f"nie „{args.wikipedia}“.", file=sys.stderr)
+        return 1
+    values["wikipedia"] = wiki_on
+
+    # Interval vrstevníc je voľba (miesto vo formulári si vzal switch
+    # `wikipedia`), takže sa musí kontrolovať tu – `contour_interval=päť` by
+    # inak spadlo až v `gdal_contour`, po hodine sťahovania DEM.
+    try:
+        interval = float(values["contour_interval"])
+    except ValueError:
+        print(f"::error::Voľba „contour_interval“ musí byť číslo v metroch, "
+              f"nie „{values['contour_interval']}“.", file=sys.stderr)
+        return 1
+    if interval <= 0:
+        print(f"::error::Voľba „contour_interval“ musí byť väčšia než nula "
+              f"(„{values['contour_interval']}“). Vrstevnice sa vypínajú "
+              f"výberom `contour_source: ziadne`.", file=sys.stderr)
+        return 1
+    values["contour_interval"] = f"{interval:g}"
+
     if args.rebuild not in REBUILD:
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
               f"{', '.join(REBUILD)}", file=sys.stderr)
@@ -413,7 +447,8 @@ def main():
     print("Nastavenia:")
     for k in sorted(values):
         mark = "  ←" if k in changed else ""
-        d = DEFAULTS.get(k, ("", "z inputov formulára (zdroje / rebuild / test)"))[1]
+        d = DEFAULTS.get(
+            k, ("", "z inputov formulára (zdroje / rebuild / test / wikipedia)"))[1]
         print(f"  {k:<20} {values[k] or '(prázdne)':<24} {d}{mark}")
     if changed:
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")

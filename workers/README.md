@@ -1643,8 +1643,31 @@ balíka, než si vypýtal – pravidlo 8.
 (`size_limit_mb`) a v mape ich nikto nekreslí, takže články idú vlastným
 artefaktom do jobu `deploy` a odtiaľ na Drive ako **štvrtý balík**
 `<kraj>[-<výsek>]-wikipedia.zip` (a do `maps.json` ako `wikipedia`). Vypína sa
-voľbou `wikipedia=false`, jazyky sa vyberajú `wiki_langs=sk,en`, strop počtu
-článkov je `wiki_max`.
+**switchom `wikipedia`** vo formulári, jazyky sa vyberajú `wiki_langs=sk,en`,
+strop počtu článkov je `wiki_max`.
+
+**Cache je na Drive a neplatí ju kalendár, ale `lastrevid`.** Obnovuje sa cez
+predponu (`wiki-v1-<región>-<jazyky>-<podoba>-`), takže sa berie najnovší
+záznam toho istého regiónu; plný kľúč má na konci číslo behu, aby sa dal
+doplniť (existujúci kľúč sa neprepisuje). Keď je v cache z čoho recyklovať,
+`collect.py` si najprv dá **jednu dávkovú otázku `prop=info` na 50 článkov**
+a stiahne len tie, ktorým sa medzitým zmenil `lastrevid`:
+
+| tá istá dávka 50 článkov | zo siete |
+|---|--:|
+| `prop=info` (len `lastrevid`) | 19,9 kB |
+| `prop=revisions` (s obsahom) | 197,4 kB |
+
+Čo sa tým **neušetrí**: počet požiadaviek – dávka je dávka. Ušetria sa bajty
+(desatina), prevod wikitextu, a pri `wiki_format=html`, kde dávka neexistuje,
+celé minúty. Koľko sa naozaj recyklovalo, job vypíše (`z cache 812 z 830
+článkov (98 %)`) – inak sa nedá odlíšiť „cache funguje" od „cache je tam, ale
+kľúč nesedí", a to druhé je zelené a tiché, len o desiatky sekúnd dlhšie.
+
+Cache je ten istý `articles.ndjson`, aký ide do balíka, takže sa nemá ako
+rozísť s tým, čo je v mape. Nedopísaný posledný riadok (beh, ktorý niekto
+zrušil v polovici zápisu) sa **preskočí**, nie odmietne – jeden pokazený riadok
+nesmie zahodiť 900 článkov pred ním.
 
 Rozpis: [`workers/wiki/collect.py`](wiki/collect.py) a
 [`workers/wiki/build.sh`](wiki/build.sh).
@@ -2340,7 +2363,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
-   | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
+   | `wikipedia` | **switch** | stiahnuť **články z Wikipédie** k objektom v regióne (vlastný ZIP na Drive; predvolene zapnuté) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
@@ -2359,6 +2382,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=5`,
    `rock_res=1`); mriežku navyše `auto` vyberie z bunky DEM a rozpočtu času
    lepšie, než sa háda ručne.
+
+   **A prečo `wikipedia` a nie `contour_interval`.** Ten istý obchod, o jedno
+   kolo neskôr. Články sa zapínajú a vypínajú podľa toho, či ide o ostrý build
+   alebo o ladenie terénu — to je switch. Interval vrstevníc má z DMR 5.0 dobrý
+   default 5 m a mení sa pri prechode do nížin, nie pri každom behu, takže sa
+   píše ako voľba (`options: contour_interval=10`). Že sa jedenásty input
+   nepridá, chytí **actionlint** do dvoch sekúnd („maximum number of inputs for
+   workflow_dispatch event is 10") – nie je to na dôvere, je to overené.
 
    **Tri výbery zdroja, jeden na vrstvu.** Kým to bol jeden `dem_source` pre
    všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly

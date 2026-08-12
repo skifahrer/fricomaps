@@ -327,6 +327,16 @@ aj plochy), stiahne články a pridá `index.json`, ktorý hovorí, ktorý člá
 patrí ktorému OSM objektu. Desiatky MB textu by v `_site` zjedli rozpočet
 stránky, takže idú vlastným artefaktom do `deploy` a odtiaľ na Drive.
 
+**Zapína ich switch `wikipedia`** vo formulári – a miesto naň sa muselo uvoľniť:
+`workflow_dispatch` dovolí najviac 10 inputov, takže `contour_interval` sa
+presťahoval do `options` (5 m z DMR 5.0 je dobrý default, mení sa pri prechode
+do nížin; články sa zapínajú a vypínajú pri každom ladení). Jedenásty input
+chytí actionlint. **Cache článkov je na Drive** a neplatí ju kalendár, ale
+`lastrevid`: keď je z čoho recyklovať, predradí sa dávková otázka `prop=info`
+(50 článkov za 19,9 kB proti 197,4 kB s obsahom) a stiahne sa len to, čo sa
+zmenilo. Počet požiadaviek to nezníži, bajty a prevod áno – a pri `html`, kde
+dávka neexistuje, celé minúty.
+
 **Jeden NDJSON, nie súbor na článok, a dávky po päťdesiatich.** Oboje má
 namerané dôvody: ZIP má na každý záznam ~320 B hlavičky a deflate si na každom
 súbore začína slovník odznova (153 článkov: 149 kB v súboroch vs 101 kB
