@@ -251,6 +251,7 @@ export const THEMES = {
     ridgeLine: "#a89880",
     scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
+    roadProposed: "#b0a48c",
     parking: "#e8e4f0",
     farmyard: "#eee4d2",
     dam: "#b0a898",
@@ -369,6 +370,7 @@ export const THEMES = {
     ridgeLine: "#6a6050",
     scrub: "#272a1e",
     roadConstruction: "#6a5628",
+    roadProposed: "#585044",
     parking: "#23202e",
     farmyard: "#2a2419",
     dam: "#3a3630",
@@ -486,6 +488,7 @@ export const THEMES = {
     ridgeLine: "#9a8468",
     scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
+    roadProposed: "#a89878",
     parking: "#e6e2ee",
     farmyard: "#e8dcc2",
     dam: "#a89e8a",
@@ -602,6 +605,7 @@ export const THEMES = {
     ridgeLine: "#c0a488",
     scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
+    roadProposed: "#b4a488",
     parking: "#efe8f0",
     farmyard: "#f2e6d2",
     dam: "#c4b8a8",
@@ -727,7 +731,8 @@ export const PALETTE_GROUPS = [
       ["pedestrian", "Pešia zóna"],
       ["roadCasing", "Obrys ciest"],
       ["roadText", "Popisok cesty"],
-      ["roadConstruction", "Cesta vo výstavbe"]
+      ["roadConstruction", "Cesta vo výstavbe"],
+      ["roadProposed", "Plánovaná cesta"]
     ]
   },
   {
@@ -2793,7 +2798,19 @@ export function buildStyle({
       ["tree-row", "Stromoradia", ["tree_row"], "treeRow",
         [[14, 0.9], [16, 1.8], [20, 4]], [1, 1.5], 14],
       ["gully", "Výmole a zrázy", ["gully", "earth_bank"], "embankment",
-        [[14, 0.6], [16, 1.2], [20, 3]], [3, 2], 14]
+        [[14, 0.6], [16, 1.2], [20, 3]], [3, 2], 14],
+      // PLÁNOVANÁ CESTA (`highway=proposed`) – trasa, na ktorej sa ešte ani
+      // nekope. Kreslí sa TU, medzi prvkami, a nie vedľa `road-construction`
+      // v sekcii ciest, hoci by tam logicky patrila: ide z vlastných dlaždíc
+      // (`features`), ktoré štýl pridáva len keď ten archív existuje.
+      //
+      // Bodkovaná a šedšia než rozostavaná cesta, ktorá je čiarkovaná
+      // (`[3, 2]`) a farebná: rozdiel „stavia sa" proti „je to zatiaľ na
+      // papieri" musí byť vidieť na prvý pohľad, nie až z popupu. Šírka je
+      // schválne o dosť menšia než pri rozostavanej ceste – plánovanú
+      // diaľnicu netreba kresliť ako diaľnicu.
+      ["road-proposed", "Plánované cesty", ["road_proposed"], "roadProposed",
+        [[11, 0.8], [14, 1.6], [16, 2.6], [20, 6]], [1, 2.5], 11]
     ];
     for (const [id, label, classes, paletteKey, stops, dash, mz] of featureLines) {
       add(
@@ -3696,6 +3713,11 @@ export const CLICKABLE_LAYERS = [
   "aerodrome-label",
   // Krajinné prvky z vlastných dlaždíc – popup povie, čo to je a v akej výške.
   "feature-point",
+  // Plánovaná cesta: z čiary sa nedozvieš, či pôjde o diaľnicu alebo o lesnú
+  // cestu, a to je pri nej to hlavné – popup povie meno, `ref` (napr. `D3`)
+  // aj čo sa plánuje. Zbierať `subclass` do dlaždíc a nikde ho neukázať by
+  // bolo to isté, čo sa stalo napätiu pri elektrickom vedení.
+  "feature-road-proposed",
   "piste-line",
   // Značené trasy – po ceste ich vedie viac, popup povie, ktorá je ktorá.
   "trail-hiking",

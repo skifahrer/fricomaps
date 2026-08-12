@@ -512,6 +512,14 @@ jobs:
       - name: Katalóg máp drží tvar a nikto ho neobchádza
         run: python3 workers/lint/catalog.py
 
+      # Job `features` číta PBF dvakrát: hrubým sitom (`filter.txt`) a potom
+      # schémou (`features.yml`). To isté rozhodnutie je tým na dvoch miestach
+      # a keď sa rozídu, je to tiché – Planetiler dostane PBF bez tých objektov
+      # a vyrobí dlaždice, v ktorých tá trieda jednoducho nie je. Beh zelený,
+      # v mape nič. Rozpis: `workers/lint/features.py`.
+      - name: Predfilter pustí všetko, čo si schéma prvkov vyžiada
+        run: python3 workers/lint/features.py
+
       # „V tomto stupni terén nie je" je doživotná odpoveď – kým prázdna
       # dlaždica leží v sklade, ten stupeň už nikto neprečíta. Keď ju vysloví
       # vzorkovaná štatistika, je beh zelený a v mape chýba pol kraja: presne
