@@ -410,10 +410,20 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
                  "(únia skončila prázdna – hľadaj v logu `TopologyException`)"
                  if not n_zlep else
                  f"(z {plocha_pred/1e6:.2f} km² ostalo {plocha_po/1e6:.2f} km²)")
+        # POZOR NA DÔVOD V TEJ HLÁŠKE. Kým tu stálo „Chýba spatialite?", posielala
+        # každý beh hľadať chybu tam, kde nie je: `libsqlite3-mod-spatialite`
+        # inštaluje `contours-rocks/build.sh` a `ST_Union` sa volá úspešne. Čo
+        # padá, je GEOS nad obrysmi z `gdal_contour` – a padá na tých veľkých,
+        # teda na pásmach pod prahom, ktoré sa o dva kroky nižšie aj tak
+        # zahodia. Preto sa tu hovorí, čo hľadať a čo to znamená pre mapu, a nie
+        # čo to asi je.
         print(f"::warning::Zlepenie švov stratilo plochu {preco}"
-              + f". Vraciam {n_sev} pôvodných plôch nezlepených: budú rozseknuté "
-              f"na hraniciach blokov a diery na nich otvorené, ale BUDÚ. "
-              f"Chýba spatialite?", flush=True)
+              + f". Vraciam {n_sev} pôvodných plôch nezlepených: na hraniciach "
+              f"blokov ({label}) budú rozseknuté a diery na nich otvorené, ale "
+              f"BUDÚ – v mape je to vidieť ako priamu hranu v obryse. Dôvod je "
+              f"v logu vyššie (`TopologyException` z GEOS nad obrysom "
+              f"z gdal_contour); spatialite v tom nie je, ten je nainštalovaný.",
+              flush=True)
         return seq
 
     print(f"  švy: {n_sev} plôch zlepených na {n_zlep} "
