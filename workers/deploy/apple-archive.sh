@@ -23,6 +23,8 @@
 #   CONTOURS_ENABLED CONTOURS_SOURCE CONTOUR_INTERVAL
 #   ROCKS_ENABLED ROCKS_SOURCE TERRAIN_ENABLED TERRAIN_SOURCE
 #   TRAILS_ENABLED FEATURES_ENABLED CUSTOM_NAME CUSTOM_PBF_URL
+# a k tomu WIKI_ENABLED – „mali prísť články?", aby sa dalo odlíšiť „wiki
+# v tomto builde nie je" od „artefakt sa nestiahol" (viď nižšie)
 # a k tomu prihlásenie na Drive z `env:` celého workflowu.
 set -euo pipefail
 
@@ -32,10 +34,27 @@ if ! command -v aa >/dev/null 2>&1; then
 fi
 echo "Apple Archive: $(command -v aa)"
 
-# Články z Wikipédie sú štvrtý balík a majú vlastný artefakt – keď ich build
-# nerobil, priečinok tu jednoducho nie je a `--wiki` ostane prázdne.
+# ---------- články z Wikipédie ----------
+# Štvrtý balík, s vlastným artefaktom – a rovnako ako ostatné tri ide aj ako
+# `.aar`. Keď ho build nerobil, priečinok tu jednoducho nie je a `--wiki`
+# ostane prázdne.
+#
+# ROZLÍŠIŤ „NEBOLI" OD „NEPRIŠLI" JE TU NUTNÉ. Keď `_wiki` chýba, považuje
+# `publish-map.py` ten balík za „v tomto builde nie je" a starý `.aar` na
+# Drive ZMAŽE – aby vedľa novej mapy neostal balík z iného behu. To je
+# správne, kým články naozaj neboli; keby sa len nestiahol artefakt, zmazal
+# by sa dobrý balík kvôli výpadku prenosu. `WIKI_ENABLED` hovorí, či mali
+# prísť, takže sa tie dva prípady dajú odlíšiť a druhý zhodí job.
 WIKI=""
-[ -f _wiki/index.json ] && WIKI=_wiki
+if [ -f _wiki/index.json ]; then
+  WIKI=_wiki
+  echo "Články z Wikipédie: $(du -sh _wiki | cut -f1) – pribalia sa ako .aar"
+elif [ "${WIKI_ENABLED:-false}" = 'true' ]; then
+  echo "::error::Job wiki články vyrobil, ale artefakt wiki-articles sa sem nestiahol (_wiki/index.json tu nie je). Nepokračujem: bez neho by publish-map.py považoval balík za nevyrobený a starý -wikipedia.aar na Drive by zmazal. Pozri krok „Stiahni články z Wikipédie“ v tomto jobe."
+  exit 1
+else
+  echo "Články z Wikipédie: v tomto builde nie sú."
+fi
 
 python3 workers/deploy/publish-map.py --site=_site --format=aar \
   --wiki="$WIKI" \
