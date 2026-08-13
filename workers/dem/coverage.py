@@ -147,6 +147,41 @@ def covered_pct(bbox, extents, cells=400):
     return 100.0 * hit / (cells * cells)
 
 
+def data_pct(path, region=None):
+    """Koľko percent dlaždice má NAOZAJ výšky (nie nodata).
+
+    PREČO TO NESTAČÍ MERAŤ ROZSAHOM. Doteraz sa pokrytie počítalo z rozsahov
+    dlaždíc – „mozaika sa dotýka celého bboxu" – a to prejde aj vtedy, keď je
+    dlaždica takmer prázdna. Presne to sa stalo v behu 31635772047: v sklade
+    `dem-dmr5` mala `N49E020.tif` (Vysoké Tatry, čiže STRED Prešovského kraja)
+    5 MB, kým susedná `N49E021.tif` 265 MB. Kontrola vypísala „Pokrytie územia
+    100.0 % z 8 dlaždíc" a beh pokračoval – tieňovanie potom skončilo rovnou
+    hranou na 21° a skalám z hrany dát vyšlo 13 403 km² falošných stien.
+    Veľkosť súboru pritom stačila na to, aby to bolo vidieť; nikto sa nepozeral.
+
+    `STATISTICS_VALID_PERCENT` počíta GDAL sám pri `-stats`. Je to PRESNÝ
+    priechod, nie vzorkovanie (`-approx_stats` už raz odrezalo pol kraja, viď
+    `tiles.py`), ale beží nad hotovým súborom na disku a je ich osem.
+    """
+    r = subprocess.run(["gdalinfo", "-json", "-stats", path],
+                       capture_output=True, text=True, check=False)
+    if r.returncode:
+        return None
+    try:
+        info = json.loads(r.stdout)
+    except ValueError:
+        return None
+    for band in info.get("bands") or []:
+        md = (band.get("metadata") or {}).get("") or {}
+        pct = md.get("STATISTICS_VALID_PERCENT")
+        if pct is not None:
+            try:
+                return float(pct)
+            except ValueError:
+                return None
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bbox", required=True, help="W,S,E,N územia, čo sa počíta")
@@ -155,6 +190,9 @@ def main():
     ap.add_argument("--min-pct", type=float, default=95.0,
                     help="pod týmto pokrytím je návratový kód 1")
     ap.add_argument("--out", default="", help="kam zapísať key=value")
+    ap.add_argument("--data-pct", type=float, default=0.0,
+                    help="dlaždica pod týmto podielom skutočných výšok "
+                         "sa hlási ako podozrivá (0 = nekontrolovať)")
     args = ap.parse_args()
 
     bbox = tuple(float(v) for v in args.bbox.split(","))
@@ -209,6 +247,40 @@ def main():
         else:
             good.append((float(deg[0]), float(deg[1]),
                          float(deg[0] + 1), float(deg[1] + 1)))
+
+    # ---------- majú dlaždice aj DÁTA, nie len rozsah? ----------
+    # Toto je tá kontrola, ktorá v behu 31635772047 chýbala. Rozsahy sedeli,
+    # pokrytie vyšlo 100 % – a pol kraja bolo bez terénu, lebo jedna dlaždica
+    # v jeho STREDE bola takmer prázdna. Nie je to chyba behu (dlaždica môže
+    # byť prázdna právom – stupeň, ktorý je celý za hranicou Slovenska), preto
+    # varovanie a nie pád; hlavné je, že to už nie je ticho.
+    chudobne = []
+    if args.data_pct > 0:
+        print(f"  dáta v dlaždiciach (podiel skutočných výšok, prah "
+              f"{args.data_pct:g} %):")
+        for p_ in sorted(set(paths)):
+            name = os.path.basename(p_)
+            if name in liars:
+                continue
+            d = data_pct(p_)
+            mb = os.path.getsize(p_) / 1e6 if os.path.exists(p_) else 0
+            if d is None:
+                print(f"    ? {name} – podiel dát sa nedá zistiť ({mb:.0f} MB)")
+                continue
+            znak = "✓" if d >= args.data_pct else "✗"
+            print(f"    {znak} {name}: {d:.1f} % výšok, {mb:.0f} MB")
+            if d < args.data_pct and name not in empty:
+                chudobne.append((name, d, mb))
+        if chudobne:
+            zoznam = ", ".join(f"{n} ({d:.1f} % výšok, {mb:.0f} MB)"
+                               for n, d, mb in chudobne)
+            print(f"::warning::Dlaždice s takmer žiadnymi výškami: {zoznam}. "
+                  f"Rozsah majú v poriadku, takže pokrytie vyšlo v poriadku – "
+                  f"ale v mape z nich bude PRÁZDNE MIESTO s rovnou hranou na "
+                  f"celom stupni a skalám z hrany dát vyjdú falošné steny. "
+                  f"Keď ten stupeň má byť plný, zmaž ho zo skladu a nechaj "
+                  f"doplniť znova (`store.py --rm`); keď je celý za hranicou "
+                  f"Slovenska, je to v poriadku.")
 
     # Ktoré stupne bboxu neprikrýva ani jedna poctivá dlaždica.
     missing = []

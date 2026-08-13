@@ -417,6 +417,8 @@ python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
+python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
+python3 workers/lib/region-mask.py --poly=… --bbox=… --zoom=14  # čo padne mimo kraj
 python3 workers/drive/store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
 REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/deploy/site.sh   # a tak ďalej
