@@ -1861,7 +1861,7 @@ Je to preto, že formulár *Run workflow* sa vždy otvorí s predvolenými
 hodnotami – GitHub si nepamätá, s čím si beh pustil naposledy, a v API to
 nikde nie je. Keď teda chceš beh zopakovať a zmeniť jedinú vec (typicky
 `rebuild`), z tohto bloku vidíš, čo treba nastaviť späť. Predvolené hodnoty
-si blok číta priamo z workflowu ([workers/deploy/summary-inputs.py](deploy/summary-inputs.py)),
+si blok číta priamo z workflowu ([workers/plan/summary-inputs.py](plan/summary-inputs.py)),
 takže sa s formulárom nemôžu rozísť.
 
 
