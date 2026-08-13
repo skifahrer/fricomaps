@@ -161,8 +161,13 @@ echo "$SRC_LABEL: $have z $WANT dlaždíc zo skladu $SRC_STORE ✓"
 # (31476448895 → 31484544154). Odteraz sa meria ROZSAH dlaždíc, nie ich počet.
 COV="$DIR/coverage.txt"
 set +e
+# `--data-pct`: dlaždica, ktorá má rozsah v poriadku ale takmer žiadne výšky,
+# sa ohlási. Prah 2 % je zámerne nízko – ide o „takmer prázdna", nie o „menej
+# než pol stupňa Slovenska". Namerané v behu 31635772047: N49E020 mala 5 MB
+# proti 265 MB susednej dlaždice a v mape z nej bola rovná hrana na 21°.
 python3 "$HERE/coverage.py" --bbox="$BBOX" --dir="$DIR/tiles" \
-  --min-pct="${DEM_MIN_COVER_PCT:-95}" --out="$COV"
+  --min-pct="${DEM_MIN_COVER_PCT:-95}" \
+  --data-pct="${DEM_MIN_DATA_PCT:-2}" --out="$COV"
 COV_RC=$?
 set -e
 LIARS=$(sed -n 's/^liars=//p' "$COV" 2>/dev/null || true)

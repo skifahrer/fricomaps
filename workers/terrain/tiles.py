@@ -132,10 +132,31 @@ def warp_level(dem, path, minx, miny, maxx, maxy, width, height):
     )
 
 
+def load_mask(poly, bbox):
+    """Maska kraja z `workers/lib/region-mask.py`, alebo `None` bez polygónu.
+
+    Modul má v mene pomlčku, takže `import` naň nefunguje – naťahuje sa cez
+    `importlib` presne tak, ako to robí zvyšok pipeline (`load("rock_plan", …)`).
+    """
+    if not poly or not os.path.exists(poly):
+        return None
+    import importlib.util
+    lib = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                       "lib", "region-mask.py")
+    spec = importlib.util.spec_from_file_location("region_mask", lib)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod, mod.mask_from_file(poly, bbox)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dem", required=True, help="vstupný DEM (.vrt/.tif)")
     ap.add_argument("--bbox", required=True, help="west,south,east,north")
+    ap.add_argument("--poly", default="",
+                    help="GeoJSON kraja – dlaždice mimo neho sa nekreslia")
+    ap.add_argument("--grow", type=float, default=0.5,
+                    help="o koľko svojej strany smie dlaždica prečnievať za kraj")
     ap.add_argument("--maxzoom", type=int, default=12)
     ap.add_argument("--minzoom", type=int, default=0)
     ap.add_argument("--out", required=True, help="adresár s dlaždicami {z}/{x}/{y}.png")
@@ -144,8 +165,22 @@ def main():
     args = ap.parse_args()
 
     w, s, e, n = (float(v) for v in args.bbox.split(","))
+    # ORIENTAČNÝ OREZ NA KRAJ. Bbox kraja je oveľa väčší než kraj sám (pri
+    # Prešovskom 16 107 km² proti 10 184 km², teda 37 % mimo), takže bez tohto
+    # sa tretina dlaždíc kreslila do susedných krajov a za hranicu – a práve
+    # tam je DMR 5.0 prázdne, takže z nich boli biele dlaždice s rovnou hranou.
+    maska = load_mask(args.poly, (w, s, e, n))
+    rm, mask = maska if maska else (None, None)
+    if mask:
+        print(f"Orez na kraj: v kraji je {mask.pct:.0f} % bboxu "
+              f"(maska {mask.nx}×{mask.ny}); dlaždica smie prečnievať "
+              f"{args.grow:g} svojej strany.", flush=True)
+    else:
+        print("::warning::Polygón kraja nie je – kreslí sa celý bbox regiónu, "
+              "teda aj mimo kraj. (`--poly` nedostal súbor.)", flush=True)
     total_bytes = 0
     total_tiles = 0
+    skipped = 0
     made = args.minzoom - 1
 
     # ---------- plán ----------
@@ -156,9 +191,18 @@ def main():
     plan = []
     for z in range(args.minzoom, args.maxzoom + 1):
         x0, x1, y0, y1 = tile_range(z, w, s, e, n)
-        plan.append((z, (x1 - x0 + 1) * (y1 - y0 + 1)))
-    print("Plán: " + ", ".join(f"z{z} {k} dl." for z, k in plan)
-          + f"  (spolu {sum(k for _, k in plan)} dlaždíc)"
+        vsetkych = (x1 - x0 + 1) * (y1 - y0 + 1)
+        if mask:
+            v_kraji = sum(1 for tx in range(x0, x1 + 1) for ty in range(y0, y1 + 1)
+                          if rm.tile_touches(mask, z, tx, ty, args.grow))
+        else:
+            v_kraji = vsetkych
+        plan.append((z, v_kraji, vsetkych))
+    mimo = sum(v - k for _, k, v in plan)
+    print("Plán: " + ", ".join(f"z{z} {k} dl." for z, k, _ in plan)
+          + f"  (spolu {sum(k for _, k, _ in plan)} dlaždíc"
+          + (f", {mimo} mimo kraja sa vynechá" if mimo else "")
+          + ")"
           + (f", strop {args.budget_mb:.0f} MB" if args.budget_mb else ""),
           flush=True)
 
@@ -171,7 +215,7 @@ def main():
         # ani nezačne počítať – inak by sa hodina práce vyhodila.
         if args.budget_mb and total_tiles:
             per_tile = total_bytes / total_tiles
-            want = (x1 - x0 + 1) * (y1 - y0 + 1) * per_tile
+            want = next(k for zz, k, _ in plan if zz == z) * per_tile
             if (total_bytes + want) / 1048576 > args.budget_mb:
                 print(f"::warning::Výškové dlaždice končia na z{made}: z{z} by "
                       f"pridal ~{want / 1048576:.0f} MB a rozpočet na "
@@ -182,6 +226,7 @@ def main():
                 break
         size = 2 * ORIGIN / (2**z)
         nx, ny = x1 - x0 + 1, y1 - y0 + 1
+        skipped_before = skipped
 
         # Po pásoch, nech pamäť nerastie s veľkosťou územia.
         rows_per_strip = max(1, 512 // max(1, nx))
@@ -205,6 +250,14 @@ def main():
 
             for ty in range(ry, ry_end + 1):
                 for tx in range(x0, x1 + 1):
+                    # MIMO KRAJA SA NEZAPISUJE. Kontroluje sa tu a nie pred
+                    # warpom zámerne: warp beží na celý pás naraz a v tom páse
+                    # sú aj dlaždice v kraji, takže sa celý vynechať nedá.
+                    # Ušetrí sa zápis, veľkosť stránky a hlavne biele dlaždice
+                    # z prázdneho DEM za hranicou.
+                    if mask and not rm.tile_touches(mask, z, tx, ty, args.grow):
+                        skipped += 1
+                        continue
                     tile = rgb[
                         (ty - ry) * TILE : (ty - ry + 1) * TILE,
                         (tx - x0) * TILE : (tx - x0 + 1) * TILE,
@@ -218,7 +271,9 @@ def main():
                     total_tiles += 1
         total_bytes += zbytes
         made = z
-        print(f"z{z}: {nx}×{ny} dlaždíc, {zbytes / 1048576:.1f} MB", flush=True)
+        print(f"z{z}: {nx}×{ny} dlaždíc, {zbytes / 1048576:.1f} MB"
+              + (f" (mimo kraja vynechaných {skipped - skipped_before})"
+                 if mask and skipped > skipped_before else ""), flush=True)
 
     if made < args.minzoom:
         print("::error::Nevznikla ani jedna dlaždica tieňovania.",
@@ -230,7 +285,10 @@ def main():
     with open(os.path.join(args.out, "maxzoom.txt"), "w") as f:
         f.write(f"{made}\n")
     print(f"Spolu: {total_tiles} dlaždíc, {total_bytes / 1048576:.1f} MB, "
-          f"maxzoom z{made}")
+          f"maxzoom z{made}"
+          + (f"; mimo kraja vynechaných {skipped} dlaždíc "
+             f"({100 * skipped / (total_tiles + skipped):.0f} %)"
+             if skipped else ""))
     return 0
 
 

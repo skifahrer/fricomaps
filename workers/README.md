@@ -1460,6 +1460,61 @@ Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
 dátum, alebo otlačok zdroja.
 
+### Vrstvy z DEM sa počítajú na KRAJ, nie na jeho obdĺžnik
+
+Vrstevnice, skaly a tieňovanie sa počítali na **bboxe** regiónu. Bbox
+Prešovského kraja je obdĺžnik ~199×82 km, teda 16 107 km², kým kraj má
+10 184 km² – **37 % práce padalo mimo kraj**, do susedných krajov a za hranicu.
+A nie je to len práca navyše: **DMR 5.0 je len Slovensko**, takže za hranicou je
+v modeli nodata, a hranica dát a nodaty je pre `gdaldem slope` zvislá stena so
+sklonom 90°.
+
+| región | kraj | bbox | mimo kraj |
+|---|--:|--:|--:|
+| Prešovský | 10 184 km² | 16 107 km² | **37 %** |
+| Žilinský | 7 706 km² | 13 068 km² | 41 % |
+| Bratislavský | 2 142 km² | 3 773 km² | 43 % |
+
+**Polygón sa nekreslí ani sa neťahá z OSM – berie sa ten istý `.poly`, ktorým
+je orezaný náš PBF** (openstreetmap.fr ich zverejňuje vedľa extraktov, pri kraji
+je to ~3,5 kB a 249 bodov). Mapa a jej výškové vrstvy tak majú **rovnakú**
+hranicu; druhá definícia by sa raz rozišla s prvou. Vyrába ho
+[`workers/plan/region-poly.py`](plan/region-poly.py) v jobe `plan` a ostatné
+joby ho dostanú **artefaktom** – keby si ho ťahal každý sám a jednému by sa to
+nepodarilo, rezal by na bboxe, kým ostatní na kraji.
+
+**Pol dlaždice smie prečnievať.** Dlaždica tieňovania sa berie, keď sa jej okno
+zväčšené o pol svojej strany dotýka kraja
+([`workers/lib/region-mask.py`](lib/region-mask.py)). Bez tej rezervy by vrstva
+končila presne na hranici a v mape by bola rovná hrana tam, kde ešte má byť
+terén. Namerané na Prešovskom kraji: z11 sa vynechá 7 % dlaždíc, z13 27 %,
+**z14 31 %**.
+
+Maska je rastrová a **bez shapely** – tá istá úvaha ako v `dem/coverage.py`: pri
+mriežke 2048 buniek je bunka ~100 m, kým dlaždica na z14 má ~1,5 km. Vrstevnice
+a skaly dostanú polygón ako `-cutline` do gdalwarpu (bez `-crop_to_cutline` –
+okno má ostať bboxom, nech sa kľúče cache nemenia).
+
+### Dlaždica DEM musí mať aj DÁTA, nie len rozsah
+
+Pokrytie sa meralo z **rozsahov** dlaždíc („mozaika sa dotýka celého bboxu") a to
+prejde aj vtedy, keď je dlaždica takmer prázdna. V behu **31635772047** mala
+v sklade `dem-dmr5` dlaždica `N49E020.tif` – Vysoké Tatry, čiže **stred**
+Prešovského kraja – **5 MB**, kým susedná `N49E021.tif` 265 MB. Kontrola
+vypísala „Pokrytie územia 100.0 % z 8 dlaždíc" a beh pokračoval:
+
+* **tieňovanie** skončilo rovnou hranou na 21° (prázdny model = biele dlaždice),
+* **skalám** z hrany dát vyšlo **13 403 km²** „skalnej plochy" (bbox má 16 107),
+  zlepovanie švov to nedalo dokopy (`z 13403.21 km² ostalo 0.00 km²`) a spadlo
+  na náhradné riešenie s 375 nezlepenými plochami – v mape teda skaly len na
+  kúsku.
+
+`coverage.py --data-pct` preto pri každej dlaždici vypíše podiel skutočných
+výšok (`STATISTICS_VALID_PERCENT`, presný priechod – nie vzorkovanie, to už raz
+odrezalo pol kraja) aj jej veľkosť, a pod prahom (2 %) to **ohlási varovaním**
+s návodom: keď ten stupeň má byť plný, zmazať zo skladu a nechať doplniť znova.
+Nie je to pád – stupeň celý za hranicou Slovenska je prázdny právom.
+
 ### Hotové dáta ležia v sklade na Google Drive, nie v releasoch
 
 Do GitHubu nejde nič, čo má prežiť beh — **ani release, ani artefakt**. Osem

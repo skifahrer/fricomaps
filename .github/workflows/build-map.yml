@@ -970,6 +970,25 @@ jobs:
           path: data/region.osm.pbf
           key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
 
+      # POLYGÓN KRAJA pre vrstvy z výškového modelu. Sťahuje sa ten istý
+      # `.poly`, ktorým je orezaný náš PBF, takže mapa a jej výškové vrstvy
+      # majú rovnakú hranicu. Vyrába ho `plan` a ostatné joby ho dostanú
+      # ARTEFAKTOM, nie tým, že si ho stiahnu samy: keby si ho ťahal každý
+      # sám a jednému by sa to nepodarilo, rezal by na bboxe, kým ostatní na
+      # kraji – čiže dve pravdy o jednej hranici.
+      - name: Polygón kraja (orez vrstiev z DEM)
+        run: |
+          set -euo pipefail
+          python3 workers/plan/region-poly.py --region='${{ inputs.region }}' \
+            --out=data/region.geojson
+
+      - name: Odlož polygón kraja
+        uses: actions/upload-artifact@v7
+        with:
+          name: region-poly
+          path: data/region.geojson
+          retention-days: 1
+
       # PBF potrebuje už len job s dlaždicami. Ide artefaktom, nie cache:
       # v rámci behu je to isté, cache by sa mohla minúť s iným behom.
       - name: Odlož PBF pre job s dlaždicami
@@ -1161,6 +1180,15 @@ jobs:
       # (`dem/sonny/tiles`, `dem/dmr5/tiles`) – vrstevnice a skaly majú
       # vlastný zdroj. Medzivýsledky (orez, izolínie) idú preto do `work/`
       # a nie sem, nech sa do cache nedostane niekoľkogigabajtový `clip.tif`.
+      # Polygón kraja z prípravy – bez neho by sa vrstva počítala na celom
+      # bboxe regiónu, teda aj mimo kraj (pri Prešovskom 37 % územia navyše).
+      - name: Stiahni polygón kraja
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
@@ -1364,6 +1392,15 @@ jobs:
           path: contours-out
           key: ${{ needs.keys.outputs.contours }}-rocks
 
+      # Polygón kraja z prípravy – bez neho by sa vrstva počítala na celom
+      # bboxe regiónu, teda aj mimo kraj (pri Prešovskom 37 % územia navyše).
+      - name: Stiahni polygón kraja
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         if: ${{ needs.plan.outputs.opt_contours == 'true' }}
@@ -1532,6 +1569,15 @@ jobs:
       # `terrain_rebuild` ich prepíše nanovo.
       # DEM dlaždice majú vlastný kľúč (vlastný zdroj), takže sa s cache jobu
       # s vrstevnicami nepomiešajú ani vtedy, keď si vyberú iný model.
+      # Polygón kraja z prípravy – bez neho by sa vrstva počítala na celom
+      # bboxe regiónu, teda aj mimo kraj (pri Prešovskom 37 % územia navyše).
+      - name: Stiahni polygón kraja
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
       - name: Cache DEM dlaždíc (restore)
         id: demtiles-cache
         uses: ./.github/actions/cache-restore

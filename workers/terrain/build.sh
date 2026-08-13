@@ -109,7 +109,11 @@ if ! have_tiles; then
     exit "$TRC"
   fi
   echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM (strop ${TBUDGET_MB} MB)"
+  # `--poly`: dlaždice mimo kraja sa nekreslia (smie prečnievať pol dlaždice).
+  # Keď súbor nie je (polygón sa nestiahol), `tiles.py` to povie a kreslí celý
+  # bbox ako predtým – vrstva teda nikdy nezmizne, len je väčšia.
   python3 workers/terrain/tiles.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \
+    --poly=data/region.geojson \
     --minzoom=5 --maxzoom="$TZ" --budget-mb="$TBUDGET_MB" --out=terrain-out
   # Vyrobený maxzoom píše `build-terrain.py` – strop veľkosti mohol ten
   # želaný zraziť a asset sa MUSÍ volať podľa toho, čo v ňom naozaj je.

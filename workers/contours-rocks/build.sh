@@ -38,6 +38,23 @@ mkdir -p dem data work contours-out "$SLOPE_DIR"
 
 BBOX="$REGION_BBOX"
 IFS=, read -r W S E N <<< "$BBOX"
+
+# OREZ NA POLYGÓN KRAJA, nie len na jeho obdĺžnik. Bbox kraja je oveľa väčší
+# než kraj (pri Prešovskom 16 107 km² proti 10 184, teda 37 % mimo) a za jeho
+# hranicou je DMR 5.0 PRÁZDNE. Hranica dát a nodaty je pritom pre `gdaldem
+# slope` zvislá stena – sklon 90° – takže z okrajov vychádzali falošné skaly:
+# v behu 31635772047 z nich bolo 13 403 km² „skalnej plochy" (bbox má 16 107),
+# zlepovanie švov to nedalo dokopy a spadlo na náhradné riešenie.
+#
+# `-cutline` mimo polygónu zapíše nodatu, `-crop_to_cutline` sa NEPOUŽÍVA:
+# okno má ostať to isté (bbox), nech sa dlaždice a kľúče cache nemenia.
+CUT=()
+if [ -s data/region.geojson ]; then
+  CUT=(-cutline data/region.geojson)
+  echo "Orez na kraj: data/region.geojson (mimo kraja bude nodata)"
+else
+  echo "::warning::Polygón kraja nie je (data/region.geojson) – počíta sa celý bbox regiónu, teda aj mimo kraj. Za hranicou Slovenska je DMR 5.0 prázdne a z hrany dát vychádzajú falošné skaly."
+fi
 INTERVAL="$CONTOUR_INTERVAL"
 case "$INTERVAL" in ''|*[!0-9]*) INTERVAL=10 ;; esac
 
@@ -216,12 +233,13 @@ else
     RES=$(python3 -c "print(f'{$SMOOTH / 3600:.8f}')")
     echo "Zjemnenie DEM: ${SMOOTH}″ (mriežka $RES°)"
     python3 workers/lib/watch.py --label="orez DEM" --watch-file=work/clip.tif \
-      -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" \
+      -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" "${CUT[@]}" \
          -tr "$RES" "$RES" -r average "$CONTOUR_VRT" work/clip.tif
   else
     echo "Zjemnenie DEM: vypnuté – vrstevnice sa trasujú z plného rozlíšenia."
     python3 workers/lib/watch.py --label="orez DEM" --watch-file=work/clip.tif \
-      -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" "$CONTOUR_VRT" work/clip.tif
+      -- gdalwarp -overwrite -te "$W" "$S" "$E" "$N" "${CUT[@]}" \
+         "$CONTOUR_VRT" work/clip.tif
   fi
 
   # ---------- vyhladenie SAMOTNÉHO DEM ----------
