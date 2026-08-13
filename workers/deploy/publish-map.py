@@ -260,17 +260,23 @@ def vrstvy_subory(site, man):
 
 
 def tienovanie_subory(site, man):
-    """Súbory balíka `tienovanie` – pyramída výškových PNG dlaždíc.
+    """Súbory balíka `tienovanie` – raster `.pmtiles` s výškovými dlaždicami.
 
-    Balí sa len vlastná pyramída v `_site/terrain`. Keď sa tieňovanie
-    nevyrobilo, štýl padá na cudzie dlaždice (AWS Terrain Tiles) a tie do
-    nášho balíka nepatria – nie sú naše a nie sú v `_site`.
+    Balí sa len vlastný archív. Keď sa tieňovanie nevyrobilo, štýl padá na
+    cudzie dlaždice (AWS Terrain Tiles) a tie do nášho balíka nepatria – nie
+    sú naše a nie sú v `_site`.
+
+    Bola to pyramída tisícov PNG súborov v `_site/terrain`; odkedy je z nej
+    jeden `.pmtiles` (workers/terrain/pack.py), je to jeden súbor. Hľadá sa
+    podľa PRÍPONY MENA, nie podľa priečinka: `tiles/` je spoločný pre všetky
+    vrstvy, takže „všetko v priečinku" by do balíka `tienovanie` pribalilo
+    aj mapu, vrstevnice a trasy.
     """
-    base = os.path.join(site, "terrain")
-    out = []
-    for root, _dirs, names in os.walk(base):
-        out += [os.path.join(root, n) for n in names]
-    return out
+    base = os.path.join(site, "tiles")
+    if not os.path.isdir(base):
+        return []
+    return [os.path.join(base, n) for n in sorted(os.listdir(base))
+            if n.endswith("-terrain.pmtiles")]
 
 
 def obsah(kind, man):
@@ -503,7 +509,7 @@ def main():
          args.site, vsetky_subory(args.site)),
         ("vrstevnice-skaly", "vrstevnice a skalné plochy (.pmtiles)",
          args.site, vrstvy_subory(args.site, man)),
-        ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (PNG)",
+        ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (raster .pmtiles)",
          args.site, tienovanie_subory(args.site, man)),
         ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
          args.wiki, vsetky_subory(args.wiki) if args.wiki else []),

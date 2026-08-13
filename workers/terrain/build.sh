@@ -41,9 +41,11 @@ REBUILD="${TERRAIN_REBUILD:-false}"
 # (strop veľkosti ho môže zraziť), takže sa meno skladá funkciou a volá sa
 # dvakrát: raz s tým želaným, keď sa hľadá v sklade, a raz s vyrobeným,
 # keď sa nahráva.
-asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}.tar.zst"; }
+asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}.pmtiles"; }
 
-have_tiles() { [ -d terrain-out ] && [ -n "$(ls -A terrain-out 2>/dev/null)" ]; }
+# Hotové = leží tu hotový archív. Kým to bol strom PNG, stačilo „priečinok
+# nie je prázdny" – lenže polovica stromu je tiež neprázdny priečinok.
+have_tiles() { [ -s terrain-out/terrain.pmtiles ]; }
 
 if [ "$REBUILD" = 'true' ]; then
   echo "terrain_rebuild=áno – dlaždice sa počítajú nanovo."
@@ -60,13 +62,16 @@ else
   # jemnejšie dlaždice, než sa žiadalo, a stránka by sa nemusela zmestiť).
   HAVE_Z=$(python3 workers/drive/store.py --names --store="$TERRAIN_STORE" \
       2>/dev/null \
-    | sed -n "s/^terrain-${REGION_KEY}-${TDEM}-z\([0-9]\+\)\.tar\.zst$/\1/p" \
+    | sed -n "s/^terrain-${REGION_KEY}-${TDEM}-z\([0-9]\+\)\.pmtiles$/\1/p" \
     | awk -v want="$TZ" '$1 <= want' | sort -n | tail -1)
   if [ -n "$HAVE_Z" ] && python3 workers/drive/store.py --get \
        --store="$TERRAIN_STORE" --name="$(asset_name "$HAVE_Z")" --dir=/tmp; then
+    # `.pmtiles` sa NEROZBAĽUJE – je to ten istý súbor, ktorý ide na Pages.
+    # Kým to bol `.tar.zst`, existovali dve podoby tej istej veci (strom na
+    # Pages, archív v sklade) a pri každom behu sa medzi nimi prepínalo.
     mkdir -p terrain-out
-    tar --use-compress-program=unzstd -xf "/tmp/$(asset_name "$HAVE_Z")" \
-      -C terrain-out
+    cp "/tmp/$(asset_name "$HAVE_Z")" terrain-out/terrain.pmtiles
+    echo "$HAVE_Z" > terrain-out/maxzoom.txt
     echo "Výškové dlaždice stiahnuté zo skladu $TERRAIN_STORE ✓ (z$HAVE_Z)"
     TSRC="sklad $TERRAIN_STORE"
   fi
@@ -114,27 +119,44 @@ if ! have_tiles; then
   # bbox ako predtým – vrstva teda nikdy nezmizne, len je väčšia.
   python3 workers/terrain/tiles.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \
     --poly=data/region.geojson \
-    --minzoom=5 --maxzoom="$TZ" --budget-mb="$TBUDGET_MB" --out=terrain-out
-  # Vyrobený maxzoom píše `build-terrain.py` – strop veľkosti mohol ten
-  # želaný zraziť a asset sa MUSÍ volať podľa toho, čo v ňom naozaj je.
-  TZ=$(cat terrain-out/maxzoom.txt)
+    --minzoom=5 --maxzoom="$TZ" --budget-mb="$TBUDGET_MB" --out=terrain-png
+  # Vyrobený maxzoom píše `tiles.py` – strop veľkosti mohol ten želaný
+  # zraziť a asset sa MUSÍ volať podľa toho, čo v ňom naozaj je.
+  TZ=$(cat terrain-png/maxzoom.txt)
+  # Strom PNG je len medzikrok: von ide jeden `.pmtiles`, rovnako ako pri
+  # mape, vrstevniciach, skalách aj trasách. Rozpis je vo `workers/terrain/
+  # pack.py` – aj to, prečo sa zapisuje v Hilbertovom poradí.
+  python3 -m pip install --quiet pmtiles
+  mkdir -p terrain-out
+  python3 workers/terrain/pack.py --in=terrain-png \
+    --out=terrain-out/terrain.pmtiles --name="$REGION_KEY" --source="$TDEM"
+  echo "$TZ" > terrain-out/maxzoom.txt
+  # Strom PNG sa maže hneď: pri kraji je to desaťtisíce súborov a disk
+  # runnera nemá dôvod ich držať, keď je archív hotový.
+  rm -rf terrain-png
   echo "::endgroup::"
 
   # Ulož do skladu, nech ich nabudúce netreba počítať znova. Zlyhanie
   # uloženia NESMIE zhodiť beh – dlaždice sú spočítané a v `terrain-out`,
   # takže mapa bude; stratí sa len to, že sa nabudúce budú počítať znova.
+  #
+  # Do skladu ide TEN ISTÝ SÚBOR, ktorý sa nasadí – žiadne balenie do
+  # `.tar.zst` a rozbaľovanie pri každom behu. Dve podoby tej istej veci sa
+  # vždy raz rozídu.
   ASSET=$(asset_name "$TZ")
-  tar --use-compress-program='zstd -19 -T0' -cf "/tmp/$ASSET" -C terrain-out .
+  cp terrain-out/terrain.pmtiles "/tmp/$ASSET"
   python3 workers/drive/store.py --put --store="$TERRAIN_STORE" \
       --file="/tmp/$ASSET" \
-      --note="Terrarium PNG dlaždice z výškového modelu – jeden .tar.zst na región, model a maxzoom (Build map)" \
+      --note="Terrarium PNG dlaždice z výškového modelu ako raster .pmtiles – jeden súbor na región, model a maxzoom (Build map)" \
     && echo "Uložené do skladu $TERRAIN_STORE ako $ASSET" \
     || echo "::warning::Výškové dlaždice sa nepodarilo uložiť do skladu $TERRAIN_STORE – nabudúce sa budú počítať znova."
 fi
 
 TZ=$(cat terrain-out/maxzoom.txt 2>/dev/null || echo "$TZ")
-mkdir -p _site/terrain
-find terrain-out -mindepth 1 -maxdepth 1 -type d -exec cp -r {} _site/terrain/ \;
+# Ide medzi ostatné `.pmtiles`, nie do vlastného priečinka: pre klienta je to
+# tá istá vec ako mapa či vrstevnice, len raster.
+mkdir -p _site/tiles
+cp terrain-out/terrain.pmtiles "_site/tiles/${REGION_KEY}-terrain.pmtiles"
 echo "enabled=true" >> "$GITHUB_OUTPUT"
 echo "maxzoom=$TZ" >> "$GITHUB_OUTPUT"
 # Model ide do atribúcie výškových dlaždíc v štýle. Odkedy má
@@ -146,7 +168,8 @@ echo "dem_source=$TDEM" >> "$GITHUB_OUTPUT"
 # z neho vrátili ako keby boli jeho. Do skladu ísť môžu, tam ich
 # meno súboru už hovorí pravdu.
 echo "fell_back=$FELL_BACK" >> "$GITHUB_OUTPUT"
-echo "Výškové dlaždice: $(find _site/terrain -name '*.png' | wc -l) ks do z$TZ z modelu $TDEM, $(du -sm _site/terrain | cut -f1) MB"
+TER_MB=$(du -sm "_site/tiles/${REGION_KEY}-terrain.pmtiles" | cut -f1)
+echo "Výškové dlaždice: raster .pmtiles do z$TZ z modelu $TDEM, ${TER_MB} MB"
 printf '%s\t%s\t%s\t%s\n' "60" "Tieňovanie a 3D terén" "$(( $(date +%s) - T_TER ))" \
-  "$(find _site/terrain -name '*.png' | wc -l) PNG dlaždíc do z$TZ z $TDEM, $(du -sm _site/terrain | cut -f1) MB ($TSRC)" \
+  "raster .pmtiles do z$TZ z $TDEM, ${TER_MB} MB ($TSRC)" \
   >> steps-out/terrain.tsv

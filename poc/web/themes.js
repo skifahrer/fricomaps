@@ -2059,9 +2059,14 @@ export function buildStyle({
   if (demTiles) {
     const ownDem = demTiles !== DEFAULT_DEM_TILES;
     const tilesSource = demTilesSource || demSource;
+    // Vlastné dlaždice chodia ako JEDEN `.pmtiles` (workers/terrain/pack.py),
+    // verejné AWS ako šablóna `{z}/{x}/{y}.png`. Rozlišuje sa to podľa
+    // protokolu, nie podľa druhého prepínača – dve polia o tej istej veci sa
+    // vždy raz rozídu.
+    const demIsArchive = demTiles.startsWith("pmtiles://");
     style.sources.dem = {
       type: "raster-dem",
-      tiles: [demTiles],
+      ...(demIsArchive ? { url: demTiles } : { tiles: [demTiles] }),
       encoding: "terrarium",
       tileSize: 256,
       maxzoom: demMaxzoom,
@@ -2073,8 +2078,13 @@ export function buildStyle({
     // ich počíta len na štvorci s pár km², kým mapa je celý kraj. `bounds`
     // hovorí MapLibre, kde ich má vôbec pýtať – bez neho by z každého posunu
     // mapy padali stovky 404 a v konzole by sa stratilo všetko ostatné.
-    // (.pmtiles si hranicu nesú v hlavičke samy, raster nie.)
-    if (ownDem && Array.isArray(demBounds) && demBounds.length === 4) {
+    //
+    // PRI `.pmtiles` SA NEDOPISUJE: rozsah aj zoomy si archív nesie v hlavičke
+    // a klient ich prečíta skôr, než si vypýta prvú dlaždicu. Dopísať ich sem
+    // druhýkrát by znamenalo dve pravdy o jednej veci – a tá z formulára by
+    // sa časom rozišla s tým, čo v archíve naozaj je.
+    if (ownDem && !demIsArchive
+        && Array.isArray(demBounds) && demBounds.length === 4) {
       style.sources.dem.bounds = demBounds.map(Number);
     }
     // 3D TERÉN PRIAMO V ŠTÝLE. Doteraz si ho zapínal len web za behu

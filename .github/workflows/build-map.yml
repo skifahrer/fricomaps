@@ -2174,7 +2174,7 @@ jobs:
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-bounds='${{ needs.plan.outputs.test_bbox }}' \
             --terrain-3d='${{ needs.plan.outputs.opt_terrain_3d }}' \
-            ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
+            ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles=pmtiles://{0}/tiles/{1}-terrain.pmtiles --dem-maxzoom={2}', steps.pages.outputs.base_url, needs.plan.outputs.key, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -2201,7 +2201,7 @@ jobs:
           CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval || '5' }}
           DEM_MAXZOOM: ${{ needs.terrain.outputs.maxzoom || 15 }}
           DEM_TILES_SOURCE: ${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}
-          DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}
+          DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('pmtiles://{0}/tiles/{1}-terrain.pmtiles', steps.pages.outputs.base_url, needs.plan.outputs.key) || '' }}
           FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
           FEATURES_MAXZOOM: ${{ needs.features.outputs.maxzoom || '15' }}
           ICONS_AVAILABLE: ${{ needs.assets.outputs.available }}
