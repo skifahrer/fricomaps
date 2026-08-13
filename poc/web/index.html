@@ -264,6 +264,18 @@
     .dev-prophead .dev-propname { width: auto; font-style: italic; }
     .dev-colorrow { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
     .dev-colorrow.changed .dev-hex { border-color: #d09030; background: #fffaf0; }
+    /* Zoomové zlomy: „na z11 takto, na z16 inak". Zlomy sú pod sebou, každý
+       so svojím zoomom, aby sa dali čítať ako krivka zhora dolu. */
+    .dev-stops { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+    .dev-stop { display: flex; align-items: center; gap: 4px; }
+    .dev-stopz { font-size: 10px; color: #888; }
+    .dev-num-z { width: 40px; }
+    .dev-stop .dev-field { margin: 0; }
+    .dev-addstop { align-self: flex-start; font-size: 10px; }
+    .dev-addstop[disabled] { opacity: 0.45; cursor: default; }
+    /* Zaškrtávatko s textom v jednom riadku (napr. „bez výplne") */
+    .dev-inline { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+    .dev-inline.changed { color: #b06000; font-weight: 600; }
     .dev-color {
       width: 26px; height: 22px; padding: 0; border: 1px solid #ccc;
       border-radius: 4px; background: none; cursor: pointer; flex: none;

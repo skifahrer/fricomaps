@@ -2177,6 +2177,51 @@ predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, **kamie
 tehly, krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
 ťahu a krytím.
 
+**Plochu sa dá nechať BEZ VÝPLNE** – zaškrtávatko *„bez výplne – ostane len
+vzor a okraj"* pri farbe plochy. V úpravách je to `"fill-color": "none"`
+a v štýle z toho vyjde priehľadná farba. Nie je to to isté ako dve veci, ktoré
+sa na prvý pohľad ponúkajú:
+
+| páka | čo urobí |
+|---|---|
+| **`fill-color: none`** | zmizne len farba pozadia; **vzor aj okraj ostanú** |
+| krytie 0 | `fill-opacity` násobí všetko, čo vrstva kreslí – **zhasne aj obrys** z `fill-outline-color` (má ho `pedestrian-area` a `building`) |
+| vypnutie vrstvy | zmizne aj **vzor**, ktorý na nej visí (odvodená vrstva drží viditeľnosť predlohy) |
+
+Preto sa `none` dá zadať len na ploche (`fill-color`, `fill-extrusion-color`) –
+čiaru alebo popisok treba vypnúť cez viditeľnosť, nie priehľadnou farbou, aby na
+to isté neboli dve páky. Kontrola pri importe to odmietne a povie prečo.
+
+#### Farba a hrúbka podľa zoomu
+
+Farba, krytie aj hrúbka sa dajú nastaviť **pre každý zoom zvlášť** – nie len
+jednou pevnou hodnotou. V paneli je pri každej z nich riadok *„podľa zoomu"*
+s tlačidlom **`+ zlom pri z14`**, ktoré pridá zlom na zoome, KDE PRÁVE STOJÍ
+MAPA. Tak sa mapa aj ladí: nastav zoom, pozri sa, oprav farbu; písať zoom do
+políčka a až potom sa naň presunúť by bolo to isté dvakrát, druhý raz naslepo.
+
+V úpravách je to pole `[[zoom, hodnota], …]` a v štýle z neho vyjde
+`interpolate` podľa zoomu:
+
+```json
+"landcover-wood": { "paint": { "fill-color": [[12, "#00ff00"], [18, "#ff00aa"]] } }
+"rail-bg":        { "paint": { "line-width": [[11, 1], [16, 4], [20, 12]] } }
+```
+
+Kým sú zlomy zapnuté, pevné políčko tej istej vlastnosti sa **zamkne** – dve
+páky na jednu vlastnosť by sa tichým prepisom rušili. Jeden zlom je platný
+a znamená pevnú hodnotu; strop je 8 zlomov.
+
+**Zlomy sa zoraďujú podľa zoomu hneď pri zápise, nie až pri skladaní štýlu**,
+a nie je to kozmetika: `interpolate` vyžaduje striktne rastúce vstupy a MapLibre
+pri porušení odmietne **celý štýl**, nie len tú vlastnosť – mapa sa nenačíta
+vôbec. Overené jeho vlastným validátorom (*„Input/output pairs for `interpolate`
+expressions must be arranged with input values in strictly ascending order"*).
+V paneli pritom zlomy vznikajú v poradí, v akom ich naklikáš (najprv z18, potom
+z12), takže nezoradený vstup je normálny stav. Zoraďuje ich jedna funkcia
+(`sortStops`) na všetkých troch miestach, kde vznikajú: import súboru, zápis
+z panela aj skladanie štýlu.
+
 **Vzor, ktorý má vyzerať ako rozsyp, musí prečnievať za hranu dlaždice.**
 Vzory sa dlaždicujú, takže keď v nich všetky tvary ležia vnútri (súradnice
 0–1), má dlaždica po obvode prázdny okraj – a z opakovania je **mriežka
