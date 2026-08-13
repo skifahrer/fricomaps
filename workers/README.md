@@ -1632,8 +1632,20 @@ REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
 
 ### Články z Wikipédie k objektom v regióne
 
+**Vlastný workflow: `Wikipédia k mape` (`.github/workflows/wiki.yml`).** Bol to
+job v Build map a odsťahoval sa, lebo sú to tri rôzne veci naraz: **iná sieť**
+(cudzí server, ktorý sa nemá čím nahradiť – keď nepustí, nemá to zhodiť
+hodinový build mapy), **iná životnosť** (mapa sa prerába pri zmene dát alebo
+štýlu, články si žijú vlastným tempom a ťahať ich pri každom builde je tisíce
+požiadaviek za nič) a **iný výstup** (text vedľa mapy, do `_site` nejde nič).
+
+Balík aj zápis do `maps.json` robí ďalej `publish-map.py`, len s
+`--only=wikipedia`: publikuje jediný balík a položku regiónu **doplní**,
+namiesto aby ju prepísal – inak by zmazal odkazy na mapu, o ktorej nič nevie.
+Druhý packer by bol druhá pravda o tom istom.
+
 Kto v regióne odkazuje na wiki, dostane článok. Body, čiary aj plochy majú v OSM
-tagy `wikipedia` a `wikidata`; job **`wiki`** ich z regionálneho PBF vyberie
+tagy `wikipedia` a `wikidata`; workflow ich z regionálneho PBF vyberie
 a stiahne články **po päťdesiatich na požiadavku do jedného súboru**:
 
 ```
@@ -1645,6 +1657,34 @@ data/region.osm.pbf
   → api.php prop=revisions  celý článok, PÄŤDESIAT NA POŽIADAVKU
   → wiki-out/articles.ndjson + wiki-out/index.json
 ```
+
+#### Angličtina a jazyk krajiny, nie jeden z nich
+
+Sťahuje sa **vždy anglický** článok a k nemu **v jazyku krajiny, v ktorej bod
+leží**. Zoznam vzniká z troch zdrojov a každý rieši inú vec:
+
+| zdroj | čo dáva | prečo |
+|---|---|---|
+| vždy `en` | anglický článok | jediný jazyk, v ktorom je článok skoro o všetkom |
+| krajina regiónu | `sk` pre slovenské kraje | to, čo číta domáci. Tabuľka je [`workers/data/wiki-languages.json`](data/wiki-languages.json), kľúč je `country` z `regions.json` – tá istá hodnota, ktorá rozhoduje o priečinku na Drive |
+| tag objektu | `wikipedia=pl:Rysy` → `pl` | bod na poľskej strane hrebeňa dostane poľský článok bez toho, aby o Poľsku niekto musel vedieť vopred |
+
+**Krajina bodu sa berie z regiónu, nie z bodu.** Extrakt kraja je rezaný jeho
+hranicou, takže bod v ňom v tej krajine naozaj leží; presnejšie by to bolo len
+reverzným geokódovaním hraníc – celá ďalšia pipeline kvôli pár bodom pri
+hranici, a tie sa aj tak chytia tretím riadkom tabuľky.
+
+**Druhý jazyk sa dohľadá cez `langlinks`.** Objekt má v tagoch typicky jeden
+`wikipedia=sk:…`; anglický článok o tom istom mieste existuje, len sa volá inak
+a z tagu ho nikto neuhádne. Je to jedna dávková otázka na tie isté články,
+ktoré aj tak sťahujeme. Dve veci, na ktorých to stálo:
+
+* prepojenie príde pod menom **cieľa presmerovania** (`Devín (hrad)`), kým
+  objekt má v tagu meno, ktoré sme **pýtali** (`Devínsky hrad`) – zapisuje sa
+  preto pod obe, inak sa nájde a ticho zahodí;
+* `index.json` viaže objekt na **článok v každom jazyku** (`keys: {sk: …, en:
+  …}`), nie na jeden. Kým to bolo jedno pole, posledný jazyk prepísal predošlý
+  a anglický článok sa stiahol nadarmo.
 
 **Odkaz má v dátach štyri podoby** a všetky sa čítajú: `wikipedia=sk:Devín
 (hrad)` (jazyk v hodnote), `wikipedia:sk=Devín (hrad)` (jazyk v kľúči),

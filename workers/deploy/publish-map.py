@@ -332,7 +332,23 @@ def katalog_meno(regions, key, kind):
     return r.get("name") or key
 
 
-def zapis_katalog(path, parts, regions, baliky, man):
+def zapis(path, data, popis):
+    """Zapíše katalóg, keď sa naozaj zmenil. True = súbor je iný."""
+    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                log(f"{path}: to isté ako doteraz – bez zmeny.")
+                return False
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(text)
+    log(f"{path}: {popis}")
+    return True
+
+
+def zapis_katalog(path, parts, regions, baliky, man, iba=""):
     """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
 
     `baliky` je zoznam `(druh, meno, veľkosť, id)` – to, čo sa naozaj nahralo.
@@ -365,6 +381,24 @@ def zapis_katalog(path, parts, regions, baliky, man):
         uzol.setdefault("name", katalog_meno(regions, parts[2], "area"))
 
     reg = region_entry(man)
+    if iba:
+        # DOPLNENIE, NIE PREPIS. Samostatná pipeline vie len o svojom balíku;
+        # keby prepísala celú položku, zmazala by odkazy na mapu, zoomy aj
+        # zdroje výšok, o ktorých nič nevie – a v katalógu by po nich nezostalo
+        # nič. Preto sa mení len ten jeden balík a čas.
+        uzol.setdefault("name", katalog_meno(regions, parts[-1], "region"))
+        uzol.setdefault("drive", "/".join(parts))
+        uzol["updated_at"] = data["_updated_at"]
+        uzol["run"] = env("GITHUB_RUN_NUMBER")
+        mapy = uzol.setdefault("maps", {})
+        for kind, name, velkost, fid in baliky:
+            mapy[kind or "mapa"] = {
+                "file": name, "size": velkost,
+                "link": folder.file_link(fid),
+                "download": folder.download_link(fid),
+            }
+        return zapis(path, data,
+                     f"doplnený balík {iba} k {'/'.join(parts)}")
     polozka = {
         "name": uzol.get("name"),
         "drive": "/".join(parts),
@@ -400,19 +434,8 @@ def zapis_katalog(path, parts, regions, baliky, man):
     uzol.update(polozka)
     uzol.update(zachovaj)
 
-    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    try:
-        with open(path) as f:
-            if f.read() == text:
-                log(f"{path}: tá istá mapa s tými istými odkazmi – bez zmeny.")
-                return False
-    except OSError:
-        pass
-    with open(path, "w") as f:
-        f.write(text)
-    log(f"{path}: zapísaná mapa {'/'.join(parts)} "
-        f"({len(polozka['maps'])} balíkov)")
-    return True
+    return zapis(path, data, f"zapísaná mapa {'/'.join(parts)} "
+                             f"({len(polozka['maps'])} balíkov)")
 
 
 # ---------- balenie ----------
@@ -481,6 +504,10 @@ def main():
     ap.add_argument("--wiki", default="",
                     help="priečinok s článkami z Wikipédie (balík `wikipedia`); "
                          "prázdne = ten balík sa nepublikuje a starý sa zmaže")
+    ap.add_argument("--only", default="",
+                    help="publikuj LEN tento balík (napr. `wikipedia`) a "
+                         "katalóg dopĺň, nie prepisuj – na samostatné "
+                         "pipeline, ktoré nerobia celú mapu")
     ap.add_argument("--maps", default="maps.json",
                     help="katalóg hotových máp v repozitári (prázdne = nezapisuj)")
     args = ap.parse_args()
@@ -508,7 +535,22 @@ def main():
         ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
          args.wiki, vsetky_subory(args.wiki) if args.wiki else []),
     ]
-    if not baliky[0][3]:
+    # `--only`: samostatná pipeline (napr. „Wikipédia k mape") vyrába JEDEN
+    # balík a o zvyšok mapy sa nestará. Bez tohto by musela mať vlastný packer
+    # a vlastný zápis do katalógu – dve kópie toho istého, ktoré sa raz rozídu.
+    # Ostatné balíky sa vtedy ani nemažú: to, že ich tento beh nevyrobil,
+    # neznamená, že v mape nie sú.
+    if args.only:
+        znam = [k for k, *_ in baliky]
+        if args.only not in znam:
+            raise SystemExit(f"::error::`--only={args.only}` nepoznám. Balíky "
+                             f"sú: {', '.join(k or 'mapa' for k in znam)}.")
+        baliky = [b for b in baliky if b[0] == args.only]
+        if not baliky[0][3]:
+            raise SystemExit(
+                f"::error::Balík `{args.only}` nemá ani jeden súbor – nie je "
+                f"čo publikovať. (Zbehol krok, ktorý ho vyrába?)")
+    elif not baliky[0][3]:
         raise SystemExit(f"::error::V {args.site} nie je ani jeden súbor – nie je "
                          f"čo publikovať. (Zbehol job `deploy` až po zloženie "
                          f"webu?)")
@@ -593,7 +635,8 @@ def main():
         else:
             zmenene = zapis_katalog(
                 args.maps, parts, regions,
-                [(k, n, v, i) for k, n, _p, v, _pr, i in hotove], man)
+                [(k, n, v, i) for k, n, _p, v, _pr, i in hotove], man,
+                iba=args.only)
             if args.summary and zmenene:
                 with open(args.summary, "a") as f:
                     f.write(f"Katalóg `{args.maps}` v repozitári je "

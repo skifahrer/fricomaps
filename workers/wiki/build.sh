@@ -11,8 +11,8 @@
 # ich z regionálneho PBF vyberie za sekundy – ten istý nástroj, ktorým si trasy
 # predfiltrujú relácie.
 #
-# Hodnoty z prostredia (viď job `wiki` v build-map.yml):
-#   REGION_KEY OPT_WIKI_LANGS OPT_WIKI_FORMAT OPT_WIKI_MAX
+# Hodnoty z prostredia (viď workflow `Wikipédia k mape`, wiki.yml):
+#   REGION_KEY WIKI_COUNTRY OPT_WIKI_LANGS OPT_WIKI_FORMAT OPT_WIKI_MAX
 set -euo pipefail
 
 sudo apt-get update -qq
@@ -24,7 +24,12 @@ pip install --quiet mwparserfromhell
 
 mkdir -p wiki-out wiki-cache steps-out
 
-LANGS="${OPT_WIKI_LANGS:-sk,en}"
+# Jazyky: angličtina a jazyk krajiny sa DOPLNIA SAMY podľa `--country`
+# (rozpis vo `collect.py`), toto sú tie navyše. Prázdno je preto správna
+# predvolená hodnota, nie chyba – „sk,en" by tu bola len druhá pravda o tom,
+# čo už vie číselník `workers/data/wiki-languages.json`.
+LANGS="${OPT_WIKI_LANGS:-}"
+COUNTRY="${WIKI_COUNTRY:-}"
 FMT="${OPT_WIKI_FORMAT:-text}"
 MAX="${OPT_WIKI_MAX:-5000}"
 # PREKLEP SA NESMIE PREJSŤ NA PREDVOLENÚ HODNOTU. Náhrada „nerozumiem, beriem
@@ -53,6 +58,7 @@ python3 workers/wiki/collect.py \
   --pbf=data/region.osm.pbf \
   --out=wiki-out \
   --cache=wiki-cache \
+  --country="$COUNTRY" \
   --langs="$LANGS" \
   --format="$FMT" \
   --max="$MAX" \
@@ -75,5 +81,5 @@ MB=$(du -sm wiki-out | cut -f1)
 echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 echo "mb=$MB" >> "$GITHUB_OUTPUT"
 echo "enabled=$([ "$COUNT" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-echo "Články: $COUNT, $MB MB v wiki-out/ (jazyky $LANGS, formát $FMT)"
+echo "Články: $COUNT, $MB MB v wiki-out/ (krajina ${COUNTRY:-?}, jazyky navyše ${LANGS:-žiadne}, formát $FMT)"
 ls -1 wiki-out | head -5
