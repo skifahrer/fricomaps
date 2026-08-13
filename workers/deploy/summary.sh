@@ -234,14 +234,12 @@ fi
 } >> "$S"
 
 # ---- s čím bol beh spustený ----
-# Formulár `Run workflow` sa vždy otvorí s predvolenými hodnotami – GitHub
-# si nepamätá, s čím si beh pustil naposledy, a z API sa to ani nedá zistiť.
-# Keď teda chceš zopakovať beh a zmeniť jedinú vec, ostatné polia musíš
-# nastaviť znova; toto je zoznam, z ktorého sa dajú odpísať. `|| true`:
-# súhrn je užitočný aj bez tohto bloku, nemá kvôli nemu spadnúť.
-python3 workers/deploy/summary-inputs.py \
-  --inputs="${INPUTS_JSON:-}" \
-  --workflow=.github/workflows/build-map.yml >> "$S" || true
+# TU UŽ NIE JE, a je to zámer: ten blok píše job `plan` na ZAČIATKU behu
+# (`workers/plan/summary-inputs.py` a `--summary` v `plan/options.py`).
+# Stránka behu skladá súhrny všetkých jobov pod seba, takže by tu bola tá
+# istá tabuľka druhýkrát – a hlavne: keď beh o hodinu spadne, do tohto
+# súhrnu sa vôbec nedostane, kým súhrn prípravy je na stránke od prvej
+# minúty. Zoznam, z ktorého sa dá beh zopakovať, má byť čitateľný aj po páde.
 
 {
   echo "**Ako pregenerovať:** spusti workflow znova a vo výbere"

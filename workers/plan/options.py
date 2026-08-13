@@ -275,6 +275,8 @@ def main():
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
+    ap.add_argument("--summary", default="",
+                    help="kam pripísať blok do súhrnu behu (GITHUB_STEP_SUMMARY)")
     args = ap.parse_args()
 
     values = {k: v for k, (v, _) in DEFAULTS.items()}
@@ -470,6 +472,24 @@ def main():
     if args.out:
         with open(args.out, "a") as f:
             f.write("\n".join(lines) + "\n")
+
+    # ---------- s čím beh štartuje, hneď na začiatku ----------
+    # Doteraz bolo toto vidieť až v LOGU prípravného jobu – čiže po
+    # rozkliknutí jobu, rozkliknutí kroku a odscrollovaní cez `env:`. A to,
+    # čo z volieb naozaj vyšlo (`options` je JEDNO textové pole, z ktorého
+    # sa stane tridsať nastavení), sa nedalo porovnať s tým, čo si zadal,
+    # bez čítania tohto skriptu. Súhrn prípravného jobu je pritom na stránke
+    # behu ako PRVÝ, takže sa dá pozrieť hneď po spustení – a keď beh o hodinu
+    # spadne, je stále na očiach, s čím išiel.
+    if args.summary:
+        with open(args.summary, "a") as f:
+            f.write("## Čo z toho vyšlo – s tým beh štartuje\n\n")
+            f.write("| nastavenie | hodnota | |\n|---|---|---|\n")
+            for k in sorted(values):
+                mark = "**iné než default**" if k in changed else ""
+                f.write(f"| `{k}` | `{values[k] or '—'}` | {mark} |\n")
+            f.write("\nHodnoty bez značky sú predvolené. Tie označené si "
+                    "zadal – buď vo formulári, alebo v poli `options`.\n\n")
 
     print("Nastavenia:")
     for k in sorted(values):

@@ -801,6 +801,14 @@ jobs:
         id: opts
         run: |
           set -euo pipefail
+          # Čo bolo vo FORMULÁRI (nie čo z toho vyšlo) – ten istý blok, aký
+          # bol dovtedy až v súhrne na konci. Súhrn prípravy je na stránke
+          # behu prvý, takže je to vidieť hneď po spustení, nie až po hodine.
+          # `|| true`: beh nemá padnúť na tom, že sa nevykreslila tabuľka.
+          python3 workers/plan/summary-inputs.py \
+            --inputs='${{ toJSON(inputs) }}' \
+            --workflow=.github/workflows/build-map.yml \
+            >> "$GITHUB_STEP_SUMMARY" || true
           python3 workers/plan/options.py \
             --options='${{ inputs.options }}' \
             --rebuild='${{ inputs.rebuild }}' \
@@ -809,7 +817,8 @@ jobs:
             --shading-source='${{ inputs.shading_source }}' \
             --test='${{ inputs.test }}' \
             --wikipedia='${{ inputs.wikipedia }}' \
-            --out="$GITHUB_OUTPUT"
+            --out="$GITHUB_OUTPUT" \
+            --summary="$GITHUB_STEP_SUMMARY"
 
       - name: Dnešný dátum do kľúča cache
         id: day
