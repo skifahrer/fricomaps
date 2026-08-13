@@ -83,6 +83,14 @@ on:
         required: false
         default: true
         type: boolean
+      # Ten istý balík ešte raz ako `.aar` (Apple Archive) – rovnako ako pri
+      # Build map. Robí to job na macOS, lebo nástroj `aa` je súčasť macOS;
+      # keď ho nechceš platiť pri každom behu, odškrtni.
+      apple_archive:
+        description: "Nahrať balík aj ako .aar (Apple Archive, job na macOS)"
+        required: false
+        default: true
+        type: boolean
       custom_pbf_url:
         description: "Vlastný .osm.pbf (iný región Európy/sveta)"
         required: false
@@ -115,6 +123,10 @@ jobs:
     # ako pri Build map. Bez tohto práva by sa zapísal na runner a stratil.
     permissions:
       contents: write
+    outputs:
+      key: ${{ steps.region.outputs.key }}
+      enabled: ${{ steps.wiki.outputs.enabled }}
+      published: ${{ steps.publish.outcome }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -232,6 +244,17 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: workers/deploy/catalog.sh
 
+      # Aby si `.aar` mohol vyrobiť job na macOS, musia sa k nemu články
+      # dostať – v tom istom behu a bez druhého sťahovania z Wikipédie.
+      - name: Odlož články pre Apple Archive
+        if: ${{ inputs.publish && steps.publish.outcome == 'success' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: wiki-aar
+          path: wiki-out
+          retention-days: 1
+          compression-level: 0
+
       # Bez publikovania (alebo keď zlyhalo) sa dá aspoň pozrieť, čo vzniklo.
       # Deň retencie: je to prepravka, nie uložený výsledok – ten je na Drive.
       - name: Odlož články na pozretie
@@ -267,3 +290,50 @@ jobs:
             echo "\`workers/data/wiki-languages.json\`) plus to, čo si objekty"
             echo "píšu samy v tagu. Text je z Wikipédie (CC BY-SA)."
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Apple Archive ----------
+  # Ten istý balík ešte raz ako `.aar` – iOS a macOS ho rozbalia systémovo
+  # (framework AppleArchive), bez tretej knižnice v aplikácii. Články sú z toho
+  # najvďačnejšie: je to text, takže LZFSE stlačí 14 MB na 5.
+  #
+  # Vlastný job a na macOS preto, že nástroj `aa` je súčasť macOS a inde
+  # neexistuje – rovnako ako pri Build map. Skript je ten istý
+  # (`workers/deploy/apple-archive.sh`), len s `ONLY=wikipedia`: „ako sa vyrobí
+  # .aar a nahrá na Drive" je jedna otázka a dve kópie by sa raz rozišli.
+  #
+  # Beží AŽ PO tom, čo sa nahral ZIP: `--only` položku katalógu DOPĹŇA, takže
+  # ZIP musí byť zapísaný prvý. Keď spadne, články tým netrpia – na Drive sú
+  # a v katalógu tiež, chýba len druhá podoba balíka.
+  apple-archive:
+    name: Balík ako Apple Archive (.aar)
+    needs: wiki
+    if: ${{ !cancelled() && needs.wiki.outputs.published == 'success' && inputs.apple_archive }}
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Stiahni články z predošlého jobu
+        uses: actions/download-artifact@v8
+        with:
+          name: wiki-aar
+          path: wiki-out
+      - name: Zabaľ a nahraj .aar na Drive
+        id: publish
+        env:
+          ONLY: wikipedia
+          WIKI: wiki-out
+          REGION_KEY: ${{ needs.wiki.outputs.key }}
+          AREA_KEY: cely
+          TEST_KM2: "0"
+          CUSTOM_PBF_URL: ${{ inputs.custom_pbf_url }}
+          CUSTOM_NAME: ${{ inputs.custom_name }}
+        run: workers/deploy/apple-archive.sh
+      - name: Commitni maps.json
+        if: ${{ steps.publish.outcome == 'success' }}
+        env:
+          MAPS_JSON: maps.json
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: workers/deploy/catalog.sh

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Blok „Nastavenia tohto behu" do súhrnu behu.
+Blok „Nastavenia tohto behu" do súhrnu behu – píše ho job `plan`, teda hneď
+na začiatku.
 
 PREČO: formulár *Run workflow* sa vždy otvorí s predvolenými hodnotami –
 GitHub si nepamätá, s čím si beh spustil naposledy, a ani to nevie: hodnoty
@@ -9,12 +10,16 @@ jedinú vec (typicky `rebuild`), ostatné polia musíš nastaviť znova – a ne
 ich odkiaľ odpísať, lebo v Actions ich vidno len ako rozklikávací detail
 behu. Toto je ten zoznam, na jednom mieste a na skopírovanie.
 
+NA ZAČIATKU, NIE NA KONCI. Bol to posledný krok súhrnu, čiže sa dal prečítať
+až po dobehnutí – a keď beh po hodine spadol, nedal sa prečítať vôbec. Zoznam,
+z ktorého sa beh opakuje, treba práve vtedy, keď sa niečo pokazilo.
+
 Predvolené hodnoty sa čítajú z workflowu, nie sú tu napísané druhýkrát –
 inak by sa raz rozišli a súhrn by tvrdil, že si nič nemenil. Čo je iné než
 default, je označené: presne tie polia treba pri opakovaní prekliknúť.
 
 Použitie:
-    python3 workers/deploy/summary-inputs.py \\
+    python3 workers/plan/summary-inputs.py \\
         --inputs="$INPUTS_JSON" --workflow=.github/workflows/build-map.yml
 """
 import argparse
@@ -87,7 +92,7 @@ def main():
         riadky.append("| `{}` | {} | {} |".format(
             k, f"`{v}`" if v else "*(prázdne)*", stav))
 
-    out = ["## Nastavenia tohto behu", "",
+    out = ["## Formulár, z ktorého beh vyšiel", "",
            "| pole | hodnota | |", "|---|---|---|"] + riadky + [""]
     if zmenene:
         out += ["Formulár *Run workflow* sa vždy otvorí s predvolenými "

@@ -28,10 +28,12 @@ Build map                    deväť jobov, tie dlhé bežia súbežne:
 (manuálne, výber regiónu)      plan     región + PBF z osm.fr exportov
                                tiles    Planetiler ─► {región}.pmtiles
                                contours vrstevnice + skaly z DEM
-                               terrain  tieňovanie a 3D ako PNG dlaždice
+                               terrain  tieňovanie a 3D ako raster .pmtiles
                                trails   značené trasy z OSM relácií
                                assets   SDF sprity a glyfy
                                deploy   zloží _site ─► GitHub Pages
+                               apple-archive  balíky ešte raz ako .aar
+                                        (macOS runner – nástroj `aa`)
 
 Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► sklad `dem-sonny`:
@@ -115,7 +117,7 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
 | **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš sklad `dem-sonny` na Drive (napĺňa ho workflow *Stiahnuť výškové dáta*) |
-| **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastné PNG dlaždice `terrain/{z}/{x}/{y}.png`, uložené v sklade `dem-terrain` |
+| **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastný raster `.pmtiles` (terrarium PNG vnútri), uložený v sklade `dem-terrain` |
 | tieňovanie a 3D – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/), keď sa vlastné nevyrobia |
 
 Tieňovanie reliéfu je **predvolene vypnuté** – na farebnej mape prekrýva
@@ -1587,13 +1589,20 @@ Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
 
     presovsky-vysoke_tatry.zip                    celá mapa – web, ako sa nasadil
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy (.pmtiles)
-    presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (PNG)
-    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie + index.json
+    presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (.pmtiles)
+    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
+
+Každý balík je aj ako **`.aar` (Apple Archive)** – ten istý obsah, to isté
+meno, iná prípona. iOS a macOS ho rozbalia systémovo (framework AppleArchive),
+bez tretej knižnice v aplikácii, a LZFSE je na Apple hardvéri rýchlejšie než
+deflate. Robí to vlastný job na `macos-latest`, lebo nástroj `aa` je súčasť
+macOS; vypína sa voľbou `apple_archive=false`. V `maps.json` má každý balík
+`formats.zip` aj `formats.aar`. + index.json
 ```
 
 **Vrstevnice a skaly sú v jednom balíku** zámerne: sú z toho istého výpočtu nad
 tým istým DEM a jedna bez druhej sa nepoužíva. Tieňovanie je zvlášť, lebo je to
-jedna pyramída PNG dlaždíc a váži rádovo inak.
+jeden raster `.pmtiles` a váži rádovo inak.
 
 **Meno je stále** — rovnaký kraj (a rovnaký výsek) má vždy to isté meno, takže
 ďalší build starý balík **prepíše** a v priečinku je jeden aktuálny súbor
@@ -1892,7 +1901,7 @@ Je to preto, že formulár *Run workflow* sa vždy otvorí s predvolenými
 hodnotami – GitHub si nepamätá, s čím si beh pustil naposledy, a v API to
 nikde nie je. Keď teda chceš beh zopakovať a zmeniť jedinú vec (typicky
 `rebuild`), z tohto bloku vidíš, čo treba nastaviť späť. Predvolené hodnoty
-si blok číta priamo z workflowu ([workers/deploy/summary-inputs.py](deploy/summary-inputs.py)),
+si blok číta priamo z workflowu ([workers/plan/summary-inputs.py](plan/summary-inputs.py)),
 takže sa s formulárom nemôžu rozísť.
 
 

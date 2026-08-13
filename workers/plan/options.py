@@ -126,6 +126,11 @@ DEFAULTS = {
     # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
     # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
     "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
+    # To isté ešte raz ako `.aar` (Apple Archive, LZFSE) – iOS a macOS ho
+    # rozbalia systémovo, bez tretej knižnice v aplikácii. Robí to vlastný job
+    # na macOS, lebo nástroj `aa` je súčasť macOS a inde neexistuje; keď ho
+    # nechceš platiť pri každom builde, `apple_archive=false`.
+    "apple_archive": ("true", "nahrať mapu aj ako .aar (Apple Archive, job na macOS)"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
@@ -258,6 +263,8 @@ def main():
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
+    ap.add_argument("--summary", default="",
+                    help="kam pripísať blok do súhrnu behu (GITHUB_STEP_SUMMARY)")
     args = ap.parse_args()
 
     values = {k: v for k, (v, _) in DEFAULTS.items()}
@@ -384,6 +391,10 @@ def main():
 
     # A to isté pre publikovanie na Drive: `publish=0` by ho ticho vyplo
     # a mapa by nikde nepribudla bez toho, aby to niekto povedal.
+    if values["apple_archive"] not in ("true", "false"):
+        print(f"::error::Voľba „apple_archive“ musí byť true alebo false, "
+              f"nie „{values['apple_archive']}“.", file=sys.stderr)
+        return 1
     if values["publish"] not in ("true", "false"):
         print(f"::error::Voľba „publish“ musí byť true alebo false, "
               f"nie „{values['publish']}“.", file=sys.stderr)
@@ -437,6 +448,24 @@ def main():
     if args.out:
         with open(args.out, "a") as f:
             f.write("\n".join(lines) + "\n")
+
+    # ---------- s čím beh štartuje, hneď na začiatku ----------
+    # Doteraz bolo toto vidieť až v LOGU prípravného jobu – čiže po
+    # rozkliknutí jobu, rozkliknutí kroku a odscrollovaní cez `env:`. A to,
+    # čo z volieb naozaj vyšlo (`options` je JEDNO textové pole, z ktorého
+    # sa stane tridsať nastavení), sa nedalo porovnať s tým, čo si zadal,
+    # bez čítania tohto skriptu. Súhrn prípravného jobu je pritom na stránke
+    # behu ako PRVÝ, takže sa dá pozrieť hneď po spustení – a keď beh o hodinu
+    # spadne, je stále na očiach, s čím išiel.
+    if args.summary:
+        with open(args.summary, "a") as f:
+            f.write("## Čo z toho vyšlo – s tým beh štartuje\n\n")
+            f.write("| nastavenie | hodnota | |\n|---|---|---|\n")
+            for k in sorted(values):
+                mark = "**iné než default**" if k in changed else ""
+                f.write(f"| `{k}` | `{values[k] or '—'}` | {mark} |\n")
+            f.write("\nHodnoty bez značky sú predvolené. Tie označené si "
+                    "zadal – buď vo formulári, alebo v poli `options`.\n\n")
 
     print("Nastavenia:")
     for k in sorted(values):
