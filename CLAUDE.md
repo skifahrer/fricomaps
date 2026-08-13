@@ -39,6 +39,7 @@ workers/contours-rocks/  joby `contours` a `rocks` – jeden skript, dve polovic
 workers/rocks-shading/   `shading-rocks.yml`: dlaždice → raster → vektor
 workers/terrain/         job `terrain` (tieňovanie a 3D)
 workers/trails/          job `trails`      workers/features/  job `features`
+workers/wiki/            job `wiki`: články z Wikipédie k objektom v regióne
 workers/tiles/           job `tiles`       workers/assets/    job `assets`
 workers/styles/          štýly pre web aj iOS (deploy + save-style-overrides)
 workers/deploy/          job `deploy`: zloženie, kontrola, súhrn, publikovanie
@@ -317,7 +318,40 @@ Okrem Pages sa každý build publikuje aj do priečinka na Drive
     presovsky-vysoke_tatry.zip                    celý `_site`
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   tie dve vrstvy (jeden balík)
     presovsky-vysoke_tatry-tienovanie.zip         výškové dlaždice PNG
+    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
 ```
+
+**Články z Wikipédie sú štvrtý balík a na Pages NEIDÚ.** Job `wiki` vyberie
+z regionálneho PBF všetko, čo má tag `wikipedia` alebo `wikidata` (body, čiary
+aj plochy), stiahne články a pridá `index.json`, ktorý hovorí, ktorý článok
+patrí ktorému OSM objektu. Desiatky MB textu by v `_site` zjedli rozpočet
+stránky, takže idú vlastným artefaktom do `deploy` a odtiaľ na Drive.
+
+**Zapína ich switch `wikipedia`** vo formulári – a miesto naň sa muselo uvoľniť:
+`workflow_dispatch` dovolí najviac 10 inputov, takže `contour_interval` sa
+presťahoval do `options` (5 m z DMR 5.0 je dobrý default, mení sa pri prechode
+do nížin; články sa zapínajú a vypínajú pri každom ladení). Jedenásty input
+chytí actionlint. **Cache článkov je na Drive** a neplatí ju kalendár, ale
+`lastrevid`: keď je z čoho recyklovať, predradí sa dávková otázka `prop=info`
+(50 článkov za 19,9 kB proti 197,4 kB s obsahom) a stiahne sa len to, čo sa
+zmenilo. Počet požiadaviek to nezníži, bajty a prevod áno – a pri `html`, kde
+dávka neexistuje, celé minúty. **Cachovanie je predvolené**, obchádza ho
+`rebuild: clanky` – a to je páka na zmenený ZBERAČ (iné podoby odkazu, iný
+prevod), lebo vtedy je `lastrevid` ten istý a cache by vrátila články po
+starom. Rýchly test články zámerne NEpregenerúva: nezávisia od testovacieho
+štvorca ani od prahov, ktoré sa ním ladia. Kľúč článkov sa pri pregenerovaní
+nemaže (na rozdiel od vrstevníc a terénu) – má na konci číslo behu, takže nový
+záznam vždy vznikne a predpona vyberie najnovší.
+
+**Jeden NDJSON, nie súbor na článok, a dávky po päťdesiatich.** Oboje má
+namerané dôvody: ZIP má na každý záznam ~320 B hlavičky a deflate si na každom
+súbore začína slovník odznova (153 článkov: 149 kB v súboroch vs 101 kB
+v jednom NDJSON), a plný text sa dávkovať DÁ – len nie cez `prop=extracts`
+(ten nad `exlimit=1` vráti JEDEN článok a ostatné vyzerajú ako neexistujúce),
+ale cez `prop=revisions&rvslots=main`, kde je strop 50 názvov a nad ním hlasná
+chyba `toomanyvalues`. Wikitext prevádza `mwparserfromhell`. Namerané: 153
+článkov v 4 požiadavkách (18 ms/článok) proti 484 ms/článok po jednom. Rozpis
+vo `workers/wiki/collect.py`.
 
 **Meno je STÁLE, nie jedinečné** – rovnaký kraj a výsek má vždy to isté meno,
 takže ďalší build starý balík prepíše a v priečinku je jeden aktuálny súbor
@@ -381,6 +415,7 @@ python3 workers/dem/target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,
 python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
+python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/drive/store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
@@ -398,8 +433,11 @@ prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
 (`workers/lint/publishing.py`), že **každá výplň v štýle nad vrstvou so
 zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že
 **„v tomto stupni terén nie je" nerozhodne vzorkovaná štatistika a že sa tá
-odpoveď podpíše** (`workers/lint/dem-empty.py`), že **pásik značenej trasy
-drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
+odpoveď podpíše** (`workers/lint/dem-empty.py`), že **predfilter PBF pustí
+všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py` –
+to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
+Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
+trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
 zlomy kriviek odstupu a atribúty v schéme dlaždíc), že sa
 ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
 v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`

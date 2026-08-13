@@ -1424,17 +1424,37 @@ zmenia nastavenia, zmení sa aj kľúč a prepočíta sa to samo. Keď chceš to
 prepočítať **nanovo aj pri rovnakých nastaveniach**, spusť *Build map*
 so zaškrtnutým inputom:
 
-| input | čo pregeneruje |
+| `rebuild` | čo pregeneruje |
 |---|---|
-| `contours_rebuild` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `rocks_rebuild` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `terrain_rebuild` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
+| `vrstevnice` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
+| `skaly` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
+| `teren` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
+| `clanky` | články z Wikipédie – **obíde cache** `wiki-…` a stiahne ich odznova |
+| `vsetko` | všetko z tejto tabuľky |
 
 Prečo to musí najprv mazať: **existujúci záznam cache sa nedá prepísať.**
 Kľúč, ktorý raz existuje, si drží starý obsah, takže bez zmazania by sa
 prepočítaná verzia zahodila a ďalší build by dostal späť tú starú. Preto každý
 `*_rebuild` začne tým, že príslušný záznam zmaže (aj jeho variant `-rocks`,
 lebo skaly majú vlastný job a tým aj vlastný záznam).
+
+**Články sú jediná výnimka z toho mazania a nie je to nedôslednosť:** ich kľúč
+má na konci číslo behu (`wiki-v1-…-<run_id>`), takže nový záznam vždy vznikne
+a ďalší beh si cez predponu vezme najnovší – čiže ten čerstvý. `rebuild:
+clanky` preto len **preskočí obnovenie**: nesťahuje z Drive nič, čo by potom
+zahodil.
+
+**Kedy to naozaj treba.** Cache článkov sa neplatí kalendárom, ale `lastrevid`
+(viď kapitolu o jobe `wiki`), takže zmenu na Wikipédii zachytí sama – na to
+`rebuild: clanky` netreba. Treba ho na ten druhý prípad: **zmenil sa zberač**
+(pribudla podoba odkazu, iný prevod wikitextu, iné jazyky). Vtedy je
+`lastrevid` ten istý, cache sadne a vrátila by články spracované po starom –
+zelený beh so starým obsahom, čiže pravidlo 8.
+
+**Testovací beh články NEpregenerúva**, hoci terén áno. Nezávisia od
+testovacieho štvorca ani od prahov, ktoré sa ním ladia – job `wiki` číta celý
+regionálny PBF tak či tak – a sťahovať pri každom kole ladenia terénu tisíc
+článkov odznova by bola len daň za to, že sa ladí niečo iné.
 
 Ostatné cache (PBF, Planetiler, DEM dlaždice, glyfy a sprity) sa
 nepregenerúvajú vôbec – sú to stiahnuté dáta, nie výpočet, a majú v kľúči buď
@@ -1513,6 +1533,7 @@ Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
     presovsky-vysoke_tatry.zip                    celá mapa – web, ako sa nasadil
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy (.pmtiles)
     presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (PNG)
+    presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie + index.json
 ```
 
 **Vrstevnice a skaly sú v jednom balíku** zámerne: sú z toho istého výpočtu nad
@@ -1553,6 +1574,127 @@ Drive:
 REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
   python3 workers/deploy/publish-map.py --site=_site --out=/tmp --zip-only
 ```
+
+### Články z Wikipédie k objektom v regióne
+
+Kto v regióne odkazuje na wiki, dostane článok. Body, čiary aj plochy majú v OSM
+tagy `wikipedia` a `wikidata`; job **`wiki`** ich z regionálneho PBF vyberie
+a stiahne články **po päťdesiatich na požiadavku do jedného súboru**:
+
+```
+data/region.osm.pbf
+  → osmium tags-filter   len objekty s wiki odkazom (z 30 MB PBF ostane ~1 MB,
+                         takže ďalšie kroky sú sekundy)
+  → osmium cat -f opl    typ, id a tagy KAŽDÉHO takého objektu
+  → wikidata sitelinks   `Q…` → názov článku v požadovanom jazyku (50/req)
+  → api.php prop=revisions  celý článok, PÄŤDESIAT NA POŽIADAVKU
+  → wiki-out/articles.ndjson + wiki-out/index.json
+```
+
+**Odkaz má v dátach štyri podoby** a všetky sa čítajú: `wikipedia=sk:Devín
+(hrad)` (jazyk v hodnote), `wikipedia:sk=Devín (hrad)` (jazyk v kľúči),
+`wikipedia=https://sk.wikipedia.org/wiki/Devín` (celé URL) a `wikidata=Q123456`
+(článok sa dohľadá cez sitelinks). `brand:wikipedia` a `operator:wikipedia` sa
+zámerne neberú – to nie je článok o tom mieste, ale o firme, a v kraji by z toho
+boli stovky kópií článku o Lidli.
+
+**Jeden súbor, nie súbor na článok.** Formát je **NDJSON** – riadok = jeden
+článok ako JSON (`key`, `lang`, `title`, `pageid`, `revid`, `url`, `text`). Tak
+to robí aj Wikimedia Enterprise so svojimi dumpmi a má to dva namerané dôvody
+(vzorka 153 článkov sk wiki, 267 kB textu):
+
+| balenie | ZIP | záznamov v ZIPe |
+|---|--:|--:|
+| súbor na článok | 149,1 kB | 153 |
+| jeden NDJSON | **101,3 kB** | 1 |
+
+Za tým rozdielom je jedna vec dvakrát: ZIP má na každý záznam hlavičku
+(~320 B nameraných vrátane centrálneho adresára – pri 5000 článkoch 1,6 MB
+samej režie) a **deflate si na každom súbore začína slovník odznova**, takže
+tisíc krátkych článkov o tej istej doline sa komprimuje horšie než jeden prúd.
+K tomu praktické: rozbaliť 5000 súborov je citeľne pomalšie než jeden.
+
+**`index.json` je súčasť výsledku, nie príloha.** Hovorí, ktorý článok patrí
+ktorému OSM objektu (`osm`: `node/123` → kľúč článku, meno, súradnice) – bez
+neho je to hromada textov, ktorú sa v mape nemá ako na čo napojiť. Text článku
+v ňom **nie je** (ten je v NDJSON, pravidlo 1), len `offset` a `len` riadka,
+takže sa dá skočiť `seek`-om priamo na článok. A článok, ktorý sa nestiahol
+(preklep v odkaze, premenovaný článok, jazyk bez článku), je tam v `chybne`,
+nie zamlčaný: „stiahlo sa 900 z 1000" musí byť napísané.
+
+**Plný text sa dávkovať DÁ, ale nie cez `prop=extracts`** – a to je celý dôvod,
+prečo sa články berú z `prop=revisions` a wikitext sa prevádza u nás. Namerané
+na `sk.wikipedia.org`, 10 názvov v jednej požiadavke:
+
+```
+prop=extracts&explaintext=1&exlimit=20      1 z 10 článkov, k tomu warning
+    „exlimit was too large for a whole article extracts request, lowered to 1"
+    – ostatných deväť vyzerá ako neexistujúce
+prop=revisions&rvprop=content&rvslots=main  10 z 10, jedna požiadavka
+```
+
+Strop je **50 názvov na požiadavku** a nad ním API vráti chybu `toomanyvalues`,
+nie ticho zrezanú dávku. Prevod wikitextu robí `mwparserfromhell` (knižnica od
+Wikimedie) plus odstrihnutie tabuliek pred parsovaním – bez toho v texte ostanú
+riadky `| align=center` (namerané: 102 zvyškov na ôsmich článkoch, s ním jeden).
+Proti hotovému textu z `extracts` má takto prevedený článok 92–144 % dĺžky
+(medián ~106 %), takže o nič neprichádzame.
+
+| `wiki_format` | čo stiahne | koľko požiadaviek |
+|---|---|--:|
+| `text` (default) | celý článok ako čistý text | **jedna na 50 článkov** |
+| `wikitext` | celý článok bez prevodu | **jedna na 50 článkov** |
+| `intro` | len úvod článku | jedna na 20 článkov |
+| `html` | celý článok v HTML z REST API | jedna na článok |
+
+Namerané: **153 článkov v 4 požiadavkách za 2,7 s** (18 ms na článok), kým po
+jednom to bolo 484 ms na článok – 27× viac. Kraj s tisíckou článkov je teda
+dvadsať požiadaviek a sekundy, nie tisíc požiadaviek a pár minút. Job to hovorí
+v pláne dopredu (pravidlo 4) a na konci porovná odhad s nameraným; pri `html`
+navyše rovno napíše, že dávka tam neexistuje. Voči Wikimedii sa chodí slušne:
+sériovo (tak to žiada API:Etiquette), s `User-Agent`, ktorý hovorí kto sme,
+s `maxlag=5`, a pri 429/503 sa čaká `Retry-After`.
+
+**Neznámy `wiki_format` alebo nečíselný `wiki_max` job odmietne** s návodom, čo
+zvoliť. Náhrada za predvolenú hodnotu by znamenala zelený beh s iným obsahom
+balíka, než si vypýtal – pravidlo 8.
+
+**Na Pages to NEIDE.** Desiatky MB textu by zjedli rozpočet stránky
+(`size_limit_mb`) a v mape ich nikto nekreslí, takže články idú vlastným
+artefaktom do jobu `deploy` a odtiaľ na Drive ako **štvrtý balík**
+`<kraj>[-<výsek>]-wikipedia.zip` (a do `maps.json` ako `wikipedia`). Vypína sa
+**switchom `wikipedia`** vo formulári, jazyky sa vyberajú `wiki_langs=sk,en`,
+strop počtu článkov je `wiki_max`.
+
+**Cache je na Drive a neplatí ju kalendár, ale `lastrevid`.** Obnovuje sa cez
+predponu (`wiki-v1-<región>-<jazyky>-<podoba>-`), takže sa berie najnovší
+záznam toho istého regiónu; plný kľúč má na konci číslo behu, aby sa dal
+doplniť (existujúci kľúč sa neprepisuje). Keď je v cache z čoho recyklovať,
+`collect.py` si najprv dá **jednu dávkovú otázku `prop=info` na 50 článkov**
+a stiahne len tie, ktorým sa medzitým zmenil `lastrevid`:
+
+| tá istá dávka 50 článkov | zo siete |
+|---|--:|
+| `prop=info` (len `lastrevid`) | 19,9 kB |
+| `prop=revisions` (s obsahom) | 197,4 kB |
+
+Čo sa tým **neušetrí**: počet požiadaviek – dávka je dávka. Ušetria sa bajty
+(desatina), prevod wikitextu, a pri `wiki_format=html`, kde dávka neexistuje,
+celé minúty. Koľko sa naozaj recyklovalo, job vypíše (`z cache 812 z 830
+článkov (98 %)`) – inak sa nedá odlíšiť „cache funguje" od „cache je tam, ale
+kľúč nesedí", a to druhé je zelené a tiché, len o desiatky sekúnd dlhšie.
+
+Cache je ten istý `articles.ndjson`, aký ide do balíka, takže sa nemá ako
+rozísť s tým, čo je v mape. Nedopísaný posledný riadok (beh, ktorý niekto
+zrušil v polovici zápisu) sa **preskočí**, nie odmietne – jeden pokazený riadok
+nesmie zahodiť 900 článkov pred ním.
+
+**Cachovanie je predvolené; obísť sa dá voľbou `rebuild: clanky`** (alebo
+`vsetko`) – to je na prípad, keď sa zmenil zberač a `lastrevid` o tom nevie.
+Podrobnosti v kapitole [Pregenerovanie](#pregenerovanie).
+
+Rozpis: [`workers/wiki/collect.py`](wiki/collect.py) a
+[`workers/wiki/build.sh`](wiki/build.sh).
 
 #### `maps.json` – zoznam hotových máp v repozitári
 
@@ -1868,7 +2010,7 @@ data/region.osm.pbf
 
 | vrstva | čo v nej je | od zoomu |
 |---|---|--:|
-| `feature_line` | **násyp**, zárez, múr, hradby, plot, živý plot, elektrické vedenie, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
+| `feature_line` | **násyp**, zárez, múr, hradby, plot, živý plot, elektrické vedenie, **plánovaná cesta**, priesek, nadzemné potrubie, stromoradie, priehradný múr, hať, výmoľ | 11–15 |
 | `feature_area` | parkovisko, skládka, halda, hospodársky dvor, skleníky, opustený priemysel, kamenné pole | 11–14 |
 | `feature_point` | prameň, vodopád, jaskyňa, závrt, rozhľadňa, stožiar, vodojem, kríž pri ceste, pomník, archeologické nálezisko, štôlňa, útulňa, horský priechod, núdzový bod, geodetický bod | 11–15 |
 | `piste` | zjazdovka, bežkárska trať, skialp, sánkarská dráha – čiara aj plocha, s obťažnosťou | 11 |
@@ -1877,6 +2019,19 @@ data/region.osm.pbf
 všetkých ciest dokopy, takže idú až od z15; vedenie vysokého napätia je
 v otvorenej krajine orientačný bod na kilometre, takže od z11. Nie je to vkus,
 je to priamo veľkosť súboru.
+
+**Plánované cesty (`highway=proposed`) sú tu, nie v základných dlaždiciach.**
+OpenMapTiles má pre rozostavané cesty vlastné triedy (`motorway_construction`
+až `raceway_construction`, `highway=construction`), ale pre `proposed` v celej
+vrstve `transportation` **žiadnu** – overené v jej zozname tried. Trasa, na
+ktorej sa ešte ani nekope, sa teda ťahá z PBF druhýkrát ako každý iný prvok tu:
+od z11 (plánovaná diaľnica je čiara cez celý kraj a práve na tom zoome má
+zmysel vedieť, kade pôjde), s `name`, `ref` a `subclass`. Čo sa plánuje, hovorí
+`proposed=motorway` alebo `proposed:highway=motorway` – berú sa oba, cez
+`coalesce`, takže z plánovanej diaľnice a plánovanej lesnej cesty nie je tá istá
+čiara. V mape je **bodkovaná a šedšia** než rozostavaná cesta, ktorá je
+čiarkovaná a farebná: „stavia sa" a „je to zatiaľ na papieri" sa musia dať
+odlíšiť na prvý pohľad. Klik povie meno, označenie aj čo sa plánuje.
 
 **Násyp a bralo sa kreslia zúbkami.** Kolmé čiarky MapLibre nevie, takže sa
 robia druhou čiarou: širokou, prerušovanou a odsunutou nabok (`line-offset`),
@@ -2104,7 +2259,7 @@ Detail vrstvy je rozdelený na sekcie **Zoom → Farby → Ikona → Štýl čia
 **Štýl čiary** (línie): výber druhu čiary s **náhľadom** vedľa rozbaľovačky –
 12 predvolieb: plná, čiarkovaná, dlhé čiarky, krátke čiarky, bodkovaná,
 bodkovaná hustá, bodkovaná riedka, čiarka-bodka, **čiarka-bodka-bodka
-(náučný chodník)**, šrafovanie železnice, priečky, rebrík lanovky. K tomu
+(náučný chodník)**, čiarkovaná 1 : 1 (železnica), priečky, rebrík lanovky. K tomu
 hrúbka a krytie čiary. Malý chodník sa teda spraví bodkovaný a náučný
 chodník čiarka-bodka-bodka jedným výberom – a keďže úprava vie ísť len do
 jednej mapy, môže to platiť napríklad iba na turistickej.
@@ -2113,6 +2268,65 @@ jednej mapy, môže to platiť napríklad iba na turistickej.
 predvolieb – šrafovanie, mriežka, bodky, vlnky, stromčeky, šupiny, **kamienky**,
 tehly, krížiky, priečky, šípky…) s vlastnou farbou, veľkosťou dlaždice, hrúbkou
 ťahu a krytím.
+
+**Plochu sa dá nechať BEZ VÝPLNE** – zaškrtávatko *„bez výplne – ostane len
+vzor a okraj"* pri farbe plochy. V úpravách je to `"fill-color": "none"`
+a v štýle z toho vyjde priehľadná farba. Nie je to to isté ako dve veci, ktoré
+sa na prvý pohľad ponúkajú:
+
+| páka | čo urobí |
+|---|---|
+| **`fill-color: none`** | zmizne len farba pozadia; **vzor aj okraj ostanú** |
+| krytie 0 | `fill-opacity` násobí všetko, čo vrstva kreslí – **zhasne aj obrys** z `fill-outline-color` (má ho `pedestrian-area` a `building`) |
+| vypnutie vrstvy | zmizne aj **vzor**, ktorý na nej visí (odvodená vrstva drží viditeľnosť predlohy) |
+
+Preto sa `none` dá zadať len na ploche (`fill-color`, `fill-extrusion-color`) –
+čiaru alebo popisok treba vypnúť cez viditeľnosť, nie priehľadnou farbou, aby na
+to isté neboli dve páky. Kontrola pri importe to odmietne a povie prečo.
+
+#### Farba a hrúbka podľa zoomu
+
+Farba, krytie aj hrúbka sa dajú nastaviť **pre každý zoom zvlášť** – nie len
+jednou pevnou hodnotou. V paneli je pri každej z nich riadok *„podľa zoomu"*
+s tlačidlom **`+ zlom pri z14`**, ktoré pridá zlom na zoome, KDE PRÁVE STOJÍ
+MAPA. Tak sa mapa aj ladí: nastav zoom, pozri sa, oprav farbu; písať zoom do
+políčka a až potom sa naň presunúť by bolo to isté dvakrát, druhý raz naslepo.
+
+V úpravách je to pole `[[zoom, hodnota], …]` a v štýle z neho vyjde
+`interpolate` podľa zoomu:
+
+```json
+"landcover-wood": { "paint": { "fill-color": [[12, "#00ff00"], [18, "#ff00aa"]] } }
+"rail-bg":        { "paint": { "line-width": [[11, 1], [16, 4], [20, 12]] } }
+```
+
+Kým sú zlomy zapnuté, pevné políčko tej istej vlastnosti sa **zamkne** – dve
+páky na jednu vlastnosť by sa tichým prepisom rušili. Jeden zlom je platný
+a znamená pevnú hodnotu; strop je 8 zlomov.
+
+**Zlomy sa zoraďujú podľa zoomu hneď pri zápise, nie až pri skladaní štýlu**,
+a nie je to kozmetika: `interpolate` vyžaduje striktne rastúce vstupy a MapLibre
+pri porušení odmietne **celý štýl**, nie len tú vlastnosť – mapa sa nenačíta
+vôbec. Overené jeho vlastným validátorom (*„Input/output pairs for `interpolate`
+expressions must be arranged with input values in strictly ascending order"*).
+V paneli pritom zlomy vznikajú v poradí, v akom ich naklikáš (najprv z18, potom
+z12), takže nezoradený vstup je normálny stav. Zoraďuje ich jedna funkcia
+(`sortStops`) na všetkých troch miestach, kde vznikajú: import súboru, zápis
+z panela aj skladanie štýlu.
+
+**Vzor, ktorý má vyzerať ako rozsyp, musí prečnievať za hranu dlaždice.**
+Vzory sa dlaždicujú, takže keď v nich všetky tvary ležia vnútri (súradnice
+0–1), má dlaždica po obvode prázdny okraj – a z opakovania je **mriežka
+prázdnych uličiek každých `size` pixelov**, ktorú oko na hotovej ploche vidí
+ako raster. Jedna dlaždica pritom vyzerá úplne v poriadku a MapLibre nepovie
+nič, čiže je to tichý omyl. Kamienky (`rocks`) to raz mali: namerané krytie
+inkom na šve bolo 3,4 % proti 25,8 % v celej dlaždici a najprázdnejší pás 0 %.
+Odvtedy časť kameňov presahuje za hranu (rasterizér počíta vzdialenosť aj
+k 3×3 susedným kópiám, takže druhá polovica sa objaví na opačnej strane sama)
+a na šve je 27,1 %. Kontroluje to `workers/lint/style.mjs` pri každom vzore,
+ktorý sa hlási ako `scatter: true`; pravidelné motívy v bunke (bodky, krúžky,
+krížiky na cintoríne, stromčeky v lese) majú prázdny okraj zámerne a tie sa
+nekontrolujú.
 
 **Vzor môže mať plocha aj priamo zo štýlu**, nie len z naklikanej úpravy –
 skalné plochy majú predvolene kamienky (`rocks`). Developer mode vtedy
@@ -2337,9 +2551,9 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
-   | `contour_interval` | text | interval vrstevníc v metroch (každá 10. je hlavná, každá 5. polovičná) |
+   | `wikipedia` | **switch** | stiahnuť **články z Wikipédie** k objektom v regióne (vlastný ZIP na Drive; predvolene zapnuté) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
-   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `vsetko` |
+   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `clanky` / `vsetko` |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
    **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, Vysoké
@@ -2356,6 +2570,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    obrys skál sa menia zriedka, takže sú z nich voľby (`test_km2=5`,
    `rock_res=1`); mriežku navyše `auto` vyberie z bunky DEM a rozpočtu času
    lepšie, než sa háda ručne.
+
+   **A prečo `wikipedia` a nie `contour_interval`.** Ten istý obchod, o jedno
+   kolo neskôr. Články sa zapínajú a vypínajú podľa toho, či ide o ostrý build
+   alebo o ladenie terénu — to je switch. Interval vrstevníc má z DMR 5.0 dobrý
+   default 5 m a mení sa pri prechode do nížin, nie pri každom behu, takže sa
+   píše ako voľba (`options: contour_interval=10`). Že sa jedenásty input
+   nepridá, chytí **actionlint** do dvoch sekúnd („maximum number of inputs for
+   workflow_dispatch event is 10") – nie je to na dôvere, je to overené.
 
    **Tri výbery zdroja, jeden na vrstvu.** Kým to bol jeden `dem_source` pre
    všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly

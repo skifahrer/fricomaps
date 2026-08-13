@@ -107,6 +107,23 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
+    # INTERVAL VRSTEVNÍC. Bol to input vo formulári a presťahoval sa sem, keď
+    # si miesto vzal switch `wikipedia` – `workflow_dispatch` dovolí najviac 10
+    # inputov. Je to ten istý výmenný obchod, aký kedysi spravil `test_km2`:
+    # z DMR 5.0 je 5 m dobrý default takmer všade a mení sa pri prechode do
+    # nížin, nie pri každom behu.
+    "contour_interval": ("5", "interval vrstevníc v metroch (10 = redšie)"),
+    # Poradie jazykov: berie sa prvý, ktorý pre daný objekt existuje. Slovenský
+    # článok je pri slovenskej mape lepší než anglický, aj keď je kratší.
+    "wiki_langs": ("sk,en", "jazyky článkov v poradí, prvý ktorý je"),
+    # `text` a `wikitext` idú z `prop=revisions` po PÄŤDESIATICH na požiadavku
+    # (`text` sa tu ešte prevedie na čistý text), `intro` po dvadsiatich.
+    # `html` z REST API sa dávkovať nedá – jeden článok, jedna požiadavka –
+    # takže je to jediná drahá podoba a job to v pláne rovno napíše. Neznámu
+    # hodnotu `wiki/build.sh` odmietne, nenahradí ju predvolenou.
+    "wiki_format": ("text",
+                    "článok: `text`, `wikitext`, `intro` alebo `html`"),
+    "wiki_max": ("5000", "strop počtu článkov na jeden beh"),
     # 15, nie 14: schéma má triedy s `min_zoom: 15` (ploty, živé ploty,
     # geodetické body, hraničné kamene). Čo má min_zoom nad maxzoomom
     # archívu, Planetiler ZAHODÍ BEZ SLOVA – pri 14 ich v dlaždiciach bola
@@ -147,6 +164,9 @@ MOVED = {
                    "nie voľba",
     "test": "je switch vo formulári (rýchly test na pár km²), nie voľba. "
             "Veľkosť štvorca je voľba `test_km2`",
+    "wikipedia": "je switch vo formulári (stiahnuť články z Wikipédie), nie "
+                 "voľba. Jazyky, podoba a strop ostali voľbami – `wiki_langs`, "
+                 "`wiki_format`, `wiki_max`",
     "dem_source": "sa rozpadol na tri inputy vo formulári – `contour_source`, "
                   "`rock_source` a `shading_source`, každá vrstva má svoj "
                   "zdroj",
@@ -171,8 +191,20 @@ REBUILD = {
     "vrstevnice": ("contours_rebuild",),
     "skaly": ("rocks_rebuild",),
     "teren": ("terrain_rebuild",),
-    "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"),
+    # Články: obísť cache na Drive a stiahnuť ich odznova. Predvolene sa
+    # RECYKLUJÚ – cache sa neplatí kalendárom, ale `lastrevid`, takže sa ťahá
+    # len to, čo sa na Wikipédii zmenilo. Táto páka je na ten druhý prípad:
+    # zmenil sa ZBERAČ (iné podoby odkazu, iný prevod wikitextu), a vtedy je
+    # `lastrevid` ten istý – cache by sadla a vrátila články po starom.
+    "clanky": ("wiki_rebuild",),
+    "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild",
+               "wiki_rebuild"),
 }
+# Príznaky, ktoré `rebuild` prepína. Zoznam je jeden, nech sa nedá pridať
+# hodnota do REBUILD a zabudnúť ju vypísať na výstup (príznak by ostal
+# prázdny a pregenerovanie by ticho nič neurobilo).
+REBUILD_FLAGS = ("contours_rebuild", "rocks_rebuild", "terrain_rebuild",
+                 "wiki_rebuild")
 
 
 def dem_sources(path=None):
@@ -233,6 +265,8 @@ def main():
     ap.add_argument("--test", default="false",
                     help="switch rýchleho testu: true = počítať len štvorec "
                          "s `test_km2` km²")
+    ap.add_argument("--wikipedia", default="true",
+                    help="switch článkov z Wikipédie: true = stiahnuť ich")
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
@@ -367,11 +401,39 @@ def main():
               f"nie „{values['publish']}“.", file=sys.stderr)
         return 1
 
+    # ČLÁNKY Z WIKIPÉDIE sú switch vo formulári, nie voľba – preto sa hodnota
+    # neberie z `values`, ale z `--wikipedia`, a do `values` sa až dopisuje
+    # (nech ju `opt_wikipedia` vypíše na výstup ako všetko ostatné). Čokoľvek
+    # iné než true/false je chyba: prázdny reťazec z nevyplneného switchu by
+    # články ticho vypol a zistilo by sa to až tým, že balík na Drive nie je.
+    wiki_on = (args.wikipedia or "true").strip().lower()
+    if wiki_on not in ("true", "false"):
+        print(f"::error::Switch „wikipedia“ musí byť true alebo false, "
+              f"nie „{args.wikipedia}“.", file=sys.stderr)
+        return 1
+    values["wikipedia"] = wiki_on
+
+    # Interval vrstevníc je voľba (miesto vo formulári si vzal switch
+    # `wikipedia`), takže sa musí kontrolovať tu – `contour_interval=päť` by
+    # inak spadlo až v `gdal_contour`, po hodine sťahovania DEM.
+    try:
+        interval = float(values["contour_interval"])
+    except ValueError:
+        print(f"::error::Voľba „contour_interval“ musí byť číslo v metroch, "
+              f"nie „{values['contour_interval']}“.", file=sys.stderr)
+        return 1
+    if interval <= 0:
+        print(f"::error::Voľba „contour_interval“ musí byť väčšia než nula "
+              f"(„{values['contour_interval']}“). Vrstevnice sa vypínajú "
+              f"výberom `contour_source: ziadne`.", file=sys.stderr)
+        return 1
+    values["contour_interval"] = f"{interval:g}"
+
     if args.rebuild not in REBUILD:
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
               f"{', '.join(REBUILD)}", file=sys.stderr)
         return 1
-    for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
+    for flag in REBUILD_FLAGS:
         values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
 
     # RÝCHLY TEST PREGENERÚVA VŽDY VŠETKO, aj pri `rebuild: nic`.
@@ -385,6 +447,12 @@ def main():
     # Cache ostrého behu je pritom v bezpečí: kľúče vrstevníc, skál
     # a tieňovania nesú `dem_bboxkey` a ten je pri teste bboxom testovacieho
     # štvorca, takže sa maže a prepisuje len cache toho testu.
+    #
+    # ČLÁNKY SÚ Z TOHO VYNECHANÉ, a je to zámer: nezávisia od testovacieho
+    # štvorca ani od prahov, ktoré sa ním ladia – job `wiki` číta celý
+    # regionálny PBF tak či tak. Sťahovať pri každom kole ladenia terénu
+    # tisíc článkov odznova by bola len daň za to, že sa ladí niečo iné.
+    # Kto ich naozaj chce nanovo, má na to `rebuild: clanky`.
     if test_on:
         for flag in ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"):
             values[flag] = "true"
@@ -397,7 +465,8 @@ def main():
     print("Nastavenia:")
     for k in sorted(values):
         mark = "  ←" if k in changed else ""
-        d = DEFAULTS.get(k, ("", "z inputov formulára (zdroje / rebuild / test)"))[1]
+        d = DEFAULTS.get(
+            k, ("", "z inputov formulára (zdroje / rebuild / test / wikipedia)"))[1]
         print(f"  {k:<20} {values[k] or '(prázdne)':<24} {d}{mark}")
     if changed:
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")

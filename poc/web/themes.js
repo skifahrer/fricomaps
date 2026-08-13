@@ -212,7 +212,7 @@ export const THEMES = {
     cycleway: "#6a8fd0",
     steps: "#c05a3a",
     track: "#b09060",
-    rail: "#9a9a9a",
+    rail: "#454545",
     railHatch: "#ffffff",
     ferry: "#8aa8c8",
     aerialway: "#8a8a8a",
@@ -251,6 +251,7 @@ export const THEMES = {
     ridgeLine: "#a89880",
     scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
+    roadProposed: "#b0a48c",
     parking: "#e8e4f0",
     farmyard: "#eee4d2",
     dam: "#b0a898",
@@ -332,8 +333,8 @@ export const THEMES = {
     cycleway: "#41618f",
     steps: "#7a4030",
     track: "#5a4a35",
-    rail: "#3f3f52",
-    railHatch: "#5a5a70",
+    rail: "#26263a",
+    railHatch: "#c2c2d4",
     ferry: "#3a4a66",
     aerialway: "#55556a",
     pier: "#2a2833",
@@ -369,6 +370,7 @@ export const THEMES = {
     ridgeLine: "#6a6050",
     scrub: "#272a1e",
     roadConstruction: "#6a5628",
+    roadProposed: "#585044",
     parking: "#23202e",
     farmyard: "#2a2419",
     dam: "#3a3630",
@@ -449,7 +451,7 @@ export const THEMES = {
     cycleway: "#3060b0",
     steps: "#a02818",
     track: "#96703c",
-    rail: "#787868",
+    rail: "#42423a",
     railHatch: "#f4f1e4",
     ferry: "#5f93b5",
     aerialway: "#5a5a5a",
@@ -486,6 +488,7 @@ export const THEMES = {
     ridgeLine: "#9a8468",
     scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
+    roadProposed: "#a89878",
     parking: "#e6e2ee",
     farmyard: "#e8dcc2",
     dam: "#a89e8a",
@@ -565,7 +568,7 @@ export const THEMES = {
     cycleway: "#7a9fb8",
     steps: "#b06048",
     track: "#b58e6a",
-    rail: "#b0a598",
+    rail: "#5e5348",
     railHatch: "#fdf6ec",
     ferry: "#8fb8a8",
     aerialway: "#a89c90",
@@ -602,6 +605,7 @@ export const THEMES = {
     ridgeLine: "#c0a488",
     scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
+    roadProposed: "#b4a488",
     parking: "#efe8f0",
     farmyard: "#f2e6d2",
     dam: "#c4b8a8",
@@ -727,7 +731,8 @@ export const PALETTE_GROUPS = [
       ["pedestrian", "Pešia zóna"],
       ["roadCasing", "Obrys ciest"],
       ["roadText", "Popisok cesty"],
-      ["roadConstruction", "Cesta vo výstavbe"]
+      ["roadConstruction", "Cesta vo výstavbe"],
+      ["roadProposed", "Plánovaná cesta"]
     ]
   },
   {
@@ -769,7 +774,7 @@ export const PALETTE_GROUPS = [
     label: "Železnica a ostatná doprava",
     keys: [
       ["rail", "Železnica"],
-      ["railHatch", "Šrafovanie železnice"],
+      ["railHatch", "Čiarkovanie železnice (svetlý diel)"],
       ["ferry", "Kompa"],
       ["aerialway", "Lanovka / vlek"],
       ["pier", "Mólo"],
@@ -1233,6 +1238,143 @@ const clampZoom = (v) => {
 };
 
 /**
+ * „BEZ VÝPLNE" – plocha, ktorá nemá farbu pozadia, ale ostane jej vzor
+ * aj okraj.
+ *
+ * PREČO VLASTNÁ HODNOTA A NIE `krytie 0`. Krytie sa dá nastaviť na nulu už
+ * dlho, ale robí niečo iné: `fill-opacity` násobí VŠETKO, čo tá vrstva kreslí
+ * – teda aj obrys z `fill-outline-color` (má ho `pedestrian-area` a `building`).
+ * Nulou by teda z budovy zmizla aj jej hrana a ostalo by prázdno. Priehľadná
+ * FARBA vypne len výplň; `fill-outline-color` je vlastná vlastnosť a kreslí sa
+ * ďalej. A nie je to ani `visible: false`: tým by zmizla celá vrstva vrátane
+ * vzoru, ktorý na nej visí (odvodená vrstva drží viditeľnosť predlohy).
+ *
+ * V súbore úprav je to čitateľné slovo, nie `#00000000`, aby bolo pri čítaní
+ * jasné, že je to zámer.
+ */
+export const NO_FILL = "none";
+/** Kde má „bez výplne" zmysel – čiara sa vypína cez `visible`, nie farbou. */
+const NO_FILL_PROPS = new Set(["fill-color", "fill-extrusion-color"]);
+/** Strop počtu zoomových zlomov na jednu vlastnosť. */
+export const MAX_PAINT_STOPS = 8;
+
+/**
+ * Zoradí zoomové zlomy podľa zoomu. JEDNA funkcia pre všetky tri cesty, ktoré
+ * ich vyrábajú (import súboru, developer mode, skladanie štýlu) – poradie je
+ * jedna otázka a musí mať jednu odpoveď.
+ *
+ * PREČO NA TOM ZÁLEŽÍ VIAC, NEŽ SA ZDÁ: `interpolate` vyžaduje stopy v STRIKTNE
+ * RASTÚCOM poradí a MapLibre pri porušení odmietne CELÝ ŠTÝL, nie len tú
+ * vlastnosť – mapa sa nenačíta vôbec. Overené jeho vlastným validátorom:
+ * „Input/output pairs for "interpolate" expressions must be arranged with input
+ * values in strictly ascending order." V developer móde pritom zlomy vznikajú
+ * v poradí, v akom ich niekto naklikal (najprv z18, potom z12), takže
+ * nezoradené je NORMÁLNY stav vstupu, nie pokazený.
+ */
+export const sortStops = (list) => [...list].sort((a, b) => a[0] - b[0]);
+
+/**
+ * Hodnota z úprav → to, čo ide do štýlu.
+ *
+ * Skalár ostane skalárom, `none` sa zmení na priehľadnú farbu a POLE ZLOMOV
+ * `[[zoom, hodnota], …]` na `interpolate` podľa zoomu. Jeden zlom nie je
+ * krivka, takže z neho vyjde obyčajná hodnota – jedna hodnota je čitateľnejšia
+ * než `interpolate` s jediným stopom (ten by MapLibre prijal, ale nič nerobí).
+ *
+ * Zoradenie je tu ZÁMERNE, hoci ho robí aj kontrola pri importe a developer
+ * mode pri zápise: toto je posledné miesto pred štýlom a jediný nevzostupný
+ * pár tu zhodí celú mapu.
+ */
+export function paintValue(value) {
+  if (value === NO_FILL) return "rgba(0,0,0,0)";
+  if (!Array.isArray(value)) return value;
+  if (value.length === 1) return paintValue(value[0][1]);
+  return [
+    "interpolate",
+    ["linear"],
+    ["zoom"],
+    ...sortStops(value).flatMap(([z, v]) => [z, paintValue(v)])
+  ];
+}
+
+/**
+ * Skontroluje jednu hodnotu vlastnosti (bez zoomu). Vracia `undefined`, keď
+ * nie je v poriadku – a vtedy už je dôvod v `problems`.
+ */
+function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
+  const kde = `${where}Vrstva "${id}": ${prop}${atZoom}`;
+  if (prop.endsWith("-color")) {
+    if (value === NO_FILL) {
+      if (!NO_FILL_PROPS.has(prop)) {
+        problems.push(`${kde} nemôže byť "${NO_FILL}" – bez výplne sa dá nechať `
+          + `len plocha (${[...NO_FILL_PROPS].join(", ")}). Čiaru alebo popisok `
+          + `vypni cez "visible", nie priehľadnou farbou.`);
+        return undefined;
+      }
+      return NO_FILL;
+    }
+    if (!isColor(value)) {
+      problems.push(`${kde} nie je hex farba (${value}).`);
+      return undefined;
+    }
+    return String(value).toLowerCase();
+  }
+  if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) {
+      problems.push(`${kde} musí byť nezáporné číslo.`);
+      return undefined;
+    }
+    return n;
+  }
+  problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
+  return undefined;
+}
+
+/**
+ * Skontroluje pole zoomových zlomov `[[zoom, hodnota], …]`.
+ *
+ * Zoomy musia RÁSŤ a nesmú sa opakovať: `interpolate` s neusporiadanými
+ * stopmi MapLibre odmietne a s ním celý štýl, takže by sa mapa nenačítala
+ * vôbec. Namiesto odmietnutia sa preto zoradia – z developer módu môžu prijsť
+ * v poradí, v akom ich niekto naklikal.
+ */
+function cleanPaintStops(prop, list, id, problems, where) {
+  const kde = `${where}Vrstva "${id}": ${prop}`;
+  if (!list.length) {
+    problems.push(`${kde} má prázdny zoznam zoomových zlomov – vymaž ho, alebo doplň zlom.`);
+    return undefined;
+  }
+  if (list.length > MAX_PAINT_STOPS) {
+    problems.push(`${kde} má ${list.length} zoomových zlomov, strop je ${MAX_PAINT_STOPS}.`);
+    return undefined;
+  }
+  const out = [];
+  for (const stop of list) {
+    if (!Array.isArray(stop) || stop.length !== 2) {
+      problems.push(`${kde}: zoomový zlom musí byť [zoom, hodnota].`);
+      return undefined;
+    }
+    const z = clampZoom(stop[0]);
+    if (z == null) {
+      problems.push(`${kde}: "${stop[0]}" nie je zoom.`);
+      return undefined;
+    }
+    const v = cleanPaintScalar(prop, stop[1], id, problems, where, ` pri z${z}`);
+    if (v === undefined) return undefined;
+    out.push([z, v]);
+  }
+  const zoradene = sortStops(out);
+  const zoomy = zoradene.map(([z]) => z);
+  if (new Set(zoomy).size !== zoomy.length) {
+    problems.push(`${kde}: dva zoomové zlomy na tom istom zoome `
+      + `(${zoomy.join(", ")}) – ponechaj jeden.`);
+    return undefined;
+  }
+  return zoradene;
+}
+
+/**
  * Prečistí (a skontroluje) objekt úprav – rovnaká funkcia beží v prehliadači
  * pri importe súboru aj v pipeline pred zápisom do zdrojáku, takže do repa
  * sa nikdy nedostane nezmysel.
@@ -1382,24 +1524,16 @@ function cleanLayers(rawLayers, target, problems, where) {
       problems.push(`${where}Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
       delete clean.maxzoom;
     }
+    // Hodnota smie byť SKALÁR alebo POLE ZOOMOVÝCH ZLOMOV `[[zoom, hodnota], …]`.
+    // Skalár nahradí to, čo štýl počíta podľa zoomu, pevnou hodnotou; pole ju
+    // nahradí vlastnou krivkou. Farba plochy môže byť navyše `none` – bez
+    // výplne (viď `NO_FILL`).
     const paint = {};
     for (const [prop, value] of Object.entries(def.paint || {})) {
-      if (prop.endsWith("-color")) {
-        if (!isColor(value)) {
-          problems.push(`${where}Vrstva "${id}": ${prop} nie je hex farba (${value}).`);
-          continue;
-        }
-        paint[prop] = String(value).toLowerCase();
-      } else if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 0) {
-          problems.push(`${where}Vrstva "${id}": ${prop} musí byť nezáporné číslo.`);
-          continue;
-        }
-        paint[prop] = n;
-      } else {
-        problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
-      }
+      const clean = Array.isArray(value)
+        ? cleanPaintStops(prop, value, id, problems, where)
+        : cleanPaintScalar(prop, value, id, problems, where);
+      if (clean !== undefined) paint[prop] = clean;
     }
     if (Object.keys(paint).length) clean.paint = paint;
 
@@ -1690,7 +1824,14 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     if (layer.minzoom != null && layer.maxzoom != null && layer.maxzoom <= layer.minzoom) {
       delete layer.maxzoom;
     }
-    if (o.paint) layer.paint = { ...(layer.paint || {}), ...o.paint };
+    // `paintValue` rozbalí to, čo úprava nesie: `none` na priehľadnú farbu
+    // a pole zlomov na `interpolate` podľa zoomu.
+    if (o.paint) {
+      layer.paint = { ...(layer.paint || {}) };
+      for (const [prop, value] of Object.entries(o.paint)) {
+        layer.paint[prop] = paintValue(value);
+      }
+    }
     if (o.dash && layer.type === "line") {
       layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
     }
@@ -2772,6 +2913,13 @@ export function buildStyle({
   );
 
   // --- železnica ---
+  // Dve vrstvy nad sebou: plná tmavá čiara a na nej čiarkovaná svetlá. Svetlé
+  // diely majú byť ROVNAKO DLHÉ ako tmavé, čo drží vzor `rail` ([1, 1]
+  // v násobkoch šírky) – a preto musí byť horná čiara ROVNAKO ŠIROKÁ ako
+  // spodná: keby bola tenšia (bola, na tretinu), tmavá by po stranách
+  // presvitala a z čiarkovanej čiary by boli priečky na tmavom páse.
+  // Šírka je preto jedna a tá istá pre obe vrstvy.
+  const railWidth = [[7, 0.4], [10, 0.8], [14, 2.4], [16, 4], [20, 12]];
   add(
     {
       id: "rail-bg",
@@ -2781,7 +2929,7 @@ export function buildStyle({
       filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
       paint: {
         "line-color": c.rail,
-        "line-width": zw([[7, 0.4], [10, 0.8], [14, 2.4], [16, 4], [20, 12]])
+        "line-width": zw(railWidth)
       }
     },
     ["doprava", "Železnica", "line", { "line-color": "rail" }]
@@ -2791,15 +2939,21 @@ export function buildStyle({
       id: "rail-hatch",
       type: "line",
       "source-layer": "transportation",
+      // Až od z13: pod ním je čiara užšia než pixel a čiarkovanie by z nej
+      // urobilo len prerušovanú šmuhu.
       minzoom: 13,
       filter: ["in", str("class"), ["literal", ["rail", "transit"]]],
+      layout: { "line-cap": "butt" },
       paint: {
         "line-color": c.railHatch,
-        "line-width": zw([[13, 0.8], [16, 2], [20, 6]]),
-        "line-dasharray": [0.3, 2.5]
+        "line-width": zw(railWidth),
+        // Vzor z `patterns.js`, nie číslo tu: to isté prerušovanie ponúka
+        // developer mode a ukladá sa do `style-overrides.json`, takže dve
+        // kópie by sa raz rozišli.
+        "line-dasharray": dashArray("rail")
       }
     },
-    ["doprava", "Železnica – šrafovanie", "line", { "line-color": "railHatch" }]
+    ["doprava", "Železnica – čiarkovanie", "line", { "line-color": "railHatch" }]
   );
 
   // --- mosty (nad všetkým ostatným) ---
@@ -2937,7 +3091,19 @@ export function buildStyle({
       ["tree-row", "Stromoradia", ["tree_row"], "treeRow",
         [[14, 0.9], [16, 1.8], [20, 4]], [1, 1.5], 14],
       ["gully", "Výmole a zrázy", ["gully", "earth_bank"], "embankment",
-        [[14, 0.6], [16, 1.2], [20, 3]], [3, 2], 14]
+        [[14, 0.6], [16, 1.2], [20, 3]], [3, 2], 14],
+      // PLÁNOVANÁ CESTA (`highway=proposed`) – trasa, na ktorej sa ešte ani
+      // nekope. Kreslí sa TU, medzi prvkami, a nie vedľa `road-construction`
+      // v sekcii ciest, hoci by tam logicky patrila: ide z vlastných dlaždíc
+      // (`features`), ktoré štýl pridáva len keď ten archív existuje.
+      //
+      // Bodkovaná a šedšia než rozostavaná cesta, ktorá je čiarkovaná
+      // (`[3, 2]`) a farebná: rozdiel „stavia sa" proti „je to zatiaľ na
+      // papieri" musí byť vidieť na prvý pohľad, nie až z popupu. Šírka je
+      // schválne o dosť menšia než pri rozostavanej ceste – plánovanú
+      // diaľnicu netreba kresliť ako diaľnicu.
+      ["road-proposed", "Plánované cesty", ["road_proposed"], "roadProposed",
+        [[11, 0.8], [14, 1.6], [16, 2.6], [20, 6]], [1, 2.5], 11]
     ];
     for (const [id, label, classes, paletteKey, stops, dash, mz] of featureLines) {
       add(
@@ -3884,6 +4050,11 @@ export const CLICKABLE_LAYERS = [
   "aerodrome-label",
   // Krajinné prvky z vlastných dlaždíc – popup povie, čo to je a v akej výške.
   "feature-point",
+  // Plánovaná cesta: z čiary sa nedozvieš, či pôjde o diaľnicu alebo o lesnú
+  // cestu, a to je pri nej to hlavné – popup povie meno, `ref` (napr. `D3`)
+  // aj čo sa plánuje. Zbierať `subclass` do dlaždíc a nikde ho neukázať by
+  // bolo to isté, čo sa stalo napätiu pri elektrickom vedení.
+  "feature-road-proposed",
   "piste-line",
   // Značené trasy – po ceste ich vedie viac, popup povie, ktorá je ktorá.
   "trail-hiking",

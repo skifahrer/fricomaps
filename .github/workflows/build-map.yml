@@ -130,11 +130,22 @@ on:
           - dmr35
           - dmr5
           - ziadne
-      contour_interval:
-        description: "Interval vrstevníc v metroch (5 = hustejšie, 10 = redšie)"
+      # ČO TU STOJÍ ZA `contour_interval`, KTORÝ BOL NA TOMTO MIESTE:
+      # `workflow_dispatch` dovolí NAJVIAC 10 inputov a nad tým GitHub workflow
+      # ticho neprijme (beh bez jobov, červený krížik, prázdny log – stalo sa
+      # to pri 26 inputoch). Formulár bol plný, takže si dva knôfle vymenili
+      # miesto: interval vrstevníc má v DMR 5.0 dobrý default 5 m a mení sa pri
+      # prechode do nížin, nie pri každom behu, takže sa píše ako voľba
+      # (`options: contour_interval=10`) – to isté, čo sa kedysi stalo
+      # s `test_km2`. Články sa naopak zapínajú a vypínajú podľa toho, či ide
+      # o ostrý build alebo ladenie terénu, a to je práca pre zaškrtávatko.
+      # Predvolene ZAPNUTÉ: kraj je pri dávkach po päťdesiatich otázka sekúnd
+      # (namerané 18 ms na článok), takže sa nemá čo šetriť.
+      wikipedia:
+        description: "Stiahnuť články z Wikipédie k objektom v regióne (vlastný ZIP na Drive)"
         required: false
-        default: "5"
-        type: string
+        default: true
+        type: boolean
       rock_slope:
         description: "Od akého sklonu (°) je terén skala (50 = steny, 40 = aj strmé svahy)"
         required: false
@@ -153,6 +164,12 @@ on:
           - vrstevnice
           - skaly
           - teren
+          # Články sa inak berú z cache na Drive a sťahuje sa len to, čomu sa
+          # zmenil `lastrevid` – to je predvolené správanie. Toto je páka na
+          # „stiahni ich odznova", keď sa zmenil sám zberač (iné podoby odkazu,
+          # iný prevod wikitextu): vtedy je `lastrevid` ten istý, takže cache
+          # by sadla a vrátila by články spracované PO STAROM.
+          - clanky
           - vsetko
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
       # Veľkosť rýchleho testu: `test_km2=8` (default 4).
@@ -653,6 +670,14 @@ jobs:
       opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_features: ${{ steps.opts.outputs.opt_features }}
+      # Články z Wikipédie – job `wiki`. Nie sú vrstvou mapy, tak nemajú
+      # výber zdroja: berú sa z toho istého PBF ako trasy a prvky.
+      opt_wikipedia: ${{ steps.opts.outputs.opt_wikipedia }}
+      opt_wiki_langs: ${{ steps.opts.outputs.opt_wiki_langs }}
+      opt_wiki_format: ${{ steps.opts.outputs.opt_wiki_format }}
+      opt_wiki_max: ${{ steps.opts.outputs.opt_wiki_max }}
+      wiki_cache: ${{ steps.wikikey.outputs.prefix }}
+      wiki_cache_key: ${{ steps.wikikey.outputs.key }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
@@ -665,7 +690,7 @@ jobs:
       opt_auto_shrink: ${{ steps.opts.outputs.opt_auto_shrink }}
       opt_ugkk_fallback: ${{ steps.opts.outputs.opt_ugkk_fallback }}
       opt_ugkk_urls: ${{ steps.opts.outputs.opt_ugkk_urls }}
-      opt_contour_interval: ${{ inputs.contour_interval }}
+      opt_contour_interval: ${{ steps.opts.outputs.opt_contour_interval }}
       opt_contour_maxzoom: ${{ steps.opts.outputs.opt_contour_maxzoom }}
       opt_rock_maxzoom: ${{ steps.opts.outputs.opt_rock_maxzoom }}
       opt_rock_plne: ${{ steps.opts.outputs.opt_rock_plne }}
@@ -689,6 +714,7 @@ jobs:
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
+      opt_wiki_rebuild: ${{ steps.opts.outputs.opt_wiki_rebuild }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -781,6 +807,7 @@ jobs:
             --rock-source='${{ inputs.rock_source }}' \
             --shading-source='${{ inputs.shading_source }}' \
             --test='${{ inputs.test }}' \
+            --wikipedia='${{ inputs.wikipedia }}' \
             --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
@@ -876,6 +903,37 @@ jobs:
             fi
           fi
 
+      # PREDPONA KĽÚČA CACHE ČLÁNKOV. Je tu a nie vo `workers/plan/cache-keys.sh`
+      # (kde sú všetky ostatné kľúče) z jedného dôvodu: ten skript púšťa job
+      # `keys`, ktorý čaká na `check-dem` a na štyri zrkadlenia DEM z Drive –
+      # a články na DEM nečakajú, čítajú len PBF. Job `wiki` by tak stál za
+      # sťahovaním modelu, ktorý nepotrebuje.
+      #
+      # Píše sa RAZ, lebo ju potrebuje restore aj save: keby stála na dvoch
+      # miestach, stačí raz zabudnúť opraviť jedno a cache sa ticho rozsype
+      # (ukladá sa pod iný kľúč, než sa hľadá). Končí pomlčkou zámerne – je to
+      # PREDPONA, plný kľúč má na konci číslo behu (existujúci kľúč sa
+      # neprepisuje, takže pevný by po prvom behu už nikdy nič nedoplnil).
+      # V predpone je región, jazyky a podoba článku, čiže presne to, čo mení
+      # obsah – dátum v nej NIE JE: sviežosť rieši `lastrevid`, nie kalendár.
+      # Vypíše OBOJE – predponu aj plný kľúč – práve preto, aby ich nikto
+      # neskladal druhýkrát: `restore` berie oboje, `save` plný kľúč, a pri
+      # `rebuild: clanky` sa restore preskočí, takže `save` sa nemôže oprieť
+      # o `cache-primary-key` z preskočeného kroku (bol by prázdny a cache by
+      # sa ticho neuložila).
+      - name: Predpona kľúča cache pre články
+        id: wikikey
+        env:
+          REGION_KEY: ${{ steps.region.outputs.key }}
+          LANGS: ${{ steps.opts.outputs.opt_wiki_langs }}
+          FMT: ${{ steps.opts.outputs.opt_wiki_format }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          S=$(printf '%s-%s-%s' "$REGION_KEY" "$LANGS" "$FMT" | tr -c 'a-zA-Z0-9._-' '_')
+          echo "prefix=wiki-v1-$S-" >> "$GITHUB_OUTPUT"
+          echo "key=wiki-v1-$S-$RUN_ID" >> "$GITHUB_OUTPUT"
+
       # Testovací štvorec má pár km² – z čísel sa nedá povedať, či padol na
       # hrebeň so stenami alebo na lúku, a keď padne na lúku, „nenašlo ani
       # jednu skalu" nehovorí nič o prahoch. Obrázok ide do stránky (nie len
@@ -967,7 +1025,7 @@ jobs:
         env:
           AREA_IN: ${{ inputs.area }}
           AREA_KEY: ${{ needs.plan.outputs.area_key }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval }}
           DEMKEY_CONTOURS: ${{ needs.check-dem.outputs.demkey_contours }}
           DEMKEY_ROCKS: ${{ needs.check-dem.outputs.demkey_rocks }}
           DEMKEY_TERRAIN: ${{ needs.check-dem.outputs.demkey_terrain }}
@@ -1136,7 +1194,7 @@ jobs:
           AREA_NAME_IN: ${{ needs.plan.outputs.area_name }}
           AREA_BBOX_IN: ${{ needs.plan.outputs.area_bbox }}
           AREA_KM2: ${{ needs.plan.outputs.area_km2 }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval }}
           OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
           OPT_CONTOUR_SOURCE: ${{ needs.plan.outputs.opt_contour_source }}
           OPT_CONTOUR_SMOOTHING: ${{ needs.plan.outputs.opt_contour_smoothing }}
@@ -1335,7 +1393,7 @@ jobs:
           AREA_NAME_IN: ${{ needs.plan.outputs.area_name }}
           AREA_BBOX_IN: ${{ needs.plan.outputs.area_bbox }}
           AREA_KM2: ${{ needs.plan.outputs.area_km2 }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval }}
           OPT_CONTOUR_LINES: ${{ needs.plan.outputs.opt_contour_lines }}
           OPT_CONTOUR_SOURCE: ${{ needs.plan.outputs.opt_contour_source }}
           OPT_CONTOUR_SMOOTHING: ${{ needs.plan.outputs.opt_contour_smoothing }}
@@ -1721,6 +1779,113 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
+  # ---------- články z Wikipédie ----------
+  # KTO V REGIÓNE ODKAZUJE NA WIKI, DOSTANE ČLÁNOK. Body, čiary aj plochy majú
+  # v OSM tagy `wikipedia` a `wikidata`; tento job z nich poskládá zoznam
+  # článkov, stiahne ich (každý do samostatného súboru) a odloží ako artefakt.
+  # Balík `-wikipedia.zip` z neho urobí job `deploy` – tam, kde sa balí mapa,
+  # nech je jeden packer a jeden zápis do katalógu.
+  #
+  # NEIDE TO NA PAGES, a to je zámer: články sú desiatky MB textu, ktoré by
+  # zjedli rozpočet stránky (`size_limit_mb`) a v mape ich nikto nekreslí.
+  # Preto vlastný artefakt s dennou retenciou (prepravka, nie publikovanie)
+  # a nie `site-*`.
+  #
+  # Beží súbežne s dlaždicami a nepotrebuje ani DEM, ani Planetiler – len PBF
+  # z prípravy a `osmium`, ktorým si trasy filtrujú relácie.
+  wiki:
+    name: Články z Wikipédie
+    needs: plan
+    if: ${{ !cancelled() && needs.plan.outputs.opt_wikipedia == 'true' }}
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.wiki.outputs.count }}
+      mb: ${{ steps.wiki.outputs.mb }}
+      enabled: ${{ steps.wiki.outputs.enabled }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Priprav priečinok na meranie
+        run: mkdir -p steps-out
+
+      - name: Stiahni PBF z prípravy
+        uses: actions/download-artifact@v8
+        with:
+          name: pbf
+          path: data
+
+      # CACHE ČLÁNKOV. Obnovuje sa cez PREDPONU, nie presným kľúčom – ten má na
+      # konci číslo behu, aby sa dal doplniť (existujúci kľúč sa neprepisuje).
+      # Berie sa najnovší záznam, čo na predponu sedí, čiže články z minulého
+      # behu toho istého regiónu.
+      #
+      # ČO SA TÝM UŠETRÍ a čo nie: obsah. `collect.py` si dá jednu dávkovú
+      # otázku `prop=info` na 50 článkov (namerané 19,9 kB) a stiahne len tie,
+      # ktorým sa medzitým zmenil `lastrevid` – sťahovanie tých istých 50
+      # článkov s obsahom je 197,4 kB, teda 10× viac, a k tomu prevod wikitextu.
+      # Počet požiadaviek sa NEZNÍŽI (dávka je dávka); ušetria sa bajty, čas
+      # prevodu a pri `wiki_format=html`, kde dávka neexistuje, celé minúty.
+      #
+      # `rebuild: clanky` (alebo `vsetko`) restore PRESKOČÍ – nič sa nesťahuje
+      # z Drive, aby sa to potom zahodilo, a `collect.py` na prázdnom priečinku
+      # stiahne všetko odznova. Mazať starý záznam pritom netreba (na rozdiel od
+      # vrstevníc a terénu, kde má kľúč pevné meno): tento má na konci číslo
+      # behu, takže nový sa vždy uloží, a ďalší beh si cez predponu vezme
+      # najnovší – čiže ten čerstvý.
+      - name: Cache článkov z Wikipédie (restore)
+        id: wiki-cache
+        if: ${{ needs.plan.outputs.opt_wiki_rebuild != 'true' }}
+        uses: ./.github/actions/cache-restore
+        with:
+          path: wiki-cache
+          key: ${{ needs.plan.outputs.wiki_cache_key }}
+          restore-keys: ${{ needs.plan.outputs.wiki_cache }}
+
+      # Rozpis je vo `workers/wiki/collect.py`; tu sú len voľby z formulára.
+      - name: Odkazy na wiki → stiahnuté články
+        id: wiki
+        env:
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          OPT_WIKI_LANGS: ${{ needs.plan.outputs.opt_wiki_langs }}
+          OPT_WIKI_FORMAT: ${{ needs.plan.outputs.opt_wiki_format }}
+          OPT_WIKI_MAX: ${{ needs.plan.outputs.opt_wiki_max }}
+        run: workers/wiki/build.sh
+
+      # Ukladá sa HNEĎ, ako články vzniknú, nie v post-kroku – zrušený beh tak
+      # nezahodí to, čo sa už stiahlo. `always()`, lebo aj čiastočný výsledok
+      # (spadlo to na 900. článku z 1000) je ďalšiemu behu na osoh.
+      - name: Cache článkov z Wikipédie (save)
+        if: ${{ always() && hashFiles('wiki-cache/articles.ndjson') != '' }}
+        continue-on-error: true
+        uses: ./.github/actions/cache-save
+        with:
+          path: wiki-cache
+          # Plný kľúč z plánu, nie `cache-primary-key` z restore: pri
+          # `rebuild: clanky` je restore preskočený a jeho výstup prázdny –
+          # cache by sa vtedy ticho neuložila a ďalší beh by ťahal odznova.
+          key: ${{ needs.plan.outputs.wiki_cache_key }}
+
+      # Prepravka pre job `deploy`, nie publikovanie: `retention-days: 1`.
+      # Uložený výsledok je ten ZIP na Drive.
+      - name: Odlož články pre deploy
+        if: ${{ always() && hashFiles('wiki-out/index.json') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: wiki-articles
+          path: wiki-out
+          retention-days: 1
+          compression-level: 6
+          if-no-files-found: ignore
+
+      - name: Odlož meranie krokov
+        if: ${{ always() && hashFiles('steps-out/*') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: steps-wiki
+          path: steps-out
+          retention-days: 1
+          if-no-files-found: ignore
+
   # ---------- mapové dlaždice ----------
   # Beží súbežne s vrstevnicami, trasami aj tieňovaním – z nich nič
   # nepotrebuje, len PBF z prípravy.
@@ -1894,7 +2059,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets]
+    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets, wiki]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -1987,7 +2152,7 @@ jobs:
           CONTOURS_DEM_SOURCE: ${{ needs.contours.outputs.dem_source || 'sonny' }}
           CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
           CONTOURS_MAXZOOM: ${{ needs.contours.outputs.maxzoom || '14' }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval || '5' }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval || '5' }}
           DEM_MAXZOOM: ${{ needs.terrain.outputs.maxzoom || 15 }}
           DEM_TILES_SOURCE: ${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}
           DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}
@@ -2060,6 +2225,18 @@ jobs:
       # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
       # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
       # model by inak `obsah.json` tvrdil niečo iné, než v tej mape je.
+      # Články z Wikipédie prídu ako vlastný artefakt (do `_site` nepatria –
+      # zjedli by rozpočet stránky). Keď job `wiki` nebežal alebo nič nenašiel,
+      # artefakt nie je a `publish-map.py` ten balík nepublikuje; starý zmaže,
+      # aby vedľa mapy neostal balík z iného behu.
+      - name: Stiahni články z Wikipédie
+        if: ${{ always() && needs.wiki.outputs.enabled == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: wiki-articles
+          path: _wiki
+
       - name: Publikuj mapu na Drive
         id: publish
         if: ${{ always() && needs.plan.outputs.opt_publish == 'true' && steps.kontrola.outcome == 'success' }}
@@ -2070,7 +2247,7 @@ jobs:
           AREA_BBOX: ${{ needs.plan.outputs.area_bbox }}
           CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
           CONTOURS_SOURCE: ${{ needs.contours.outputs.dem_source }}
-          CONTOUR_INTERVAL: ${{ inputs.contour_interval }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval }}
           CUSTOM_NAME: ${{ needs.plan.outputs.opt_custom_name }}
           CUSTOM_PBF_URL: ${{ needs.plan.outputs.opt_custom_pbf_url }}
           FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
@@ -2085,6 +2262,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 workers/deploy/publish-map.py --site=_site \
+            --wiki="$([ -f _wiki/index.json ] && echo _wiki)" \
             --maps=maps.json \
             --summary="$GITHUB_STEP_SUMMARY"
 

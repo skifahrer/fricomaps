@@ -105,8 +105,16 @@ STORE_NAME = "fricomaps-sklad"
 # Sklady, ktoré pipeline pozná. Zoznam je tu na jednu jedinú vec: keď sa niekto
 # preklepne v mene skladu, `--get` by mu inak povedal „nič tam nie je" a build
 # by ticho počítal odznova. Nový sklad sem treba dopísať.
+#
+# A KEĎ SA TO ZABUDNE, PADÁ TO AŽ PO PRÁCI. `dem-sonny1` tu chýbal od chvíle,
+# čo pribudol zdroj `sonny1`: doplnenie stiahlo z Drive 12 dlaždíc, rozuzlilo
+# skratky, prevedlo ich – a až posledný krok, nahratie do skladu, spadol na
+# tomto zozname. Hotová práca sa zahodila a s ňou aj vrstevnice, skaly
+# a tieňovanie, ktoré na ten sklad čakali (beh 31533988137, štyri padnuté joby).
+# Že zoznam sedí s tým, čo si pipeline pýta, stráži `workers/lint/stores.py`.
 KNOWN = {
     "dem-sonny": "Výškový model – Sonny's LiDAR DTM (1°×1° dlaždice)",
+    "dem-sonny1": "Výškový model – Sonny's LiDAR DTM 1″ (.hgt, krok výšky 1 m)",
     "dem-dmr35": "Výškový model – ÚGKK DMR 3.5 (otvorené dáta, 10 m)",
     "dem-dmr5": "Výškový model – ÚGKK DMR 5.0, dlaždicová podoba (5 m)",
     "dem-ugkk": "Výškový model – ÚGKK DMR 5.0, výrez v plnom 1 m rozlíšení",

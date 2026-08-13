@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-Hotová mapa na Google Drive – TRI ZIPy so stálym menom.
+Hotová mapa na Google Drive – ŠTYRI ZIPy so stálym menom.
 
 ČO TO ROBÍ. Z `_site` (celý web: dlaždice, štýly, vrstevnice, skaly,
-tieňovanie, fonty a sprity) sa zabalia tri balíky a nahrajú na Drive do
-priečinka podľa toho, čoho sa mapa týka:
+tieňovanie, fonty a sprity) a z priečinka s článkami (`--wiki`) sa zabalia
+balíky a nahrajú na Drive do priečinka podľa toho, čoho sa mapa týka:
 
     <koreň>/slovensko/presovsky/vysoke_tatry/
         presovsky-vysoke_tatry.zip                    celá mapa
         presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy
         presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice
+        presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
 
 Úrovne cesty, ktoré nedávajú zmysel, sa vynechajú: build celej krajiny nemá
 kraj a build celého kraja nemá výsek. Chýbajúce priečinky sa vyrobia.
@@ -477,6 +478,9 @@ def main():
     ap.add_argument("--zip-only", action="store_true",
                     help="zabaľ do --out a na Drive nesiahaj (lokálna skúška)")
     ap.add_argument("--summary", default="", help="kam dopísať súhrn")
+    ap.add_argument("--wiki", default="",
+                    help="priečinok s článkami z Wikipédie (balík `wikipedia`); "
+                         "prázdne = ten balík sa nepublikuje a starý sa zmaže")
     ap.add_argument("--maps", default="maps.json",
                     help="katalóg hotových máp v repozitári (prázdne = nezapisuj)")
     args = ap.parse_args()
@@ -489,19 +493,26 @@ def main():
     # Tri balíky v jednom zozname: druh, čo do neho patrí, a popis do logu.
     # Zoznam preto, že sa s nimi robí to isté – zabaliť, nahrať, prepísať
     # starý – a tri kópie toho istého by sa raz rozišli.
+    # Štvrtý balík má VLASTNÝ KORENNÝ PRIEČINOK, a preto je v každom riadku aj
+    # báza: články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
+    # rozpočet stránky), takže ich job `wiki` odloží ako samostatný artefakt
+    # a `deploy` ich podá sem cez `--wiki`. Cesty v ZIPe sa počítajú od tej
+    # bázy, takže vnútri je `articles.ndjson`, nie `_wiki/articles.ndjson`.
     baliky = [
         ("", "celá mapa – web tak, ako sa nasadil",
-         vsetky_subory(args.site)),
+         args.site, vsetky_subory(args.site)),
         ("vrstevnice-skaly", "vrstevnice a skalné plochy (.pmtiles)",
-         vrstvy_subory(args.site, man)),
+         args.site, vrstvy_subory(args.site, man)),
         ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (PNG)",
-         tienovanie_subory(args.site, man)),
+         args.site, tienovanie_subory(args.site, man)),
+        ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
+         args.wiki, vsetky_subory(args.wiki) if args.wiki else []),
     ]
-    if not baliky[0][2]:
+    if not baliky[0][3]:
         raise SystemExit(f"::error::V {args.site} nie je ani jeden súbor – nie je "
                          f"čo publikovať. (Zbehol job `deploy` až po zloženie "
                          f"webu?)")
-    for kind, popis, subory in baliky:
+    for kind, popis, _base, subory in baliky:
         stav = (f"{len(subory)} súborov, "
                 f"{folder.human(sum(os.path.getsize(p) for p in subory))}"
                 if subory else "NIE JE V TOMTO BUILDE – starý balík sa zmaže")
@@ -514,13 +525,12 @@ def main():
         # Lokálna skúška: to isté balenie, len bez Drive – nech sa dá pozrieť,
         # čo v balíkoch je, bez tokenu a bez nahrávania.
         out = args.out or os.environ.get("RUNNER_TEMP", "/tmp")
-        for kind, popis, subory in baliky:
+        for kind, popis, base, subory in baliky:
             if not subory:
                 log(f"{meno(kind)}: {popis} v tomto builde nie je – vynechávam.")
                 continue
             dest = os.path.join(out, meno(kind))
-            zabal(args.site, dest, meno(kind)[:-4], subory,
-                  info=obsah(kind, man))
+            zabal(base, dest, meno(kind)[:-4], subory, info=obsah(kind, man))
         return 0
 
     creds = auth.from_env()
@@ -539,7 +549,7 @@ def main():
     root = folder.folder_id(args.folder)
     fid = folder.ensure_path(creds, root, parts)
     hotove = []
-    for kind, popis, subory in baliky:
+    for kind, popis, base, subory in baliky:
         name = meno(kind)
         if not subory:
             # Vrstva v tomto builde nie je. Starý balík toho istého mena by
@@ -555,7 +565,7 @@ def main():
             continue
         dest = os.path.join(args.out or os.environ.get("RUNNER_TEMP", "/tmp"),
                             name)
-        velkost = zabal(args.site, dest, name[:-4], subory,
+        velkost = zabal(base, dest, name[:-4], subory,
                         info=obsah(kind, man))
         try:
             log(f"Nahrávam {name} ({folder.human(velkost)}) …")

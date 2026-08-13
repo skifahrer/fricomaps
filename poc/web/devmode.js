@@ -38,6 +38,8 @@ import {
   LAYER_GROUPS,
   LAYER_KINDS,
   MAX_DISPLAY_Z,
+  NO_FILL,
+  sortStops,
   emptyOverrides,
   normalizeOverrides,
   hasOverrides,
@@ -854,7 +856,13 @@ export function initDevMode({
   function goToZoom(z) {
     zoomView = Math.min(MAX_DISPLAY_Z, Math.max(0, Number(z)));
     getMap()?.jumpTo({ zoom: zoomView });
-    renderBody();
+    // Prekreslenie ide o tik neskôr, nie priamo tu. Volá sa to totiž
+    // z `change` handlera číselného políčka a Chromium neznesie, keď sa
+    // uprostred spracovania udalosti vymení podstrom, v ktorom ten input
+    // leží: `replaceChildren` skončí výnimkou „The node to be removed is no
+    // longer a child of this node". Tá istá obchádzka je v `apply()` a bola
+    // tam napísaná presne z tohto dôvodu – tu chýbala.
+    setTimeout(renderBody, 0);
   }
 
   /**
@@ -1306,10 +1314,116 @@ export function initDevMode({
    * a v ňom nápoveda; vyplnením sa nahradí konštantou, vymazaním sa vráti
    * pôvodná interpolácia.
    */
+  /**
+   * Editor ZOOMOVÝCH ZLOMOV jednej vlastnosti – „na z11 takto, na z16 inak".
+   *
+   * PREČO PODĽA AKTUÁLNEHO ZOOMU. Zlom sa pridáva tam, kde práve stojí mapa
+   * (`Pridať pri z14`), lebo tak sa mapa aj ladí: nastavíš zoom, pozrieš sa,
+   * opravíš farbu. Písať zoom do políčka a až potom sa naň presunúť by bolo
+   * to isté dvakrát – a druhý raz naslepo.
+   *
+   * Hodnota v úprave je pole `[[zoom, hodnota], …]`; `themes.js` z neho spraví
+   * `interpolate`. Jeden zlom je platný a znamená pevnú hodnotu (`interpolate`
+   * s jediným stopom by MapLibre odmietol, preto ho `paintValue` rozbalí).
+   */
+  function zoomStopsEditor({ layer, prop, kind, min, max, step }) {
+    const o = layerOverride(layer.id) || {};
+    const cur = o.paint && o.paint[prop];
+    const stops = Array.isArray(cur) ? cur : null;
+    const zNow = zoomCell();
+
+    const setStops = (next) => {
+      // ZORADIŤ HNEĎ PRI ZÁPISE, nie až pri skladaní štýlu. Zlomy vznikajú
+      // v poradí, v akom ich naklikáš (najprv z18, potom z12), a `interpolate`
+      // chce striktne rastúce – MapLibre by pri porušení odmietol CELÝ štýl
+      // a mapa by sa nenačítala. Uložené má byť to isté, čo je platné.
+      // Prázdny zoznam neukladáme – to je „nechaj, čo je v štýle".
+      setLayerPaint(
+        layer.id, prop, next && next.length ? sortStops(next) : undefined
+      );
+      apply({ immediate: true });
+    };
+
+    // Hodnota, s ktorou nový zlom začína: čo tá vlastnosť práve v mape má.
+    const nowValue = () => {
+      const v = (layer.paint || {})[prop];
+      if (typeof v === "number" || (typeof v === "string" && v.startsWith("#"))) return v;
+      if (stops?.length) return stops[stops.length - 1][1];
+      return kind === "color" ? primaryColor(layer) : min ?? 1;
+    };
+
+    const rows = (stops || []).map(([z, v], i) => {
+      const zoomInput = el("input", {
+        type: "number", class: "dev-num dev-num-z",
+        min: "0", max: String(MAX_DISPLAY_Z), step: "1", value: String(z)
+      });
+      zoomInput.addEventListener("change", () => {
+        const next = stops.map((s, j) => (j === i ? [Number(zoomInput.value), s[1]] : s));
+        setStops(next);
+      });
+      const setVal = (nv) => setStops(stops.map((s, j) => (j === i ? [s[0], nv] : s)));
+      const control =
+        kind === "color"
+          ? colorControl({ value: v, onInput: setVal, onReset: null, changed: false })
+          : numberField({
+              label: "", value: v, min, max, step,
+              onChange: (nv) => setVal(nv ?? 0)
+            });
+      return el("div", { class: "dev-stop" }, [
+        el("span", { class: "dev-stopz", text: "z" }),
+        zoomInput,
+        control,
+        el("button", {
+          type: "button", class: "dev-mini", title: "Zmazať tento zlom", text: "×",
+          onclick: () => setStops(stops.filter((_, j) => j !== i))
+        })
+      ]);
+    });
+
+    const uzTam = (stops || []).some(([z]) => z === zNow);
+    return el("div", { class: "dev-stops" }, [
+      ...rows,
+      el("button", {
+        type: "button",
+        class: "dev-mini dev-addstop",
+        title: uzTam
+          ? `Na zoome ${zNow} už zlom je – zmeň ho v riadku vyššie`
+          : `Pridá zlom na zoome, kde práve stojí mapa`,
+        text: `+ zlom pri z${zNow}`,
+        disabled: uzTam || null,
+        onclick: () => setStops([...(stops || []), [zNow, nowValue()]])
+      }),
+      stops
+        ? el("button", {
+            type: "button", class: "dev-mini",
+            title: "Zrušiť zoomové zlomy a nechať, čo je v štýle",
+            text: "⟲",
+            onclick: () => setStops(null)
+          })
+        : null
+    ]);
+  }
+
   function paintNumber({ layer, prop, label, min, max, step }) {
     const o = layerOverride(layer.id) || {};
     const cur = (layer.paint || {})[prop];
     const isNum = typeof cur === "number";
+    // Keď tú istú vlastnosť riadia zoomové zlomy, pevná hodnota by ich prepísala
+    // – políčko sa preto zamkne a povie, kde sa to teraz nastavuje. Dve páky na
+    // jednu vlastnosť by sa inak tichým prepisom navzájom rušili.
+    if (Array.isArray(o.paint && o.paint[prop])) {
+      // Do políčka širokého 46 px sa „podľa zoomu" nezmestí (odsekne sa na
+      // „podľa"), takže tam je pomlčka a vysvetlenie v bublinke – vedľajší
+      // riadok „… podľa zoomu" povie zvyšok.
+      const field = numberField({ label, value: undefined, min, max, step,
+                                  placeholder: "—", onChange: () => {} });
+      const input = field.querySelector("input");
+      input.disabled = true;
+      input.title = `${prop} je nastavené zoomovými zlomami nižšie – `
+        + `zruš ich (⟲), ak chceš jednu pevnú hodnotu`;
+      field.classList.add("changed");
+      return field;
+    }
     const field = numberField({
       label,
       value: isNum ? Math.round(cur * 100) / 100 : undefined,
@@ -1397,25 +1511,52 @@ export function initDevMode({
     if (colorProps(layer).length) parts.push(sectionTitle("Farby"));
     for (const [prop, value] of colorProps(layer)) {
       const paletteKey = paletteMap[prop];
-      const overridden = !!(o.paint && o.paint[prop]);
+      const overridden = !!(o.paint && o.paint[prop] !== undefined);
+      const bezVyplne = o.paint && o.paint[prop] === NO_FILL;
+      // BEZ VÝPLNE má zmysel len na ploche: plocha stratí farbu pozadia, ale
+      // vzor aj okraj na nej ostanú. Nie je to krytie 0 (to zhasne aj obrys
+      // z `fill-outline-color`) ani vypnutie vrstvy (tým by zmizol aj vzor).
+      const canNoFill = prop === "fill-color" || prop === "fill-extrusion-color";
       parts.push(
         el("div", { class: "dev-prop" }, [
           el("span", { class: "dev-propname", text: prop.replace(/-color$/, "") }),
-          colorControl({
-            value,
-            changed: overridden,
-            note: paletteKey ? `paleta: ${PALETTE_LABELS[paletteKey] || paletteKey}` : "",
-            onInput: (v) => {
-              setLayerPaint(layer.id, prop, v);
-              apply({ rerender: false });
-            },
-            onReset: overridden
-              ? () => {
-                  setLayerPaint(layer.id, prop, undefined);
-                  apply({ immediate: true });
-                }
-              : null
-          })
+          bezVyplne
+            ? el("span", { class: "dev-note", text: "bez výplne (priehľadná)" })
+            : colorControl({
+                value,
+                changed: overridden,
+                note: paletteKey ? `paleta: ${PALETTE_LABELS[paletteKey] || paletteKey}` : "",
+                onInput: (v) => {
+                  setLayerPaint(layer.id, prop, v);
+                  apply({ rerender: false });
+                },
+                onReset: overridden
+                  ? () => {
+                      setLayerPaint(layer.id, prop, undefined);
+                      apply({ immediate: true });
+                    }
+                  : null
+              })
+        ])
+      );
+      if (canNoFill) {
+        const box = el("input", { type: "checkbox", class: "dev-check" });
+        box.checked = !!bezVyplne;
+        box.addEventListener("change", () => {
+          setLayerPaint(layer.id, prop, box.checked ? NO_FILL : undefined);
+          apply({ immediate: true });
+        });
+        parts.push(
+          el("label", { class: `dev-field dev-inline${bezVyplne ? " changed" : ""}` }, [
+            box,
+            el("span", { text: "bez výplne – ostane len vzor a okraj" })
+          ])
+        );
+      }
+      parts.push(
+        el("div", { class: "dev-prop" }, [
+          el("span", { class: "dev-propname", text: "podľa zoomu" }),
+          zoomStopsEditor({ layer, prop, kind: "color" })
         ])
       );
     }
@@ -1542,6 +1683,19 @@ export function initDevMode({
           })
         ])
       );
+      // Hrúbka a krytie sa dajú nastaviť aj PODĽA ZOOMU – práve tie dve sa
+      // ladia najčastejšie (tenko na prehľade, hrubo v detaile).
+      for (const [prop, label, min, max, step] of [
+        ["line-width", "hrúbka podľa zoomu", 0, 40, 0.5],
+        ["line-opacity", "krytie podľa zoomu", 0, 1, 0.1]
+      ]) {
+        parts.push(
+          el("div", { class: "dev-prop" }, [
+            el("span", { class: "dev-propname", text: label }),
+            zoomStopsEditor({ layer, prop, kind: "number", min, max, step })
+          ])
+        );
+      }
     } else {
       // Plocha: krytie výplne. Vzor a okraj sú nižšie – spolu je z toho
       // „šrafovaná plocha s prerušovaným okrajom", ktorá sa dá naklikať.
@@ -1550,6 +1704,10 @@ export function initDevMode({
       parts.push(
         el("div", { class: "dev-sub" }, [
           paintNumber({ layer, prop: opacityProp, label: "krytie", min: 0, max: 1, step: 0.05 })
+        ]),
+        el("div", { class: "dev-prop" }, [
+          el("span", { class: "dev-propname", text: "krytie podľa zoomu" }),
+          zoomStopsEditor({ layer, prop: opacityProp, kind: "number", min: 0, max: 1, step: 0.05 })
         ])
       );
     }
