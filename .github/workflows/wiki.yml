@@ -329,6 +329,9 @@ jobs:
           TEST_KM2: "0"
           CUSTOM_PBF_URL: ${{ inputs.custom_pbf_url }}
           CUSTOM_NAME: ${{ inputs.custom_name }}
+          # Z ktorej vetvy si vypýtať čerstvý `maps.json` – ten predošlý
+          # job doň práve zapísal a checkout má stav spred toho.
+          BRANCH: ${{ github.ref_name }}
         run: workers/deploy/apple-archive.sh
       - name: Commitni maps.json
         if: ${{ steps.publish.outcome == 'success' }}

@@ -2279,6 +2279,9 @@ jobs:
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
           TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+          # Z ktorej vetvy si vypýtať čerstvý `maps.json` – ten predošlý
+          # job doň práve zapísal a checkout má stav spred toho.
+          BRANCH: ${{ github.ref_name }}
         run: workers/deploy/apple-archive.sh
       # Katalóg: `deploy` doň zapísal ZIPy, tento krok k nim pridá `.aar`.
       # `git pull --rebase` v skripte je tu nutnosť, nie poistka – `deploy`
