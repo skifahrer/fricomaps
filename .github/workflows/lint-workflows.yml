@@ -520,6 +520,14 @@ jobs:
       - name: Predfilter pustí všetko, čo si schéma prvkov vyžiada
         run: python3 workers/lint/features.py
 
+      # Pásik značenej trasy sa skladá z troch miest naraz (routes.py rozhodne
+      # stranu a poradie, trails.yml to pustí do dlaždíc, themes.js z toho
+      # spočíta `line-offset`). Keď sa ktorékoľvek dve rozídu, nič nespadne –
+      # len sú cyklotrasy na tej istej strane ako turistické, alebo sú pásiky
+      # odlepené od cesty. Rozpis: `workers/lint/trails.mjs`.
+      - name: "Trasy: strana, odstup a atribúty držia spolu"
+        run: node workers/lint/trails.mjs
+
       # „V tomto stupni terén nie je" je doživotná odpoveď – kým prázdna
       # dlaždica leží v sklade, ten stupeň už nikto neprečíta. Keď ju vysloví
       # vzorkovaná štatistika, je beh zelený a v mape chýba pol kraja: presne

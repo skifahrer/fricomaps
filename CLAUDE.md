@@ -416,6 +416,7 @@ python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
+node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/drive/store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
 REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/deploy/site.sh   # a tak ďalej
@@ -435,7 +436,9 @@ zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že
 odpoveď podpíše** (`workers/lint/dem-empty.py`), že **predfilter PBF pustí
 všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py` –
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
-Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že sa
+Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
+trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
+zlomy kriviek odstupu a atribúty v schéme dlaždíc), že sa
 ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
 v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`
 by ticho vypol kontroly, ktoré cesty hľadajú vzorom). **Keď

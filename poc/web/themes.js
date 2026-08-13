@@ -284,7 +284,7 @@ export const THEMES = {
     trailPurple: "#8a3aa8",
     trailGray: "#7c7c7c",
     trailHiking: "#b8342c",
-    trailCycling: "#1668b8",
+    trailCycling: "#cc2f9c",
     trailMtb: "#7a3aa0",
     trailSki: "#0f9ec0",
     trailHorse: "#8a6a3a",
@@ -402,7 +402,7 @@ export const THEMES = {
     trailPurple: "#c481e0",
     trailGray: "#9c9caa",
     trailHiking: "#e07a7a",
-    trailCycling: "#6aa8ff",
+    trailCycling: "#f07ad2",
     trailMtb: "#b47ade",
     trailSki: "#5ad0e8",
     trailHorse: "#c0a070",
@@ -519,7 +519,7 @@ export const THEMES = {
     trailPurple: "#8226a4",
     trailGray: "#6e6e6e",
     trailHiking: "#c02a20",
-    trailCycling: "#1a5ec0",
+    trailCycling: "#c41a92",
     trailMtb: "#7a2ea0",
     trailSki: "#0894b8",
     trailHorse: "#7d5a30",
@@ -634,7 +634,7 @@ export const THEMES = {
     trailPurple: "#a87aa8",
     trailGray: "#9a9088",
     trailHiking: "#c07a68",
-    trailCycling: "#7a9fb8",
+    trailCycling: "#b8608e",
     trailMtb: "#a87aa8",
     trailSki: "#7ab8c0",
     trailHorse: "#a08a68",
@@ -1030,12 +1030,83 @@ export const TRAIL_MARK_COLOURS = [
   ["gray", "trailGray"]
 ];
 
+// ------------------------------------------------- odstup pásikov od cesty
+// Zoomy, na ktorých sú zlomy všetkých troch kriviek nižšie. Musia byť tie
+// isté: `line-offset` sa skladá z odstupu aj rozostupu v JEDNOM `interpolate`
+// (`["zoom"]` smie byť len vstupom toho najvrchnejšieho), takže sa hodnoty
+// berú po indexoch.
+export const TRAIL_OFFSET_ZOOMS = [9, 11, 13, 14, 16, 20];
+
+// Odstup osi prvého pásika od osi cesty, v pixeloch. Nie je to odhad – je to
+// spočítané z toho, aké široké sú v štýle čiary pod ním: polovica čiary +
+// polovica pásika (a pri ceste ešte obrys, ktorý `widen` pridáva k CELEJ
+// šírke, takže z osi trčí polovicou).
+//
+//   miestna cesta    9 px + 1,6 obrys = 10,6 → okraj 5,3 od osi; pásik je
+//   (z16)            2,6 široký, takže 5,3 + 1,3 = 6,6 a práve sa jej dotýka
+//   lesná cesta      3,5 px → okraj 1,75; 1,75 + 1,3 = 3,05 by bol dotyk,
+//   a chodník        3,6 necháva jemnú medzeru, nech je pod pásikom vidieť
+//                    aj samotný chodník (a to, že je prerušovaný)
+//
+// Cesta je jedna hodnota pre všetky triedy ciest, hoci diaľnica je širšia než
+// účelová – pásik sa presne dotýka MIESTNEJ cesty, po ktorej trasy chodia
+// najčastejšie. Rozlišovať triedu cesty by znamenalo dotiahnuť ju do dlaždíc
+// trás a to za tie dve desatiny pixela nestojí.
+export const TRAIL_OFFSET_ROAD = [
+  [9, 0.8], [11, 1.5], [13, 2.6], [14, 3.5], [16, 6.6], [20, 19.8]
+];
+export const TRAIL_OFFSET_PATH = [
+  [9, 0.8], [11, 1.0], [13, 1.5], [14, 2.4], [16, 3.6], [20, 11.0]
+];
+// Rozostup dvoch trás na tej istej ceste = ŠÍRKA PÁSIKA, čiže sú nalepené na
+// seba bez medzery. Tri značky na jednom chodníku majú vyzerať ako jeden
+// trojfarebný pás, nie ako tri čiary rozhádzané do polovice obrazovky.
+export const TRAIL_PITCH = [
+  [9, 0.9], [11, 1.15], [13, 1.6], [14, 1.9], [16, 2.6], [20, 6]
+];
+
+/** Referenčný zoom, v ktorom sa odstupy zadávajú aj ladia. */
+export const TRAIL_GAP_ZOOM = 16;
+const atZoom = (stops, z) => (stops.find(([sz]) => sz === z) || [, 0])[1];
+
+/** Predvolené odstupy v pixeloch pri z16 – to, čo prepisuje developer mode. */
+export const TRAIL_GAP_DEFAULTS = {
+  road: atZoom(TRAIL_OFFSET_ROAD, TRAIL_GAP_ZOOM),
+  path: atZoom(TRAIL_OFFSET_PATH, TRAIL_GAP_ZOOM),
+  pitch: atZoom(TRAIL_PITCH, TRAIL_GAP_ZOOM)
+};
+
+/**
+ * Účinné odstupy: predvolené, prípadne prepísané z developer módu. Celá
+ * krivka sa potom škáluje pomerom voči predvolenej hodnote pri z16, takže
+ * jedno číslo posunie pásiky na všetkých zoomoch rovnako.
+ */
+export function trailGapPx(overrides) {
+  const raw = overrides?.trails?.gap || {};
+  const out = { ...TRAIL_GAP_DEFAULTS };
+  for (const key of Object.keys(TRAIL_GAP_DEFAULTS)) {
+    const n = Number(raw[key]);
+    // Nula je platná odpoveď („nalep to priamo na čiaru"), záporná nie –
+    // z tej by bol pásik na opačnej strane, než hovorí `side`.
+    if (Number.isFinite(n) && n >= 0 && n <= 60) out[key] = n;
+  }
+  return out;
+}
+
 /**
  * Druhy značených trás. Jeden zoznam pre štýl (vrstvy, ikony, prerušovanie),
  * developer mode aj popup vo viewri – inak by sa tri kópie časom rozišli.
  *
  * `palette` je farba, ktorá sa použije, keď trasa značku bez farby nemá;
  * `icons` sú kandidáti na ikonu v poradí, prvý existujúci v sade vyhráva.
+ *
+ * `dash` je ID predvoľby z `patterns.js`, nie pole čísel – tú istú predvoľbu
+ * ponúka developer mode v záložke „Trasy", takže sa dá vzor čiary prepnúť bez
+ * zásahu do kódu a uložený vzor znamená to isté tu aj tam.
+ *
+ * `side` je strana cesty (+1 / −1). Musí sedieť so `SIDE_BY_ROUTE`
+ * vo `workers/trails/routes.py`, ktorý podľa nej číslu je rady – tu je len na
+ * to, aby developer mode vedel povedať, čo kde uvidíš; posúva sa podľa dát.
  */
 export const TRAIL_TYPES = [
   {
@@ -1044,7 +1115,8 @@ export const TRAIL_TYPES = [
     short: "turistická trasa",
     palette: "trailHiking",
     icons: ["mountain", "triangle"],
-    dash: null
+    dash: "solid",
+    side: 1
   },
   {
     // Ferrata je `route=via_ferrata` relácia ako každá iná značená trasa, len
@@ -1055,15 +1127,21 @@ export const TRAIL_TYPES = [
     short: "ferrata",
     palette: "trailFerrata",
     icons: ["climbing", "mountain", "triangle"],
-    dash: [1.5, 1.5]
+    dash: "dashed-fine",
+    side: 1
   },
   {
+    // Cyklotrasy sú bodkované a ružovo-fialové: značka v teréne farbu nemá
+    // (na rozdiel od turistickej), takže farba je naša voľba – a musí sa
+    // odlíšiť od turistických značiek, ktoré zaberajú červenú, modrú, zelenú
+    // aj žltú. Kolesové trasy idú navyše na opačnú stranu cesty než pešie.
     id: "bicycle",
     label: "Cyklotrasy",
     short: "cyklotrasa",
     palette: "trailCycling",
     icons: ["bicycle"],
-    dash: [5, 2]
+    dash: "dotted",
+    side: -1
   },
   {
     id: "mtb",
@@ -1071,7 +1149,8 @@ export const TRAIL_TYPES = [
     short: "horská cyklotrasa",
     palette: "trailMtb",
     icons: ["bicycle"],
-    dash: [2.5, 1.5]
+    dash: "dotted-dense",
+    side: -1
   },
   {
     id: "ski",
@@ -1079,7 +1158,8 @@ export const TRAIL_TYPES = [
     short: "lyžiarska trasa",
     palette: "trailSki",
     icons: ["skiing", "mountain"],
-    dash: [7, 2.5]
+    dash: "dashed-long",
+    side: 1
   },
   {
     id: "horse",
@@ -1087,9 +1167,36 @@ export const TRAIL_TYPES = [
     short: "jazdecká trasa",
     palette: "trailHorse",
     icons: ["horse", "circle"],
-    dash: [1.5, 1.5]
+    dash: "dashed-fine",
+    side: 1
   }
 ];
+
+export const TRAIL_TYPE_IDS = TRAIL_TYPES.map((t) => t.id);
+const TRAIL_BY_ID = Object.fromEntries(TRAIL_TYPES.map((t) => [t.id, t]));
+
+/**
+ * Účinné nastavenie druhu trasy: zoznam vyššie + to, čo prepísal developer
+ * mode (`overrides.trails.types`). Pýtajú sa naň štýl aj developer mode, tak
+ * je odpoveď na jednom mieste – inak by panel ukazoval jedno a mapa kreslila
+ * druhé.
+ *
+ * Farba tu NIE JE zámerne: tá ide cez paletu (`palette`), lebo z nej žije aj
+ * pásik, aj ikona, aj názov trasy. Druhá cesta k tej istej farbe by sa raz
+ * rozišla.
+ */
+export function trailTypeDef(type, overrides) {
+  const own = overrides?.trails?.types?.[type.id] || {};
+  const icon = typeof own.icon === "string" ? own.icon.trim() : "";
+  return {
+    ...type,
+    dash: DASH_IDS.includes(own.dash) ? own.dash : type.dash,
+    // Ikonu treba vedieť aj VYPNÚŤ – prázdny reťazec je „žiadna", nie „vezmi
+    // predvolenú"; trasa hustá na ikonky sa inak nedá zbaviť inak než skrytím
+    // celej vrstvy.
+    iconPick: "icon" in own ? (icon ? [icon] : []) : type.icons
+  };
+}
 
 const isTunnel = ["==", ["get", "brunnel"], "tunnel"];
 const isBridge = ["==", ["get", "brunnel"], "bridge"];
@@ -1111,6 +1218,10 @@ export function emptyOverrides() {
     hillshade: false,
     palette: {},
     layers: {},
+    // Značené trasy majú vlastnú položku, lebo to nie sú nastavenia JEDNEJ
+    // vrstvy: jeden druh trasy má v štýle tri vrstvy (pásik, ikona, názov)
+    // a odstup od cesty je vlastnosť všetkých naraz.
+    trails: { gap: {}, types: {} },
     poi: { hidden: [] },
     maps: {}
   };
@@ -1312,6 +1423,50 @@ export function normalizeOverrides(raw) {
     if (Object.keys(clean).length) out.palette[themeKey] = clean;
   }
 
+  // ---- značené trasy ----
+  // Odstupy sú v pixeloch pri z16 (TRAIL_GAP_ZOOM) a zapisuje sa len to, čo
+  // sa od predvolenej hodnoty naozaj líši – rovnako ako pri palete.
+  const rawTrails = raw.trails && typeof raw.trails === "object" ? raw.trails : {};
+  for (const [key, def] of Object.entries(TRAIL_GAP_DEFAULTS)) {
+    const value = (rawTrails.gap || {})[key];
+    if (value == null) continue;
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 60) {
+      problems.push(`Odstup trás "${key}" musí byť číslo od 0 do 60 px (${value}).`);
+      continue;
+    }
+    const round = Math.round(n * 10) / 10;
+    if (round !== def) out.trails.gap[key] = round;
+  }
+  for (const [id, def] of Object.entries(rawTrails.types || {})) {
+    if (!TRAIL_BY_ID[id]) {
+      problems.push(`Neznámy druh trasy "${id}" – preskakujem.`);
+      continue;
+    }
+    if (!def || typeof def !== "object") {
+      problems.push(`Nastavenie trasy "${id}" nie je objekt – preskakujem.`);
+      continue;
+    }
+    const clean = {};
+    if (def.dash != null) {
+      if (!DASH_IDS.includes(def.dash)) {
+        problems.push(`Trasa "${id}": neznámy vzor čiary "${def.dash}".`);
+      } else if (def.dash !== TRAIL_BY_ID[id].dash) {
+        clean.dash = def.dash;
+      }
+    }
+    if (def.icon != null) {
+      const icon = String(def.icon).trim();
+      // Prázdny reťazec je platná odpoveď: „na tejto trase žiadnu ikonu".
+      if (icon && !/^[A-Za-z0-9_.:-]{1,64}$/.test(icon)) {
+        problems.push(`Trasa "${id}": neplatné meno ikony "${def.icon}".`);
+      } else {
+        clean.icon = icon;
+      }
+    }
+    if (Object.keys(clean).length) out.trails.types[id] = clean;
+  }
+
   // ---- vrstvy ----
   cleanLayers(raw.layers, out.layers, problems, "");
 
@@ -1452,6 +1607,8 @@ export function hasOverrides(o) {
     (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
+    Object.keys(o.trails?.gap || {}).length > 0 ||
+    Object.keys(o.trails?.types || {}).length > 0 ||
     (o.poi?.hidden || []).length > 0 ||
     Object.values(o.maps || {}).some(
       (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
@@ -3055,8 +3212,9 @@ export function buildStyle({
   //     ━━ červená (off 0,5) ━
   //     ━━ modrá   (off 1,5) ━   druhá trasa po tej istej ceste
   //
-  // Pruh (`off`) prichádza z dát, `line-offset` ho prepočíta na pixely –
-  // preto sa pásiky neprekrývajú ani vtedy, keď po ceste vedie päť trás.
+  // Pruh (`side` + `off`) prichádza z dát, `line-offset` ho prepočíta na
+  // pixely – preto sa pásiky neprekrývajú ani vtedy, keď po ceste vedie päť
+  // trás. Pešie trasy idú na jednu stranu, kolesové na druhú.
   if (trailsUrl) {
     // Farby značiek idú cez paletu, nie natvrdo z dát: „červená" značka má
     // v každej téme vyzerať ako červená značka, nie ako presne to `#ff0000`,
@@ -3074,28 +3232,71 @@ export function buildStyle({
       ["coalesce", ["get", "hex"], c[fallbackKey]]
     ];
 
-    // Posun pásika od osi cesty. `["zoom"]` smie byť len vstupom
-    // najvrchnejšieho `interpolate`, preto sa násobí až vo výstupoch stopov,
-    // nie výrazom `["*", ["interpolate", …], …]`.
+    // ---- posun pásika od osi cesty ----
+    //
+    //     line-offset = side × (odstup(po čom vedie) + poradie × rozostup)
+    //
+    // ODSTUP NIE JE JEDNO ČÍSLO. Asfaltka je v mape pri z16 široká deväť
+    // pixelov plus obrys, chodník dva – odstup, pri ktorom sa pásik lepí na
+    // chodník, leží uprostred cesty. Preto sú dva: pri ceste ide pásik tesne
+    // ZA jej okraj (žiadna medzera, ale ani prekryv), pri chodníku a lesnej
+    // ceste ostáva jemná medzera, nech je pod pásikom vidieť aj samotný
+    // chodník aj s tým, že je prerušovaný. Po čom trasa vedie, hovoria dáta
+    // (`way`) – tu je len to, koľko to v pixeloch znamená.
+    //
+    // ROZOSTUP DVOCH TRÁS je šírka pásika, teda druhá trasa je nalepená na
+    // prvú bez medzery. Tri značky na jednom chodníku majú vyzerať ako jeden
+    // trojfarebný pás, nie ako tri čiary rozhádzané do polovice obrazovky.
+    //
+    // Čísla sú pixely pri z16 (referenčný zoom, v ktorom sa to ladí) a celá
+    // krivka sa škáluje pomerom voči nim, keď ich developer mode prepíše.
+    const trailGaps = trailGapPx(overrides);
+    const scaled = (stops, ref, want) =>
+      stops.map(([z, v]) => [z, Math.round(((v * want) / ref) * 100) / 100]);
+    const ROAD_STOPS = scaled(TRAIL_OFFSET_ROAD, TRAIL_GAP_DEFAULTS.road, trailGaps.road);
+    const PATH_STOPS = scaled(TRAIL_OFFSET_PATH, TRAIL_GAP_DEFAULTS.path, trailGaps.path);
+    const PITCH_STOPS = scaled(TRAIL_PITCH, TRAIL_GAP_DEFAULTS.pitch, trailGaps.pitch);
+
+    // `["zoom"]` smie byť len vstupom najvrchnejšieho `interpolate`, preto sa
+    // celý výpočet skladá až vo výstupoch stopov – `["*", ["interpolate", …]]`
+    // by MapLibre odmietol. Stopy majú preto všetky tri krivky rovnaké.
     const trailOffset = [
       "interpolate",
       ["linear"],
       ["zoom"],
-      // Krok pruhu musí byť aspoň polovica šírky cesty pod ním, inak by
-      // pásik ležal na ceste. Rastie preto rýchlejšie než šírka pásika –
-      // na z20 sú cesty široké desiatky pixelov.
-      ...[[9, 1.6], [12, 2.4], [14, 4], [16, 6], [20, 20]].flatMap(
-        ([z, step]) => [z, ["*", step, num("off", 0)]]
-      )
+      ...TRAIL_OFFSET_ZOOMS.flatMap((z, i) => [
+        z,
+        [
+          "*",
+          num("side", 1),
+          [
+            "+",
+            ["case", ["==", str("way"), "path"], PATH_STOPS[i][1], ROAD_STOPS[i][1]],
+            ["*", num("off", 0), PITCH_STOPS[i][1]]
+          ]
+        ]
+      ])
     ];
 
-    /** Ikona podľa druhu trasy – prvá, ktorú vybraná sada naozaj má. */
+    /**
+     * Ikona podľa druhu trasy – prvá, ktorú vybraná sada naozaj má.
+     *
+     * Meno sa skúša aj s príponou sady, aj holé: zo zoznamu v `TRAIL_TYPES`
+     * chodia holé mená (`bicycle`), z developer módu meno tak, ako je
+     * v sprite (a to už príponu má). Ikona, ktorú sada nemá, sa nenastaví –
+     * chýbajúci obrázok znamená nevykreslený symbol a v pipeline zhodí
+     * kontrolu štýlu.
+     */
     const pickIcon = (names) => {
-      for (const n of names) {
+      for (const n of names || []) {
         if (hasIcon(`${n}${suffix}`)) return `${n}${suffix}`;
+        if (hasIcon(n)) return n;
       }
       return null;
     };
+
+    /** Druhy trás už aj s tým, čo na nich prepísal developer mode. */
+    const trailTypes = TRAIL_TYPES.map((t) => trailTypeDef(t, overrides));
 
     // Popisok: „0801 Chodník hrdinov SNP", inak čo z toho je.
     const trailLabel = [
@@ -3139,7 +3340,7 @@ export function buildStyle({
       ["trasy", "Podklad pod pásikmi trás", "line", { "line-color": "trailHalo" }]
     );
 
-    for (const { id, label, palette: paletteKey, dash } of TRAIL_TYPES) {
+    for (const { id, label, palette: paletteKey, dash } of trailTypes) {
       const filter = ["==", str("route"), id];
       add(
         {
@@ -3155,7 +3356,7 @@ export function buildStyle({
             "line-width": zw([[9, 0.9], [12, 1.3], [14, 1.9], [16, 2.6], [20, 6]]),
             "line-offset": trailOffset,
             "line-opacity": zl([[9, 0.75], [13, 0.95]]),
-            ...(dash ? { "line-dasharray": dash } : {})
+            ...(dashArray(dash) ? { "line-dasharray": dashArray(dash) } : {})
           }
         },
         ["trasy", label, "line", {}, [...MARK_KEYS, paletteKey]]
@@ -3164,8 +3365,8 @@ export function buildStyle({
 
     // Ikony a popisky idú až za všetky pásiky, aby sa čiara jednej trasy
     // nekreslila cez popisok druhej.
-    for (const { id, label, palette: paletteKey, icons: iconNames } of TRAIL_TYPES) {
-      const icon = pickIcon(iconNames);
+    for (const { id, label, palette: paletteKey, iconPick } of trailTypes) {
+      const icon = pickIcon(iconPick);
       if (!icon) continue;
       add(
         {
@@ -3204,7 +3405,7 @@ export function buildStyle({
       );
     }
 
-    for (const { id, label, palette: paletteKey } of TRAIL_TYPES) {
+    for (const { id, label, palette: paletteKey } of trailTypes) {
       add(
         {
           id: `trail-${id}-label`,

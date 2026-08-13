@@ -47,6 +47,10 @@ import {
   selectedIconSource,
   TRAIL_TYPES,
   TRAIL_MARK_COLOURS,
+  TRAIL_GAP_DEFAULTS,
+  TRAIL_GAP_ZOOM,
+  trailGapPx,
+  trailTypeDef,
   DEFAULT_MAP_TYPE,
   mapTypeDef,
   mapTypeHidden,
@@ -276,6 +280,7 @@ export function initDevMode({
     ["layers", "Vrstvy"],
     ["pick", "Prvky"],
     ["palette", "Paleta"],
+    ["trails", "Trasy"],
     ["icons", "Ikony"],
     ["poi", "POI"],
     ["file", "Súbor"]
@@ -539,12 +544,16 @@ export function initDevMode({
     );
     const nLayers = Object.keys(overrides.layers).length;
     const nPoi = overrides.poi.hidden.length;
+    const nTrails =
+      Object.keys(overrides.trails.gap).length +
+      Object.keys(overrides.trails.types).length;
     const perMap = Object.entries(overrides.maps)
       .map(([id, m]) => `${mapTypeDef(id).label} ${Object.keys(m.layers).length}`)
       .join(", ");
     status.textContent = hasOverrides(overrides)
       ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
-        `${nPoi} skrytých POI · ikony ${selectedIconSource(overrides)}` +
+        `${nPoi} skrytých POI · ${nTrails} úprav trás · ` +
+        `ikony ${selectedIconSource(overrides)}` +
         (perMap ? ` · po mapách: ${perMap}` : "") +
         " · uložené v prehliadači"
       : "Žiadne zmeny – mapa beží na pôvodnom štýle.";
@@ -2211,6 +2220,233 @@ export function initDevMode({
     ]);
   }
 
+  // ---------- tab: trasy ----------
+  // Značené trasy sa nedajú poriadne ladiť v záložke Vrstiev: jeden druh
+  // trasy sú tam TRI vrstvy (pásik, ikona, názov), farba nie je v `paint`, ale
+  // vo výraze podľa značky z OSM, a odstup od cesty je vlastnosť všetkých
+  // naraz. Táto záložka je preto o druhu trasy, nie o vrstve.
+
+  /** Nastavenie jedného druhu trasy (`overrides.trails.types[id]`). */
+  function setTrailType(id, patch) {
+    const cur = { ...(overrides.trails.types[id] || {}), ...patch };
+    for (const k of Object.keys(cur)) if (cur[k] === undefined) delete cur[k];
+    if (Object.keys(cur).length) overrides.trails.types[id] = cur;
+    else delete overrides.trails.types[id];
+  }
+
+  /** Odstup pásikov od cesty; `undefined` = späť na predvolený. */
+  function setTrailGap(key, value) {
+    if (value === undefined || value === null || value === "" ||
+        Number(value) === TRAIL_GAP_DEFAULTS[key]) {
+      delete overrides.trails.gap[key];
+    } else {
+      overrides.trails.gap[key] = Number(value);
+    }
+  }
+
+  /** Mená ikon z nasadenej sady (aj s tou, ktorú štýl práve používa). */
+  function iconNames(extra) {
+    const set = (getIconSets?.() || []).find(
+      (s2) => s2.id === selectedIconSource(overrides)
+    ) || (getIconSets?.() || [])[0];
+    return [...new Set([...(extra ? [extra] : []), ...(set?.icons || [])])].sort();
+  }
+
+  /** Ktorá ikona je pre daný druh trasy naozaj v mape (z hotového štýlu). */
+  function trailIconNow(id) {
+    const layer = getStyle().layers.find((l) => l.id === `trail-${id}-icon`);
+    const name = (layer?.layout || {})["icon-image"];
+    return typeof name === "string" ? name : "";
+  }
+
+  function renderTrails() {
+    const theme = getTheme();
+    const colors = mergedPalette(theme, overrides);
+    const changedPalette = overrides.palette[theme] || {};
+    const gaps = trailGapPx(overrides);
+
+    // ---- odstup od cesty ----
+    const gapFields = [
+      ["road", "Pri ceste", "pásik ide tesne za okraj cesty aj s jej obrysom"],
+      ["path", "Pri chodníku a lesnej ceste", "jemný odstup, nech je pod pásikom vidieť aj chodník"],
+      ["pitch", "Rozostup dvoch trás", "0 = druhá trasa nalepená na prvú bez medzery"]
+    ].map(([key, label, note]) =>
+      el("div", { class: `dev-sub${overrides.trails.gap[key] != null ? " changed" : ""}` }, [
+        numberField({
+          label,
+          value: gaps[key],
+          min: 0,
+          max: 60,
+          step: 0.1,
+          onChange: (v) => {
+            setTrailGap(key, v);
+            apply({ immediate: true });
+          }
+        }),
+        el("span", { class: "dev-note", text: `${note} · predvolené ${TRAIL_GAP_DEFAULTS[key]} px` })
+      ])
+    );
+
+    // ---- druhy trás ----
+    const typeRows = TRAIL_TYPES.map((type) => {
+      const def = trailTypeDef(type, overrides);
+      const own = overrides.trails.types[type.id] || {};
+      const icons = iconNames(trailIconNow(type.id));
+      return el("div", { class: `dev-item${Object.keys(own).length ? " changed" : ""}` }, [
+        el("div", { class: "dev-row" }, [
+          el("span", { class: "dev-swatch", style: `background:${colors[type.palette]}` }),
+          el("span", { class: "dev-name" }, [
+            el("span", { text: type.label }),
+            el("small", {
+              text: `${type.id} · ${type.side > 0 ? "vpravo od cesty" : "vľavo od cesty (opačná strana než pešie)"}`
+            })
+          ])
+        ]),
+        el("div", { class: "dev-sub" }, [
+          el("span", { class: "dev-note", text: "Farba bez značky" }),
+          colorControl({
+            value: colors[type.palette],
+            changed: !!changedPalette[type.palette],
+            onInput: (v) => {
+              setPaletteColor(type.palette, v);
+              apply({ rerender: false });
+            },
+            onReset: changedPalette[type.palette]
+              ? () => {
+                  setPaletteColor(type.palette, undefined);
+                  apply({ immediate: true });
+                }
+              : null
+          })
+        ]),
+        el("div", { class: `dev-sub${own.dash ? " changed" : ""}` }, [
+          dashField({
+            label: "Čiara",
+            value: def.dash,
+            onChange: (v) => {
+              setTrailType(type.id, { dash: v === type.dash ? undefined : v });
+              apply({ immediate: true });
+            }
+          }),
+          own.dash
+            ? el("button", {
+                type: "button",
+                class: "dev-mini",
+                title: "Späť na pôvodnú čiaru",
+                text: "⟲",
+                onclick: () => {
+                  setTrailType(type.id, { dash: undefined });
+                  apply({ immediate: true });
+                }
+              })
+            : null
+        ]),
+        el("div", { class: `dev-sub${own.icon != null ? " changed" : ""}` }, [
+          selectField({
+            label: "Ikona",
+            // Prázdna položka je „žiadna" – trasa hustá na ikonky sa inak
+            // nedá zbaviť inak než skrytím celej vrstvy.
+            value: own.icon != null ? own.icon : trailIconNow(type.id),
+            options: [["", "— žiadna —"], ...icons.map((n) => [n, n])],
+            onChange: (v) => {
+              setTrailType(type.id, { icon: v });
+              apply({ immediate: true });
+            }
+          }),
+          own.icon != null
+            ? el("button", {
+                type: "button",
+                class: "dev-mini",
+                title: "Späť na pôvodnú ikonu",
+                text: "⟲",
+                onclick: () => {
+                  setTrailType(type.id, { icon: undefined });
+                  apply({ immediate: true });
+                }
+              })
+            : null
+        ])
+      ]);
+    });
+
+    // ---- farby značiek ----
+    // Turistická značka farbu NESIE z OSM (červená, modrá…), takže farba
+    // druhu trasy je pri nej len náhrada pre trasy bez značky. Skutočné
+    // farby značiek sú tieto – a patria sem, nie do palety niekde inde.
+    const markRows = TRAIL_MARK_COLOURS.map(([name, key]) =>
+      el("div", { class: `dev-prow${changedPalette[key] ? " changed" : ""}` }, [
+        el("span", { class: "dev-swatch", style: `background:${colors[key]}` }),
+        el("span", { class: "dev-name", title: key }, [
+          el("span", { text: PALETTE_LABELS[key] || name }),
+          el("small", { text: `colour=${name}` })
+        ]),
+        colorControl({
+          value: colors[key],
+          changed: !!changedPalette[key],
+          onInput: (v) => {
+            setPaletteColor(key, v);
+            apply({ rerender: false });
+          },
+          onReset: changedPalette[key]
+            ? () => {
+                setPaletteColor(key, undefined);
+                apply({ immediate: true });
+              }
+            : null
+        })
+      ])
+    );
+
+    return el("div", {}, [
+      el("p", {
+        class: "dev-hint",
+        text:
+          "Značené trasy sa kreslia ako farebné pásiky vedľa cesty, nie na nej – " +
+          "samotná cesta tak zostane vidieť. Pešie trasy idú na jednu stranu, " +
+          "cyklo a MTB na druhú; druhá trasa na tej istej ceste sa nalepí na prvú."
+      }),
+      el("div", { class: "dev-h5" }, [
+        el("span", { text: "Odstup od cesty" }),
+        el("small", { text: `v pixeloch pri z${TRAIL_GAP_ZOOM}, ostatné zoomy sa škálujú s ním` })
+      ]),
+      ...gapFields,
+      el("div", { class: "dev-bulk on" }, [
+        el("button", {
+          type: "button",
+          class: "dev-btn danger",
+          text: "Späť na predvolené odstupy",
+          onclick: () => {
+            overrides.trails.gap = {};
+            apply();
+          }
+        })
+      ]),
+      el("div", { class: "dev-h5" }, [
+        el("span", { text: "Druhy trás" }),
+        el("small", { text: "farba, čiara a ikona podľa druhu (route)" })
+      ]),
+      el("div", { class: "dev-list" }, typeRows),
+      el("div", { class: "dev-h5" }, [
+        el("span", { text: "Farby značiek" }),
+        el("small", { text: "turistická značka nesie farbu z OSM – toto sú tie farby" })
+      ]),
+      el("div", { class: "dev-list" }, markRows),
+      el("div", { class: "dev-bulk on" }, [
+        el("button", {
+          type: "button",
+          class: "dev-btn danger",
+          text: "Späť na pôvodné trasy",
+          onclick: () => {
+            overrides.trails = { gap: {}, types: {} };
+            for (const [, key] of TRAIL_MARK_COLOURS) setPaletteColor(key, undefined);
+            for (const t of TRAIL_TYPES) setPaletteColor(t.palette, undefined);
+            apply();
+          }
+        })
+      ])
+    ]);
+  }
+
   // ---------- tab: ikony ----------
   /**
    * Náhľad ikoniek: sprite je SDF, takže alfa nesie vzdialenostné pole a
@@ -2531,6 +2767,8 @@ export function initDevMode({
         ? renderPick()
         : tab === "palette"
         ? renderPalette()
+        : tab === "trails"
+        ? renderTrails()
         : tab === "icons"
         ? renderIcons()
         : tab === "poi"
