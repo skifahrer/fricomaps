@@ -2396,7 +2396,7 @@ jobs:
   # `needs` niekoho ďalšieho.
   apple-archive:
     name: Balíky ako Apple Archive (.aar)
-    needs: [plan, deploy, contours, rocks, terrain, trails, features, tiles]
+    needs: [plan, deploy, contours, rocks, terrain, trails, features, tiles, wiki]
     if: ${{ !cancelled() && needs.deploy.result == 'success' && needs.plan.outputs.opt_publish == 'true' && needs.plan.outputs.opt_apple_archive == 'true' }}
     runs-on: macos-latest
     permissions:
@@ -2414,13 +2414,21 @@ jobs:
           path: _site
           merge-multiple: true
       # Články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
-      # rozpočet), takže majú vlastný artefakt aj vlastný balík.
+      # rozpočet), takže majú vlastný artefakt aj vlastný balík – a ten sa
+      # rovnako ako ostatné tri vyrába aj ako `.aar`.
+      #
+      # Meno artefaktu aj podmienka sú TIE ISTÉ, aké má krok v `deploy`.
+      # Nesmú sa rozísť: keby sa tu sťahovalo pod iným menom, `_wiki` by
+      # nevzniklo, `publish-map.py` by ten balík považoval za „v tomto builde
+      # nie je" a starý `-wikipedia.aar` na Drive by ZMAZAL. Podmienka je
+      # `needs.wiki.outputs.enabled`, nie voľba z formulára: tá hovorí, čo
+      # sa žiadalo, kdežto toto, či články naozaj vznikli.
       - name: Stiahni články z Wikipédie
-        if: ${{ needs.plan.outputs.opt_wikipedia == 'true' }}
+        if: ${{ needs.wiki.outputs.enabled == 'true' }}
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
-          name: wiki
+          name: wiki-articles
           path: _wiki
       - name: Zabaľ a nahraj .aar na Drive
         id: publish
@@ -2441,6 +2449,10 @@ jobs:
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
           TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+          # „Mali prísť články?" – aby sa dalo rozoznať „wiki v tomto builde
+          # nie je" od „artefakt sa nestiahol". Prvé je v poriadku, druhé by
+          # zmazalo dobrý balík na Drive.
+          WIKI_ENABLED: ${{ needs.wiki.outputs.enabled || 'false' }}
         run: workers/deploy/apple-archive.sh
       # Katalóg: `deploy` doň zapísal ZIPy, tento krok k nim pridá `.aar`.
       # `git pull --rebase` v skripte je tu nutnosť, nie poistka – `deploy`
