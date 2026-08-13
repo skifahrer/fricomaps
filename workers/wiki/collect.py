@@ -57,6 +57,7 @@ Použitie:
     python3 workers/wiki/collect.py --pbf=… --langs=sk,en --format=wikitext
 """
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -111,6 +112,58 @@ TRIES = 4
 # Nerob to na servery, ktoré práve nestíhajú replikáciu (API:Etiquette).
 # Wikimedia na to odpovie 503 s `Retry-After`, čo `Api.get` počká.
 MAXLAG = 5
+
+
+# Číselníky ležia v susednom priečinku (`workers/data`). Priečinok = job,
+# súbor = krok, takže hĺbka je vždy jedna úroveň.
+_DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     "data")
+
+
+def jazyky(country, extra, table):
+    """Ktoré jazyky sťahovať: angličtina, jazyk krajiny a čo si žiada volajúci.
+
+    ANGLIČTINA VŽDY, lebo je to jediný jazyk, v ktorom je článok skoro o
+    všetkom, a mapu s ním možno dať do ruky komukoľvek. K nej JAZYK KRAJINY,
+    v ktorej bod leží – to je to, čo číta domáci.
+
+    Krajina sa berie z REGIÓNU, nie z bodu: extrakt kraja je rezaný jeho
+    hranicou, takže bod v ňom v tej krajine naozaj leží. Presnejšie by to bolo
+    len reverzným geokódovaním hraníc, čo je celá ďalšia pipeline kvôli pár
+    bodom pri hranici – a tie sa aj tak chytia inak: jazyk, ktorý si objekt
+    píše sám v tagu (`wikipedia=pl:Rysy`), sa sťahuje tiež (viď `odkazy`).
+    """
+    out = ["en"]
+    country = (country or "").strip().lower()
+    if country:
+        try:
+            with open(table, encoding="utf-8") as f:
+                tabulka = json.load(f)
+        except (OSError, ValueError) as exc:
+            log(f"::warning::{table} sa nedá prečítať ({exc}) – ide sa len po "
+                f"anglicky a v jazykoch, ktoré si objekty píšu samy.")
+            tabulka = {}
+        domace = tabulka.get(country)
+        if domace:
+            out += [str(v).strip().lower() for v in domace if str(v).strip()]
+        else:
+            log(f"::warning::Krajina „{country}“ nie je vo "
+                f"{os.path.basename(table)} – domáci jazyk sa nedoplní. Dopíš "
+                f"ju tam, alebo si ho vypýtaj cez voľbu `wiki_langs`.")
+    out += [x.strip().lower() for x in (extra or "").split(",") if x.strip()]
+    return list(dict.fromkeys(out))
+
+
+def load(name, path):
+    """workers/*.py sa načítavajú cez `importlib` – v priečinku holým menom."""
+    if name in sys.modules:
+        return sys.modules[name]
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(os.path.dirname(os.path.abspath(__file__)), path))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def log(msg):
@@ -182,29 +235,39 @@ def opl_unescape(text):
                   lambda m: chr(int(m.group(1), 16)), text)
 
 
-def odkaz(tags, keys, langs):
-    """Z tagov objektu vytiahne `(jazyk, názov)` alebo `("wikidata", Q…)`.
+def odkazy(tags, keys, langs):
+    """Z tagov objektu vytiahne VŠETKY `(jazyk, názov)`, ktoré si píše sám.
 
-    Poradie je dané: najprv `wikipedia` v požadovaných jazykoch, potom hociktorý
-    jazyk, až nakoniec `wikidata` – článok v jazyku, ktorý si beh vypýtal, je
-    lepší než ten, na ktorý ukazuje sitelink.
+    Vracia `({jazyk: názov}, wikidata_id)`. Jazyk v tagu je zároveň odpoveďou
+    na „v akej krajine ten bod leží": `wikipedia=pl:Rysy` na poľskej strane
+    hrebeňa dá poľský článok bez toho, aby o Poľsku niekto musel vedieť
+    vopred. Zvyšné jazyky (angličtinu a jazyk krajiny) dopĺňa `doplnkove_langs`
+    cez `langlinks` – z jedného článku sa dá zistiť, ako sa volá v ostatných.
+
+    Predtým sa bral PRVÝ jazyk, ktorý sedel, a ostatné sa zahodili: objekt
+    s `wikipedia=sk:…` tak nikdy nedostal anglický článok, hoci existuje.
     """
     hodnoty = {}
     for k, v in tags.items():
         if not v.strip():
             continue
         if k == "wikipedia" or k.startswith("wikipedia:"):
-            hodnoty.setdefault(*wiki_hodnota(k, v))
-    for lang in langs:
-        if lang in hodnoty:
-            return lang, hodnoty[lang]
-    if hodnoty:
-        lang = sorted(hodnoty)[0]
-        return lang, hodnoty[lang]
+            lang, nazov = wiki_hodnota(k, v)
+            if nazov:
+                hodnoty.setdefault(lang, nazov)
+    # Odkaz bez jazyka (`wikipedia=Devín`) je v OSM chyba a jazyk z neho nikto
+    # nevyčíta. Skúsi sa vo VŠETKÝCH žiadaných jazykoch naraz – stojí to len
+    # ďalší názov v dávke, ktorá aj tak ide, a inak by objekt vypadol celý.
+    holy = hodnoty.pop("", "")
+    if holy:
+        for lang in langs:
+            hodnoty.setdefault(lang, holy)
+    qid = ""
     for k in keys:
         if k.endswith("wikidata") and re.fullmatch(r"Q\d+", tags.get(k, "")):
-            return "wikidata", tags[k]
-    return None, None
+            qid = tags[k]
+            break
+    return hodnoty, qid
 
 
 def wiki_hodnota(key, value):
@@ -234,329 +297,21 @@ def wiki_hodnota(key, value):
 
 
 # ---------- 2. sieť ----------
-
-class Api:
-    """Volania na api.php a REST – sériovo, so slušnosťou a s meraním."""
-
-    def __init__(self, pause=PAUSE_S):
-        self.pause = pause
-        self.pocet = 0
-        self.bajtov = 0
-        self.cakanie = 0.0
-
-    def get(self, url):
-        for pokus in range(1, TRIES + 1):
-            req = urllib.request.Request(url, headers={
-                "User-Agent": UA, "Accept-Encoding": "identity"})
-            try:
-                with urllib.request.urlopen(req, timeout=60) as r:
-                    telo = r.read()
-                self.pocet += 1
-                self.bajtov += len(telo)
-                time.sleep(self.pause)
-                return telo
-            except urllib.error.HTTPError as exc:
-                if exc.code in (429, 503) and pokus < TRIES:
-                    # Wikimedia povie, koľko čakať – tak sa to počká, a nie
-                    # háda. Bez toho by opakovanie útočilo do toho istého.
-                    cakaj = float(exc.headers.get("Retry-After") or 5 * pokus)
-                    log(f"  Wikipedia povedala HTTP {exc.code}, čakám "
-                        f"{cakaj:.0f} s ({pokus}. z {TRIES})")
-                    self.cakanie += cakaj
-                    time.sleep(cakaj)
-                    continue
-                if exc.code == 404:
-                    return None
-                if pokus >= TRIES:
-                    raise
-            except (urllib.error.URLError, TimeoutError) as exc:
-                if pokus >= TRIES:
-                    raise
-                log(f"  sieť zlyhala ({exc}), skúšam znova "
-                    f"({pokus}. z {TRIES})")
-                time.sleep(2 * pokus)
-        return None
-
-    def json(self, url):
-        telo = self.get(url)
-        return json.loads(telo) if telo else None
-
-
-def wikidata_na_nazvy(api, qids, langs):
-    """`Q…` → `(jazyk, názov)` podľa sitelinks, v poradí jazykov."""
-    out = {}
-    qids = sorted(set(qids))
-    for i in range(0, len(qids), WIKIDATA_BATCH):
-        davka = qids[i:i + WIKIDATA_BATCH]
-        url = ("https://www.wikidata.org/w/api.php?action=wbgetentities"
-               "&props=sitelinks&format=json&formatversion=2&ids="
-               + "|".join(davka))
-        data = api.json(url) or {}
-        for qid, ent in (data.get("entities") or {}).items():
-            links = ent.get("sitelinks") or {}
-            for lang in langs:
-                sl = links.get(f"{lang}wiki")
-                if sl and sl.get("title"):
-                    out[qid] = (lang, sl["title"])
-                    break
-        log(f"  wikidata {min(i + WIKIDATA_BATCH, len(qids))}/{len(qids)} → "
-            f"{len(out)} článkov")
-    return out
-
-
-TABULKA = re.compile(r"\{\|.*?\|\}", re.S)
-
-
-def na_text(wikitext):
-    """Wikitext → čistý text. Tabuľky sa odstrihnú PRED parsovaním.
-
-    `mwparserfromhell.strip_code()` tabuľky nerozoberá – nechá ich ako text,
-    takže v článku ostanú riadky `| align=center` a `|-`. Namerané na ôsmich
-    článkoch sk wiki: bez tohto krokov 102 zvyškov `| param=`, s ním jeden
-    jediný (neuzavretá šablóna v jednom článku).
-
-    Čo tým NESTRATÍME: proti hotovému textu z `prop=extracts` má takto
-    prevedený článok 92–144 % dĺžky (medián ~106 %) – teda o nič, čo by
-    v článku bolo, neprichádzame.
-    """
-    # Import je tu a nie na začiatku súboru zámerne: `wikitext`, `intro` ani
-    # `html` túto knižnicu nepotrebujú, tak nech sa beh o ňu opiera len keď
-    # si vypýtal `text`. A keď chýba, nech je to hláška s návodom, nie
-    # `ModuleNotFoundError` v tretej minúte sťahovania.
-    try:
-        import mwparserfromhell
-    except ImportError:
-        raise SystemExit(
-            "::error::Chýba `mwparserfromhell` – prevádza wikitext na čistý "
-            "text pri `wiki_format=text`. Doinštaluj ho (`pip install "
-            "mwparserfromhell`, robí to `workers/wiki/build.sh`), alebo zvoľ "
-            "`wiki_format=wikitext` (bez prevodu) či `wiki_format=intro`.")
-    prev = None
-    while prev != wikitext:            # vnorené tabuľky, zvnútra von
-        prev, wikitext = wikitext, TABULKA.sub("", wikitext)
-    txt = mwparserfromhell.parse(wikitext).strip_code()
-    txt = re.sub(r"(?m)^[|!].*$", "", txt)     # zvyšky riadkov tabuliek
-    txt = re.sub(r"\n{3,}", "\n\n", txt)       # tri a viac prázdnych riadkov
-    return txt.strip()
-
-
-def rozuzli(query):
-    """`{názov, ktorý sme si vypýtali: názov, pod ktorým článok leží}`.
-
-    API vracia dve mapy a MÔŽU SA ZARETIAZIŤ: `normalized` opraví prvé veľké
-    písmo a podčiarkovníky (`devín_hrad` → `Devín hrad`), `redirects` potom
-    presmeruje na cieľ (`Devín` → `Devín (hrad)`). Kto by prešiel len jednu,
-    stratí článok, ktorý sa pritom stiahol – text by v balíku bol a index by
-    ho k objektu nepriradil.
-    """
-    krok = {r["from"]: r["to"] for r in query.get("normalized") or []}
-    krok.update({r["from"]: r["to"] for r in query.get("redirects") or []})
-    out = {}
-    for zdroj in krok:
-        ciel, videne = zdroj, {zdroj}
-        while ciel in krok and krok[ciel] not in videne:
-            ciel = krok[ciel]
-            videne.add(ciel)
-        out[zdroj] = ciel
-    return out
-
-
-def nacitaj_cache(cesta):
-    """`{kľúč článku: záznam}` z minulého behu, alebo prázdno.
-
-    NEDOPÍSANÝ RIADOK SA PRESKOČÍ, nie odmietne: cache sa ukladá aj zo behu,
-    ktorý niekto zrušil v polovici zápisu, a jeden pokazený riadok na konci
-    nesmie znamenať, že sa zahodí aj tých 900 článkov pred ním.
-    """
-    out = {}
-    if not cesta:
-        return out
-    p = os.path.join(cesta, NDJSON)
-    if not os.path.exists(p):
-        return out
-    zlych = 0
-    with open(p, encoding="utf-8") as f:
-        for riadok in f:
-            try:
-                z = json.loads(riadok)
-            except ValueError:
-                zlych += 1
-                continue
-            if z.get("key") and z.get("text") and z.get("revid"):
-                out[z["key"]] = z
-    log(f"Cache: {len(out)} článkov z minulého behu"
-        + (f" ({zlych} nedopísaných riadkov preskočených)" if zlych else ""))
-    return out
-
-
-def sviezost(api, lang, nazvy):
-    """`{názov: (titul, lastrevid, url)}` – jedna otázka na 50 názvov.
-
-    `prop=info` povie `lastrevid` a rozuzlí presmerovania, takže sa z nej dá
-    rozhodnúť, ČO NETREBA sťahovať. Namerané na sk wiki, tých istých 50
-    názvov: `prop=info` 19,9 kB, `prop=revisions` s obsahom 197,4 kB – teda
-    desatina, a k tomu odpadne prevod wikitextu. `lastrevid` z `info` sedí
-    s `revid` obsahu (overené).
-    """
-    out = {}
-    for i in range(0, len(nazvy), CONTENT_BATCH):
-        davka = nazvy[i:i + CONTENT_BATCH]
-        url = (f"https://{lang}.wikipedia.org/w/api.php?action=query"
-               f"&prop=info&inprop=url&redirects=1&maxlag={MAXLAG}"
-               f"&format=json&formatversion=2&titles="
-               + "|".join(urllib.parse.quote(t) for t in davka))
-        data = api.json(url) or {}
-        query = data.get("query") or {}
-        prezvane = rozuzli(query)
-        podla_nazvu = {p.get("title"): p for p in query.get("pages") or []}
-        for nazov in davka:
-            page = podla_nazvu.get(prezvane.get(nazov, nazov))
-            if page and not page.get("missing") and page.get("lastrevid"):
-                out[nazov] = (page["title"], page["lastrevid"],
-                              page.get("fullurl") or "")
-    return out
-
-
-def stiahni_texty(api, lang, nazvy, fmt, cache=None):
-    """Články jedného jazyka. Vracia `({názov z OSM: záznam}, chybné, z cache)`.
-
-    Štyri podoby, dve ceny. Dávkové (desiatky požiadaviek na kraj):
-      `text`      celý článok ako čistý text – wikitext po 50 a prevod tu
-      `wikitext`  celý článok ako wikitext, po 50 a bez prevodu
-      `intro`     len úvod, po 20 (jediná dávková podoba `prop=extracts`)
-    Po jednom článku (tisíce požiadaviek na kraj):
-      `html`      celý článok v HTML z REST API – batch tam neexistuje
-
-    Keď je zapnutá cache, predradí sa jej dávková otázka na `lastrevid`
-    a stiahne sa len to, čo sa medzitým zmenilo.
-    """
-    nazvy = sorted(set(nazvy))
-    hotove, recyklovane, info = {}, 0, {}
-    # Otázka na sviežosť má zmysel, len keď je z čoho recyklovať – na prázdnej
-    # cache je to čistá režija, lebo `prop=revisions` vracia `revid` samo.
-    # `html` je výnimka: REST žiadne `revid` nedá, takže bez tejto otázky by
-    # sa jeho články nemali čím porovnať a cache by pri ňom NIKDY nesadla –
-    # a je to práve ten formát, kde je najdrahšia (jedna požiadavka na článok).
-    if cache is not None and (cache or fmt == "html"):
-        info = sviezost(api, lang, nazvy)
-        zostava = []
-        for nazov in nazvy:
-            if nazov not in info:
-                zostava.append(nazov)          # neexistuje → nech to povie sťahovanie
-                continue
-            titul, revid, url = info[nazov]
-            z = cache.get(f"{lang}:{titul}")
-            if z and z.get("revid") == revid:
-                hotove[nazov] = dict(z, title=titul, url=url or z["url"])
-                recyklovane += 1
-            else:
-                zostava.append(nazov)
-        log(f"  {lang}: {recyklovane} článkov je v cache a nezmenilo sa, "
-            f"{len(zostava)} treba stiahnuť")
-        nazvy = zostava
-        if not nazvy:
-            return hotove, [], recyklovane
-
-    if fmt == "html":
-        nove, chybne = _po_jednom_html(api, lang, nazvy, info)
-    else:
-        nove, chybne = _po_davkach(api, lang, nazvy, fmt)
-    hotove.update(nove)
-    return hotove, chybne, recyklovane
-
-
-def _po_davkach(api, lang, nazvy, fmt):
-    """`text`, `wikitext` a `intro` – po 50, resp. po 20 na požiadavku."""
-    davka_max = INTRO_BATCH if fmt == "intro" else CONTENT_BATCH
-    hotove, chybne = {}, []
-    for i in range(0, len(nazvy), davka_max):
-        davka = nazvy[i:i + davka_max]
-        if fmt == "intro":
-            dotaz = (f"&prop=extracts|info&explaintext=1&exintro=1"
-                     f"&exsectionformat=plain&exlimit={INTRO_BATCH}")
-        else:
-            dotaz = "&prop=revisions|info&rvprop=content|ids&rvslots=main"
-        url = (f"https://{lang}.wikipedia.org/w/api.php?action=query{dotaz}"
-               f"&redirects=1&inprop=url&maxlag={MAXLAG}"
-               f"&format=json&formatversion=2&titles="
-               + "|".join(urllib.parse.quote(t) for t in davka))
-        data = api.json(url) or {}
-        if data.get("error"):
-            # Dávka po 50 nemá ako naraziť na `toomanyvalues`, ale keby áno
-            # (alebo na iný `error`), nesmie z toho byť 50 „neexistujúcich"
-            # článkov – to je presne tichý omyl, ktorý sa potom hľadá v mape.
-            raise SystemExit(f"::error::Wikipedia ({lang}) odmietla dávku "
-                             f"{len(davka)} názvov: "
-                             f"{data['error'].get('code')} – "
-                             f"{data['error'].get('info')}")
-        query = data.get("query") or {}
-        prezvane = rozuzli(query)
-        podla_nazvu = {p.get("title"): p for p in query.get("pages") or []}
-        for nazov in davka:
-            page = podla_nazvu.get(prezvane.get(nazov, nazov))
-            zaznam = _zaznam(lang, nazov, page, fmt)
-            if zaznam:
-                hotove[nazov] = zaznam
-            else:
-                chybne.append(nazov)
-        log(f"  {lang}: {min(i + davka_max, len(nazvy))}/{len(nazvy)} článkov, "
-            f"{api.pocet} požiadaviek")
-    return hotove, chybne
-
-
-def _zaznam(lang, nazov, page, fmt):
-    """Z jednej stránky odpovede spraví záznam, alebo `None` keď z nej nič nie je."""
-    if not page or page.get("missing") is True or page.get("invalid"):
-        return None
-    if fmt == "intro":
-        text = (page.get("extract") or "").strip()
-    else:
-        try:
-            wt = page["revisions"][0]["slots"]["main"]["content"]
-        except (KeyError, IndexError):
-            return None
-        text = wt.strip() if fmt == "wikitext" else na_text(wt)
-    if not text:
-        return None
-    titul = page.get("title") or nazov
-    return {"key": f"{lang}:{titul}", "lang": lang, "title": titul,
-            "pageid": page.get("pageid"),
-            "revid": (page.get("revisions") or [{}])[0].get("revid"),
-            "url": page.get("fullurl") or
-                   f"https://{lang}.wikipedia.org/wiki/"
-                   + urllib.parse.quote(titul.replace(" ", "_")),
-            "text": text}
-
-
-def _po_jednom_html(api, lang, nazvy, info):
-    """`html` z REST API. Dávka tu NIE JE – REST vydá jednu stránku na volanie.
-
-    `info` je výsledok `sviezost()`, keď bola: REST žiadne `revid` nevracia,
-    takže bez neho by sa článok nemal čím porovnať a cache by pri `html`
-    nikdy nesadla.
-    """
-    hotove, chybne = {}, []
-    for n, nazov in enumerate(nazvy, 1):
-        url = (f"https://{lang}.wikipedia.org/api/rest_v1/page/html/"
-               + urllib.parse.quote(nazov.replace(" ", "_"), safe=""))
-        telo = api.get(url)
-        # Postup sa vypíše VŽDY, aj keď článok nevyšel – inak posledný riadok
-        # chýba práve vtedy, keď zlyhal posledný článok, a z logu to vyzerá,
-        # že sa sťahovanie zaseklo.
-        if n % 25 == 0 or n == len(nazvy):
-            log(f"  {lang}: {n}/{len(nazvy)} článkov (HTML, po jednom)")
-        if not telo:
-            chybne.append(nazov)
-            continue
-        titul, revid, plna_url = info.get(nazov, (nazov, None, ""))
-        hotove[nazov] = {
-            "key": f"{lang}:{titul}", "lang": lang, "title": titul,
-            "pageid": None, "revid": revid,
-            "url": plna_url or f"https://{lang}.wikipedia.org/wiki/"
-                   + urllib.parse.quote(titul.replace(" ", "_")),
-            "text": telo.decode("utf-8", "replace")}
-    return hotove, chybne
-
+# Sťahovanie a prevod článkov je vo vlastnom module: je to iná otázka („ako sa
+# článok dostane k nám") než zvyšok tohto súboru („čo v regióne odkazuje na
+# wiki") a spolu to prerástlo strop 800 riadkov.
+articles = load("wiki_articles", "articles.py")
+Api = articles.Api
+wikidata_na_nazvy = articles.wikidata_na_nazvy
+doplnkove_langs = articles.doplnkove_langs
+nacitaj_cache = articles.nacitaj_cache
+stiahni_texty = articles.stiahni_texty
+CONTENT_BATCH = articles.CONTENT_BATCH
+INTRO_BATCH = articles.INTRO_BATCH
+WIKIDATA_BATCH = articles.WIKIDATA_BATCH
+MS_PER_ARTICLE_BATCHED = articles.MS_PER_ARTICLE_BATCHED
+MS_PER_ARTICLE_SINGLE = articles.MS_PER_ARTICLE_SINGLE
+PAUSE_S = articles.PAUSE_S
 
 # ---------- 3. beh ----------
 
@@ -565,7 +320,12 @@ def main():
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--pbf", default="data/region.osm.pbf")
     ap.add_argument("--out", default="wiki-out")
-    ap.add_argument("--langs", default="sk,en",
+    ap.add_argument("--country", default="",
+                    help="`country` regiónu (slovensko) – z neho je DOMÁCI "
+                         "jazyk; angličtina ide vždy")
+    ap.add_argument("--lang-table", default=os.path.join(_DATA, "wiki-languages.json"),
+                    help="číselník krajina → jazyky")
+    ap.add_argument("--langs", default="",
                     help="poradie jazykov (prvý, ktorý je, sa berie)")
     ap.add_argument("--keys", default=",".join(KEYS),
                     help="tagy, v ktorých sa hľadá odkaz")
@@ -581,7 +341,7 @@ def main():
     ap.add_argument("--stats", default="", help="kam dopísať meranie (TSV)")
     args = ap.parse_args()
 
-    langs = [x.strip() for x in args.langs.split(",") if x.strip()]
+    langs = jazyky(args.country, args.langs, args.lang_table)
     keys = [x.strip() for x in args.keys.split(",") if x.strip()]
     if not os.path.exists(args.pbf):
         print(f"::error::PBF {args.pbf} neexistuje – job `wiki` ho dostáva "
@@ -594,35 +354,37 @@ def main():
     log(f"Predfilter: {os.path.getsize(args.pbf) / 1e6:.0f} MB → "
         f"{os.path.getsize(maly) / 1e6:.1f} MB")
 
-    # Odkaz → objekty, ktoré naň ukazujú. Jeden článok má často viac objektov
-    # (hrad ako bod aj ako plocha), a sťahovať ho dvakrát netreba.
-    kde = {}
-    bez_odkazu = 0
+    # Objekt → názvy jeho článku vo VŠETKÝCH jazykoch, ktoré o sebe vie.
+    # Jeden článok má často viac objektov (hrad ako bod aj ako plocha)
+    # a sťahovať ho dvakrát netreba, tak sa to nakoniec otočí na
+    # `(jazyk, názov) → objekty`.
+    veci, bez_odkazu = [], 0
     for o in objekty(maly):
-        lang, nazov = odkaz(o["tags"], keys, langs)
-        if not nazov:
+        tituly, qid = odkazy(o["tags"], keys, langs)
+        if not tituly and not qid:
             bez_odkazu += 1
             continue
-        if lang == "":
-            lang = langs[0]
-        kde.setdefault((lang, nazov), []).append({
-            "typ": o["typ"], "id": o["id"],
-            "name": o["tags"].get("name"),
-            "lat": o["lat"], "lon": o["lon"]})
+        veci.append({"osm": {"typ": o["typ"], "id": o["id"],
+                             "name": o["tags"].get("name"),
+                             "lat": o["lat"], "lon": o["lon"]},
+                     "titles": tituly, "qid": qid})
 
-    qids = [n for (lang, n) in kde if lang == "wikidata"]
-    clankov = len({k for k in kde if k[0] != "wikidata"})
+    qids = sorted({v["qid"] for v in veci if v["qid"] and not v["titles"]})
+    clankov = len({(l, n) for v in veci for l, n in v["titles"].items()})
     log("── Plán ────────────────────────────────────────────")
-    log(f"  objektov s odkazom   {sum(len(v) for v in kde.values())}"
+    log(f"  objektov s odkazom   {len(veci)}"
         + (f" (+{bez_odkazu} s tagom, ktorému nerozumiem)" if bez_odkazu else ""))
     log(f"  článkov priamo       {clankov}")
     log(f"  cez wikidata         {len(qids)}")
-    log(f"  jazyky               {', '.join(langs)}, formát {args.format}")
+    log(f"  jazyky               {', '.join(langs)} (angličtina vždy + jazyk "
+        f"krajiny), formát {args.format}")
     # Odhad z NAMERANÉHO: dávkové podoby ~20 ms na článok, `html` ~500 ms
     # (pauza medzi požiadavkami je v oboch číslach). Nech je z plánu dopredu
     # vidieť, či to budú sekundy alebo hodina – job, ktorý spadne na strop
     # času, minie rozpočet a nevyrobí nič.
-    spolu = clankov + len(qids)
+    # Článkov je pri dvoch jazykoch rádovo dvakrát toľko než objektov – odhad
+    # musí rátať s tým, čo sa naozaj stiahne, nie s počtom bodov.
+    spolu = clankov + len(qids) * len(langs)
     na_clanok = (MS_PER_ARTICLE_SINGLE if args.format == "html"
                  else MS_PER_ARTICLE_BATCHED)
     odhad = (spolu * na_clanok / 1000.0
@@ -641,11 +403,36 @@ def main():
     api = Api()
     if qids:
         log(f"Dohľadávam články pre {len(qids)} wikidata id…")
-        for qid, (lang, nazov) in wikidata_na_nazvy(api, qids, langs).items():
-            kde.setdefault((lang, nazov), []).extend(kde[("wikidata", qid)])
-    for q in list(kde):
-        if q[0] == "wikidata":
-            del kde[q]
+        sitelinks = wikidata_na_nazvy(api, qids, langs)
+        for v in veci:
+            if v["qid"] and not v["titles"]:
+                v["titles"] = dict(sitelinks.get(v["qid"], {}))
+
+    # Doplnenie zvyšných jazykov cez `langlinks`: objekt má v tagoch typicky
+    # jeden `wikipedia=sk:…` a anglický článok o tom istom mieste sa volá inak.
+    chcem = set(langs)
+    chyba = {v_id for v_id, v in enumerate(veci) if set(v["titles"]) < chcem}
+    if chyba:
+        znama = {}
+        for v in veci:
+            for lang, nazov in v["titles"].items():
+                znama.setdefault(lang, []).append(nazov)
+        log(f"Dopĺňam jazyky {', '.join(sorted(chcem))} pre {len(chyba)} "
+            f"objektov cez prepojenia článkov…")
+        prepoj = doplnkove_langs(api, znama, chcem)
+        for v in veci:
+            for lang, nazov in list(v["titles"].items()):
+                for cielovy, cudzi in (prepoj.get((lang, nazov)) or {}).items():
+                    if cielovy in chcem:
+                        v["titles"].setdefault(cielovy, cudzi)
+
+    kde = {}
+    for v in veci:
+        for lang, nazov in v["titles"].items():
+            kde.setdefault((lang, nazov), []).append(v["osm"])
+    if not kde:
+        log("::warning::Ani jeden objekt nemá článok v žiadnom zo žiadaných "
+            "jazykov – balík by bol prázdny.")
 
     if args.max and len(kde) > args.max:
         log(f"::warning::Článkov je {len(kde)}, strop je {args.max} – beriem "
@@ -679,9 +466,15 @@ def main():
             if nazov != z["title"]:
                 clanky[z["key"]]["asked"].append(nazov)
             for o in objekty_odkazu:
-                kde_je[f"{o['typ']}/{o['id']}"] = {
-                    "key": z["key"], "name": o["name"],
-                    "lat": o["lat"], "lon": o["lon"]}
+                # JEDEN OBJEKT MÁ TERAZ VIAC ČLÁNKOV – po jednom na jazyk.
+                # Kým tu stálo priradenie, prepísal posledný jazyk všetky
+                # predošlé (`sorted` ide en → sk, takže z anglického článku
+                # nezostalo v indexe nič, hoci sa stiahol). Kľúče sú preto
+                # v mape podľa jazyka.
+                zaznam = kde_je.setdefault(f"{o['typ']}/{o['id']}", {
+                    "keys": {}, "name": o["name"],
+                    "lat": o["lat"], "lon": o["lon"]})
+                zaznam["keys"][lang] = z["key"]
 
     os.remove(maly)
     znakov, index = 0, []
