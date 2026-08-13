@@ -136,6 +136,11 @@ DEFAULTS = {
     # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
     # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
     "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
+    # To isté ešte raz ako `.aar` (Apple Archive, LZFSE) – iOS a macOS ho
+    # rozbalia systémovo, bez tretej knižnice v aplikácii. Robí to vlastný job
+    # na macOS, lebo nástroj `aa` je súčasť macOS a inde neexistuje; keď ho
+    # nechceš platiť pri každom builde, `apple_archive=false`.
+    "apple_archive": ("true", "nahrať mapu aj ako .aar (Apple Archive, job na macOS)"),
     # Ktorý asset s hotovými skalami z tieňovaných dlaždíc použiť (platí len
     # pri `rock_source: tienovanie`). Prázdne = najnovší pre daný výrez,
     # takže stačí pustiť ten workflow a potom build – nič sa neprepisuje.
@@ -396,6 +401,10 @@ def main():
 
     # A to isté pre publikovanie na Drive: `publish=0` by ho ticho vyplo
     # a mapa by nikde nepribudla bez toho, aby to niekto povedal.
+    if values["apple_archive"] not in ("true", "false"):
+        print(f"::error::Voľba „apple_archive“ musí byť true alebo false, "
+              f"nie „{values['apple_archive']}“.", file=sys.stderr)
+        return 1
     if values["publish"] not in ("true", "false"):
         print(f"::error::Voľba „publish“ musí byť true alebo false, "
               f"nie „{values['publish']}“.", file=sys.stderr)

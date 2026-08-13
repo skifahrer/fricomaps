@@ -350,10 +350,18 @@ def katalog_meno(regions, key, kind):
     return r.get("name") or key
 
 
-def zapis_katalog(path, parts, regions, baliky, man):
+def zapis_katalog(path, parts, regions, baliky, man, merge=False):
     """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
 
-    `baliky` je zoznam `(druh, meno, veľkosť, id)` – to, čo sa naozaj nahralo.
+    `baliky` je zoznam `(druh, meno, veľkosť, id, formát)` – to, čo sa naozaj
+    nahralo.
+
+    `merge=True` znamená „tento beh nahral LEN ĎALŠÍ FORMÁT toho istého, čo
+    tam už je" – vtedy sa balíky doplnia k existujúcim namiesto nahradenia.
+    Tak to má job na macOS, ktorý dobalí `.aar` po tom, čo `deploy` nahral
+    ZIPy: keby prepisoval, katalóg by o ZIPoch prestal vedieť. Pri bežnom
+    behu (`merge=False`) sa naopak MUSÍ nahradiť – inak by v katalógu ostali
+    odkazy na balíky, ktoré tento build nevyrobil.
     """
     try:
         with open(path) as f:
@@ -389,12 +397,11 @@ def zapis_katalog(path, parts, regions, baliky, man):
         "updated_at": data["_updated_at"],
         "run": env("GITHUB_RUN_NUMBER"),
         "layers": vrstvy(),
-        "maps": {kind or "mapa": {
-            "file": name,
-            "size": velkost,
-            "link": folder.file_link(fid),
-            "download": folder.download_link(fid),
-        } for kind, name, velkost, fid in baliky},
+        # Balík × formát. `formats` je to podstatné (ZIP otvorí čokoľvek,
+        # `.aar` rozbalí iOS a macOS systémovo); `file`/`size`/`link` na
+        # úrovni balíka ostávajú a ukazujú na ZIP, aby starší čitateľ
+        # katalógu nemusel vedieť o formátoch.
+        "maps": {},
     }
     # Čo o mape treba vedieť pri výbere, nie až po rozbalení. Zoomy a zdroje
     # nesie manifest, tak sa berú z neho. `bbox` je bbox MAPY, teda celého
@@ -411,6 +418,24 @@ def zapis_katalog(path, parts, regions, baliky, man):
             polozka["area_bbox"] = [float(v) for v in area_bbox.split(",")]
         except ValueError:
             pass
+    stare_maps = uzol.get("maps") or {}
+    polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()} if merge else {}
+    for kind, name, velkost, fid, fmt in baliky:
+        polozka_balika = polozka["maps"].setdefault(kind or "mapa", {})
+        polozka_balika.setdefault("formats", {})[fmt] = {
+            "file": name,
+            "size": velkost,
+            "link": folder.file_link(fid),
+            "download": folder.download_link(fid),
+        }
+        if fmt == "zip":
+            polozka_balika.update({
+                "file": name,
+                "size": velkost,
+                "link": folder.file_link(fid),
+                "download": folder.download_link(fid),
+            })
+
     # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
     # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
     zachovaj = {k: uzol[k] for k in ("regions", "subregions") if k in uzol}
@@ -700,11 +725,11 @@ def main():
         else:
             zmenene = zapis_katalog(
                 args.maps, parts, regions,
-                # Do katalógu ide ZIP: je to zoznam „kde sa mapa dá
-                # stiahnuť" a jedna mapa má byť jeden riadok. `.aar` leží
-                # v tom istom priečinku vedľa neho, pod tým istým menom.
-                [(k, n, v, i) for k, n, _p, v, _pr, i, f in hotove
-                 if f == "zip"], man)
+                # Do katalógu idú VŠETKY formáty. Beh, ktorý nahral len
+                # `.aar`, sa k tomu, čo tam je, pridá (`merge`) – inak by
+                # katalóg o ZIPoch prestal vedieť.
+                [(k, n, v, i, f) for k, n, _p, v, _pr, i, f in hotove],
+                man, merge="zip" not in formaty)
             if args.summary and zmenene:
                 with open(args.summary, "a") as f:
                     f.write(f"Katalóg `{args.maps}` v repozitári je "
