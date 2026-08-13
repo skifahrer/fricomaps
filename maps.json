@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-12T22:20:49Z",
+  "_updated_at": "2026-08-13T14:09:04Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -92,6 +92,59 @@
         "rock_slope": 50,
         "rocks_maxzoom": 16,
         "run": "109",
+        "subregions": {
+          "vysoke_tatry": {
+            "area_bbox": [
+              19.9,
+              49.09,
+              20.32,
+              49.25
+            ],
+            "bbox": [
+              19.865,
+              48.745,
+              22.585,
+              49.48
+            ],
+            "contour_interval": 5,
+            "contours_maxzoom": 16,
+            "dem_source": "dmr5",
+            "drive": "slovensko/presovsky/vysoke_tatry",
+            "layers": [
+              "vrstevnice_dmr5_5m",
+              "skaly_dmr5",
+              "tienovanie_dmr5",
+              "trasy",
+              "prvky"
+            ],
+            "maps": {
+              "mapa": {
+                "download": "https://drive.google.com/uc?export=download&id=1Fu4dqq47gf0mmFXVzJfTv_I3zUN8tuwP",
+                "file": "presovsky-vysoke_tatry.zip",
+                "link": "https://drive.google.com/file/d/1Fu4dqq47gf0mmFXVzJfTv_I3zUN8tuwP/view",
+                "size": 360398111
+              },
+              "tienovanie": {
+                "download": "https://drive.google.com/uc?export=download&id=1o3_AgquSOi3HDoAC95kcIf4tLajrL9Vl",
+                "file": "presovsky-vysoke_tatry-tienovanie.zip",
+                "link": "https://drive.google.com/file/d/1o3_AgquSOi3HDoAC95kcIf4tLajrL9Vl/view",
+                "size": 55926495
+              },
+              "vrstevnice-skaly": {
+                "download": "https://drive.google.com/uc?export=download&id=1jjWfwUyRB2iuF2GfjPLyFTYjTLNAzyCH",
+                "file": "presovsky-vysoke_tatry-vrstevnice-skaly.zip",
+                "link": "https://drive.google.com/file/d/1jjWfwUyRB2iuF2GfjPLyFTYjTLNAzyCH/view",
+                "size": 88503396
+              }
+            },
+            "maxzoom": 16,
+            "name": "Vysoké Tatry",
+            "rock_slope": 50,
+            "rocks_maxzoom": 16,
+            "run": "110",
+            "updated_at": "2026-08-13T14:09:04Z"
+          }
+        },
         "updated_at": "2026-08-12T22:20:49Z"
       }
     }
