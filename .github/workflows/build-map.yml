@@ -711,6 +711,7 @@ jobs:
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
       opt_publish: ${{ steps.opts.outputs.opt_publish }}
+      opt_apple_archive: ${{ steps.opts.outputs.opt_apple_archive }}
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
@@ -2174,7 +2175,7 @@ jobs:
             --dem-tiles-source='${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}' \
             --dem-bounds='${{ needs.plan.outputs.test_bbox }}' \
             --terrain-3d='${{ needs.plan.outputs.opt_terrain_3d }}' \
-            ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles={0}/terrain/{{z}}/{{x}}/{{y}}.png --dem-maxzoom={1}', steps.pages.outputs.base_url, needs.terrain.outputs.maxzoom) || '' }} \
+            ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles=pmtiles://{0}/tiles/{1}-terrain.pmtiles --dem-maxzoom={2}', steps.pages.outputs.base_url, needs.plan.outputs.key, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
@@ -2201,7 +2202,7 @@ jobs:
           CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval || '5' }}
           DEM_MAXZOOM: ${{ needs.terrain.outputs.maxzoom || 15 }}
           DEM_TILES_SOURCE: ${{ needs.terrain.outputs.dem_source || needs.contours.outputs.dem_source || 'sonny' }}
-          DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('{0}/terrain/{{z}}/{{x}}/{{y}}.png', steps.pages.outputs.base_url) || '' }}
+          DEM_URL: ${{ needs.terrain.outputs.enabled == 'true' && format('pmtiles://{0}/tiles/{1}-terrain.pmtiles', steps.pages.outputs.base_url, needs.plan.outputs.key) || '' }}
           FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
           FEATURES_MAXZOOM: ${{ needs.features.outputs.maxzoom || '15' }}
           ICONS_AVAILABLE: ${{ needs.assets.outputs.available }}
@@ -2370,3 +2371,84 @@ jobs:
           # by v súhrne ticho chýbalo práve to pole, ktoré si zmenil.
           INPUTS_JSON: ${{ toJSON(inputs) }}
         run: bash workers/deploy/summary.sh
+
+  # ---------- Apple Archive ----------
+  # Ten istý obsah, aký `deploy` nahral ako ZIPy, ešte raz ako `.aar`
+  # (Apple Archive, LZFSE). iOS a macOS ho rozbalia SYSTÉMOVO – framework
+  # AppleArchive, žiadna tretia knižnica v aplikácii – a dekompresia je na
+  # Apple hardvéri výrazne rýchlejšia než deflate. ZIP tým nezaniká: otvorí ho
+  # čokoľvek, `.aar` je navyše.
+  #
+  # PREČO VLASTNÝ JOB, A EŠTE NA macOS: nástroj `aa` je súčasť macOS a inde
+  # neexistuje. Nie je to teda voliteľný krok v `deploy`, ale iný stroj – a
+  # keďže je to iný stroj, musí si `_site` stiahnuť z tých istých artefaktov,
+  # z akých ho skladal `deploy` (`site-*`, retencia 1 deň – prepravky jedného
+  # behu, nie publikovanie).
+  #
+  # Beží AŽ PO `deploy` a len keď ten publikoval: balíky sa volajú rovnako a
+  # líšia sa príponou, takže katalóg `maps.json` sa najprv naplní ZIPmi a tento
+  # job k nim `.aar` dopíše (`publish-map.py` to pozná podľa toho, že v jeho
+  # `--format` nie je `zip`). Opačné poradie by znamenalo, že katalóg chvíľu
+  # ukazuje na `.aar`, ktorý ešte nie je nahratý.
+  #
+  # Keď spadne, MAPA TÝM NETRPÍ – na Pages aj na Drive je všetko hotové a
+  # chýba len druhá podoba balíkov. Preto `continue-on-error` na kroku a nie
+  # `needs` niekoho ďalšieho.
+  apple-archive:
+    name: Balíky ako Apple Archive (.aar)
+    needs: [plan, deploy, contours, rocks, terrain, trails, features, tiles]
+    if: ${{ !cancelled() && needs.deploy.result == 'success' && needs.plan.outputs.opt_publish == 'true' && needs.plan.outputs.opt_apple_archive == 'true' }}
+    runs-on: macos-latest
+    permissions:
+      contents: write     # `maps.json` – to isté, čo robí `deploy`
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      # Tie isté kusy, z akých `deploy` skladal `_site`. Vzor `site-*`, nie
+      # mená: keď je nejaký job vypnutý alebo spadol, jeho artefakt jednoducho
+      # nie je a nič sa nedeje.
+      - name: Pozbieraj kusy stránky
+        uses: actions/download-artifact@v8
+        with:
+          pattern: site-*
+          path: _site
+          merge-multiple: true
+      # Články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
+      # rozpočet), takže majú vlastný artefakt aj vlastný balík.
+      - name: Stiahni články z Wikipédie
+        if: ${{ needs.plan.outputs.opt_wikipedia == 'true' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: wiki
+          path: _wiki
+      - name: Zabaľ a nahraj .aar na Drive
+        id: publish
+        env:
+          AREA_KEY: ${{ needs.plan.outputs.area_key }}
+          AREA_BBOX: ${{ needs.plan.outputs.area_bbox }}
+          CONTOURS_ENABLED: ${{ needs.contours.outputs.enabled || 'false' }}
+          CONTOURS_SOURCE: ${{ needs.contours.outputs.dem_source }}
+          CONTOUR_INTERVAL: ${{ needs.plan.outputs.opt_contour_interval }}
+          CUSTOM_NAME: ${{ needs.plan.outputs.opt_custom_name }}
+          CUSTOM_PBF_URL: ${{ needs.plan.outputs.opt_custom_pbf_url }}
+          FEATURES_ENABLED: ${{ needs.features.outputs.enabled || 'false' }}
+          REGION_KEY: ${{ needs.plan.outputs.key }}
+          ROCKS_ENABLED: ${{ needs.rocks.outputs.rocks_enabled || 'false' }}
+          ROCKS_SOURCE: ${{ needs.rocks.outputs.rock_source }}
+          TERRAIN_ENABLED: ${{ needs.terrain.outputs.enabled || 'false' }}
+          TERRAIN_SOURCE: ${{ needs.terrain.outputs.dem_source }}
+          TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
+          TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
+          TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
+        run: workers/deploy/apple-archive.sh
+      # Katalóg: `deploy` doň zapísal ZIPy, tento krok k nim pridá `.aar`.
+      # `git pull --rebase` v skripte je tu nutnosť, nie poistka – `deploy`
+      # commitol `maps.json` o pár minút skôr do tej istej vetvy.
+      - name: Zapíš .aar do maps.json
+        if: ${{ steps.publish.outcome == 'success' }}
+        env:
+          MAPS_JSON: maps.json
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: workers/deploy/catalog.sh
