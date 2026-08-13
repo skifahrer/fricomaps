@@ -420,6 +420,17 @@ def zapis_katalog(path, parts, regions, baliky, man, merge=False):
             pass
     stare_maps = uzol.get("maps") or {}
     polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()} if merge else {}
+    if merge:
+        # ČO TENTO BEH NEVIE, TO NESMIE ZMAZAŤ. Položka sa zapisuje celá
+        # (`uzol.clear()`), takže beh, ktorý pridáva len ďalší formát, by
+        # z katalógu vyhodil všetko, čo sám nedopočítal – bbox, zoomy, zdroj
+        # výšok. Tie sa berú z manifestu a ten sem chodí z iného jobu, takže
+        # stačí, aby raz nedorazil. Pri `merge` je preto východiskom to, čo
+        # v katalógu už je, a nové hodnoty idú navrch.
+        zaklad = {k: v for k, v in uzol.items()
+                  if k not in ("maps", "regions", "subregions")}
+        zaklad.update(polozka)
+        polozka = zaklad
     for kind, name, velkost, fid, fmt in baliky:
         polozka_balika = polozka["maps"].setdefault(kind or "mapa", {})
         polozka_balika.setdefault("formats", {})[fmt] = {

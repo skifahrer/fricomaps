@@ -2239,6 +2239,22 @@ jobs:
           REGION_KEY: ${{ needs.plan.outputs.key }}
           LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/deploy/check.sh
+      # Štýly, viewer, `manifest.json` a dopečený sprite – čo `_site` dostalo
+      # až tu a v `site-*` teda NIE JE. Prečo to job na macOS potrebuje, je
+      # vo `workers/deploy/apple-archive.sh`. Dlaždice a fonty sú vylúčené,
+      # tie na druhej strane už sú.
+      - name: Odlož zloženú časť webu pre ďalšie joby
+        if: ${{ always() && steps.kontrola.outcome == 'success' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: deploy-site
+          path: |
+            _site
+            !_site/fonts
+            !_site/tiles/*.pmtiles
+          retention-days: 1
+          compression-level: 0
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
         with:
@@ -2432,6 +2448,14 @@ jobs:
       # nie je" a starý `-wikipedia.aar` na Drive by ZMAZAL. Podmienka je
       # `needs.wiki.outputs.enabled`, nie voľba z formulára: tá hovorí, čo
       # sa žiadalo, kdežto toto, či články naozaj vznikli.
+      # AŽ PO `site-*`: sprite je v oboch a vyhrať musí ten dopečený. Poradie
+      # krokov je jediné, čo to zaručuje – `merge-multiple` o prednosti
+      # nehovorí nič.
+      - name: Pozbieraj zloženú časť webu
+        uses: actions/download-artifact@v8
+        with:
+          name: deploy-site
+          path: _site
       - name: Stiahni články z Wikipédie
         if: ${{ needs.wiki.outputs.enabled == 'true' }}
         continue-on-error: true
