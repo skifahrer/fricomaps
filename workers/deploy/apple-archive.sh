@@ -29,10 +29,34 @@
 set -euo pipefail
 
 if ! command -v aa >/dev/null 2>&1; then
-  echo "::error::Nástroj \`aa\` tu nie je. Apple Archive je súčasť macOS 11+, takže tento job musí bežať na \`macos-latest\`; na Linuxe sa \`.aar\` vyrobiť nedá."
+  echo "::error::Nástroj aa tu nie je. Apple Archive je súčasť macOS 11+, takže tento job musí bežať na macos-latest; na Linuxe sa .aar vyrobiť nedá."
   exit 1
 fi
 echo "Apple Archive: $(command -v aa)"
+
+# ---------- je `_site` naozaj zložené? ----------
+# Job si `_site` skladá z artefaktov `site-*`, teda z KUSOV od jednotlivých
+# jobov – to je stav PRED zložením: dlaždice, fonty a sprite, ale bez štýlov,
+# bez viewera a bez `manifest.json`. Tie vyrába až `deploy` a posiela ich sem
+# artefaktom `deploy-site`.
+#
+# Prvý ostrý beh (31741329496) to ukázal presne: `.aar` mal 787 súborov proti
+# 828 v ZIPe a v logu bolo len varovanie „manifest.json sa nedá prečítať".
+# Boli to dve chyby naraz a ani jedna nebola na súbore vidieť:
+#   1. `.aar` „celá mapa" sa dal rozbaliť, ale ako mapa by sa NEOTVORIL,
+#   2. bez manifestu skladá `publish-map.py` položku katalógu bez bboxu,
+#      zoomov a zdroja výšok – a keďže sa položka prepisuje celá, ostrý beh
+#      by tie polia z `maps.json` ODSTRÁNIL.
+# Preto je to tu tvrdá chyba, nie varovanie.
+if [ ! -f _site/tiles/manifest.json ]; then
+  echo "::error::_site nie je zložené – chýba tiles/manifest.json (a s ním štýly aj viewer). Sem chodia kusy site-* a navrch artefakt deploy-site z jobu deploy; pozri krok „Pozbieraj zloženú časť webu“. Nepokračujem: .aar by nebol mapa a maps.json by prišiel o bbox a zoomy."
+  exit 1
+fi
+if [ ! -d _site/styles ]; then
+  echo "::error::_site nemá priečinok styles – bez štýlov nie je .aar mapa, len dlaždice. Pozri krok „Pozbieraj zloženú časť webu“."
+  exit 1
+fi
+echo "Zložené _site ✓ ($(find _site -type f | wc -l | tr -d ' ') súborov, $(du -sh _site | cut -f1))"
 
 # ---------- články z Wikipédie ----------
 # Štvrtý balík, s vlastným artefaktom – a rovnako ako ostatné tri ide aj ako
