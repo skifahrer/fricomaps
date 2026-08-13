@@ -213,9 +213,16 @@ def zaklad():
     return "-".join(kusy)
 
 
-def meno(kind=""):
-    """Meno ZIPu jedného balíka: základ + druh (`` = celá mapa)."""
-    return zaklad() + (f"-{kind}" if kind else "") + ".zip"
+# Prípony podľa formátu. `.aar` je Apple Archive – to, čo iOS a macOS vedia
+# rozbaliť SYSTÉMOVO (framework AppleArchive), bez tretej knižnice v aplikácii
+# a s dekompresiou LZFSE, ktorá je na Apple hardvéri rýchlejšia než deflate.
+# ZIP ostáva, lebo ten otvorí čokoľvek; `.aar` je navyše, nie namiesto.
+PRIPONY = {"zip": ".zip", "aar": ".aar"}
+
+
+def meno(kind="", fmt="zip"):
+    """Meno balíka: základ + druh (`` = celá mapa) + prípona formátu."""
+    return zaklad() + (f"-{kind}" if kind else "") + PRIPONY[fmt]
 
 
 # ---------- čo je v ktorom balíku ----------
@@ -279,12 +286,17 @@ def tienovanie_subory(site, man):
             if n.endswith("-terrain.pmtiles")]
 
 
-def obsah(kind, man):
+def obsah(kind, man, fmt="zip"):
     """`obsah.json` do balíka – to, čo kedysi nieslo meno súboru."""
     reg = region_entry(man)
     return {
         "balik": kind or "mapa",
-        "subor": meno(kind),
+        # Meno TOHO súboru, v ktorom `obsah.json` leží – čiže aj s príponou
+        # formátu. Keby tu bolo natvrdo `.zip`, `.aar` by o sebe tvrdil, že
+        # je ZIP, a to je presne ten druh tichého omylu, ktorému sa mená
+        # súborov v tomto repozitári vyhýbajú.
+        "subor": meno(kind, fmt),
+        "format": fmt,
         "region": bez_testu(env("REGION_KEY")),
         "vyrez": bez_testu(env("AREA_KEY")) or "cely",
         "test_km2": env("TEST_KM2", "0"),
@@ -468,12 +480,80 @@ def zabal(site, dest, koren, subory, info=None):
     return velkost
 
 
+def aa_je():
+    """Je tu Apple Archive CLI (`aa`)? Je len na macOS – inde sa `.aar` nedá
+    vyrobiť a musí to byť POČUŤ, nie ticho preskočené."""
+    from shutil import which
+    return which("aa") is not None
+
+
+def zabal_aar(site, dest, koren, subory, info=None):
+    """Súbory → jeden Apple Archive (`.aar`, LZFSE).
+
+    PREČO NAVYŠE K ZIPU: `.aar` vie iOS aj macOS rozbaliť systémovo
+    (framework AppleArchive) – bez tretej knižnice v aplikácii a s LZFSE,
+    ktoré je na Apple hardvéri výrazne rýchlejšie než deflate. ZIP ostáva,
+    lebo ten otvorí čokoľvek; toto je druhá podoba TOHO ISTÉHO obsahu, nie
+    náhrada.
+
+    `aa` berie ADRESÁR, nie zoznam súborov, takže sa najprv postaví strom
+    z TVRDÝCH ODKAZOV. Kopírovať by znamenalo druhýkrát zapísať gigabajt na
+    disk runnera; odkaz stojí nič a `aa` cez neho číta ten istý obsah.
+    Priečinok `koren` navyše je ten istý zámer ako pri ZIPe – rozbalenie
+    nevysype dvadsať položiek do stiahnutých súborov.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    surovo = sum(os.path.getsize(p) for p in subory)
+    log(f"Balím {len(subory)} súborov ({folder.human(surovo)}) do {dest}")
+    t0 = time.time()
+    stage = tempfile.mkdtemp(prefix="aar-", dir=os.path.dirname(dest) or None)
+    try:
+        koren_dir = os.path.join(stage, koren)
+        os.makedirs(koren_dir, exist_ok=True)
+        if info is not None:
+            with open(os.path.join(koren_dir, "obsah.json"), "w") as f:
+                json.dump(info, f, ensure_ascii=False, indent=2)
+                f.write("\n")
+        for p in sorted(subory):
+            cieľ = os.path.join(koren_dir, os.path.relpath(p, site))
+            os.makedirs(os.path.dirname(cieľ), exist_ok=True)
+            try:
+                os.link(p, cieľ)
+            except OSError:
+                # Iný filesystém alebo plný počet odkazov – vtedy kópia.
+                shutil.copy2(p, cieľ)
+        if os.path.exists(dest):
+            os.remove(dest)
+        subprocess.run(["aa", "archive", "-a", "lzfse", "-d", stage,
+                        "-o", dest], check=True)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+    velkost = os.path.getsize(dest)
+    log(f"  hotovo za {time.time() - t0:.0f} s: {folder.human(velkost)} "
+        f"({velkost * 100 // max(surovo, 1)} % pôvodnej veľkosti)")
+    return velkost
+
+
+# Formát → funkcia, ktorá ho zabalí. Jedno miesto, kde sú vymenované: keby
+# pribudol tretí, pridá sa sem a nikde inde.
+BALICE = {"zip": zabal, "aar": zabal_aar}
+
+
 # ---------- beh ----------
 
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--site", default="_site", help="čo sa balí")
+    # ZIP vždy (otvorí ho čokoľvek), `.aar` navyše pre iOS a macOS. Je to
+    # zoznam a nie druhý prepínač „aj aar": formáty sa pridávajú, nie
+    # prepínajú, a `--format=aar` samotné má zmysel v jobe na macOS, ktorý
+    # dobalí to, čo Linux nevie.
+    ap.add_argument("--format", default="zip",
+                    help="ktoré formáty vyrobiť: `zip`, `aar`, `zip,aar`")
     ap.add_argument("--folder", default=FOLDER_ID,
                     help="priečinok na Drive (URL alebo id)")
     ap.add_argument("--out", default="", help="kam odložiť ZIP (default RUNNER_TEMP)")
@@ -493,6 +573,19 @@ def main():
 
     with open(os.path.join(_DATA, "regions.json")) as f:
         regions = json.load(f)
+
+    formaty = [f.strip() for f in args.format.split(",") if f.strip()]
+    for f in formaty:
+        if f not in BALICE:
+            raise SystemExit(f"::error::Neznámy formát „{f}“. Známe: "
+                             f"{', '.join(BALICE)}.")
+    if "aar" in formaty and not aa_je():
+        # Ticho preskočiť sa to NESMIE: v priečinku by potom chýbal `.aar`
+        # a na ničom by nebolo vidieť prečo. `aa` je len na macOS.
+        raise SystemExit("::error::Apple Archive sa nedá vyrobiť – nástroj "
+                         "`aa` tu nie je. Je súčasťou macOS (11+), takže "
+                         "`--format` s `aar` patrí do jobu na `macos-latest`; "
+                         "na Linuxe nechaj `--format=zip`.")
 
     parts = cesta(regions)
     man = manifest_data(args.site)
@@ -522,7 +615,8 @@ def main():
         stav = (f"{len(subory)} súborov, "
                 f"{folder.human(sum(os.path.getsize(p) for p in subory))}"
                 if subory else "NIE JE V TOMTO BUILDE – starý balík sa zmaže")
-        log(f"  {meno(kind):<48} {popis} – {stav}")
+        for fmt in formaty:
+            log(f"  {meno(kind, fmt):<48} {popis} – {stav}")
     log(f"Priečinok na Drive: {'/'.join(parts)}")
     if args.dry_run:
         return 0
@@ -535,8 +629,10 @@ def main():
             if not subory:
                 log(f"{meno(kind)}: {popis} v tomto builde nie je – vynechávam.")
                 continue
-            dest = os.path.join(out, meno(kind))
-            zabal(base, dest, meno(kind)[:-4], subory, info=obsah(kind, man))
+            for fmt in formaty:
+                name = meno(kind, fmt)
+                BALICE[fmt](base, os.path.join(out, name), name[:-4], subory,
+                            info=obsah(kind, man, fmt))
         return 0
 
     creds = auth.from_env()
@@ -555,12 +651,17 @@ def main():
     root = folder.folder_id(args.folder)
     fid = folder.ensure_path(creds, root, parts)
     hotove = []
-    for kind, popis, base, subory in baliky:
-        name = meno(kind)
+    # Balík × formát: každý balík sa vyrobí v každom žiadanom formáte. Formát
+    # je vonkajší cyklus zámerne až tu, nie v `baliky` – to, ČO je v balíku,
+    # je vec obsahu a nie toho, do čoho sa zabalí.
+    for (kind, popis, base, subory), fmt in [(b_, f) for b_ in baliky
+                                             for f in formaty]:
+        name = meno(kind, fmt)
         if not subory:
             # Vrstva v tomto builde nie je. Starý balík toho istého mena by
             # vedľa novej mapy tvrdil, že je – a na súbore by to nikto
-            # nepoznal.
+            # nepoznal. Platí to pre KAŽDÝ formát: keby sa mazal len ZIP,
+            # ostal by vedľa neho `.aar` z iného behu.
             kolko = folder.delete_named(creds, fid, name)
             if kolko:
                 log(f"::warning::{popis} v tomto builde nie je – zmazal som "
@@ -571,8 +672,8 @@ def main():
             continue
         dest = os.path.join(args.out or os.environ.get("RUNNER_TEMP", "/tmp"),
                             name)
-        velkost = zabal(base, dest, name[:-4], subory,
-                        info=obsah(kind, man))
+        velkost = BALICE[fmt](base, dest, name[:-4], subory,
+                              info=obsah(kind, man, fmt))
         try:
             log(f"Nahrávam {name} ({folder.human(velkost)}) …")
             t0 = time.time()
@@ -585,7 +686,7 @@ def main():
         finally:
             if not args.keep_zip and os.path.exists(dest):
                 os.remove(dest)
-        hotove.append((kind, name, popis, velkost, prepisane, file_id))
+        hotove.append((kind, name, popis, velkost, prepisane, file_id, fmt))
     log(f"Hotovo: {len(hotove)} balíkov v {folder.folder_link(fid)}")
 
     # ---------- katalóg ----------
@@ -599,7 +700,11 @@ def main():
         else:
             zmenene = zapis_katalog(
                 args.maps, parts, regions,
-                [(k, n, v, i) for k, n, _p, v, _pr, i in hotove], man)
+                # Do katalógu ide ZIP: je to zoznam „kde sa mapa dá
+                # stiahnuť" a jedna mapa má byť jeden riadok. `.aar` leží
+                # v tom istom priečinku vedľa neho, pod tým istým menom.
+                [(k, n, v, i) for k, n, _p, v, _pr, i, f in hotove
+                 if f == "zip"], man)
             if args.summary and zmenene:
                 with open(args.summary, "a") as f:
                     f.write(f"Katalóg `{args.maps}` v repozitári je "
@@ -612,7 +717,7 @@ def main():
                     f"mená sú stále, takže ďalší build tie isté súbory prepíše. "
                     f"Čo je v balíku, hovorí `obsah.json` v ňom.\n\n")
             f.write("| balík | čo je v ňom | veľkosť | starý |\n|---|---|--:|---|\n")
-            for _kind, name, popis, velkost, prepisane, _fid in hotove:
+            for _kind, name, popis, velkost, prepisane, _fid, _fmt in hotove:
                 f.write(f"| `{name}` | {popis} | {folder.human(velkost)} | "
                         f"{'prepísaný' if prepisane else '–'} |\n")
             f.write("\n")
