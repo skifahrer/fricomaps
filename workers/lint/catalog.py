@@ -30,6 +30,11 @@ MENO = re.compile(r"^[a-z0-9_]+(-[a-z0-9_]+)*(-test[0-9.]+km2)?"
                   r"(-vrstevnice-skaly|-tienovanie|-wikipedia)?\.zip$")
 CATALOG = "maps.json"
 WORKFLOW = ".github/workflows/build-map.yml"
+# Články z Wikipédie majú vlastnú pipeline a tá do katalógu zapisuje tiež –
+# tým istým skriptom, len s `--only=wikipedia`. Platia na ňu tie isté dve
+# pravidlá: musí mať právo commitnúť a nesmie zapísať po neúspešnom nahratí.
+WIKI_WORKFLOW = ".github/workflows/wiki.yml"
+PUBLISH_MAP = "workers/deploy/publish-map.py"
 
 bad = []
 
@@ -123,6 +128,47 @@ else:
 if "--maps=" not in text:
     bad.append(f"{WORKFLOW}: `publish-map.py` sa volá bez `--maps=`, takže "
                f"katalóg nikto nedopíše.")
+
+# ---- wiki: samostatná pipeline zapisuje do toho istého katalógu ----
+try:
+    wwf = yaml.safe_load(open(WIKI_WORKFLOW))
+    wtext = open(WIKI_WORKFLOW, encoding="utf-8").read()
+except (OSError, ValueError) as exc:
+    bad.append(f"{WIKI_WORKFLOW} sa nedá prečítať: {exc}")
+    wwf, wtext = {}, ""
+for job, jd in ((wwf.get("jobs") or {})).items():
+    if (jd.get("permissions") or {}).get("contents") != "write":
+        bad.append(f"{WIKI_WORKFLOW}: job `{job}` nemá `contents: write`, "
+                   f"takže {CATALOG} nemá ako commitnúť – balík by sa nahral "
+                   f"na Drive a v katalógu by po ňom nezostalo nič.")
+    kat = [s for s in (jd.get("steps") or [])
+           if "deploy/catalog.sh" in str(s.get("run", ""))]
+    if not kat:
+        bad.append(f"{WIKI_WORKFLOW}: job `{job}` nepúšťa "
+                   f"`workers/deploy/catalog.sh` – katalóg by sa zapísal na "
+                   f"runner a stratil sa s ním.")
+    for s in kat:
+        if "steps.publish.outcome == 'success'" not in str(s.get("if", "")):
+            bad.append(f"{WIKI_WORKFLOW}: krok „{s.get('name')}“ nemá "
+                       f"podmienku `steps.publish.outcome == 'success'` – "
+                       f"katalóg by ukazoval aj na balík, ktorý sa nenahral.")
+if wtext and "--only=wikipedia" not in wtext:
+    bad.append(f"{WIKI_WORKFLOW}: `publish-map.py` sa volá bez "
+               f"`--only=wikipedia`. Bez toho by publikovanie chcelo celý web "
+               f"(`_site`), ktorý táto pipeline nerobí, a katalóg by prepísalo "
+               f"položkou bez máp.")
+
+# `--only` musí katalóg DOPĹŇAŤ, nie prepisovať: samostatná pipeline vie len
+# o svojom balíku a prepis by zmazal odkazy na mapu, o ktorej nič nevie.
+try:
+    pmap = open(PUBLISH_MAP, encoding="utf-8").read()
+except OSError as exc:
+    bad.append(f"{PUBLISH_MAP} sa nedá prečítať: {exc}")
+    pmap = ""
+if pmap and "def zapis_katalog(path, parts, regions, baliky, man, iba=" not in pmap:
+    bad.append(f"{PUBLISH_MAP}: `zapis_katalog` nepozná režim „doplň jeden "
+               f"balík“ (parameter `iba`). Samostatná pipeline by položku "
+               f"regiónu prepísala a odkazy na mapu by zmizli.")
 
 for b in bad:
     print(f"::error::{b}")

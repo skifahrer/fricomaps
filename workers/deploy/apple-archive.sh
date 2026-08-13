@@ -23,9 +23,9 @@
 #   CONTOURS_ENABLED CONTOURS_SOURCE CONTOUR_INTERVAL
 #   ROCKS_ENABLED ROCKS_SOURCE TERRAIN_ENABLED TERRAIN_SOURCE
 #   TRAILS_ENABLED FEATURES_ENABLED CUSTOM_NAME CUSTOM_PBF_URL
-# a k tomu WIKI_ENABLED – „mali prísť články?", aby sa dalo odlíšiť „wiki
-# v tomto builde nie je" od „artefakt sa nestiahol" (viď nižšie)
-# a k tomu prihlásenie na Drive z `env:` celého workflowu.
+# a k tomu ONLY / WIKI – ktorý balík sa ide robiť (prázdne = balíky mapy
+# z `_site`, `wikipedia` = jediný balík s článkami z `WIKI`)
+# a prihlásenie na Drive z `env:` celého workflowu.
 set -euo pipefail
 
 if ! command -v aa >/dev/null 2>&1; then
@@ -34,53 +34,51 @@ if ! command -v aa >/dev/null 2>&1; then
 fi
 echo "Apple Archive: $(command -v aa)"
 
-# ---------- je `_site` naozaj zložené? ----------
-# Job si `_site` skladá z artefaktov `site-*`, teda z KUSOV od jednotlivých
-# jobov – to je stav PRED zložením: dlaždice, fonty a sprite, ale bez štýlov,
-# bez viewera a bez `manifest.json`. Tie vyrába až `deploy` a posiela ich sem
-# artefaktom `deploy-site`.
-#
-# Prvý ostrý beh (31741329496) to ukázal presne: `.aar` mal 787 súborov proti
-# 828 v ZIPe a v logu bolo len varovanie „manifest.json sa nedá prečítať".
-# Boli to dve chyby naraz a ani jedna nebola na súbore vidieť:
-#   1. `.aar` „celá mapa" sa dal rozbaliť, ale ako mapa by sa NEOTVORIL,
-#   2. bez manifestu skladá `publish-map.py` položku katalógu bez bboxu,
-#      zoomov a zdroja výšok – a keďže sa položka prepisuje celá, ostrý beh
-#      by tie polia z `maps.json` ODSTRÁNIL.
-# Preto je to tu tvrdá chyba, nie varovanie.
-if [ ! -f _site/tiles/manifest.json ]; then
-  echo "::error::_site nie je zložené – chýba tiles/manifest.json (a s ním štýly aj viewer). Sem chodia kusy site-* a navrch artefakt deploy-site z jobu deploy; pozri krok „Pozbieraj zloženú časť webu“. Nepokračujem: .aar by nebol mapa a maps.json by prišiel o bbox a zoomy."
-  exit 1
-fi
-if [ ! -d _site/styles ]; then
-  echo "::error::_site nemá priečinok styles – bez štýlov nie je .aar mapa, len dlaždice. Pozri krok „Pozbieraj zloženú časť webu“."
-  exit 1
-fi
-echo "Zložené _site ✓ ($(find _site -type f | wc -l | tr -d ' ') súborov, $(du -sh _site | cut -f1))"
+# ---------- čo sa ide baliť ----------
+# `ONLY` prázdne = balíky mapy z `_site` (Build map). `ONLY=wikipedia` = jediný
+# balík s článkami z `WIKI` (workflow „Wikipédia k mape"). Je to ten istý
+# skript pre obe pipeline zámerne: „ako sa vyrobí .aar a nahrá na Drive" je
+# jedna otázka a dve kópie by sa raz rozišli – jedna by mala strážcu, druhá nie.
+ONLY="${ONLY:-}"
+WIKI="${WIKI:-}"
+ARGS=(--format=aar --maps=maps.json --summary="${GITHUB_STEP_SUMMARY:-/dev/null}")
 
-# ---------- články z Wikipédie ----------
-# Štvrtý balík, s vlastným artefaktom – a rovnako ako ostatné tri ide aj ako
-# `.aar`. Keď ho build nerobil, priečinok tu jednoducho nie je a `--wiki`
-# ostane prázdne.
-#
-# ROZLÍŠIŤ „NEBOLI" OD „NEPRIŠLI" JE TU NUTNÉ. Keď `_wiki` chýba, považuje
-# `publish-map.py` ten balík za „v tomto builde nie je" a starý `.aar` na
-# Drive ZMAŽE – aby vedľa novej mapy neostal balík z iného behu. To je
-# správne, kým články naozaj neboli; keby sa len nestiahol artefakt, zmazal
-# by sa dobrý balík kvôli výpadku prenosu. `WIKI_ENABLED` hovorí, či mali
-# prísť, takže sa tie dva prípady dajú odlíšiť a druhý zhodí job.
-WIKI=""
-if [ -f _wiki/index.json ]; then
-  WIKI=_wiki
-  echo "Články z Wikipédie: $(du -sh _wiki | cut -f1) – pribalia sa ako .aar"
-elif [ "${WIKI_ENABLED:-false}" = 'true' ]; then
-  echo "::error::Job wiki články vyrobil, ale artefakt wiki-articles sa sem nestiahol (_wiki/index.json tu nie je). Nepokračujem: bez neho by publish-map.py považoval balík za nevyrobený a starý -wikipedia.aar na Drive by zmazal. Pozri krok „Stiahni články z Wikipédie“ v tomto jobe."
-  exit 1
+if [ -n "$ONLY" ]; then
+  ARGS+=(--only="$ONLY")
+  if [ -z "$WIKI" ] || [ ! -f "$WIKI/index.json" ]; then
+    echo "::error::ONLY=$ONLY, ale články nie sú (WIKI=${WIKI:-prázdne}). Nepokračujem: publish-map.py by spadol na prázdnom balíku."
+    exit 1
+  fi
+  ARGS+=(--wiki="$WIKI" --site="${SITE:-_site}")
+  echo "Balí sa jediný balík: $ONLY ($(du -sh "$WIKI" | cut -f1))"
 else
-  echo "Články z Wikipédie: v tomto builde nie sú."
+  # ---------- je `_site` naozaj zložené? ----------
+  # Job si `_site` skladá z artefaktov `site-*`, teda z KUSOV od jednotlivých
+  # jobov – to je stav PRED zložením: dlaždice, fonty a sprite, ale bez štýlov,
+  # bez viewera a bez `manifest.json`. Tie vyrába až `deploy` a posiela ich sem
+  # artefaktom `deploy-site`.
+  #
+  # Prvý ostrý beh (31741329496) to ukázal presne: `.aar` mal 787 súborov proti
+  # 828 v ZIPe a v logu bolo len varovanie „manifest.json sa nedá prečítať".
+  # Boli to dve chyby naraz a ani jedna nebola na súbore vidieť:
+  #   1. `.aar` „celá mapa" sa dal rozbaliť, ale ako mapa by sa NEOTVORIL,
+  #   2. bez manifestu skladá `publish-map.py` položku katalógu bez bboxu,
+  #      zoomov a zdroja výšok – a keďže sa položka prepisuje celá, ostrý beh
+  #      by tie polia z `maps.json` ODSTRÁNIL.
+  # Preto je to tu tvrdá chyba, nie varovanie.
+  if [ ! -f _site/tiles/manifest.json ]; then
+    echo "::error::_site nie je zložené – chýba tiles/manifest.json (a s ním štýly aj viewer). Sem chodia kusy site-* a navrch artefakt deploy-site z jobu deploy; pozri krok „Pozbieraj zloženú časť webu“. Nepokračujem: .aar by nebol mapa a maps.json by prišiel o bbox a zoomy."
+    exit 1
+  fi
+  if [ ! -d _site/styles ]; then
+    echo "::error::_site nemá priečinok styles – bez štýlov nie je .aar mapa, len dlaždice. Pozri krok „Pozbieraj zloženú časť webu“."
+    exit 1
+  fi
+  ARGS+=(--site=_site)
+  echo "Zložené _site ✓ ($(find _site -type f | wc -l | tr -d ' ') súborov, $(du -sh _site | cut -f1))"
+  # Články z Wikipédie tu NIE SÚ: majú vlastnú pipeline, ktorá si `.aar` robí
+  # sama. Bez `--wiki` ich `publish-map.py` do zoznamu nezaradí, takže ich
+  # tento beh ani nezmaže.
 fi
 
-python3 workers/deploy/publish-map.py --site=_site --format=aar \
-  --wiki="$WIKI" \
-  --maps=maps.json \
-  --summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+python3 workers/deploy/publish-map.py "${ARGS[@]}"

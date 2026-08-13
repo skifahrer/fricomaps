@@ -141,11 +141,6 @@ on:
       # o ostrý build alebo ladenie terénu, a to je práca pre zaškrtávatko.
       # Predvolene ZAPNUTÉ: kraj je pri dávkach po päťdesiatich otázka sekúnd
       # (namerané 18 ms na článok), takže sa nemá čo šetriť.
-      wikipedia:
-        description: "Stiahnuť články z Wikipédie k objektom v regióne (vlastný ZIP na Drive)"
-        required: false
-        default: true
-        type: boolean
       rock_slope:
         description: "Od akého sklonu (°) je terén skala (50 = steny, 40 = aj strmé svahy)"
         required: false
@@ -164,12 +159,6 @@ on:
           - vrstevnice
           - skaly
           - teren
-          # Články sa inak berú z cache na Drive a sťahuje sa len to, čomu sa
-          # zmenil `lastrevid` – to je predvolené správanie. Toto je páka na
-          # „stiahni ich odznova", keď sa zmenil sám zberač (iné podoby odkazu,
-          # iný prevod wikitextu): vtedy je `lastrevid` ten istý, takže cache
-          # by sadla a vrátila by články spracované PO STAROM.
-          - clanky
           - vsetko
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
       # Veľkosť rýchleho testu: `test_km2=8` (default 4).
@@ -670,14 +659,6 @@ jobs:
       opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_features: ${{ steps.opts.outputs.opt_features }}
-      # Články z Wikipédie – job `wiki`. Nie sú vrstvou mapy, tak nemajú
-      # výber zdroja: berú sa z toho istého PBF ako trasy a prvky.
-      opt_wikipedia: ${{ steps.opts.outputs.opt_wikipedia }}
-      opt_wiki_langs: ${{ steps.opts.outputs.opt_wiki_langs }}
-      opt_wiki_format: ${{ steps.opts.outputs.opt_wiki_format }}
-      opt_wiki_max: ${{ steps.opts.outputs.opt_wiki_max }}
-      wiki_cache: ${{ steps.wikikey.outputs.prefix }}
-      wiki_cache_key: ${{ steps.wikikey.outputs.key }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.
@@ -715,7 +696,6 @@ jobs:
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
       opt_terrain_rebuild: ${{ steps.opts.outputs.opt_terrain_rebuild }}
-      opt_wiki_rebuild: ${{ steps.opts.outputs.opt_wiki_rebuild }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -816,7 +796,6 @@ jobs:
             --rock-source='${{ inputs.rock_source }}' \
             --shading-source='${{ inputs.shading_source }}' \
             --test='${{ inputs.test }}' \
-            --wikipedia='${{ inputs.wikipedia }}' \
             --out="$GITHUB_OUTPUT" \
             --summary="$GITHUB_STEP_SUMMARY"
 
@@ -913,36 +892,6 @@ jobs:
             fi
           fi
 
-      # PREDPONA KĽÚČA CACHE ČLÁNKOV. Je tu a nie vo `workers/plan/cache-keys.sh`
-      # (kde sú všetky ostatné kľúče) z jedného dôvodu: ten skript púšťa job
-      # `keys`, ktorý čaká na `check-dem` a na štyri zrkadlenia DEM z Drive –
-      # a články na DEM nečakajú, čítajú len PBF. Job `wiki` by tak stál za
-      # sťahovaním modelu, ktorý nepotrebuje.
-      #
-      # Píše sa RAZ, lebo ju potrebuje restore aj save: keby stála na dvoch
-      # miestach, stačí raz zabudnúť opraviť jedno a cache sa ticho rozsype
-      # (ukladá sa pod iný kľúč, než sa hľadá). Končí pomlčkou zámerne – je to
-      # PREDPONA, plný kľúč má na konci číslo behu (existujúci kľúč sa
-      # neprepisuje, takže pevný by po prvom behu už nikdy nič nedoplnil).
-      # V predpone je región, jazyky a podoba článku, čiže presne to, čo mení
-      # obsah – dátum v nej NIE JE: sviežosť rieši `lastrevid`, nie kalendár.
-      # Vypíše OBOJE – predponu aj plný kľúč – práve preto, aby ich nikto
-      # neskladal druhýkrát: `restore` berie oboje, `save` plný kľúč, a pri
-      # `rebuild: clanky` sa restore preskočí, takže `save` sa nemôže oprieť
-      # o `cache-primary-key` z preskočeného kroku (bol by prázdny a cache by
-      # sa ticho neuložila).
-      - name: Predpona kľúča cache pre články
-        id: wikikey
-        env:
-          REGION_KEY: ${{ steps.region.outputs.key }}
-          LANGS: ${{ steps.opts.outputs.opt_wiki_langs }}
-          FMT: ${{ steps.opts.outputs.opt_wiki_format }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          set -euo pipefail
-          S=$(printf '%s-%s-%s' "$REGION_KEY" "$LANGS" "$FMT" | tr -c 'a-zA-Z0-9._-' '_')
-          echo "prefix=wiki-v1-$S-" >> "$GITHUB_OUTPUT"
-          echo "key=wiki-v1-$S-$RUN_ID" >> "$GITHUB_OUTPUT"
 
       # Testovací štvorec má pár km² – z čísel sa nedá povedať, či padol na
       # hrebeň so stenami alebo na lúku, a keď padne na lúku, „nenašlo ani
@@ -1835,113 +1784,6 @@ jobs:
           retention-days: 1
           if-no-files-found: ignore
 
-  # ---------- články z Wikipédie ----------
-  # KTO V REGIÓNE ODKAZUJE NA WIKI, DOSTANE ČLÁNOK. Body, čiary aj plochy majú
-  # v OSM tagy `wikipedia` a `wikidata`; tento job z nich poskládá zoznam
-  # článkov, stiahne ich (každý do samostatného súboru) a odloží ako artefakt.
-  # Balík `-wikipedia.zip` z neho urobí job `deploy` – tam, kde sa balí mapa,
-  # nech je jeden packer a jeden zápis do katalógu.
-  #
-  # NEIDE TO NA PAGES, a to je zámer: články sú desiatky MB textu, ktoré by
-  # zjedli rozpočet stránky (`size_limit_mb`) a v mape ich nikto nekreslí.
-  # Preto vlastný artefakt s dennou retenciou (prepravka, nie publikovanie)
-  # a nie `site-*`.
-  #
-  # Beží súbežne s dlaždicami a nepotrebuje ani DEM, ani Planetiler – len PBF
-  # z prípravy a `osmium`, ktorým si trasy filtrujú relácie.
-  wiki:
-    name: Články z Wikipédie
-    needs: plan
-    if: ${{ !cancelled() && needs.plan.outputs.opt_wikipedia == 'true' }}
-    runs-on: ubuntu-latest
-    outputs:
-      count: ${{ steps.wiki.outputs.count }}
-      mb: ${{ steps.wiki.outputs.mb }}
-      enabled: ${{ steps.wiki.outputs.enabled }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-      - name: Priprav priečinok na meranie
-        run: mkdir -p steps-out
-
-      - name: Stiahni PBF z prípravy
-        uses: actions/download-artifact@v8
-        with:
-          name: pbf
-          path: data
-
-      # CACHE ČLÁNKOV. Obnovuje sa cez PREDPONU, nie presným kľúčom – ten má na
-      # konci číslo behu, aby sa dal doplniť (existujúci kľúč sa neprepisuje).
-      # Berie sa najnovší záznam, čo na predponu sedí, čiže články z minulého
-      # behu toho istého regiónu.
-      #
-      # ČO SA TÝM UŠETRÍ a čo nie: obsah. `collect.py` si dá jednu dávkovú
-      # otázku `prop=info` na 50 článkov (namerané 19,9 kB) a stiahne len tie,
-      # ktorým sa medzitým zmenil `lastrevid` – sťahovanie tých istých 50
-      # článkov s obsahom je 197,4 kB, teda 10× viac, a k tomu prevod wikitextu.
-      # Počet požiadaviek sa NEZNÍŽI (dávka je dávka); ušetria sa bajty, čas
-      # prevodu a pri `wiki_format=html`, kde dávka neexistuje, celé minúty.
-      #
-      # `rebuild: clanky` (alebo `vsetko`) restore PRESKOČÍ – nič sa nesťahuje
-      # z Drive, aby sa to potom zahodilo, a `collect.py` na prázdnom priečinku
-      # stiahne všetko odznova. Mazať starý záznam pritom netreba (na rozdiel od
-      # vrstevníc a terénu, kde má kľúč pevné meno): tento má na konci číslo
-      # behu, takže nový sa vždy uloží, a ďalší beh si cez predponu vezme
-      # najnovší – čiže ten čerstvý.
-      - name: Cache článkov z Wikipédie (restore)
-        id: wiki-cache
-        if: ${{ needs.plan.outputs.opt_wiki_rebuild != 'true' }}
-        uses: ./.github/actions/cache-restore
-        with:
-          path: wiki-cache
-          key: ${{ needs.plan.outputs.wiki_cache_key }}
-          restore-keys: ${{ needs.plan.outputs.wiki_cache }}
-
-      # Rozpis je vo `workers/wiki/collect.py`; tu sú len voľby z formulára.
-      - name: Odkazy na wiki → stiahnuté články
-        id: wiki
-        env:
-          REGION_KEY: ${{ needs.plan.outputs.key }}
-          OPT_WIKI_LANGS: ${{ needs.plan.outputs.opt_wiki_langs }}
-          OPT_WIKI_FORMAT: ${{ needs.plan.outputs.opt_wiki_format }}
-          OPT_WIKI_MAX: ${{ needs.plan.outputs.opt_wiki_max }}
-        run: workers/wiki/build.sh
-
-      # Ukladá sa HNEĎ, ako články vzniknú, nie v post-kroku – zrušený beh tak
-      # nezahodí to, čo sa už stiahlo. `always()`, lebo aj čiastočný výsledok
-      # (spadlo to na 900. článku z 1000) je ďalšiemu behu na osoh.
-      - name: Cache článkov z Wikipédie (save)
-        if: ${{ always() && hashFiles('wiki-cache/articles.ndjson') != '' }}
-        continue-on-error: true
-        uses: ./.github/actions/cache-save
-        with:
-          path: wiki-cache
-          # Plný kľúč z plánu, nie `cache-primary-key` z restore: pri
-          # `rebuild: clanky` je restore preskočený a jeho výstup prázdny –
-          # cache by sa vtedy ticho neuložila a ďalší beh by ťahal odznova.
-          key: ${{ needs.plan.outputs.wiki_cache_key }}
-
-      # Prepravka pre job `deploy`, nie publikovanie: `retention-days: 1`.
-      # Uložený výsledok je ten ZIP na Drive.
-      - name: Odlož články pre deploy
-        if: ${{ always() && hashFiles('wiki-out/index.json') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: wiki-articles
-          path: wiki-out
-          retention-days: 1
-          compression-level: 6
-          if-no-files-found: ignore
-
-      - name: Odlož meranie krokov
-        if: ${{ always() && hashFiles('steps-out/*') != '' }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: steps-wiki
-          path: steps-out
-          retention-days: 1
-          if-no-files-found: ignore
-
   # ---------- mapové dlaždice ----------
   # Beží súbežne s vrstevnicami, trasami aj tieňovaním – z nich nič
   # nepotrebuje, len PBF z prípravy.
@@ -2115,7 +1957,7 @@ jobs:
   # bez nich, ale nasadiť.
   deploy:
     name: Zloženie a nasadenie
-    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets, wiki]
+    needs: [plan, shading-rocks, contours, rocks, trails, features, terrain, tiles, assets]
     if: ${{ !cancelled() && needs.tiles.result == 'success' && needs.assets.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
@@ -2276,38 +2118,6 @@ jobs:
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
         run: workers/deploy/smoke-test.sh
 
-      # ---------- hotová mapa na Drive ----------
-      # TRI ZIPy do priečinka `/krajina/kraj/výsek`: celý `_site`, vrstevnice so
-      # skalami a tieňovanie. Mená sú STÁLE (`<kraj>[-<výsek>][-testNkm2]`),
-      # takže ďalší build tie isté súbory prepíše – najprv nahrá, potom zmaže
-      # starý. Čo v balíku je, hovorí `obsah.json` v ňom (rozpis vo
-      # `workers/deploy/publish-map.py`). Vypína sa voľbou `publish=false`.
-      #
-      # Až ZA nasadením zámerne: mapa je vtedy na Pages už aj tak, takže keď
-      # Drive nepustí, nestratí sa nič – len to bude v logu červené a povie to
-      # aj súhrn behu, ktorý beží po tomto kroku (`if: always()`).
-      #
-      # PODMIENKA JE „PREŠLA KONTROLA", nie „všetko dobehlo". Publikuje sa
-      # každá mapa, ktorá prešla krokom vyššie (štýl odkazuje len na to, čo
-      # naozaj existuje) – aj keď potom zlyhalo nasadenie na Pages alebo smoke
-      # test, lebo tá mapa je v poriadku. Naopak mapa, ktorá kontrolou
-      # neprešla, sa na Drive nemá dostať vôbec: rozbitý ZIP v priečinku
-      # vyzerá presne ako dobrý.
-      #
-      # Zdroje vrstiev sa berú z toho, čo joby NAOZAJ použili
-      # (`…outputs.dem_source`), nie z formulára: pri prepnutí na náhradný
-      # model by inak `obsah.json` tvrdil niečo iné, než v tej mape je.
-      # Články z Wikipédie prídu ako vlastný artefakt (do `_site` nepatria –
-      # zjedli by rozpočet stránky). Keď job `wiki` nebežal alebo nič nenašiel,
-      # artefakt nie je a `publish-map.py` ten balík nepublikuje; starý zmaže,
-      # aby vedľa mapy neostal balík z iného behu.
-      - name: Stiahni články z Wikipédie
-        if: ${{ always() && needs.wiki.outputs.enabled == 'true' }}
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: wiki-articles
-          path: _wiki
 
       - name: Publikuj mapu na Drive
         id: publish
@@ -2334,7 +2144,6 @@ jobs:
         run: |
           set -euo pipefail
           python3 workers/deploy/publish-map.py --site=_site \
-            --wiki="$([ -f _wiki/index.json ] && echo _wiki)" \
             --maps=maps.json \
             --summary="$GITHUB_STEP_SUMMARY"
 
@@ -2421,7 +2230,7 @@ jobs:
   # `needs` niekoho ďalšieho.
   apple-archive:
     name: Balíky ako Apple Archive (.aar)
-    needs: [plan, deploy, contours, rocks, terrain, trails, features, tiles, wiki]
+    needs: [plan, deploy, contours, rocks, terrain, trails, features, tiles]
     if: ${{ !cancelled() && needs.deploy.result == 'success' && needs.plan.outputs.opt_publish == 'true' && needs.plan.outputs.opt_apple_archive == 'true' }}
     runs-on: macos-latest
     permissions:
@@ -2438,16 +2247,11 @@ jobs:
           pattern: site-*
           path: _site
           merge-multiple: true
-      # Články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
-      # rozpočet), takže majú vlastný artefakt aj vlastný balík – a ten sa
-      # rovnako ako ostatné tri vyrába aj ako `.aar`.
-      #
-      # Meno artefaktu aj podmienka sú TIE ISTÉ, aké má krok v `deploy`.
-      # Nesmú sa rozísť: keby sa tu sťahovalo pod iným menom, `_wiki` by
-      # nevzniklo, `publish-map.py` by ten balík považoval za „v tomto builde
-      # nie je" a starý `-wikipedia.aar` na Drive by ZMAZAL. Podmienka je
-      # `needs.wiki.outputs.enabled`, nie voľba z formulára: tá hovorí, čo
-      # sa žiadalo, kdežto toto, či články naozaj vznikli.
+      # Články z Wikipédie tu NIE SÚ a nie je to opomenutie: majú vlastnú
+      # pipeline (`.github/workflows/wiki.yml`), ktorá si `.aar` vyrába sama.
+      # Build map o tom balíku nerozhoduje, takže sa ho tu ani nedotýkame –
+      # `publish-map.py` ho bez `--wiki` do zoznamu vôbec nezaradí, a tým
+      # pádom ho ani nezmaže.
       # AŽ PO `site-*`: sprite je v oboch a vyhrať musí ten dopečený. Poradie
       # krokov je jediné, čo to zaručuje – `merge-multiple` o prednosti
       # nehovorí nič.
@@ -2456,13 +2260,6 @@ jobs:
         with:
           name: deploy-site
           path: _site
-      - name: Stiahni články z Wikipédie
-        if: ${{ needs.wiki.outputs.enabled == 'true' }}
-        continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          name: wiki-articles
-          path: _wiki
       - name: Zabaľ a nahraj .aar na Drive
         id: publish
         env:
@@ -2482,10 +2279,6 @@ jobs:
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}
           TILES_MAXZOOM: ${{ needs.tiles.outputs.maxzoom }}
           TRAILS_ENABLED: ${{ needs.trails.outputs.enabled || 'false' }}
-          # „Mali prísť články?" – aby sa dalo rozoznať „wiki v tomto builde
-          # nie je" od „artefakt sa nestiahol". Prvé je v poriadku, druhé by
-          # zmazalo dobrý balík na Drive.
-          WIKI_ENABLED: ${{ needs.wiki.outputs.enabled || 'false' }}
         run: workers/deploy/apple-archive.sh
       # Katalóg: `deploy` doň zapísal ZIPy, tento krok k nim pridá `.aar`.
       # `git pull --rebase` v skripte je tu nutnosť, nie poistka – `deploy`

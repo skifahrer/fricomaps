@@ -39,7 +39,7 @@ workers/contours-rocks/  joby `contours` a `rocks` – jeden skript, dve polovic
 workers/rocks-shading/   `shading-rocks.yml`: dlaždice → raster → vektor
 workers/terrain/         job `terrain` (tieňovanie a 3D)
 workers/trails/          job `trails`      workers/features/  job `features`
-workers/wiki/            job `wiki`: články z Wikipédie k objektom v regióne
+workers/wiki/            `wiki.yml`: články z Wikipédie k objektom mapy
 workers/tiles/           job `tiles`       workers/assets/    job `assets`
 workers/styles/          štýly pre web aj iOS (deploy + save-style-overrides)
 workers/deploy/          job `deploy`: zloženie, kontrola, súhrn, publikovanie

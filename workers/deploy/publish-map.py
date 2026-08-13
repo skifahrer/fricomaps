@@ -47,7 +47,6 @@ import json
 import os
 import sys
 import time
-import zipfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 # Priečinok = job, súbor = krok; spoločné veci ležia o úroveň vyššie.
@@ -67,6 +66,9 @@ def load(name, path):
     return mod
 
 
+pack = load("deploy_pack", "pack.py")   # ako sa balík zabalí (zip / aar)
+BALICE = pack.BALICE
+aa_je = pack.aa_je
 auth = load("drive_auth", os.path.join(_DRIVE, "auth.py"))        # kto sme na Drive
 folder = load("drive_folder", os.path.join(_DRIVE, "folder.py"))  # priečinky a nahrávanie
 
@@ -77,7 +79,6 @@ FOLDER_ID = "1pvrw7CGUkQLwg8Ql8xbKA4HhQHvPl8_7"
 # Balí sa `deflate` na najnižší stupeň. Obsah `_site` je z veľkej časti už
 # komprimovaný (PMTiles nesú gzip-nuté dlaždice, tieňovanie sú PNG), takže
 # vyšší stupeň stojí minúty a ušetrí percentá.
-ZIP_LEVEL = 1
 
 
 def env(name, default=""):
@@ -350,7 +351,48 @@ def katalog_meno(regions, key, kind):
     return r.get("name") or key
 
 
-def zapis_katalog(path, parts, regions, baliky, man, merge=False):
+def zapis_balik(mapy, kind, name, velkost, fid, fmt):
+    """Jeden balík v jednom formáte do `maps` položky katalógu.
+
+    JEDNO MIESTO PRE OBE CESTY. Zapisujú sa tu dve vetvy – celý build
+    (nahradenie položky) aj samostatná pipeline (`--only`, doplnenie jedného
+    balíka) – a keby si každá skladala ten zápis sama, raz sa rozídu: jedna by
+    vedela o formátoch a druhá nie.
+
+    `formats` je to podstatné; `file`/`size`/`link`/`download` na úrovni
+    balíka ukazujú na ZIP, aby starší čitateľ katalógu nemusel o formátoch
+    vedieť. `.aar` ich preto NEPREPISUJE – prepísal by odkaz, ktorý sa
+    doteraz čítal ako „stiahni mapu".
+    """
+    zaznam = {
+        "file": name,
+        "size": velkost,
+        "link": folder.file_link(fid),
+        "download": folder.download_link(fid),
+    }
+    polozka = mapy.setdefault(kind or "mapa", {})
+    polozka.setdefault("formats", {})[fmt] = zaznam
+    if fmt == "zip":
+        polozka.update(zaznam)
+
+
+def zapis(path, data, popis):
+    """Zapíše katalóg, keď sa naozaj zmenil. True = súbor je iný."""
+    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    try:
+        with open(path) as f:
+            if f.read() == text:
+                log(f"{path}: to isté ako doteraz – bez zmeny.")
+                return False
+    except OSError:
+        pass
+    with open(path, "w") as f:
+        f.write(text)
+    log(f"{path}: {popis}")
+    return True
+
+
+def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False):
     """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
 
     `baliky` je zoznam `(druh, meno, veľkosť, id, formát)` – to, čo sa naozaj
@@ -391,6 +433,20 @@ def zapis_katalog(path, parts, regions, baliky, man, merge=False):
         uzol.setdefault("name", katalog_meno(regions, parts[2], "area"))
 
     reg = region_entry(man)
+    if iba:
+        # DOPLNENIE, NIE PREPIS. Samostatná pipeline vie len o svojom balíku;
+        # keby prepísala celú položku, zmazala by odkazy na mapu, zoomy aj
+        # zdroje výšok, o ktorých nič nevie – a v katalógu by po nich nezostalo
+        # nič. Preto sa mení len ten jeden balík a čas.
+        uzol.setdefault("name", katalog_meno(regions, parts[-1], "region"))
+        uzol.setdefault("drive", "/".join(parts))
+        uzol["updated_at"] = data["_updated_at"]
+        uzol["run"] = env("GITHUB_RUN_NUMBER")
+        mapy = uzol.setdefault("maps", {})
+        for kind, name, velkost, fid, fmt in baliky:
+            zapis_balik(mapy, kind, name, velkost, fid, fmt)
+        return zapis(path, data,
+                     f"doplnený balík {iba} k {'/'.join(parts)}")
     polozka = {
         "name": uzol.get("name"),
         "drive": "/".join(parts),
@@ -432,20 +488,7 @@ def zapis_katalog(path, parts, regions, baliky, man, merge=False):
         zaklad.update(polozka)
         polozka = zaklad
     for kind, name, velkost, fid, fmt in baliky:
-        polozka_balika = polozka["maps"].setdefault(kind or "mapa", {})
-        polozka_balika.setdefault("formats", {})[fmt] = {
-            "file": name,
-            "size": velkost,
-            "link": folder.file_link(fid),
-            "download": folder.download_link(fid),
-        }
-        if fmt == "zip":
-            polozka_balika.update({
-                "file": name,
-                "size": velkost,
-                "link": folder.file_link(fid),
-                "download": folder.download_link(fid),
-            })
+        zapis_balik(polozka["maps"], kind, name, velkost, fid, fmt)
 
     # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
     # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
@@ -454,19 +497,8 @@ def zapis_katalog(path, parts, regions, baliky, man, merge=False):
     uzol.update(polozka)
     uzol.update(zachovaj)
 
-    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    try:
-        with open(path) as f:
-            if f.read() == text:
-                log(f"{path}: tá istá mapa s tými istými odkazmi – bez zmeny.")
-                return False
-    except OSError:
-        pass
-    with open(path, "w") as f:
-        f.write(text)
-    log(f"{path}: zapísaná mapa {'/'.join(parts)} "
-        f"({len(polozka['maps'])} balíkov)")
-    return True
+    return zapis(path, data, f"zapísaná mapa {'/'.join(parts)} "
+                             f"({len(polozka['maps'])} balíkov)")
 
 
 # ---------- balenie ----------
@@ -479,103 +511,6 @@ def vsetky_subory(site):
     return subory
 
 
-def zabal(site, dest, koren, subory, info=None):
-    """Súbory → jeden ZIP, v ktorom je všetko pod priečinkom `koren`.
-
-    Ten priečinok navyše je zámerný: rozbalenie do stiahnutých súborov inak
-    vysype dvadsať položiek do `~/Downloads`. Volá sa rovnako ako ZIP, takže
-    je po rozbalení vidieť, ktorá mapa to je. Cesty vnútri ostávajú tie z
-    `_site`, takže `-vrstevnice-skaly.zip` má dlaždice v `tiles/` – rovnako
-    ako celá mapa, nech sa dá rozbaliť jeden cez druhý.
-    """
-    surovo = sum(os.path.getsize(p) for p in subory)
-    log(f"Balím {len(subory)} súborov ({folder.human(surovo)}) do {dest}")
-
-    t0 = time.time()
-    hotovo = 0
-    posledny = t0
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED,
-                         compresslevel=ZIP_LEVEL) as z:
-        if info is not None:
-            # Čo kedysi nieslo meno súboru. Ide dovnútra ako prvý, nech je po
-            # rozbalení hneď na očiach.
-            z.writestr(os.path.join(koren, "obsah.json"),
-                       json.dumps(info, ensure_ascii=False, indent=2) + "\n")
-        for p in sorted(subory):
-            z.write(p, os.path.join(koren, os.path.relpath(p, site)))
-            hotovo += os.path.getsize(p)
-            # Tep raz za pol minúty: `_site` má aj gigabajt a ticho v logu sa
-            # nedá odlíšiť od zaseknutého kroku.
-            if time.time() - posledny >= 30:
-                posledny = time.time()
-                log(f"  [{(posledny - t0) / 60:.1f} min] "
-                    f"{folder.human(hotovo)} z {folder.human(surovo)}")
-    velkost = os.path.getsize(dest)
-    log(f"  hotovo za {time.time() - t0:.0f} s: {folder.human(velkost)} "
-        f"({velkost * 100 // max(surovo, 1)} % pôvodnej veľkosti)")
-    return velkost
-
-
-def aa_je():
-    """Je tu Apple Archive CLI (`aa`)? Je len na macOS – inde sa `.aar` nedá
-    vyrobiť a musí to byť POČUŤ, nie ticho preskočené."""
-    from shutil import which
-    return which("aa") is not None
-
-
-def zabal_aar(site, dest, koren, subory, info=None):
-    """Súbory → jeden Apple Archive (`.aar`, LZFSE).
-
-    PREČO NAVYŠE K ZIPU: `.aar` vie iOS aj macOS rozbaliť systémovo
-    (framework AppleArchive) – bez tretej knižnice v aplikácii a s LZFSE,
-    ktoré je na Apple hardvéri výrazne rýchlejšie než deflate. ZIP ostáva,
-    lebo ten otvorí čokoľvek; toto je druhá podoba TOHO ISTÉHO obsahu, nie
-    náhrada.
-
-    `aa` berie ADRESÁR, nie zoznam súborov, takže sa najprv postaví strom
-    z TVRDÝCH ODKAZOV. Kopírovať by znamenalo druhýkrát zapísať gigabajt na
-    disk runnera; odkaz stojí nič a `aa` cez neho číta ten istý obsah.
-    Priečinok `koren` navyše je ten istý zámer ako pri ZIPe – rozbalenie
-    nevysype dvadsať položiek do stiahnutých súborov.
-    """
-    import shutil
-    import subprocess
-    import tempfile
-
-    surovo = sum(os.path.getsize(p) for p in subory)
-    log(f"Balím {len(subory)} súborov ({folder.human(surovo)}) do {dest}")
-    t0 = time.time()
-    stage = tempfile.mkdtemp(prefix="aar-", dir=os.path.dirname(dest) or None)
-    try:
-        koren_dir = os.path.join(stage, koren)
-        os.makedirs(koren_dir, exist_ok=True)
-        if info is not None:
-            with open(os.path.join(koren_dir, "obsah.json"), "w") as f:
-                json.dump(info, f, ensure_ascii=False, indent=2)
-                f.write("\n")
-        for p in sorted(subory):
-            cieľ = os.path.join(koren_dir, os.path.relpath(p, site))
-            os.makedirs(os.path.dirname(cieľ), exist_ok=True)
-            try:
-                os.link(p, cieľ)
-            except OSError:
-                # Iný filesystém alebo plný počet odkazov – vtedy kópia.
-                shutil.copy2(p, cieľ)
-        if os.path.exists(dest):
-            os.remove(dest)
-        subprocess.run(["aa", "archive", "-a", "lzfse", "-d", stage,
-                        "-o", dest], check=True)
-    finally:
-        shutil.rmtree(stage, ignore_errors=True)
-    velkost = os.path.getsize(dest)
-    log(f"  hotovo za {time.time() - t0:.0f} s: {folder.human(velkost)} "
-        f"({velkost * 100 // max(surovo, 1)} % pôvodnej veľkosti)")
-    return velkost
-
-
-# Formát → funkcia, ktorá ho zabalí. Jedno miesto, kde sú vymenované: keby
-# pribudol tretí, pridá sa sem a nikde inde.
-BALICE = {"zip": zabal, "aar": zabal_aar}
 
 
 # ---------- beh ----------
@@ -603,6 +538,10 @@ def main():
     ap.add_argument("--wiki", default="",
                     help="priečinok s článkami z Wikipédie (balík `wikipedia`); "
                          "prázdne = ten balík sa nepublikuje a starý sa zmaže")
+    ap.add_argument("--only", default="",
+                    help="publikuj LEN tento balík (napr. `wikipedia`) a "
+                         "katalóg dopĺň, nie prepisuj – na samostatné "
+                         "pipeline, ktoré nerobia celú mapu")
     ap.add_argument("--maps", default="maps.json",
                     help="katalóg hotových máp v repozitári (prázdne = nezapisuj)")
     args = ap.parse_args()
@@ -640,10 +579,37 @@ def main():
          args.site, vrstvy_subory(args.site, man)),
         ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (raster .pmtiles)",
          args.site, tienovanie_subory(args.site, man)),
-        ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
-         args.wiki, vsetky_subory(args.wiki) if args.wiki else []),
     ]
-    if not baliky[0][3]:
+    # WIKIPÉDIA SA PRIDÁ, LEN KEĎ O NEJ TENTO BEH VIE. Odkedy má vlastnú
+    # pipeline (`.github/workflows/wiki.yml`), Build map články nesťahuje –
+    # a keby ten balík ostal v zozname natrvalo, videl by ho ako „v tomto
+    # builde nie je" a starý `-wikipedia.zip` aj `.aar` by na Drive ZMAZAL.
+    # Pri každom builde mapy, teda pri každej zmene štýlu.
+    #
+    # To mazanie je pritom správne pri vrstve, ktorú beh vypol (skaly, terén):
+    # tam „nie je v builde" naozaj znamená „nemá tam čo robiť". Rozdiel je
+    # v tom, či o balíku tento workflow vôbec rozhoduje – a to hovorí `--wiki`
+    # (dostal som články) alebo `--only=wikipedia` (idem robiť práve ten).
+    if args.wiki or args.only == "wikipedia":
+        baliky.append(
+            ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
+             args.wiki, vsetky_subory(args.wiki) if args.wiki else []))
+    # `--only`: samostatná pipeline (napr. „Wikipédia k mape") vyrába JEDEN
+    # balík a o zvyšok mapy sa nestará. Bez tohto by musela mať vlastný packer
+    # a vlastný zápis do katalógu – dve kópie toho istého, ktoré sa raz rozídu.
+    # Ostatné balíky sa vtedy ani nemažú: to, že ich tento beh nevyrobil,
+    # neznamená, že v mape nie sú.
+    if args.only:
+        znam = [k for k, *_ in baliky]
+        if args.only not in znam:
+            raise SystemExit(f"::error::`--only={args.only}` nepoznám. Balíky "
+                             f"sú: {', '.join(k or 'mapa' for k in znam)}.")
+        baliky = [b for b in baliky if b[0] == args.only]
+        if not baliky[0][3]:
+            raise SystemExit(
+                f"::error::Balík `{args.only}` nemá ani jeden súbor – nie je "
+                f"čo publikovať. (Zbehol krok, ktorý ho vyrába?)")
+    elif not baliky[0][3]:
         raise SystemExit(f"::error::V {args.site} nie je ani jeden súbor – nie je "
                          f"čo publikovať. (Zbehol job `deploy` až po zloženie "
                          f"webu?)")
@@ -738,9 +704,10 @@ def main():
                 args.maps, parts, regions,
                 # Do katalógu idú VŠETKY formáty. Beh, ktorý nahral len
                 # `.aar`, sa k tomu, čo tam je, pridá (`merge`) – inak by
-                # katalóg o ZIPoch prestal vedieť.
+                # katalóg o ZIPoch prestal vedieť. To isté robí `iba`, len
+                # o balík vyššie: samostatná pipeline pozná jediný balík.
                 [(k, n, v, i, f) for k, n, _p, v, _pr, i, f in hotove],
-                man, merge="zip" not in formaty)
+                man, iba=args.only, merge="zip" not in formaty)
             if args.summary and zmenene:
                 with open(args.summary, "a") as f:
                     f.write(f"Katalóg `{args.maps}` v repozitári je "
