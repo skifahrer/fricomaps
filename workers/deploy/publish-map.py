@@ -351,7 +351,7 @@ def katalog_meno(regions, key, kind):
     return r.get("name") or key
 
 
-def zapis_balik(mapy, kind, name, velkost, fid, fmt):
+def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy=""):
     """Jeden balík v jednom formáte do `maps` položky katalógu.
 
     JEDNO MIESTO PRE OBE CESTY. Zapisujú sa tu dve vetvy – celý build
@@ -369,7 +369,16 @@ def zapis_balik(mapy, kind, name, velkost, fid, fmt):
         "size": velkost,
         "link": folder.file_link(fid),
         "download": folder.download_link(fid),
+        # Z KTORÉHO BEHU je práve TENTO balík. Články z Wikipédie robí iná
+        # pipeline než mapu, takže `run` pri kraji (= beh, čo vyrobil mapu)
+        # o nich nič nepovie – a naopak: keby si ho tá pipeline prepísala na
+        # svoj, katalóg by tvrdil, že mapu vyrobil beh, ktorý stiahol len
+        # články. Beh 1 workflowu „Wikipédia k mape" tak v katalógu prepísal
+        # beh 110 Build map. Preto je pôvod pri balíku, nie len pri kraji.
+        "run": env("GITHUB_RUN_NUMBER"),
     }
+    if kedy:
+        zaznam["updated_at"] = kedy
     polozka = mapy.setdefault(kind or "mapa", {})
     polozka.setdefault("formats", {})[fmt] = zaznam
     if fmt == "zip":
@@ -440,11 +449,16 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False):
         # nič. Preto sa mení len ten jeden balík a čas.
         uzol.setdefault("name", katalog_meno(regions, parts[-1], "region"))
         uzol.setdefault("drive", "/".join(parts))
-        uzol["updated_at"] = data["_updated_at"]
-        uzol["run"] = env("GITHUB_RUN_NUMBER")
+        # `updated_at` a `run` pri kraji hovoria, KTORÝ BEH VYROBIL MAPU – to
+        # táto pipeline nespravila a nesmie si to prisvojiť (`setdefault` je
+        # tu na prvý zápis, keď mapa v katalógu ešte nie je). Kedy pribudol
+        # tento balík, nesie balík sám (viď `zapis_balik`).
+        uzol.setdefault("updated_at", data["_updated_at"])
+        uzol.setdefault("run", env("GITHUB_RUN_NUMBER"))
         mapy = uzol.setdefault("maps", {})
         for kind, name, velkost, fid, fmt in baliky:
-            zapis_balik(mapy, kind, name, velkost, fid, fmt)
+            zapis_balik(mapy, kind, name, velkost, fid, fmt,
+                        kedy=data["_updated_at"])
         return zapis(path, data,
                      f"doplnený balík {iba} k {'/'.join(parts)}")
     polozka = {
@@ -488,7 +502,8 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False):
         zaklad.update(polozka)
         polozka = zaklad
     for kind, name, velkost, fid, fmt in baliky:
-        zapis_balik(polozka["maps"], kind, name, velkost, fid, fmt)
+        zapis_balik(polozka["maps"], kind, name, velkost, fid, fmt,
+                    kedy=data["_updated_at"])
 
     # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
     # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
