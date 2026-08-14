@@ -1085,7 +1085,17 @@ neprečítal.
 | [`dem/tiles.py`](dem/tiles.py) `empty_tile()` | prázdna dlaždica sa **podpíše** verziou kontroly (`EMPTY_CHECK` v metadátach GDALu) – odpoveď z pravidiel, ktorým už neveríme, sa nesmie tváriť ako dnešná |
 | [`dem/coverage.py`](dem/coverage.py) | nepodpísaná (alebo staro podpísaná) prázdna dlaždica je **lož ako každá iná** → zmaže sa zo skladu a ďalší beh ten stupeň prečíta znova. Sklad sa tým vylieči sám, len to chce dva behy |
 | [`dem/fetch.sh`](dem/fetch.sh) | prázdne stupne sa vypisujú **vždy**, aj keď je pokrytie 100 % – inak sa „prečo tam nie sú vrstevnice“ hľadá v mape a nie v logu |
-| [`lint/dem-empty.py`](lint/dem-empty.py) | stráži, že o prázdnote nerozhoduje vzorkovanie, že sa podpis naozaj píše a že `coverage.py` má o prázdnej dlaždici tú istú predstavu ako `tiles.py` |
+| [`dem/trust.py`](dem/trust.py) | kontrola skladu sa pýta **to isté, čo sťahovanie**: podozrivo malý súbor (`tiles.EMPTY_MAX_BYTES`) otvorí a podpis posúdi `coverage.empty_stamp` – teda tá istá funkcia. Otvárajú sa LEN malé súbory, skutočná dlaždica má stovky MB |
+| [`lint/dem-empty.py`](lint/dem-empty.py) | stráží, že o prázdnote nerozhoduje vzorkovanie, že sa podpis naozaj píše, že `coverage.py` má o prázdnej dlaždici tú istú predstavu ako `tiles.py` a že `check.sh` sa pýta cez `trust.py` |
+
+**Kým sa kontrola pýtala len na meno, vylieči sa to až po páde.** Sklad síce
+nepoctivú dlaždicu zahodí sám, ale robí to `coverage.py` – teda až v jobe,
+ktorý si model vypýtal. Beh 31781263921 na tom zomrel: `dem-dmr5` mal
+`N48E016.tif` s nulovou veľkosťou (prázdna dlaždica ešte od kontroly „v1"),
+`check-dem` povedal „2 z 2 → doplniť: false", doplnenie sa nespustilo a
+tieňovanie o minútu neskôr napočítalo pokrytie 75,8 %, prešlo na Sonnyho a
+spadlo (jeho sklad je prázdny). Odvtedy sa na to isté pýta už aj kontrola –
+`dem/trust.py` – takže sa chýbajúci stupeň doplní hneď na začiatku behu.
 
 Skál sa to netýkalo: pri `rock_source: dmr5` si sklon číta
 [`contours-rocks/slope-chunks.py`](contours-rocks/slope-chunks.py) z Drive po

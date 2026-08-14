@@ -73,6 +73,12 @@ EMPTY_TAG = "EMPTY_CHECK"      # meno položky v metadátach GDALu
 # v1 = `-approx_stats` (vzorkovanie), v2 = vzorkovanie overené presným
 # priechodom. Prečo sa v1 zahadzuje, hovorí `has_elevations` nižšie.
 EMPTY_CHECK = "v2-presne"
+# Nad túto veľkosť to prázdna dlaždica byť NEMÔŽE: 60×60 pixelov je aj
+# s hlavičkou pár kilobajtov, kým skutočný stupeň má v 5 m mriežke stovky MB
+# (namerané: N48E017.tif = 575 MB). Podľa toho vie `workers/dem/trust.py`
+# povedať, ktorý súbor v sklade sa oplatí otvoriť, bez toho, aby sťahoval
+# celý sklad – a prah je tu, vedľa `EMPTY_PX`, z ktorého vychádza.
+EMPTY_MAX_BYTES = 1 << 20      # 1 MB
 
 
 def gdalinfo(path, stats=""):

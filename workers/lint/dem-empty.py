@@ -25,6 +25,14 @@ skončili rovnou líniou na 17. poludníku.
      overí presným priechodom.
   4. `dem/coverage.py` si prázdnu dlaždicu nedefinuje druhýkrát – obe
      konštanty berie z `dem/tiles.py` (pravidlo 1: jedna otázka, jedno miesto).
+  5. KONTROLA SA PÝTA TO ISTÉ, ČO STIAHNUTIE. `dem/check.sh` sa dlho pýtal len
+     „je to meno v sklade?", kým `coverage.py` meria, čo v tých súboroch je –
+     a v behu 31781263921 sa to rozišlo: `dem-dmr5` mal `N48E016.tif` s nulovou
+     veľkosťou (prázdna dlaždica ešte od kontroly „v1"), kontrola povedala
+     „2 z 2 → doplniť: false" a ostrý build Bratislavského kraja spadol
+     o minútu neskôr na pokrytí 75,8 %. Preto sa kontroluje, že `check.sh`
+     púšťa `dem/trust.py` a že `trust.py` posudzuje podpis TOU ISTOU funkciou
+     (`coverage.empty_stamp`), a nie vlastným nápadom.
 
 Spustenie (aj lokálne, bez GDALu – je to statická kontrola):
     python3 workers/lint/dem-empty.py
@@ -38,6 +46,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _WORKERS = os.path.dirname(_HERE)
 TILES = os.path.join(_WORKERS, "dem", "tiles.py")
 COVERAGE = os.path.join(_WORKERS, "dem", "coverage.py")
+CHECK = os.path.join(_WORKERS, "dem", "check.sh")
+TRUST = os.path.join(_WORKERS, "dem", "trust.py")
 
 
 def main():
@@ -80,6 +90,28 @@ def main():
         bad.append("workers/dem/coverage.py neberie podpis prázdnej dlaždice "
                    "z workers/dem/tiles.py – nepoctivú prázdnu dlaždicu potom "
                    "zo skladu nevyhodí a stupeň sa už nikdy neprečíta.")
+
+    # ---- kontrola sa musí pýtať to isté, čo stiahnutie ----
+    try:
+        check = open(CHECK, encoding="utf-8").read()
+        trust = open(TRUST, encoding="utf-8").read()
+    except OSError as exc:
+        bad.append(f"{exc} – bez `dem/trust.py` sa kontrola skladu vráti "
+                   f"k „meno v sklade stačí“ (beh 31781263921).")
+        check = trust = ""
+
+    if check and "trust.py" not in check:
+        bad.append("workers/dem/check.sh nepúšťa workers/dem/trust.py – "
+                   "kontrola by opäť verila menu súboru a prázdna dlaždica "
+                   "od starej kontroly by prešla ako hotový model.")
+    if trust and "empty_stamp" not in trust:
+        bad.append("workers/dem/trust.py neposudzuje podpis cez "
+                   "`coverage.empty_stamp` – tretia predstava o tom, čo je "
+                   "prázdna dlaždica, sa raz rozíde s tými dvoma.")
+    if trust and "EMPTY_MAX_BYTES" not in trust:
+        bad.append("workers/dem/trust.py nemá prah `tiles.EMPTY_MAX_BYTES` – "
+                   "bez neho by otváral aj skutočné dlaždice (stovky MB) "
+                   "a kontrola skladu by sťahovala celý sklad.")
 
     for m in bad:
         print(f"::error::{m}")
