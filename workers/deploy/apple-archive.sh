@@ -95,9 +95,14 @@ fi
 # pritom SYSTEMATICKÝ, nie smola – ten predošlý job commituje vždy.
 #
 # Stačí si pred zápisom vypýtať najnovšiu podobu súboru: potom je to, čo
-# `publish-map.py` napíše, prírastok nad aktuálnym stavom a rebase je
-# triviálny. `|| true`: keď `maps.json` vo vetve ešte nie je (prvá mapa
-# vôbec), zostane ten z checkoutu a `publish-map.py` ho založí.
+# `publish-map.py` napíše, prírastok nad aktuálnym stavom. `|| true`: keď
+# `maps.json` vo vetve ešte nie je (prvá mapa vôbec), zostane ten z checkoutu
+# a `publish-map.py` ho založí.
+#
+# To je ale len POLOVICA – tá o obsahu. Druhú polovicu (že aj RODIČ commitu je
+# čerstvá vetva, nie SHA, s ktorou beh začal) rieši `deploy/catalog.sh`; kým
+# bola len táto, commit niesol aj cudzí zápis a rebase padal na konflikte
+# zakaždým (beh 31782846262).
 BRANCH="${BRANCH:-master}"
 if git fetch --depth=1 origin "$BRANCH" >/dev/null 2>&1 \
    && git checkout FETCH_HEAD -- maps.json 2>/dev/null; then

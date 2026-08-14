@@ -38,6 +38,10 @@ PUBLISH_MAP = "workers/deploy/publish-map.py"
 # Čo sa do katalógu zapíše, skladá vedľajší modul – `publish-map.py` prerástol
 # strop 800 riadkov a rezalo sa tam, kde sa mení otázka.
 CATALOG_PY = "workers/deploy/catalog.py"
+# A `catalog.sh` ten súbor commitne – na ČERSTVÚ vetvu, nie na SHA, s ktorou
+# beh začal (inak druhý zapisujúci job v tom istom behu vždy skončí
+# konfliktom; beh 31782846262).
+CATALOG_SH = "workers/deploy/catalog.sh"
 
 bad = []
 
@@ -193,6 +197,18 @@ if pmap:
                    f"Rýchly test má vlastný uzol (`cesta_katalog`), takže "
                    f"preskakovať ho netreba – a balík, ktorý v zozname nie je, "
                    f"nikto nenájde.")
+
+try:
+    csh = open(CATALOG_SH, encoding="utf-8").read()
+except OSError as exc:
+    bad.append(f"{CATALOG_SH} sa nedá prečítať: {exc}")
+    csh = ""
+if csh and "reset --mixed" not in csh:
+    bad.append(f"{CATALOG_SH}: commit sa nerobí na čerstvú vetvu "
+               f"(`git fetch` + `git reset --mixed FETCH_HEAD`). Druhý "
+               f"zapisujúci job v tom istom behu – `.aar` po `deploy` – by "
+               f"niesol aj cudzí zápis, rebase by ho pridával druhýkrát "
+               f"a katalóg by sa zakaždým ticho zahodil.")
 
 for b in bad:
     print(f"::error::{b}")
