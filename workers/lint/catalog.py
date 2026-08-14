@@ -35,6 +35,9 @@ WORKFLOW = ".github/workflows/build-map.yml"
 # pravidlá: musí mať právo commitnúť a nesmie zapísať po neúspešnom nahratí.
 WIKI_WORKFLOW = ".github/workflows/wiki.yml"
 PUBLISH_MAP = "workers/deploy/publish-map.py"
+# Čo sa do katalógu zapíše, skladá vedľajší modul – `publish-map.py` prerástol
+# strop 800 riadkov a rezalo sa tam, kde sa mení otázka.
+CATALOG_PY = "workers/deploy/catalog.py"
 
 bad = []
 
@@ -162,13 +165,34 @@ if wtext and "--only=wikipedia" not in wtext:
 # o svojom balíku a prepis by zmazal odkazy na mapu, o ktorej nič nevie.
 try:
     pmap = open(PUBLISH_MAP, encoding="utf-8").read()
+    kmap = open(CATALOG_PY, encoding="utf-8").read()
 except OSError as exc:
-    bad.append(f"{PUBLISH_MAP} sa nedá prečítať: {exc}")
-    pmap = ""
-if pmap and "def zapis_katalog(path, parts, regions, baliky, man, iba=" not in pmap:
-    bad.append(f"{PUBLISH_MAP}: `zapis_katalog` nepozná režim „doplň jeden "
+    bad.append(f"{PUBLISH_MAP} / {CATALOG_PY} sa nedá prečítať: {exc}")
+    pmap = kmap = ""
+if kmap and "def zapis_katalog(path, parts, regions, baliky, man, iba=" not in kmap:
+    bad.append(f"{CATALOG_PY}: `zapis_katalog` nepozná režim „doplň jeden "
                f"balík“ (parameter `iba`). Samostatná pipeline by položku "
                f"regiónu prepísala a odkazy na mapu by zmizli.")
+
+# RÝCHLY TEST SA ZAPISUJE, ALE DO VLASTNÉHO UZLA. Zapisovať sa musí – balík
+# `…-test4km2.zip` na Drive je inak jediný, o ktorom sa bez tokenu nedá
+# dozvedieť. Sadnúť na uzol ostrej mapy ale nesmie: terén je v ňom na pár km²
+# a kto si ho stiahne podľa katalógu, dostane mapu s dierou. Preto sa
+# kontroluje, že cesta v katalógu vzniká `cesta_katalog()` a podáva sa ako
+# `kat=` – bez toho by test ostrú mapu prepísal.
+if pmap:
+    if "def cesta_katalog(" not in pmap:
+        bad.append(f"{PUBLISH_MAP}: chýba `cesta_katalog()` – rýchly test by "
+                   f"sa zapísal na miesto ostrej mapy toho istého kraja "
+                   f"a katalóg by o mape zo 4 km² tvrdil, že je to kraj.")
+    if "kat=kat" not in pmap:
+        bad.append(f"{PUBLISH_MAP}: `zapis_katalog` sa volá bez `kat=`, takže "
+                   f"uzol testu a uzol ostrej mapy sú ten istý.")
+    if "nezapisujem" in pmap:
+        bad.append(f"{PUBLISH_MAP}: katalóg sa pri niektorom behu preskakuje. "
+                   f"Rýchly test má vlastný uzol (`cesta_katalog`), takže "
+                   f"preskakovať ho netreba – a balík, ktorý v zozname nie je, "
+                   f"nikto nenájde.")
 
 for b in bad:
     print(f"::error::{b}")

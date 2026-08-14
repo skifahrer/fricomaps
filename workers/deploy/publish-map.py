@@ -67,6 +67,7 @@ def load(name, path):
 
 
 pack = load("deploy_pack", "pack.py")   # ako sa balík zabalí (zip / aar)
+catalog = load("deploy_catalog", "catalog.py")  # čo sa píše do maps.json
 BALICE = pack.BALICE
 aa_je = pack.aa_je
 auth = load("drive_auth", os.path.join(_DRIVE, "auth.py"))        # kto sme na Drive
@@ -116,6 +117,7 @@ def bez_testu(key):
         base = base[:cut]
 
 
+
 # ---------- kam to patrí ----------
 
 def krajina_z_url(url):
@@ -157,6 +159,22 @@ def cesta(regions):
     if area_key and area_key != "cely":
         parts.append(safe(area_key))
     return parts
+
+
+def cesta_katalog(parts):
+    """Kam to patrí v KATALÓGU – to isté, len rýchly test má vlastný uzol.
+
+    Na Drive ležia balíky testu v tom istom priečinku ako ostrá mapa (odlíši
+    ich meno – `…-test4km2.zip`), ale v katalógu na jej miesto sadnúť NESMÚ:
+    terén je v nich na pár km² a čitateľ by si podľa nich stiahol „mapu
+    kraja". Zapisovať sa ale majú – bez toho o nich nevie nikto, kto nemá
+    otvorený Drive, a to je presne to, načo `maps.json` je. Uzol preto dostane
+    tú istú príponu, akú nesú súbory: `vysoke_tatry_test4km2`.
+    """
+    test_km2 = env("TEST_KM2", "0")
+    if test_km2 in ("", "0"):
+        return parts
+    return parts[:-1] + [f"{parts[-1]}_test{safe(test_km2)}km2"]
 
 
 # ---------- ako sa to volá ----------
@@ -249,14 +267,10 @@ def manifest_data(site):
         return {}
 
 
-def region_entry(man):
-    key = man.get("default_region")
-    return ((man.get("regions") or {}).get(key) or {}) if key else {}
-
 
 def vrstvy_subory(site, man):
     """Súbory balíka `vrstevnice-skaly` – z manifestu, inak podľa mena."""
-    reg = region_entry(man)
+    reg = catalog.region_entry(man)
     rel = [reg[k] for k in ("contours", "rocks") if reg.get(k)]
     if not rel:
         tiles = os.path.join(site, "tiles")
@@ -289,7 +303,7 @@ def tienovanie_subory(site, man):
 
 def obsah(kind, man, fmt="zip"):
     """`obsah.json` do balíka – to, čo kedysi nieslo meno súboru."""
-    reg = region_entry(man)
+    reg = catalog.region_entry(man)
     return {
         "balik": kind or "mapa",
         # Meno TOHO súboru, v ktorom `obsah.json` leží – čiže aj s príponou
@@ -314,206 +328,6 @@ def obsah(kind, man, fmt="zip"):
                      "region": reg},
     }
 
-
-# ---------- katalóg máp v repozitári ----------
-# `maps.json` je JEDINÝ zoznam toho, ktoré mapy sú hotové a kde ležia. Na Drive
-# sa to inak nedá zistiť bez tokenu a bez klikania: priečinky sú tri úrovne
-# hlboko a mená balíkov si človek nepamätá. Preto ho zapisuje ten, kto tie
-# súbory práve nahral – vie ich id, veľkosť aj to, čo v nich je.
-#
-# ŠTRUKTÚRA SEDÍ S CESTOU NA DRIVE, a to zámerne: `krajina → kraj → výsek` je tá
-# istá odpoveď na otázku „čoho sa tá mapa týka", akú dáva `cesta()`. Dve rôzne
-# hierarchie tých istých máp by sa raz rozišli (pravidlo 1).
-#
-# KRAJINA JE HLAVNÝ KĽÚČ – rovno v koreni, bez obálky:
-#
-#   slovensko.regions.presovsky.maps                          celý kraj
-#   slovensko.regions.presovsky.subregions.vysoke_tatry.maps  výsek
-#
-# Metadáta katalógu ležia vedľa nich a poznať ich je po čom: začínajú
-# podčiarkovníkom (`_comment`, `_updated_at`). Je to tá istá konvencia ako
-# vo `workers/data/areas.json`, kde sú kľúče pohorí tiež v koreni a `_comment`
-# medzi nimi – kto katalóg číta, preskočí kľúče na `_`.
-#
-# ZÁPIS JE „NAHRAĎ CELÚ POLOŽKU". Keď mapa v zozname nie je, pridá sa; keď je,
-# prepíše sa celá – vrátane balíkov, ktoré tento build nevyrobil, aby v nej
-# nezostal odkaz na súbor, ktorý sa medzitým zmazal.
-
-def katalog_meno(regions, key, kind):
-    """Ľudské meno kraja/výseku/krajiny – z číselníkov, nie vymyslené."""
-    if kind == "area":
-        try:
-            with open(os.path.join(_DATA, "areas.json")) as f:
-                return (json.load(f).get(key) or {}).get("name") or key
-        except (OSError, ValueError):
-            return key
-    r = regions.get(key) or {}
-    return r.get("name") or key
-
-
-def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy=""):
-    """Jeden balík v jednom formáte do `maps` položky katalógu.
-
-    JEDNO MIESTO PRE OBE CESTY. Zapisujú sa tu dve vetvy – celý build
-    (nahradenie položky) aj samostatná pipeline (`--only`, doplnenie jedného
-    balíka) – a keby si každá skladala ten zápis sama, raz sa rozídu: jedna by
-    vedela o formátoch a druhá nie.
-
-    `formats` je to podstatné; `file`/`size`/`link`/`download` na úrovni
-    balíka ukazujú na ZIP, aby starší čitateľ katalógu nemusel o formátoch
-    vedieť. `.aar` ich preto NEPREPISUJE – prepísal by odkaz, ktorý sa
-    doteraz čítal ako „stiahni mapu".
-    """
-    zaznam = {
-        "file": name,
-        "size": velkost,
-        "link": folder.file_link(fid),
-        "download": folder.download_link(fid),
-        # Z KTORÉHO BEHU je práve TENTO balík. Články z Wikipédie robí iná
-        # pipeline než mapu, takže `run` pri kraji (= beh, čo vyrobil mapu)
-        # o nich nič nepovie – a naopak: keby si ho tá pipeline prepísala na
-        # svoj, katalóg by tvrdil, že mapu vyrobil beh, ktorý stiahol len
-        # články. Beh 1 workflowu „Wikipédia k mape" tak v katalógu prepísal
-        # beh 110 Build map. Preto je pôvod pri balíku, nie len pri kraji.
-        "run": env("GITHUB_RUN_NUMBER"),
-    }
-    if kedy:
-        zaznam["updated_at"] = kedy
-    polozka = mapy.setdefault(kind or "mapa", {})
-    polozka.setdefault("formats", {})[fmt] = zaznam
-    if fmt == "zip":
-        polozka.update(zaznam)
-
-
-def zapis(path, data, popis):
-    """Zapíše katalóg, keď sa naozaj zmenil. True = súbor je iný."""
-    text = json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    try:
-        with open(path) as f:
-            if f.read() == text:
-                log(f"{path}: to isté ako doteraz – bez zmeny.")
-                return False
-    except OSError:
-        pass
-    with open(path, "w") as f:
-        f.write(text)
-    log(f"{path}: {popis}")
-    return True
-
-
-def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False):
-    """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
-
-    `baliky` je zoznam `(druh, meno, veľkosť, id, formát)` – to, čo sa naozaj
-    nahralo.
-
-    `merge=True` znamená „tento beh nahral LEN ĎALŠÍ FORMÁT toho istého, čo
-    tam už je" – vtedy sa balíky doplnia k existujúcim namiesto nahradenia.
-    Tak to má job na macOS, ktorý dobalí `.aar` po tom, čo `deploy` nahral
-    ZIPy: keby prepisoval, katalóg by o ZIPoch prestal vedieť. Pri bežnom
-    behu (`merge=False`) sa naopak MUSÍ nahradiť – inak by v katalógu ostali
-    odkazy na balíky, ktoré tento build nevyrobil.
-    """
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = {}
-    data.setdefault("_comment",
-                    "Katalóg hotových máp na Google Drive – ktoré sú a kde. "
-                    "Hlavný kľúč je krajina, pod ňou `regions` (kraj) a "
-                    "`subregions` (výsek); kľúče na `_` sú metadáta katalógu, "
-                    "nie krajiny. Dopisuje ho na konci buildu "
-                    "workers/deploy/publish-map.py (krok „Zapíš mapu do "
-                    "maps.json“); ručne sa needituje. Odkazy otvorí ten, kto "
-                    "má prístup k priečinku s mapami.")
-    data["_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-    krajina = data.setdefault(parts[0], {})
-    krajina.setdefault("name", katalog_meno(regions, parts[0], "region"))
-    uzol = krajina                      # build celej krajiny končí tu
-    if len(parts) > 1:
-        regs = krajina.setdefault("regions", {})
-        uzol = regs.setdefault(parts[1], {})
-        uzol.setdefault("name", katalog_meno(regions, parts[1], "region"))
-    if len(parts) > 2:
-        subs = uzol.setdefault("subregions", {})
-        uzol = subs.setdefault(parts[2], {})
-        uzol.setdefault("name", katalog_meno(regions, parts[2], "area"))
-
-    reg = region_entry(man)
-    if iba:
-        # DOPLNENIE, NIE PREPIS. Samostatná pipeline vie len o svojom balíku;
-        # keby prepísala celú položku, zmazala by odkazy na mapu, zoomy aj
-        # zdroje výšok, o ktorých nič nevie – a v katalógu by po nich nezostalo
-        # nič. Preto sa mení len ten jeden balík a čas.
-        uzol.setdefault("name", katalog_meno(regions, parts[-1], "region"))
-        uzol.setdefault("drive", "/".join(parts))
-        # `updated_at` a `run` pri kraji hovoria, KTORÝ BEH VYROBIL MAPU – to
-        # táto pipeline nespravila a nesmie si to prisvojiť (`setdefault` je
-        # tu na prvý zápis, keď mapa v katalógu ešte nie je). Kedy pribudol
-        # tento balík, nesie balík sám (viď `zapis_balik`).
-        uzol.setdefault("updated_at", data["_updated_at"])
-        uzol.setdefault("run", env("GITHUB_RUN_NUMBER"))
-        mapy = uzol.setdefault("maps", {})
-        for kind, name, velkost, fid, fmt in baliky:
-            zapis_balik(mapy, kind, name, velkost, fid, fmt,
-                        kedy=data["_updated_at"])
-        return zapis(path, data,
-                     f"doplnený balík {iba} k {'/'.join(parts)}")
-    polozka = {
-        "name": uzol.get("name"),
-        "drive": "/".join(parts),
-        "updated_at": data["_updated_at"],
-        "run": env("GITHUB_RUN_NUMBER"),
-        "layers": vrstvy(),
-        # Balík × formát. `formats` je to podstatné (ZIP otvorí čokoľvek,
-        # `.aar` rozbalí iOS a macOS systémovo); `file`/`size`/`link` na
-        # úrovni balíka ostávajú a ukazujú na ZIP, aby starší čitateľ
-        # katalógu nemusel vedieť o formátoch.
-        "maps": {},
-    }
-    # Čo o mape treba vedieť pri výbere, nie až po rozbalení. Zoomy a zdroje
-    # nesie manifest, tak sa berú z neho. `bbox` je bbox MAPY, teda celého
-    # regiónu – aj pri builde na výrez, lebo mapa je celý región a orezané sú
-    # len vrstvy z výškového modelu. Práve preto je pri výreze vedľa neho aj
-    # `area_bbox`: to je to, kde v tej mape vrstevnice a skaly naozaj sú.
-    for k in ("bbox", "maxzoom", "contours_maxzoom", "contour_interval",
-              "rocks_maxzoom", "rock_slope", "dem_source"):
-        if reg.get(k) is not None:
-            polozka[k] = reg[k]
-    area_bbox = env("AREA_BBOX")
-    if len(parts) > 2 and area_bbox:
-        try:
-            polozka["area_bbox"] = [float(v) for v in area_bbox.split(",")]
-        except ValueError:
-            pass
-    stare_maps = uzol.get("maps") or {}
-    polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()} if merge else {}
-    if merge:
-        # ČO TENTO BEH NEVIE, TO NESMIE ZMAZAŤ. Položka sa zapisuje celá
-        # (`uzol.clear()`), takže beh, ktorý pridáva len ďalší formát, by
-        # z katalógu vyhodil všetko, čo sám nedopočítal – bbox, zoomy, zdroj
-        # výšok. Tie sa berú z manifestu a ten sem chodí z iného jobu, takže
-        # stačí, aby raz nedorazil. Pri `merge` je preto východiskom to, čo
-        # v katalógu už je, a nové hodnoty idú navrch.
-        zaklad = {k: v for k, v in uzol.items()
-                  if k not in ("maps", "regions", "subregions")}
-        zaklad.update(polozka)
-        polozka = zaklad
-    for kind, name, velkost, fid, fmt in baliky:
-        zapis_balik(polozka["maps"], kind, name, velkost, fid, fmt,
-                    kedy=data["_updated_at"])
-
-    # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
-    # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
-    zachovaj = {k: uzol[k] for k in ("regions", "subregions") if k in uzol}
-    uzol.clear()
-    uzol.update(polozka)
-    uzol.update(zachovaj)
-
-    return zapis(path, data, f"zapísaná mapa {'/'.join(parts)} "
-                             f"({len(polozka['maps'])} balíkov)")
 
 
 # ---------- balenie ----------
@@ -708,25 +522,26 @@ def main():
 
     # ---------- katalóg ----------
     if args.maps:
-        if env("TEST_KM2", "0") not in ("", "0"):
-            # Rýchly test má terén na pár km². Do katalógu nepatrí a hlavne
-            # nesmie PREPÍSAŤ položku ostrej mapy toho istého kraja – bol by
-            # to zoznam, ktorý na tie ZIPy ukazuje, ale tvrdí o nich niečo iné.
-            log(f"Rýchly test: do {args.maps} nezapisujem (mapa je len na "
-                f"{env('TEST_KM2')} km²; balíky na Drive to nesú v mene).")
-        else:
-            zmenene = zapis_katalog(
-                args.maps, parts, regions,
-                # Do katalógu idú VŠETKY formáty. Beh, ktorý nahral len
-                # `.aar`, sa k tomu, čo tam je, pridá (`merge`) – inak by
-                # katalóg o ZIPoch prestal vedieť. To isté robí `iba`, len
-                # o balík vyššie: samostatná pipeline pozná jediný balík.
-                [(k, n, v, i, f) for k, n, _p, v, _pr, i, f in hotove],
-                man, iba=args.only, merge="zip" not in formaty)
-            if args.summary and zmenene:
-                with open(args.summary, "a") as f:
-                    f.write(f"Katalóg `{args.maps}` v repozitári je "
-                            f"doplnený.\n\n")
+        # RÝCHLY TEST SA ZAPISUJE TIEŽ, LEN INAM. Balíky na Drive ležia
+        # v priečinku ostrej mapy a odlišuje ich meno (`…-test4km2.zip`) –
+        # a kým sa katalóg pri teste preskakoval, bol to jediný druh balíka,
+        # o ktorom sa bez otvoreného Drive nedalo dozvedieť. Uzol testu je
+        # vlastný (`cesta_katalog`), takže na položku ostrej mapy sadnúť
+        # nemôže; že je to test, hovorí kľúč, meno aj `test_km2` v položke.
+        kat = cesta_katalog(parts)
+        zmenene = catalog.zapis_katalog(
+            args.maps, parts, regions,
+            # Do katalógu idú VŠETKY formáty. Beh, ktorý nahral len
+            # `.aar`, sa k tomu, čo tam je, pridá (`merge`) – inak by
+            # katalóg o ZIPoch prestal vedieť. To isté robí `iba`, len
+            # o balík vyššie: samostatná pipeline pozná jediný balík.
+            [(k, n, v, i, f) for k, n, _p, v, _pr, i, f in hotove],
+            man, iba=args.only, merge="zip" not in formaty, kat=kat,
+            layers=vrstvy())
+        if args.summary and zmenene:
+            with open(args.summary, "a") as f:
+                f.write(f"Katalóg `{args.maps}` v repozitári je "
+                        f"doplnený (`{'/'.join(kat)}`).\n\n")
 
     if args.summary:
         with open(args.summary, "a") as f:

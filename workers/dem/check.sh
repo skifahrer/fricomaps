@@ -144,6 +144,37 @@ check_source() { # $1 = vrstva (na výpis), $2 = zdroj
     # model nemá dáta“ (u Slovenska napr. N47E016 v Maďarsku) – a „chýba jedna,
     # tak sťahuj znova“ by mirrorovalo pri každom builde. Že mozaika územie
     # naozaj pokrýva, tam meria `workers/dem/coverage.py` až pri sťahovaní.
+    # A NAVYŠE: MENO V SKLADE EŠTE NIE JE MODEL. Kontrola sa doteraz pýtala len
+    # „je to meno v sklade?", kým sťahovanie meria, čo v tých súboroch naozaj
+    # je (`coverage.py`) – dve odpovede na jednu otázku, a v behu 31781263921
+    # sa rozišli: `dem-dmr5` mal `N48E016.tif` s nulovou veľkosťou (prázdna
+    # dlaždica ešte od kontroly „v1"), kontrola povedala „2 z 2 → doplniť:
+    # false" a ostrý build Bratislavského kraja spadol o minútu neskôr na
+    # pokrytí 75,8 %. `trust.py` sa preto pýta tej istej funkcie ako
+    # `coverage.py`, len otvára LEN podozrivo malé súbory – veľkosť je vo
+    # výpise skladu, takže je to jeden dopyt navyše a pár kilobajtov.
+    if [ "$src" = 'dmr5' ] && [ "$have" -gt 0 ]; then
+      local male nedoveryhodne
+      male=$(printf '%s\n' "$assets" | python3 "$HERE/trust.py" \
+        --store="$rel" --names="$want" --only-suspect)
+      if [ -n "$male" ]; then
+        # `gdalinfo` až keď je čo otvárať: obvykle nie je čo a inštalácia
+        # GDALu je pol minúty na jobe, ktorý inak trvá osem sekúnd.
+        if ! command -v gdalinfo >/dev/null 2>&1; then
+          echo "  (dopĺňam gdal-bin – v sklade je podozrivo malá dlaždica)"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gdal-bin
+        fi
+        nedoveryhodne=$(printf '%s\n' "$assets" | python3 "$HERE/trust.py" \
+          --store="$rel" --names="$want")
+        for t in $nedoveryhodne; do
+          case " $chybaju " in
+            *" $t "*) ;;
+            *) chybaju="$chybaju $t"; have=$(( have - 1 )) ;;
+          esac
+        done
+      fi
+    fi
     if [ "$src" = 'dmr5' ]; then
       [ -n "$chybaju" ] && need=true || true
     else
