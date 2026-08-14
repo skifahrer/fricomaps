@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-14T13:52:45Z",
+  "_updated_at": "2026-08-14T13:57:04Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -15,6 +15,7 @@
         "contours_maxzoom": 16,
         "dem_source": "dmr5",
         "drive": "slovensko/bratislavsky",
+        "features_maxzoom": 15,
         "layers": [
           "vrstevnice_dmr5_5m",
           "skaly_dmr5",
@@ -24,116 +25,78 @@
         ],
         "maps": {
           "mapa": {
-            "download": "https://drive.google.com/uc?export=download&id=15z9d98T4xLy-7FI2fOvnkjrqarkXEft7",
+            "download": "https://drive.google.com/uc?export=download&id=1hAG-E5k8PyGcc2UKV7_k94_L6mrjoE4b",
             "file": "bratislavsky.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=1OhZidQq-dXqII4CBAwIIarKswvnSx4jp",
-                "file": "bratislavsky.aar",
-                "link": "https://drive.google.com/file/d/1OhZidQq-dXqII4CBAwIIarKswvnSx4jp/view",
-                "run": "123",
-                "size": 206549313,
-                "updated_at": "2026-08-14T09:21:23Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=15z9d98T4xLy-7FI2fOvnkjrqarkXEft7",
+                "download": "https://drive.google.com/uc?export=download&id=1hAG-E5k8PyGcc2UKV7_k94_L6mrjoE4b",
                 "file": "bratislavsky.zip",
-                "link": "https://drive.google.com/file/d/15z9d98T4xLy-7FI2fOvnkjrqarkXEft7/view",
-                "run": "123",
-                "size": 210039926,
-                "updated_at": "2026-08-14T09:20:35Z"
+                "link": "https://drive.google.com/file/d/1hAG-E5k8PyGcc2UKV7_k94_L6mrjoE4b/view",
+                "run": "125",
+                "size": 210039925,
+                "updated_at": "2026-08-14T13:57:04Z"
               }
             },
-            "link": "https://drive.google.com/file/d/15z9d98T4xLy-7FI2fOvnkjrqarkXEft7/view",
-            "run": "123",
-            "size": 210039926,
-            "updated_at": "2026-08-14T09:20:35Z"
+            "link": "https://drive.google.com/file/d/1hAG-E5k8PyGcc2UKV7_k94_L6mrjoE4b/view",
+            "run": "125",
+            "size": 210039925,
+            "updated_at": "2026-08-14T13:57:04Z"
           },
           "tienovanie": {
-            "download": "https://drive.google.com/uc?export=download&id=19Bns-AmC-CzXnsD_Iy1Kufk2ywsqUV1x",
+            "download": "https://drive.google.com/uc?export=download&id=1Elyb-r70W25lpeuL2sN8WV8yX0ktm-E8",
             "file": "bratislavsky-tienovanie.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=19MO_5CkQmilI75VwznfWhEzqu82YlCgx",
-                "file": "bratislavsky-tienovanie.aar",
-                "link": "https://drive.google.com/file/d/19MO_5CkQmilI75VwznfWhEzqu82YlCgx/view",
-                "run": "123",
-                "size": 36472562,
-                "updated_at": "2026-08-14T09:21:23Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=19Bns-AmC-CzXnsD_Iy1Kufk2ywsqUV1x",
+                "download": "https://drive.google.com/uc?export=download&id=1Elyb-r70W25lpeuL2sN8WV8yX0ktm-E8",
                 "file": "bratislavsky-tienovanie.zip",
-                "link": "https://drive.google.com/file/d/19Bns-AmC-CzXnsD_Iy1Kufk2ywsqUV1x/view",
-                "run": "123",
-                "size": 35824700,
-                "updated_at": "2026-08-14T09:20:35Z"
+                "link": "https://drive.google.com/file/d/1Elyb-r70W25lpeuL2sN8WV8yX0ktm-E8/view",
+                "run": "125",
+                "size": 35824699,
+                "updated_at": "2026-08-14T13:57:04Z"
               }
             },
-            "link": "https://drive.google.com/file/d/19Bns-AmC-CzXnsD_Iy1Kufk2ywsqUV1x/view",
-            "run": "123",
-            "size": 35824700,
-            "updated_at": "2026-08-14T09:20:35Z"
+            "link": "https://drive.google.com/file/d/1Elyb-r70W25lpeuL2sN8WV8yX0ktm-E8/view",
+            "run": "125",
+            "size": 35824699,
+            "updated_at": "2026-08-14T13:57:04Z"
           },
           "vrstevnice-skaly": {
-            "download": "https://drive.google.com/uc?export=download&id=1txHioxSHxBwBDL8IfnnbV1JvP33qU71l",
+            "download": "https://drive.google.com/uc?export=download&id=1v7oJeauloOv3kjbPxkvhOfTNXF2n-VMi",
             "file": "bratislavsky-vrstevnice-skaly.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=13UyJ8E4V9Guc7Vi4MXMR7EWJnOdyyMIm",
-                "file": "bratislavsky-vrstevnice-skaly.aar",
-                "link": "https://drive.google.com/file/d/13UyJ8E4V9Guc7Vi4MXMR7EWJnOdyyMIm/view",
-                "run": "123",
-                "size": 48740104,
-                "updated_at": "2026-08-14T09:21:23Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=1txHioxSHxBwBDL8IfnnbV1JvP33qU71l",
+                "download": "https://drive.google.com/uc?export=download&id=1v7oJeauloOv3kjbPxkvhOfTNXF2n-VMi",
                 "file": "bratislavsky-vrstevnice-skaly.zip",
-                "link": "https://drive.google.com/file/d/1txHioxSHxBwBDL8IfnnbV1JvP33qU71l/view",
-                "run": "123",
-                "size": 48557806,
-                "updated_at": "2026-08-14T09:20:35Z"
+                "link": "https://drive.google.com/file/d/1v7oJeauloOv3kjbPxkvhOfTNXF2n-VMi/view",
+                "run": "125",
+                "size": 48557805,
+                "updated_at": "2026-08-14T13:57:04Z"
               }
             },
-            "link": "https://drive.google.com/file/d/1txHioxSHxBwBDL8IfnnbV1JvP33qU71l/view",
-            "run": "123",
-            "size": 48557806,
-            "updated_at": "2026-08-14T09:20:35Z"
-          },
-          "wikipedia": {
-            "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
-            "file": "bratislavsky-wikipedia.zip",
-            "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=1oFCRCq4CWkVCehciwgz9uJMSZ8BA8hLw",
-                "file": "bratislavsky-wikipedia.aar",
-                "link": "https://drive.google.com/file/d/1oFCRCq4CWkVCehciwgz9uJMSZ8BA8hLw/view",
-                "run": "2",
-                "size": 3171944,
-                "updated_at": "2026-08-14T13:52:45Z"
-              },
-              "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
-                "file": "bratislavsky-wikipedia.zip",
-                "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
-                "run": "2",
-                "size": 3831311,
-                "updated_at": "2026-08-14T13:52:22Z"
-              }
-            },
-            "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
-            "run": "2",
-            "size": 3831311,
-            "updated_at": "2026-08-14T13:52:22Z"
+            "link": "https://drive.google.com/file/d/1v7oJeauloOv3kjbPxkvhOfTNXF2n-VMi/view",
+            "run": "125",
+            "size": 48557805,
+            "updated_at": "2026-08-14T13:57:04Z"
           }
         },
         "maxzoom": 16,
         "name": "Bratislavský kraj",
         "rock_slope": 50,
+        "rock_source": "dmr5",
         "rocks_maxzoom": 16,
-        "run": "123",
-        "updated_at": "2026-08-14T09:21:23Z"
+        "run": "125",
+        "terrain_maxzoom": 15,
+        "terrain_source": "dmr5",
+        "tiles": {
+          "contours": "tiles/bratislavsky-contours.pmtiles",
+          "features": "tiles/bratislavsky-features.pmtiles",
+          "pmtiles": "tiles/bratislavsky.pmtiles",
+          "rocks": "tiles/bratislavsky-rocks.pmtiles",
+          "terrain": "tiles/bratislavsky-terrain.pmtiles",
+          "trails": "tiles/bratislavsky-trails.pmtiles"
+        },
+        "trails_maxzoom": 14,
+        "updated_at": "2026-08-14T13:57:04Z"
       },
       "bratislavsky_test4km2": {
         "area_bbox": [
