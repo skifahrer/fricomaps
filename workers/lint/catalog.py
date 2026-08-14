@@ -173,6 +173,30 @@ try:
 except OSError as exc:
     bad.append(f"{PUBLISH_MAP} / {CATALOG_PY} sa nedá prečítať: {exc}")
     pmap = kmap = ""
+# ČO SI ČITATEĽ NESMIE ODVODIŤ. Meno súboru s dlaždicami sa z kľúča uzla
+# poskladať NEDÁ – uzol je `bratislavsky_test4km2`, balík `bratislavsky-test4km2
+# .zip` a dlaždice v ňom `tiles/bratislavsky_test4-…`; pri výreze sa dokonca
+# volajú podľa kraja, nie podľa výseku. Kto by si cestu odvodil, dostane súbor,
+# ktorý v balíku nie je, a vrstva sa ticho nenačíta. A strop zoomu, ktorý
+# v katalógu nie je, si čitateľ dosadí z `maxzoom` mapy – trasy (z14) a prvky
+# (z15) by tak nad svojím stropom pýtali neexistujúce dlaždice a zmizli by
+# práve tie dve vrstvy, ktoré sa vyberajú ťuknutím do mapy.
+for kluc, preco in (
+        ("tiles_paths", "cesty k `.pmtiles` sa do položky nezapisujú, takže "
+                        "si ich čitateľ musí odvodiť z kľúča – a ten meno "
+                        "súboru nie je"),
+        ("trails_maxzoom", "strop zoomu značených trás (z14) v položke nie je"),
+        ("features_maxzoom", "strop zoomu krajinných prvkov (z15) v položke "
+                             "nie je"),
+        ("rock_source", "z ktorého modelu sú SKALY, v položke nie je "
+                        "(`dem_source` je zdroj vrstevníc)"),
+        ("terrain_source", "z ktorého modelu je TIEŇOVANIE, v položke nie je "
+                           "– pri prechode na náhradný model by atribúcia "
+                           "tvrdila DMR 5.0 nad reliéfom zo Sonnyho")):
+    if kmap and kluc not in kmap:
+        bad.append(f"{CATALOG_PY}: {preco}. Doplň to z `manifest.json` – "
+                   f"pozná to, lebo podľa toho číta dlaždice aj viewer.")
+
 if kmap and "def zapis_katalog(path, parts, regions, baliky, man, iba=" not in kmap:
     bad.append(f"{CATALOG_PY}: `zapis_katalog` nepozná režim „doplň jeden "
                f"balík“ (parameter `iba`). Samostatná pipeline by položku "
