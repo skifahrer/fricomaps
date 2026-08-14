@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-14T13:52:22Z",
+  "_updated_at": "2026-08-14T13:52:45Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -105,6 +105,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
             "file": "bratislavsky-wikipedia.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1oFCRCq4CWkVCehciwgz9uJMSZ8BA8hLw",
+                "file": "bratislavsky-wikipedia.aar",
+                "link": "https://drive.google.com/file/d/1oFCRCq4CWkVCehciwgz9uJMSZ8BA8hLw/view",
+                "run": "2",
+                "size": 3171944,
+                "updated_at": "2026-08-14T13:52:45Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
                 "file": "bratislavsky-wikipedia.zip",
