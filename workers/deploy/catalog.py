@@ -290,8 +290,15 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
     # chýbajúce dáta, ale ako pokazené ťuknutie do mapy – práve tie dve vrstvy
     # sa vyberajú dotykom. `terrain_maxzoom` je to isté pre raster tieňovania
     # (v manifeste `dem_maxzoom`, lebo tam je terén mimo položky regiónu).
+    #
+    # A KAŽDÁ VRSTVA Z VÝŠKOVÉHO MODELU MUSÍ POVEDAŤ, Z ČOHO JE. `dem_source`
+    # je zdroj VRSTEVNÍC; skaly môžu byť z iného modelu (`rock_source`)
+    # a tieňovanie tiež (`terrain_source`, v manifeste je hore ako
+    # `dem_source`, lebo terén nie je časť položky regiónu). Keď sa niektorá
+    # vrstva prepne na náhradný model, musí to niesť to, čo sa NAOZAJ použilo –
+    # inak by atribúcia mapy tvrdila DMR 5.0 nad reliéfom zo Sonnyho.
     for k in ("bbox", "maxzoom", "contours_maxzoom", "contour_interval",
-              "rocks_maxzoom", "rock_slope", "dem_source",
+              "rocks_maxzoom", "rock_slope", "dem_source", "rock_source",
               "trails_maxzoom", "features_maxzoom"):
         if reg.get(k) is not None:
             polozka[k] = reg[k]
@@ -301,8 +308,11 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
     tiles = tiles_paths(man, reg)
     if tiles:
         polozka["tiles"] = tiles
-    if tiles.get("terrain") and man.get("dem_maxzoom") is not None:
-        polozka["terrain_maxzoom"] = man["dem_maxzoom"]
+    if tiles.get("terrain"):
+        if man.get("dem_maxzoom") is not None:
+            polozka["terrain_maxzoom"] = man["dem_maxzoom"]
+        if man.get("dem_source"):
+            polozka["terrain_source"] = man["dem_source"]
     area_bbox = env("AREA_BBOX")
     test_km2 = env("TEST_KM2", "0")
     if test_km2 not in ("", "0"):

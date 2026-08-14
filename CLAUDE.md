@@ -395,7 +395,13 @@ viewer. **A strop zoomu musí byť pri každej vrstve, ktorá ho má vlastný**
 (`trails_maxzoom` 14, `features_maxzoom` 15, `terrain_maxzoom`): kto ho
 nenájde, dosadí `maxzoom` mapy (16) a nad skutočným stropom pýta neexistujúce
 dlaždice – trasy a prvky ticho zmiznú a vyzerá to ako pokazené ťuknutie do
-mapy, nie ako chýbajúce dáta. Stráži to `workers/lint/catalog.py`.
+mapy, nie ako chýbajúce dáta. **A každá vrstva z výškového modelu hovorí,
+z čoho JE**: `dem_source` sú vrstevnice, `rock_source` skaly a `terrain_source`
+tieňovanie – tri polia preto, že sa každá z nich smie prepnúť na náhradný
+model sama (pravidlo 8). Na načítanie mapy aj na atribúciu tak stačí
+`maps.json`; `obsah.json` v balíku je jeho vlastný podpis pre toho, kto má ZIP
+bez katalógu, nie druhé miesto, kam sa treba pozerať. Stráži to
+`workers/lint/catalog.py`.
 
 Po neúspešnom nahratí sa nezapíše nič –
 zoznam, ktorý ukazuje na neexistujúce súbory, je horší než žiadny. Čo sa do

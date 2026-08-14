@@ -187,7 +187,12 @@ for kluc, preco in (
                         "súboru nie je"),
         ("trails_maxzoom", "strop zoomu značených trás (z14) v položke nie je"),
         ("features_maxzoom", "strop zoomu krajinných prvkov (z15) v položke "
-                             "nie je")):
+                             "nie je"),
+        ("rock_source", "z ktorého modelu sú SKALY, v položke nie je "
+                        "(`dem_source` je zdroj vrstevníc)"),
+        ("terrain_source", "z ktorého modelu je TIEŇOVANIE, v položke nie je "
+                           "– pri prechode na náhradný model by atribúcia "
+                           "tvrdila DMR 5.0 nad reliéfom zo Sonnyho")):
     if kmap and kluc not in kmap:
         bad.append(f"{CATALOG_PY}: {preco}. Doplň to z `manifest.json` – "
                    f"pozná to, lebo podľa toho číta dlaždice aj viewer.")
