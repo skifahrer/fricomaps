@@ -65,6 +65,41 @@ def region_entry(man):
     return ((man.get("regions") or {}).get(key) or {}) if key else {}
 
 
+# Ktoré vrstvy sú v balíku ako `.pmtiles` a pod akou cestou. Mená kľúčov sú tie
+# isté ako v `manifest.json`, lebo odtiaľ to ide – dva slovníky pre tú istú vec
+# by sa raz rozišli.
+VRSTVY_TILES = ("pmtiles", "contours", "rocks", "trails", "features")
+
+
+def tiles_paths(man, reg):
+    """Cesty k `.pmtiles` v balíku – tak, ako ich beh naozaj pomenoval.
+
+    MENO SÚBORU SA NEDÁ ODVODIŤ Z KĽÚČA V KATALÓGU a nikto sa o to nesmie
+    pokúšať. Kľúč uzla je `bratislavsky_test4km2` (nesie, že mapa je zo 4 km²),
+    balík sa volá `bratislavsky-test4km2.zip` a dlaždice v ňom
+    `tiles/bratislavsky_test4-contours.pmtiles` – tri rôzne zápisy tej istej
+    veci, lebo každý odpovedá na inú otázku. Kto by si z kľúča poskladal
+    `tiles/<kľúč>.pmtiles`, dostane cestu, ktorá v balíku NIE JE, a vrstva sa
+    ticho nenačíta. To isté platí pri výreze: uzol je `vysoke_tatry`, ale
+    dlaždice sa volajú podľa KRAJA (`presovsky-…`), lebo mapa je celý kraj.
+
+    Preto sa sem prepisujú cesty z `manifest.json` – ten ich pozná, lebo podľa
+    neho ich číta aj viewer. Vrstva, ktorá v mape nie je, tu nie je tiež.
+
+    Terén je v manifeste zvlášť (`dem`) a ako ADRESA NA PAGES
+    (`pmtiles://<base>/tiles/…`), lebo tam ho číta prehliadač. Do katalógu
+    patrí to, čo platí v balíku, teda relatívna cesta. Berie sa z nej MENO
+    SÚBORU a predradí sa `tiles/`: hľadať v tej adrese `tiles/` sa nedá, lebo
+    ju obsahuje aj meno repozitára (`…/maptiles/tiles/…` → `tiles/tiles/…`).
+    V balíku ležia dlaždice vždy v `tiles/`, tak ako v `_site`.
+    """
+    out = {k: reg[k] for k in VRSTVY_TILES if reg.get(k)}
+    dem = (man.get("dem") or "").rstrip("/")
+    if dem.endswith(".pmtiles"):
+        out["terrain"] = "tiles/" + dem.rsplit("/", 1)[-1]
+    return out
+
+
 # ---------- katalóg máp v repozitári ----------
 # `maps.json` je JEDINÝ zoznam toho, ktoré mapy sú hotové a kde ležia. Na Drive
 # sa to inak nedá zistiť bez tokenu a bez klikania: priečinky sú tri úrovne
@@ -247,10 +282,27 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
     # regiónu – aj pri builde na výrez, lebo mapa je celý región a orezané sú
     # len vrstvy z výškového modelu. Práve preto je pri výreze vedľa neho aj
     # `area_bbox`: to je to, kde v tej mape vrstevnice a skaly naozaj sú.
+    #
+    # STROP ZOOMU MUSÍ BYŤ PRI KAŽDEJ VRSTVE, KTORÁ HO MÁ VLASTNÝ. Kto ho
+    # nenájde, dosadí `maxzoom` mapy (16) – a nad skutočným stropom vrstvy
+    # potom pýta dlaždice, ktoré neexistujú: trasy končia na z14 a krajinné
+    # prvky na z15, takže od z15 resp. z16 by ticho zmizli. Nevyzerá to ako
+    # chýbajúce dáta, ale ako pokazené ťuknutie do mapy – práve tie dve vrstvy
+    # sa vyberajú dotykom. `terrain_maxzoom` je to isté pre raster tieňovania
+    # (v manifeste `dem_maxzoom`, lebo tam je terén mimo položky regiónu).
     for k in ("bbox", "maxzoom", "contours_maxzoom", "contour_interval",
-              "rocks_maxzoom", "rock_slope", "dem_source"):
+              "rocks_maxzoom", "rock_slope", "dem_source",
+              "trails_maxzoom", "features_maxzoom"):
         if reg.get(k) is not None:
             polozka[k] = reg[k]
+    # Cesty k dlaždiciam v balíku – NEODVODZUJÚ sa z kľúča uzla (rozpis pri
+    # `tiles_paths`), a `terrain_maxzoom` k nim patrí z toho istého dôvodu ako
+    # zoomy vyššie.
+    tiles = tiles_paths(man, reg)
+    if tiles:
+        polozka["tiles"] = tiles
+    if tiles.get("terrain") and man.get("dem_maxzoom") is not None:
+        polozka["terrain_maxzoom"] = man["dem_maxzoom"]
     area_bbox = env("AREA_BBOX")
     test_km2 = env("TEST_KM2", "0")
     if test_km2 not in ("", "0"):

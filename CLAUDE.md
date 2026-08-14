@@ -383,7 +383,21 @@ prípona, akú nesú jeho balíky): na Drive leží v priečinku ostrej mapy, ta
 bez katalógu sa o ňom bez tokenu nedá dozvedieť, ale na jej položku sadnúť
 nesmie – terén je v ňom na pár km² a kto si ho podľa zoznamu stiahne, dostane
 mapu s dierou. Že je to test, hovorí kľúč, meno („– rýchly test 4 km²") aj
-`test_km2` a `area_bbox` v položke. Po neúspešnom nahratí sa nezapíše nič –
+`test_km2` a `area_bbox` v položke.
+
+**Z kľúča uzla sa NEDÁ odvodiť meno súboru** a položka je preto písaná tak, aby
+to nikto nemusel skúšať: uzol je `bratislavsky_test4km2`, balík
+`bratislavsky-test4km2.zip` a dlaždice v ňom `tiles/bratislavsky_test4-…`
+(pri výreze sa volajú dokonca podľa KRAJA, lebo mapa je celý kraj). Tri zápisy,
+lebo každý odpovedá na inú otázku. Cesty preto nesie `tiles` v položke –
+prepísané z `manifest.json`, ktorý ich pozná, lebo podľa neho číta dlaždice aj
+viewer. **A strop zoomu musí byť pri každej vrstve, ktorá ho má vlastný**
+(`trails_maxzoom` 14, `features_maxzoom` 15, `terrain_maxzoom`): kto ho
+nenájde, dosadí `maxzoom` mapy (16) a nad skutočným stropom pýta neexistujúce
+dlaždice – trasy a prvky ticho zmiznú a vyzerá to ako pokazené ťuknutie do
+mapy, nie ako chýbajúce dáta. Stráži to `workers/lint/catalog.py`.
+
+Po neúspešnom nahratí sa nezapíše nič –
 zoznam, ktorý ukazuje na neexistujúce súbory, je horší než žiadny. Čo sa do
 katalógu píše, skladá `workers/deploy/catalog.py` (`publish-map.py` prerástol
 strop 800 riadkov); stráži to `workers/lint/catalog.py`.
