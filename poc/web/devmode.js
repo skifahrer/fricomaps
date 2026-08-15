@@ -28,7 +28,7 @@
  *   - všetko priebežne ukladá do prehliadača (localStorage), vie to
  *     exportovať do `style-overrides.json` a znovu načítať.
  *
- * Ten istý JSON potom prevezme workflow „Štýl · úpravy z prehliadača do zdrojáku",
+ * Ten istý JSON potom prevezme workflow „Mapa · úpravy štýlu",
  * uloží ho do repozitára a pipeline ho zapečie do mapy pre web aj iOS.
  */
 import {
@@ -2698,7 +2698,7 @@ export function initDevMode({
         html:
           "Úpravy sú priebežne uložené v prehliadači. Stiahni ich ako " +
           "<code>style-overrides.json</code> a nahraj cez workflow " +
-          "<b>Štýl · úpravy z prehliadača do zdrojáku</b> (Actions → Run workflow → " +
+          "<b>Mapa · úpravy štýlu</b> (Actions → Run workflow → " +
           "vlož obsah súboru). Pipeline ich zapečie do mapy pre web aj iOS.<br>" +
           "V súbore je <code>layers</code> a <code>poi</code> spoločné pre " +
           "všetky typy máp, <code>maps</code> drží to, čo platí len pre jednu."

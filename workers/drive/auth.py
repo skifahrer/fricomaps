@@ -620,7 +620,7 @@ def do_login(args):
           "(Settings → Secrets and variables → Actions):\n")
     print(json.dumps({"client_id": client_id, "client_secret": client_secret,
                       "refresh_token": data["refresh_token"]}, indent=1))
-    print("\nPotom to over behom `Dáta · DMR 5.0 z Drive` v režime „len sonda“ – "
+    print("\nPotom to over behom `Dáta · DMR 5.0` v režime „len sonda“ – "
           "krok „Prihlásenie na Drive“ vypíše, ktorým účtom beh číta.")
     return 0
 

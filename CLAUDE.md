@@ -21,26 +21,63 @@ docs/               návrhy a podrobný popis pipeline
 .github/actions/    cache-restore a cache-save (cache leží na Google Drive)
 ```
 
-### Ako sa volajú pipeline
+### Mapa pipeline
 
-**Meno workflowu je `Skupina · čo robí`.** Zoznam v Actions je zoradený podľa
-mena, takže skupina je zároveň poradie: najprv to, čo spúšťaš, potom to, čo si
-build volá sám, potom kontroly a údržba. Kým mená vznikali jedno po druhom,
-bolo v zozname `Build map (PBF → PMTiles) & deploy Pages` vedľa `Upratať cache`
-a `DMR 5.0 z Drive (ETRS89) – toto si volá Build map`; z toho sa nedalo
-prečítať, čo je vstup, čo výstup a čo tam nemá čo robiť.
+Deväť workflowov, ale nie deväť samostatných vecí – sú to **štyri skupiny**
+a v každej patria kusy k sebe. Toto je celý obrázok:
+
+```
+   ty ──┐
+        │   ┌── Mapa ─── čo z regiónu vypadne von ──────────────────┐
+        ├──►│ Build map      PBF → dlaždice → _site + ZIPy          │──► Pages
+        ├──►│ Build wiki     objekty s wikipedia/wikidata → články  │──► Drive
+        └──►│ úpravy štýlu   style-overrides.json z developer módu  │──► repozitár
+            └───────────────────────────────────────────────────────┘
+                 │  Build map si dopĺňa, čo mu v sklade chýba
+                 ▼
+            ┌── Dáta ─── čo do skladu na Drive nateká ──────────────┐
+            │ výškové modely  Sonny / ÚGKK DMR 3.5 → dem-sonny…     │
+            │ DMR 5.0         Drive cez HTTP Range → dem-ugkk, dem-dmr5
+            │ tieňované skaly hillshade z freemap.sk → dem-rocks-img │
+            └───────────────────────────────────────────────────────┘
+
+            ┌── Kontrola ─── beží sama pri pushi ──────────────────┐
+            │ lint workflowov  actionlint + 27 vlastných kontrol   │
+            └──────────────────────────────────────────────────────┘
+
+            ┌── Údržba ─── o infraštruktúru, nie o mapu ───────────┐
+            │ týždenné upratovanie  behy, releasy, cache, sklad    │
+            │ prihlásenie Drive     refresh token do secretu       │
+            └──────────────────────────────────────────────────────┘
+```
+
+**Meno workflowu je `Skupina · dve slová`.** Skupina hovorí, do ktorého
+z tých štyroch rámčekov patrí, a dve slová stačia na to, aby sa dal odlíšiť –
+dlhší popis patrí do hlavičky súboru, nie do zoznamu v Actions. Kým mená
+vznikali jedno po druhom, stálo v zozname `Build map (PBF → PMTiles) & deploy
+Pages` vedľa `Upratať cache` a `DMR 5.0 z Drive (ETRS89) – toto si volá Build
+map`; z toho sa nedalo prečítať, čo je vstup, čo výstup a čo tam nemá čo robiť.
 
 | workflow | meno v Actions | spúšťaš to ty? |
 |---|---|---|
-| `build-map.yml` | Build map · mapa na Pages a balíky na Drive | **áno** – toto je tá pipeline |
-| `wiki.yml` | Build wiki · články z Wikipédie k mape | áno, vedľa mapy toho istého regiónu |
-| `update-dem.yml` | Dáta · výškové modely do skladu | volá si ho Build map (aj ručne) |
-| `dmr5-drive.yml` | Dáta · DMR 5.0 z Drive (volá si Build map) | volá si ho Build map, dvoma jobmi |
-| `shading-rocks.yml` | Dáta · skaly z tieňovaných dlaždíc | volá si ho Build map pri `rock_source: tienovanie` |
-| `lint-workflows.yml` | Kontrola · workflowy a workery | beží sám pri pushi |
-| `cleanup.yml` | Údržba · upratať GitHub, cache a sklad | beží sám raz za týždeň |
-| `drive-login.yml` | Údržba · prihlásenie na Drive (jednorazové) | raz, a potom už len keby účet odvolal prístup |
-| `save-style-overrides.yml` | Štýl · úpravy z prehliadača do zdrojáku | áno, po ladení štýlu v developer móde |
+| `build-map.yml` | Mapa · Build map | **áno** – toto je tá pipeline |
+| `wiki.yml` | Mapa · Build wiki | áno, vedľa mapy toho istého regiónu |
+| `save-style-overrides.yml` | Mapa · úpravy štýlu | áno, po ladení štýlu v developer móde |
+| `update-dem.yml` | Dáta · výškové modely | volá si ho Build map (aj ručne) |
+| `dmr5-drive.yml` | Dáta · DMR 5.0 | volá si ho Build map, dvoma jobmi |
+| `shading-rocks.yml` | Dáta · tieňované skaly | volá si ho Build map pri `rock_source: tienovanie` |
+| `lint-workflows.yml` | Kontrola · lint workflowov | beží sám pri pushi |
+| `cleanup.yml` | Údržba · týždenné upratovanie | beží sám raz za týždeň |
+| `drive-login.yml` | Údržba · prihlásenie Drive | raz, a potom už len keby účet odvolal prístup |
+
+**`Build map` a `Build wiki` sú tie dve slová naschvál.** Tak sa tie dve
+pipeline volajú v komentároch aj v hláškach na deviatich desiatkach miest
+a nové meno nemá dôvod ich všetky zneplatniť. Prefix pribudol, meno ostalo.
+
+**Zoznam v Actions je zoradený podľa mena**, takže skupiny idú za sebou
+(Dáta, Kontrola, Mapa, Údržba) a v každej sú jej kusy pri sebe. Hlavná
+pipeline tým pádom nie je prvá – to je cena za to, že skupina je vidieť skôr
+než meno, a je zaplatená vedome.
 
 **Meno pipeline je aj v hláškach, takže sa mení na oboch stranách naraz.**
 Keď `fetch-dem` povie „spusti workflow X", to X musí byť meno, ktoré je
@@ -130,7 +167,7 @@ vznikne beh bez jobov, s červeným krížikom a prázdnym logom, ktorý vyzerá
 sa spustil sám. `build-map.yml` už cez ten strop raz prešiel; odvtedy je z neho
 graf jobov a bash je v `workers/<job>/*.sh`. **Nevracaj ho tam** –
 rozpis patrí do `workers/<job>/*.sh`, `workers/<job>/*.py` alebo `docs/pipeline.md`
-a v YAMLe ostane odkaz naň. (`Kontrola · workflowy a workery` varuje od 120 KiB.)
+a v YAMLe ostane odkaz naň. (`Kontrola · lint workflowov` varuje od 120 KiB.)
 
 Pri sťahovaní bloku do skriptu sú dve tiché chyby: `${{ výraz }}` sa zmení na
 `$PREMENNÚ` a tá sa zabudne dopísať do `env:` kroku (skript potom beží
@@ -210,7 +247,7 @@ Model je na Google Drive ako dva holé BigTIFFy v jednom priečinku a berie sa
 
 | súbor | meno v Actions | volá to Build map? |
 |---|---|---|
-| `dmr5-drive.yml` | Dáta · DMR 5.0 z Drive | **áno**, a to **dvoma jobmi** |
+| `dmr5-drive.yml` | Dáta · DMR 5.0 | **áno**, a to **dvoma jobmi** |
 
 Kedysi k tomu bola záloha z archívu ÚGKK (`dmr5.yml`): ten istý model, ale
 198 GB ZIP, v ktorom je raster jedným deflate prúdom – nedá sa v ňom skočiť
@@ -262,7 +299,7 @@ stránku. Proti Sonnyho stropu chráni zrkadlo v sklade, nie token.
 Odkedy je na Drive aj cache, je tých miest priveľa na to, aby stáli pri každom
 jobe – preto je prihlásenie v `env:` celého workflowu.
 
-`Kontrola · workflowy a workery` to stráži staticky, z oboch strán, a hlási
+`Kontrola · lint workflowov` to stráži staticky, z oboch strán, a hlási
 aj nekompletnú dvojicu secretov `DRIVE_SECRET`/`DRIVE_REFRESH` (polovica údajov nie je „veď
 tam niečo je" – `drive/auth.py` na nej padne). `DRIVE_CLIENT` medzi nimi nie
 je: `vars.*` sa v tom istom repozitári čítajú priamo, bez `secrets: inherit`.
@@ -316,7 +353,7 @@ v metri ~48 GB a voľných je ~60 GB.
 `retention-days: 1` nie sú publikovanie, ale prepravky – tými si joby jedného
 behu podávajú kusy `_site` a bez nich sa stránka nedá zlepiť. Čokoľvek s dlhšou
 retenciou je uložený výsledok a patrí do skladu `vysledky`;
-`Kontrola · workflowy a workery` to odmietne. Jediná výnimka je `upload-pages-artifact`, bez ktorého sa Pages
+`Kontrola · lint workflowov` to odmietne. Jediná výnimka je `upload-pages-artifact`, bez ktorého sa Pages
 nenasadia.
 
 **„Clobber" je najprv nahrať, potom zmazať staré.** Drive dovolí dva súbory
@@ -349,7 +386,7 @@ rovnako.
 
 Dve veci, ktoré GitHub robil sám a Drive nie: **nič sa nemaže samo** (na to je
 `--prune` a týždenný workflow) a **bez prihlásenia to nefunguje** (krok vtedy
-spadne s návodom; `Kontrola · workflowy a workery` stráži, že token dostane
+spadne s návodom; `Kontrola · lint workflowov` stráži, že token dostane
 každý cache krok).
 Nový `uses: actions/cache…` tá istá kontrola odmietne.
 
@@ -473,7 +510,7 @@ for f in workers/*/*.sh; do bash -n "$f" || echo "CHYBA $f"; done
 # čo spoľahlivo povie, na čo sa zabudlo naviazať (a v CI to nie je).
 python3 -m pyflakes workers/*/*.py  # pip install pyflakes
 
-# kontroly z „Kontrola · workflowy a workery" sa dajú spustiť aj lokálne
+# kontroly z „Kontrola · lint workflowov" sa dajú spustiť aj lokálne
 python3 - <<'PY'
 import subprocess, sys, yaml
 d = yaml.safe_load(open(".github/workflows/lint-workflows.yml"))
@@ -498,7 +535,7 @@ BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
 REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/deploy/site.sh   # a tak ďalej
 ```
 
-`Kontrola · workflowy a workery` (`.github/workflows/lint-workflows.yml`) beží pri každom pushi
+`Kontrola · lint workflowov` (`.github/workflows/lint-workflows.yml`) beží pri každom pushi
 do `.github/workflows/**`, `workers/**` a `poc/web/**` a kontroluje aj veci,
 ktoré actionlint nevie: veľkosť aj dĺžku súboru, zdvojené zátvorky v `run:`,
 dĺžku popisov inputov, súlad výberov s `data/areas.json` a `data/dem-sources.json`,
@@ -533,7 +570,7 @@ je vidieť, že tadiaľ ide všetko (#54 … #71). Nečakaj na vyzvanie: keď je
 dokončená a pushnutá, otvor k nej PR.
 
 Do popisu PR patrí to isté, čo do commit message – **čo sa zmenilo vecne a
-prečo** – a k tomu ako sa to overilo (`Kontrola · workflowy a workery`, lokálne spustené
+prečo** – a k tomu ako sa to overilo (`Kontrola · lint workflowov`, lokálne spustené
 workery, číslo behu). Keď ostalo niečo nedokončené alebo neoverené, napíš to
 tam; tichý PR, ktorý vyzerá hotovo, je tá istá trieda chyby ako tichý omyl
 v behu.

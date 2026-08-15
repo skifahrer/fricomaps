@@ -8,10 +8,10 @@
 # aj bez prístupu na Drive.
 #
 # PREČO SAMOSTATNÝ SKRIPT A NIE `run:` V WORKFLOWE: `build-map.yml` má strop
-# 128 KiB a nad ním ho GitHub ticho neprijme (stráži to „Kontrola · workflowy a workery").
+# 128 KiB a nad ním ho GitHub ticho neprijme (stráži to „Kontrola · lint workflowov").
 #
 # NEZACYKLÍ SA TO. `Build map` sa spúšťa len ručne (`workflow_dispatch`), takže
-# commit z neho nespustí ďalší build. `Kontrola · workflowy a workery` beží pri pushi do
+# commit z neho nespustí ďalší build. `Kontrola · lint workflowov` beží pri pushi do
 # `.github/workflows/**`, `workers/**` a `poc/web/**` – `maps.json` je v koreni,
 # takže ani ten.
 #

@@ -182,7 +182,7 @@ MOVED = {
 NONE = "ziadne"
 
 # Skaly majú okrem výškových modelov ešte jeden zdroj, ktorý DEM vôbec
-# nečíta: hotové polygóny z workflowu „Dáta · skaly z tieňovaných dlaždíc".
+# nečíta: hotové polygóny z workflowu „Dáta · tieňované skaly".
 ROCK_FROM_SHADING = "tienovanie"
 
 # `rebuild` je jeden výber namiesto troch zaškrtávatiek – tri booleany boli
@@ -325,7 +325,7 @@ def main():
 
     # ---------- tri výbery zdroja ----------
     # Čo sa smie kde vybrať, hovorí `for` v dem-sources.json – ten istý
-    # zoznam, aký stráži `Kontrola · workflowy a workery` proti výberom vo formulári.
+    # zoznam, aký stráži `Kontrola · lint workflowov` proti výberom vo formulári.
     srcs = dem_sources(args.dem_sources or None)
     contour_src = pick_source(
         "vrstevnice (contour_source)", args.contour_source,

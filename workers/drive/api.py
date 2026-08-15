@@ -12,7 +12,7 @@ workeroch ako predtým.
 
 PREČO ZVLÁŠŤ. `drive-auth.py` mal 894 riadkov a v jednom takom súbore sa nedá
 rýchlo nájsť, čo sa zmenilo (pravidlo 5 v CLAUDE.md, strop 800 stráži
-`Kontrola · workflowy a workery`). Rez je NADOL, nie nabok: tento modul o `Credentials` nevie
+`Kontrola · lint workflowov`). Rez je NADOL, nie nabok: tento modul o `Credentials` nevie
 nič – `creds` mu chodí ako parameter a stačí, že má `.token()` a `.client_id`.
 Preto tu nie je kruhová závislosť a netreba lenivé importy.
 

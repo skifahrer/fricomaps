@@ -13,8 +13,8 @@
 # `dem-sonny`), `dmr35` = tie isté 1°×1° dlaždice, ale z otvorených dát ÚGKK
 # (sklad `dem-dmr35`, jemnejšia mriežka), `dmr5` = LLS DMR 5.0, ktoré má dve
 # podoby podľa rozsahu (viď nižšie). Všetko sú zrkadlá – build nikdy nesiaha
-# priamo na cudzí server, to robia sťahovacie pipeline `Dáta · výškové modely do skladu`
-# (update-dem.yml), `Dáta · DMR 5.0 z Drive` (dmr5-drive.yml) – tú si volá build sám
+# priamo na cudzí server, to robia sťahovacie pipeline `Dáta · výškové modely`
+# (update-dem.yml), `Dáta · DMR 5.0` (dmr5-drive.yml) – tú si volá build sám
 # a je to jediná cesta k DMR 5.0.
 #
 # `sonny`, `dmr35` a `dmr5` na celý región sa líšia LEN menom skladu:
@@ -41,7 +41,7 @@
 #
 # Očakáva v prostredí prihlásenie na Drive: GDRIVE_CREDENTIALS, alebo premennú
 # DRIVE_CLIENT so secretmi DRIVE_SECRET / DRIVE_REFRESH (`client_id` tajný nie
-# je, je to repository variable). Stráži to `Kontrola · workflowy a workery`.
+# je, je to repository variable). Stráži to `Kontrola · lint workflowov`.
 set -euo pipefail
 
 BBOX="$1"
@@ -85,7 +85,7 @@ if [ "$FORM" = "area" ]; then
     # Kód 3 = „pre tento výrez to nemáme", nie „všetko je zle". Volajúci sa
     # podľa neho vie rozhodnúť: buď spadnúť, alebo prejsť na hrubší model
     # (input ugkk_fallback).
-    echo "::warning::V sklade $SRC_STORE nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'Dáta · DMR 5.0 z Drive' s area: $AREA_KEY."
+    echo "::warning::V sklade $SRC_STORE nie je $UASSET – DMR 5.0 pre tento výrez ešte nikto nevyrobil. Spusti workflow 'Dáta · DMR 5.0' s area: $AREA_KEY."
     exit 3
   fi
   gdalbuildvrt -q "$DIR/all.vrt" "$DIR/$UASSET"
@@ -133,13 +133,13 @@ if [ "$have" -eq 0 ]; then
   echo "Zálohu z Copernicusu zámerne nepoužívame (je to model povrchu so stromami, nie terén)."
   if [ "$SOURCE" = "dmr5" ]; then
     # Dlaždicovú podobu DMR 5.0 dopĺňa job `mirror-dmr5-tiles` v Build map,
-    # ktorý volá `Dáta · DMR 5.0 z Drive` na presne tie stupne, čo bbox pretína.
+    # ktorý volá `Dáta · DMR 5.0` na presne tie stupne, čo bbox pretína.
     # Keď tu aj tak nič nie je, ten job buď nebežal (kontrola sa rozišla
     # s týmto skriptom – pozri dem-target.py), alebo spadol.
     echo "Doplniť ich mal job 'Doplniť DMR 5.0 (dlaždice)' – pozri jeho log."
-    echo "Ručne: workflow 'Dáta · DMR 5.0 z Drive', area: $(python3 "$HERE/target.py" --source=dmr5 --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m."
+    echo "Ručne: workflow 'Dáta · DMR 5.0', area: $(python3 "$HERE/target.py" --source=dmr5 --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m."
   else
-    echo "Spusti workflow 'Dáta · výškové modely do skladu' so zdrojom, ktorý toto územie pokrýva."
+    echo "Spusti workflow 'Dáta · výškové modely' so zdrojom, ktorý toto územie pokrýva."
   fi
   [ "$SOURCE" = "sonny" ] && exit 1
   exit 3
@@ -148,7 +148,7 @@ if [ "$have" -lt "$WANT" ]; then
   # Bbox je obdĺžnik, produkt pokrýva krajinu – rohové bunky za hranicou
   # v ňom byť nemusia. Tam jednoducho nebude terén; radšej diera, ktorú
   # vidno, než výplň z modelu povrchu.
-  echo "::warning::V sklade $SRC_STORE nie je $(( WANT - have )) z $WANT dlaždíc – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Dáta · výškové modely do skladu' s priečinkom, ktorý ho pokrýva."
+  echo "::warning::V sklade $SRC_STORE nie je $(( WANT - have )) z $WANT dlaždíc – tam vrstevnice, skaly ani tieňovanie nebudú. Ak to územie má mať terén, spusti 'Dáta · výškové modely' s priečinkom, ktorý ho pokrýva."
 fi
 echo "$SRC_LABEL: $have z $WANT dlaždíc zo skladu $SRC_STORE ✓"
 
@@ -207,7 +207,7 @@ if [ "$COV_RC" -ne 0 ]; then
   if [ "$SOURCE" = "sonny" ]; then
     echo "::warning::Mozaika zo Sonnyho pokrýva len ${COV_PCT:-0} % územia – chýbajú stupne: ${COV_MISS:-?}. Vo zvyšku nebude terén."
   else
-    echo "::error::Mozaika $SRC_LABEL pokrýva len ${COV_PCT:-0} % územia (chýbajúce stupne: ${COV_MISS:-?}), takže vrstevnice, skaly ani tieňovanie by v zvyšku regiónu neboli – a mapa by vyzerala hotovo. Keď sa vyššie mazali nepoctivé dlaždice, stačí spustiť build znova: chýbajúce si doplní sám. Inak ich doplň ručne (workflow 'Dáta · DMR 5.0 z Drive', area: $(python3 "$HERE/target.py" --source="$SOURCE" --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m) alebo zvoľ zdroj, ktorý celé územie pokrýva."
+    echo "::error::Mozaika $SRC_LABEL pokrýva len ${COV_PCT:-0} % územia (chýbajúce stupne: ${COV_MISS:-?}), takže vrstevnice, skaly ani tieňovanie by v zvyšku regiónu neboli – a mapa by vyzerala hotovo. Keď sa vyššie mazali nepoctivé dlaždice, stačí spustiť build znova: chýbajúce si doplní sám. Inak ich doplň ručne (workflow 'Dáta · DMR 5.0', area: $(python3 "$HERE/target.py" --source="$SOURCE" --bbox="$BBOX" | sed -n 's/^degrees=//p'), tiles: true, mriežka 5 m) alebo zvoľ zdroj, ktorý celé územie pokrýva."
     exit 3
   fi
 fi

@@ -35,7 +35,7 @@ ZNAME = {
     "dem": "job `check-dem` a doplnenie modelu",
     "drive": "Google Drive: DMR 5.0, sklad, cache, prihlásenie",
     "contours-rocks": "joby `contours` a `rocks`",
-    "rocks-shading": "workflow „Dáta · skaly z tieňovaných dlaždíc“",
+    "rocks-shading": "workflow „Dáta · tieňované skaly“",
     "terrain": "job `terrain`",
     "trails": "job `trails`",
     "features": "job `features`",

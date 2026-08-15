@@ -225,7 +225,7 @@ def load(name, path):
 #
 # Rozdelené preto, že spolu to malo 2023 riadkov a v takom súbore sa nedá
 # rýchlo nájsť, čo sa zmenilo ani prečo to spadlo (pravidlo 5 v CLAUDE.md,
-# strop 800 stráži `Kontrola · workflowy a workery`). Rezy sú presne tam, kde v tom súbore už
+# strop 800 stráži `Kontrola · lint workflowov`). Rezy sú presne tam, kde v tom súbore už
 # boli vyznačené komentárom – a kde sa delia aj tie joby.
 tiles = load("shading_tiles", "tiles.py")
 raster = load("shading_raster", "raster.py")

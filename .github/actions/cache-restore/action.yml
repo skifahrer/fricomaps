@@ -12,7 +12,7 @@ description: >-
 # (GDRIVE_CREDENTIALS alebo trojica DRIVE_CLIENT/DRIVE_SECRET/DRIVE_REFRESH).
 # Composite akcia vidí `env:` volajúceho jobu, ale nie `secrets` – a keby sa
 # token podával ako vstup, stálo by pri každom z dvadsiatich volaní. Že ho job
-# naozaj má, stráži „Kontrola · workflowy a workery".
+# naozaj má, stráži „Kontrola · lint workflowov".
 
 inputs:
   path:

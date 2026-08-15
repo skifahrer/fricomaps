@@ -1,4 +1,4 @@
-name: Údržba · upratať GitHub, cache a sklad
+name: Údržba · týždenné upratovanie
 
 # Jediný upratovací workflow. Vznikol z dvoch (`cleanup-actions.yml`
 # a `cleanup-cache.yml`), ktoré robili tú istú prácu na dvoch miestach: raz za
@@ -28,7 +28,7 @@ name: Údržba · upratať GitHub, cache a sklad
 # NIČ SA TÝM NESTRATÍ. Výškové modely, skaly, tieňovanie aj medzivýsledky na
 # pozretie ležia v sklade na Google Drive (`workers/drive/store.py`) – to je
 # JEDINÉ miesto, kam pipeline publikuje. Že sa `gh release` ani dlhodobý
-# artefakt nevrátia, stráži `Kontrola · workflowy a workery`.
+# artefakt nevrátia, stráži `Kontrola · lint workflowov`.
 #
 # ČO PRERIEĎUJE NA DRIVE. GitHub si staré záznamy vyhadzoval sám (7 dní bez
 # použitia, 10 GB na repozitár), Drive nie – bez toho by priečinok rástol

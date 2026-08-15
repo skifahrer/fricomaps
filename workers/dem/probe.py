@@ -377,7 +377,7 @@ def main():
         print("  ÚGKK oficiálne dáva DMR 5.0 cez ZBGIS Mapový klient (interaktívny")
         print("  export do 400 km²) a cez vládny cloud. Ak ImageServer neexistuje,")
         print("  jediná cesta je stiahnuť to raz ručne a nazrkadliť do releasu –")
-        print("  presne tak, ako to robí workflow *Dáta · výškové modely do skladu*")
+        print("  presne tak, ako to robí workflow *Dáta · výškové modely*")
         print("  pre Sonnyho.")
 
     if args.summary:
@@ -397,7 +397,7 @@ def main():
                         "Mapový klient (interaktívny export do 400 km²) a cez vládny "
                         "cloud. Ak ImageServer neexistuje, jediná cesta je stiahnuť "
                         "to raz ručne a nazrkadliť do releasu – tak, ako to robí "
-                        "*Dáta · výškové modely do skladu* pre Sonnyho.\n")
+                        "*Dáta · výškové modely* pre Sonnyho.\n")
     return 0 if winner else 1
 
 

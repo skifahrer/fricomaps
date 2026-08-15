@@ -2,7 +2,7 @@
 # Viewer + `manifest.json` do `_site/` – posledný krok pred nasadením na Pages.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to „Kontrola · workflowy a workery"). Tento blok bol jeho druhý najväčší
+# ticho neprijme (stráži to „Kontrola · lint workflowov"). Tento blok bol jeho druhý najväčší
 # (109 riadkov, z toho 30 riadkov `jq --arg`).
 #
 # ČO JE MANIFEST. Jediný súbor, z ktorého viewer (web aj iOS) zistí, čo v tomto

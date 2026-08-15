@@ -4,7 +4,7 @@
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 KiB a nad ním ho GitHub
 # ticho NEPRIJME – po pushi vznikne beh bez jobov s prázdnym logom. Job, ktorý
 # toto volá, pridal do súboru dva kilobajty a bol už na 125; rozpis teda patrí
-# sem (stráži to `Kontrola · workflowy a workery`).
+# sem (stráži to `Kontrola · lint workflowov`).
 #
 # ČO TO ROBÍ. To isté, čo `deploy` spravil so ZIPmi, len s druhou príponou:
 # `publish-map.py --format=aar`. Ten istý obsah, tie isté stále mená, ten istý

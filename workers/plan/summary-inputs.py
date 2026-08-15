@@ -47,7 +47,7 @@ def defaults(path):
     with open(path) as f:
         doc = yaml.safe_load(f)
     # `on:` YAML načíta ako True (je to booleanovské kľúčové slovo), takže
-    # sa kľúč hľadá oboma spôsobmi – rovnako to robí aj „Kontrola · workflowy a workery".
+    # sa kľúč hľadá oboma spôsobmi – rovnako to robí aj „Kontrola · lint workflowov".
     on = doc[[k for k in doc if k is True or k == "on"][0]]
     inputs = (on.get("workflow_dispatch") or {}).get("inputs") or {}
     return {k: text(v.get("default", "")) for k, v in inputs.items()}

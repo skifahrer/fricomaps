@@ -1,4 +1,4 @@
-name: Build wiki · články z Wikipédie k mape
+name: Mapa · Build wiki
 
 # Ku každému objektu v regióne, ktorý má v OSM `wikipedia` alebo `wikidata`
 # tag, stiahne článok – po anglicky a v jazyku krajiny – a publikuje ho na

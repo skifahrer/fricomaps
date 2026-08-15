@@ -2,7 +2,7 @@
 # PBF → `{región}.pmtiles` Planetilerom, s rozpočtom na veľkosť.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to „Kontrola · workflowy a workery").
+# ticho neprijme (stráži to „Kontrola · lint workflowov").
 #
 # ROZPOČET JE NA CELÚ STRÁNKU, nielen na tieto dlaždice: Pages zvládne ~1 GB
 # a do toho sa musia zmestiť aj vrstevnice, terén, fonty a sprity. Tie sa ale

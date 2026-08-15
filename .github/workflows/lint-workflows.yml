@@ -1,4 +1,4 @@
-name: Kontrola · workflowy a workery
+name: Kontrola · lint workflowov
 
 # Chytá chyby, ktoré sa inak prejavia až tým, že beh skončí ako „failure"
 # s nula jobmi – GitHub vtedy workflow ani neprijme a v logu nie je nič.
@@ -265,7 +265,7 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # A to isté pre „Dáta · skaly z tieňovaných dlaždíc". Ten hľadá skaly na tom
+      # A to isté pre „Dáta · tieňované skaly". Ten hľadá skaly na tom
       # istom výreze, aký si potom Build map vypýta cez `rock_source: tienovanie`
       # – keby sa zoznamy rozišli, dali by sa vyrobiť polygóny pre pohorie,
       # ktoré build nevie zadať (alebo naopak). „Celý región" tu chýba

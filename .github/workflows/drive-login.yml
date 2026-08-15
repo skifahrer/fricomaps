@@ -1,4 +1,4 @@
-name: Údržba · prihlásenie na Drive (jednorazové)
+name: Údržba · prihlásenie Drive
 
 # Vyrobí refresh token vlastníka dát na Google Drive a ULOŽÍ HO PRIAMO DO
 # SECRETU. Spúšťa sa raz – potom už len keby účet prístup odvolal.
@@ -203,7 +203,7 @@ jobs:
               echo "Token je v secrete \`${{ inputs.secret_name }}\`; v logu tohto behu nikde neostal."
               echo
               echo "1. **Zmaž secret \`DRIVE_PAT\`** – už netreba a je to právo zapisovať secrets."
-              echo "2. Skús \`Dáta · DMR 5.0 z Drive\` v režime *len sonda*: krok"
+              echo "2. Skús \`Dáta · DMR 5.0\` v režime *len sonda*: krok"
               echo "   *Prihlásenie na Drive* má vypísať tvoj účet a pri oboch súboroch \`✓\`."
               echo "3. Kroky *Over…* vyššie hovoria, či ten účet vidí na priečinok s DMR 5.0"
               echo "   a či vie zapisovať do priečinka s cache. Bez zápisu sa cache neuloží"

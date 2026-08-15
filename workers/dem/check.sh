@@ -26,7 +26,7 @@
 # hľadala výrez v `dem-ugkk`, kým tieňovanie sťahovalo dlaždice z `dem-dmr5` –
 # a beh 31307163093 spadol na tom, že v `dem-dmr5` nie je ani jedna dlaždica.
 # Tabuľka `layer_area_key` nižšie musí sedieť s tými troma volaniami; stráži
-# to `Kontrola · workflowy a workery`.
+# to `Kontrola · lint workflowov`.
 #
 # Použitie (hodnoty chodia z prostredia, aby sa dal skript spustiť aj ručne):
 #   BBOX=W,S,E,N AREA_KEY=vysoke_tatry AREA_BBOX=W,S,E,N \
@@ -36,11 +36,11 @@
 # Zapisuje do $GITHUB_OUTPUT (keď je nastavený):
 #   demkey_<vrstva>       otlačok obsahu skladu, ide do kľúča cache
 #   mirror_<vrstva>       zdroj pre update-dem.yml (sonny/dmr35), inak prázdne
-#   mirror_dmr5_area      bbox výrezu `W,S,E,N` pre `Dáta · DMR 5.0 z Drive`
+#   mirror_dmr5_area      bbox výrezu `W,S,E,N` pre `Dáta · DMR 5.0`
 #   mirror_dmr5_asset     meno, pod ktorým ten výrez build hľadá v sklade
-#   mirror_dmr5_tiles     stupne `W,S,E,N` pre `Dáta · DMR 5.0 z Drive`, inak prázdne
+#   mirror_dmr5_tiles     stupne `W,S,E,N` pre `Dáta · DMR 5.0`, inak prázdne
 #
-# PREČO SA VÝREZ PODÁVA BBOXOM A NIE KĽÚČOM POHORIA. `Dáta · DMR 5.0 z Drive` dostane
+# PREČO SA VÝREZ PODÁVA BBOXOM A NIE KĽÚČOM POHORIA. `Dáta · DMR 5.0` dostane
 # presne to územie, ktoré si beh naozaj vypýtal – teda výrez UŽ PRETNUTÝ
 # S REGIÓNOM a pri rýchlom teste štvorec na pár km². Kým sa podával kľúč, tá
 # pipeline si ho vyriešila z `areas.json` DRUHÝKRÁT a prečítala z Drive celý
@@ -213,7 +213,7 @@ PY
         MIRROR_LIST="$MIRROR_LIST $mirror"
         if [ "$src" = 'dmr5' ]; then
           # DMR 5.0 nedopĺňa update-dem.yml – ten ho stiahnuť nevie (145 GB na
-          # Drive, runner má voľných ~60 GB). Robí to `Dáta · DMR 5.0 z Drive`, ktorá
+          # Drive, runner má voľných ~60 GB). Robí to `Dáta · DMR 5.0`, ktorá
           # číta cez HTTP Range len to, čo územie pretína.
           if [ "$form" = 'area' ]; then
             # Bbox, nie kľúč: čítať sa má presne to, čo si beh vypýtal (viď
