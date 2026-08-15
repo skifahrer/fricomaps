@@ -23,6 +23,10 @@
 #   CONTOURS_ENABLED CONTOURS_SOURCE CONTOUR_INTERVAL
 #   ROCKS_ENABLED ROCKS_SOURCE TERRAIN_ENABLED TERRAIN_SOURCE
 #   TRAILS_ENABLED FEATURES_ENABLED CUSTOM_NAME CUSTOM_PBF_URL
+# – prípadne `MAP_LAYERS`, keď mapu nerobil Build map a tie vrstvy na ňu
+# nesadajú (mapa sveta z `world-map.yml`). MUSÍ tu byť tá istá hodnota ako
+# v jobe, čo nahral ZIP: položka katalógu sa tu prepisuje navrch, takže inou
+# hodnotou by `.aar` prebil to, čo o vrstvách napísal ZIP.
 # a k tomu ONLY / WIKI – ktorý balík sa ide robiť (prázdne = balíky mapy
 # z `_site`, `wikipedia` = jediný balík s článkami z `WIKI`) – a BRANCH,
 # z ktorej si vypýtať čerstvý `maps.json` (viď nižšie)

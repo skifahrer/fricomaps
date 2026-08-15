@@ -41,6 +41,7 @@ ZNAME = {
     "features": "job `features`",
     "tiles": "job `tiles`",
     "wiki": "workflow „Build wiki“ (wiki.yml)",
+    "world": "workflow „Build svet“ (world-map.yml)",
     "assets": "job `assets`",
     "styles": "štýly pre web aj iOS",
     "deploy": "job `deploy` a publikovanie",

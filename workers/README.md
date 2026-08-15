@@ -41,6 +41,15 @@ Mapa · Build wiki            objekty regiónu s `wikipedia`/`wikidata`
                              ▲ na Pages NEJDE – do `_site` z toho nič
                              ▲ vlastná pipeline: iná sieť, iná životnosť
 
+Mapa · Build svet            základná mapa CELÉHO sveta – podklad pod výber
+(manuálne, raz za dlho)      „ktorý kus si stiahnuť":
+                               vodstvo z pobrežných čiar OSM
+                               hranice štátov a jazerá z Natural Earth
+                               regióny sťahovania z indexu Geofabriku
+                             ─► svet.zip a svet.aar na Drive
+                             ▲ NIE z planet.osm.pbf (80 GB sa na runner nezmestí)
+                             ▲ cesty, sídla ani terén v nej nie sú
+
 Dáta · výškové modely        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
 (sám, keď terén chýba)       na 1° dlaždice ─► sklad `dem-sonny`:
                              N49E019.tif + meta.json
@@ -1876,6 +1885,49 @@ Dve veci, ktoré katalóg zámerne **nerobí**: rýchly test doň nezapisuje vô
 nahratí sa nezapíše tiež (`if: steps.publish.outcome == 'success'`) – zoznam,
 ktorý ukazuje na súbory, čo na Drive nie sú, je horší než žiadny. Že to tak
 ostane, stráži [`workers/lint/catalog.py`](lint/catalog.py).
+
+### Základná mapa sveta (`Mapa · Build svet`)
+
+Mapa kraja odpovedá na „kde som a kade ísť". Ostáva ale otázka o krok skôr:
+**ktorý kus mapy si vôbec stiahnuť** – a na tú sa bez mapy sveta odpovedá
+zoznamom mien. `world-map.yml` preto robí podklad, na ktorom je to vidieť:
+
+```
+svet.pmtiles     water           moria a oceány z pobrežných čiar OSM + jazerá
+(z0–z6, ~desiatky MB)  boundary  hranice štátov (sporné prerušovane)
+                 place           popisky štátov
+                 download        regióny sťahovania – plochy
+                 download_label  ich mená
+```
+
+Každý región v `download` nesie `id`, `name`, `parent`, `level`
+(svetadiel → štát → výsek) a **`pbf`, teda odkaz, ktorý sa dá naozaj
+stiahnuť**. Úrovne sa odkrývajú podľa zoomu (svetadiel od z0, štát od z2,
+výsek od z5) – všetkých ~500 naraz je pri pohľade na celý svet kaša, v ktorej
+sa nedá ťuknúť na ten správny.
+
+**`planet.osm.pbf` sa nepoužíva a je to zámer.** Planéta má cez 80 GB
+a Planetiler nad ňou potrebuje rádovo terabajt a hodiny; runner má ~60 GB
+voľných a strop 360 minút, ktorý sa vypnúť nedá. Mapa preto stojí na tých
+istých podkladoch, z akých si nízke zoomy skladá aj Planetiler sám (Natural
+Earth), a na pobrežiach na OSM (`simplified-water-polygons`, robené na z0–z9).
+Delenie na kusy je z `index-v1.json` Geofabriku – jediná odpoveď na „na aké
+kusy je OSM delené", ktorá je v JEDNOM súbore aj s polygónmi. Naše buildy
+sťahujú PBF z osm.fr, ktorý polygóny svojich výrezov nepublikuje; delenie je
+u oboch to isté a mapa ukazuje delenie, nie náš zoznam.
+
+**Balí sa to isté a tým istým**: `svet.zip` a `svet.aar` (job na macOS) cez
+`workers/deploy/publish-map.py`, do `<koreň>/svet/` na Drive, a do `maps.json`
+ako vlastný koreňový uzol `svet`. V balíku sú dlaždice, štýly pre všetky štyri
+témy, glyfy a `manifest.json` – mapa sa teda otvorí aj bez siete.
+
+| súbor | čo robí |
+|---|---|
+| [`workers/world/sources.py`](world/sources.py) | stiahne štyri cudzie zdroje a spraví z nich podklady |
+| [`workers/world/world.yml`](world/world.yml) | schéma Planetilera – päť vrstiev a ich zoomy |
+| [`workers/world/style.mjs`](world/style.mjs) | štýl MapLibre (farby z `poc/web/themes.js`) |
+| [`workers/world/build.sh`](world/build.sh) | celý beh: podklady → dlaždice → štýly → manifest |
+| [`workers/lint/world.py`](lint/world.py) | štýl kreslí presne tie vrstvy a od tých zoomov, čo schéma robí |
 
 ### Súhrn buildu
 

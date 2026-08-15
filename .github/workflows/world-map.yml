@@ -1,0 +1,250 @@
+name: Mapa · Build svet
+
+# Základná mapa CELÉHO SVETA – vodstvo, hranice štátov a regióny, na aké kusy
+# je OSM rozdelené na sťahovanie. Publikuje sa na Drive vedľa ostatných máp:
+#
+#     <koreň>/svet/
+#         svet.zip     celá mapa (dlaždice, štýly, glyfy, manifest)
+#         svet.aar     to isté ako Apple Archive – iOS a macOS ho rozbalia
+#                      systémovo, bez tretej knižnice v aplikácii
+#
+# …a zapíše sa do `maps.json` ako vlastný uzol `svet` (hlavný kľúč katalógu je
+# krajina; svet je nad nimi, tak je uzlom sám).
+#
+# PREČO VLASTNÁ PIPELINE A NIE JOB V BUILD MAP. Rovnaké tri dôvody, pre aké má
+# vlastnú pipeline aj Build wiki:
+#
+#   * INÉ DÁTA. Neberie sa regionálne PBF, ale pobrežné čiary OSM, Natural
+#     Earth a index Geofabriku (prečo práve tie a prečo NIE `planet.osm.pbf`,
+#     je rozpísané vo `workers/world/sources.py`). Build map by o týchto
+#     zdrojoch nemal ako vedieť a jeho vstup (`region`) tu nedáva zmysel.
+#   * INÁ ŽIVOTNOSŤ. Hranice štátov a delenie exportov sa menia raz za dlho;
+#     mapa kraja sa prerába pri každej zmene štýlu. Prepočítavať pri každom
+#     builde svet by boli desiatky minút za nič.
+#   * INÝ VÝSTUP. Nejde na Pages a nie je to mapa na chodenie – je to podklad
+#     pod výber „ktorý kus si stiahnuť". Preto v nej NIE SÚ cesty, sídla,
+#     vrstevnice ani terén, a nemá zmysel ju miešať do rozpočtu stránky.
+#
+# JEDEN PACKER A JEDEN ZÁPIS DO KATALÓGU TO NERUŠÍ. Balík aj `maps.json` robí
+# ďalej `workers/deploy/publish-map.py` a `.aar` `workers/deploy/apple-archive
+# .sh` – to isté, čo robí Build map. Druhý packer by bol druhá pravda o tom
+# istom (pravidlo 1 v CLAUDE.md).
+
+on:
+  workflow_dispatch:
+    inputs:
+      maxzoom:
+        description: "Do akého zoomu dlaždice (svet je podklad, nie mapa na chodenie)"
+        required: false
+        default: "6"
+        type: choice
+        options:
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+      limit_mb:
+        description: "Nad koľko MB dlaždíc varovať (vodstvo rastie ~3× na zoom)"
+        required: false
+        default: "250"
+        type: string
+      rebuild:
+        description: "Stiahnuť podklady odznova (obíde cache na Drive)"
+        required: false
+        default: false
+        type: boolean
+      publish:
+        description: "Nahrať na Drive a zapísať do maps.json"
+        required: false
+        default: true
+        type: boolean
+      # Ten istý balík ešte raz ako `.aar` (Apple Archive) – rovnako ako pri
+      # Build map. Robí to job na macOS, lebo nástroj `aa` je súčasť macOS;
+      # keď ho nechceš platiť pri každom behu, odškrtni.
+      apple_archive:
+        description: "Nahrať balík aj ako .aar (Apple Archive, job na macOS)"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  # Prihlásenie na Drive: číta sa z neho cache podkladov a nahráva balík.
+  # Stojí pri celom workflowe ako v Build map – keby sa naň dalo zabudnúť pri
+  # jednom kroku, ten by sa ticho vrátil k sťahovaniu všetkého odznova.
+  GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
+  DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
+  DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
+  DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
+  # Kľúč mapy sveta v `workers/data/regions.json`. Odtiaľ si build berie meno
+  # aj bbox a publikovanie priečinok na Drive – nie je to teda len meno súboru.
+  REGION_KEY: svet
+  # Ten istý balík glyfov, aký sťahuje Build map (`workers/assets/glyphs.sh`).
+  GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
+  # Čo v tej mape je – ide to do `obsah.json` v balíku a do `layers`
+  # v `maps.json`. Bez toho by publikovanie hlásilo vrstvy mapy kraja
+  # („bez_vrstevnic, bez_skal, bez_tienovania"), ktoré tu nedávajú zmysel.
+  # MUSÍ byť rovnaké v oboch jobov: `.aar` položku katalógu prepisuje navrch
+  # a inou hodnotou by tú od ZIPu prebil.
+  MAP_LAYERS: hranice,vodstvo,jazera,regiony_stahovania
+
+jobs:
+  world:
+    name: Mapa sveta
+    runs-on: ubuntu-latest
+    # Katalóg `maps.json` je súbor v repozitári a dopisuje ho beh – rovnako
+    # ako pri Build map. Bez tohto práva by sa zapísal na runner a stratil.
+    permissions:
+      contents: write
+    outputs:
+      maxzoom: ${{ steps.build.outputs.maxzoom }}
+      size_mb: ${{ steps.build.outputs.size_mb }}
+      published: ${{ steps.publish.outcome }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      # SŤAHUJE SA LEN SUROVÉ, NIE HOTOVÉ. V cache je ~95 MB stiahnutých
+      # súborov z troch cudzích serverov; prevod (ogr2ogr) sa robí zakaždým –
+      # trvá minúty a jeho výsledok by cache nafúkol na stovky MB.
+      #
+      # BEZ `restore-keys`, teda len PRESNÁ zhoda. V kľúči je týždeň, takže
+      # sa podklady raz za týždeň stiahnu čerstvé; predpona by vrátila
+      # najnovší starší záznam a tá čerstvosť by ticho prestala platiť.
+      - name: Kľúč podkladov
+        id: key
+        env:
+          HASH: ${{ hashFiles('workers/world/sources.py') }}
+        run: |
+          set -euo pipefail
+          echo "key=world-src-v1-${HASH:0:12}-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache podkladov (restore)
+        if: ${{ !inputs.rebuild }}
+        uses: ./.github/actions/cache-restore
+        with:
+          path: data/world/zdroje
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Postav mapu sveta
+        id: build
+        env:
+          OPT_MAXZOOM: ${{ inputs.maxzoom }}
+          OPT_LIMIT_MB: ${{ inputs.limit_mb }}
+        run: workers/world/build.sh
+
+      # Ukladá sa HNEĎ, ako sa stiahne, nie v post-kroku – zrušený beh tak
+      # nezahodí to, čo už na disku je.
+      - name: Cache podkladov (save)
+        if: ${{ always() && hashFiles('data/world/zdroje/*') != '' }}
+        continue-on-error: true
+        uses: ./.github/actions/cache-save
+        with:
+          path: data/world/zdroje
+          key: ${{ steps.key.outputs.key }}
+
+      # Balí a do katalógu zapisuje ten istý skript ako pri mape kraja. Balíky
+      # vrstiev (`-vrstevnice-skaly`, `-tienovanie`) tu nevzniknú – svet ich
+      # nemá – a to je v poriadku: publikovanie ich vtedy nenahrá a starý
+      # súbor toho mena by zmazalo, keby nejaký bol.
+      - name: Publikuj mapu sveta na Drive a zapíš do maps.json
+        id: publish
+        if: ${{ inputs.publish }}
+        env:
+          AREA_KEY: cely
+          TEST_KM2: "0"
+          TILES_MAXZOOM: ${{ steps.build.outputs.maxzoom }}
+        run: |
+          set -euo pipefail
+          python3 workers/deploy/publish-map.py --site=_site --maps=maps.json \
+            --summary="$GITHUB_STEP_SUMMARY"
+
+      # Ten istý skript, akým katalóg commituje Build map – vrátane rebasu,
+      # keď medzitým pushol iný beh.
+      - name: Commitni maps.json
+        if: ${{ inputs.publish && steps.publish.outcome == 'success' }}
+        env:
+          MAPS_JSON: maps.json
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: workers/deploy/catalog.sh
+
+      # Aby si `.aar` mohol vyrobiť job na macOS, musí sa k nemu mapa dostať –
+      # v tom istom behu a bez druhého behu Planetilera. Deň retencie: je to
+      # prepravka medzi jobmi, nie uložený výsledok (ten je na Drive).
+      - name: Odlož mapu pre Apple Archive
+        if: ${{ always() && hashFiles('_site/tiles/manifest.json') != '' }}
+        uses: actions/upload-artifact@v5
+        with:
+          name: svet-site
+          path: _site
+          retention-days: 1
+          compression-level: 0
+
+      - name: Súhrn
+        if: ${{ always() }}
+        env:
+          MAXZOOM: ${{ steps.build.outputs.maxzoom }}
+          SIZE_MB: ${{ steps.build.outputs.size_mb }}
+          NAME: ${{ steps.build.outputs.name }}
+        run: |
+          set -uo pipefail
+          {
+            echo "## Mapa sveta"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| mapa | ${NAME:-svet} |"
+            echo "| maxzoom | ${MAXZOOM:-?} |"
+            echo "| dlaždice | ${SIZE_MB:-?} MB |"
+            echo
+            echo "Vodstvo je z pobrežných čiar OpenStreetMap, hranice štátov"
+            echo "a jazerá z Natural Earth a regióny sťahovania z indexu"
+            echo "Geofabriku. Cesty, sídla ani terén v tejto mape nie sú –"
+            echo "je to podklad pod výber, ktorý kus mapy si stiahnuť."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------- Apple Archive ----------
+  # Ten istý balík ešte raz ako `.aar` – iOS a macOS ho rozbalia systémovo
+  # (framework AppleArchive), bez tretej knižnice v aplikácii. Vlastný job a na
+  # macOS preto, že nástroj `aa` je súčasť macOS a inde neexistuje.
+  #
+  # Beží AŽ PO tom, čo sa nahral ZIP a commitol katalóg: `publish-map.py` si
+  # pri `.aar` číta `maps.json` z vetvy a k tomu, čo tam je, sa PRIDÁ (inak by
+  # katalóg o ZIPe prestal vedieť). Keď tento job spadne, mapa tým netrpí – na
+  # Drive je a v katalógu tiež, chýba len druhá podoba balíka.
+  apple-archive:
+    name: Balík ako Apple Archive (.aar)
+    needs: world
+    if: ${{ !cancelled() && needs.world.outputs.published == 'success' && inputs.apple_archive }}
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Stiahni mapu z predošlého jobu
+        uses: actions/download-artifact@v8
+        with:
+          name: svet-site
+          path: _site
+      - name: Zabaľ a nahraj .aar na Drive
+        id: publish
+        env:
+          AREA_KEY: cely
+          TEST_KM2: "0"
+          TILES_MAXZOOM: ${{ needs.world.outputs.maxzoom }}
+          # Z ktorej vetvy si vypýtať čerstvý `maps.json` – ten predošlý job
+          # doň práve zapísal a checkout má stav spred toho.
+          BRANCH: ${{ github.ref_name }}
+        run: workers/deploy/apple-archive.sh
+      - name: Commitni maps.json
+        if: ${{ steps.publish.outcome == 'success' }}
+        env:
+          MAPS_JSON: maps.json
+          BRANCH: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: workers/deploy/catalog.sh
