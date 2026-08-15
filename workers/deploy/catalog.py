@@ -167,7 +167,7 @@ def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy=""):
         # pipeline než mapu, takže `run` pri kraji (= beh, čo vyrobil mapu)
         # o nich nič nepovie – a naopak: keby si ho tá pipeline prepísala na
         # svoj, katalóg by tvrdil, že mapu vyrobil beh, ktorý stiahol len
-        # články. Beh 1 workflowu „Wikipédia k mape" tak v katalógu prepísal
+        # články. Beh 1 workflowu „Build wiki" tak v katalógu prepísal
         # beh 110 Build map. Preto je pôvod pri balíku, nie len pri kraji.
         "run": env("GITHUB_RUN_NUMBER"),
     }

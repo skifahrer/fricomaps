@@ -501,7 +501,7 @@ async function main() {
   if (!iconSets.length) warn("Nenašla sa žiadna sada ikoniek – mapa bude bez ikon.");
 
   // Úpravy štýlu: čo je uložené v prehliadači má prednosť, inak sa vezme to,
-  // čo je zapečené v zdrojáku (workflow „Uložiť úpravy štýlu do zdrojáku").
+  // čo je zapečené v zdrojáku (workflow „Štýl · úpravy z prehliadača do zdrojáku").
   const stored = loadOverrides();
   if (hasOverrides(stored)) {
     overrides = stored;

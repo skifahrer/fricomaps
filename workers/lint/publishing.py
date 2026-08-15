@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Kontrola „publikuje sa len na Drive". Volá ju `Lint workflows`.
+Kontrola „publikuje sa len na Drive". Volá ju `Kontrola · workflowy a workery`.
 
 ČO STRÁŽI. Do GitHubu nesmie ísť ani release, ani artefakt, ktorý má prežiť
 beh. Všetko, čo pipeline vyrobí a chce si nechať, ide do skladu na Google Drive

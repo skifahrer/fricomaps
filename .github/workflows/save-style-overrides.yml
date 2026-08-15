@@ -1,4 +1,4 @@
-name: Uložiť úpravy štýlu do zdrojáku
+name: Štýl · úpravy z prehliadača do zdrojáku
 
 # Protikus k developer módu vo viewri (tlačidlo 🛠 v paneli).
 #
@@ -155,7 +155,7 @@ jobs:
             --base '${{ inputs.branch }}' \
             --head '${{ steps.commit.outputs.head }}' \
             --title "Úpravy štýlu mapy z developer módu" \
-            --body "Vygenerované workflowom **Uložiť úpravy štýlu do zdrojáku** z \`poc/web/style-overrides.json\`. Po zmergovaní spusti **Build map**, aby sa úpravy dostali do nasadenej mapy."
+            --body "Vygenerované workflowom **Štýl · úpravy z prehliadača do zdrojáku** z \`poc/web/style-overrides.json\`. Po zmergovaní spusti **Build map**, aby sa úpravy dostali do nasadenej mapy."
 
       - name: Zhrnutie
         run: |
@@ -168,6 +168,6 @@ jobs:
               cat poc/web/style-overrides.json
               echo '```'
               echo ""
-              echo "Aby sa dostali do nasadenej mapy, spusti workflow **Build map (PBF → PMTiles) & deploy Pages**."
+              echo "Aby sa dostali do nasadenej mapy, spusti workflow **Build map · mapa na Pages a balíky na Drive**."
             fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,11 +1,11 @@
-name: Skaly z tieňovaných dlaždíc
+name: Dáta · skaly z tieňovaných dlaždíc
 
 # POKUSNÁ druhá cesta k skalám: nepočíta sa sklon z DEM, ale hľadajú sa TMAVÉ
 # PLOCHY v hotovom hillshade z freemap.sk. Výstup je ten istý formát ako
 # u skál z DEM – vrstva `rock` v GeoPackage, EPSG:4326 – takže si ho
 # „Build map" vie vypýtať namiesto vlastného výpočtu:
 #
-#   Skaly z tieňovaných dlaždíc  ─►  sklad `dem-rocks-img` na Drive
+#   „Dáta · skaly z tieňovaných dlaždíc"  ─►  sklad `dem-rocks-img` na Drive
 #                                    (rockimg-{výrez}-z{zoom}-…gpkg.zst)
 #                                        ▼
 #   Build map  s  výberom  rock_source: tienovanie    ─►  vrstva `rock` v mape
@@ -607,7 +607,7 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo "## Skaly z tieňovaných dlaždíc"
+            echo "## Dáta · skaly z tieňovaných dlaždíc"
             echo
             echo "**${{ needs.dlazdice.outputs.name }}** – bbox \`${{ needs.dlazdice.outputs.bbox }}\` (${{ needs.dlazdice.outputs.km2 }} km²)"
             echo

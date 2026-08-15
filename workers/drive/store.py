@@ -154,7 +154,7 @@ def creds_or_die(what):
             "GDRIVE_CREDENTIALS (alebo premennú DRIVE_CLIENT a secrety "
             "DRIVE_SECRET / DRIVE_REFRESH) a podaj ho jobu cez `env:` – "
             "vyrobí ich workflow "
-            "„Prihlásenie na Drive (jednorazové)“.")
+            "„Údržba · prihlásenie na Drive“.")
     return creds
 
 

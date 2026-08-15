@@ -1,4 +1,4 @@
-name: Lint workflows
+name: Kontrola · workflowy a workery
 
 # Chytá chyby, ktoré sa inak prejavia až tým, že beh skončí ako „failure"
 # s nula jobmi – GitHub vtedy workflow ani neprijme a v logu nie je nič.
@@ -242,7 +242,7 @@ jobs:
       # práve pre tie územia, na ktoré potom Build map počíta skaly – keby sa
       # zoznamy rozišli, dá sa vyrobiť model pre pohorie, ktoré si build nevie
       # vypýtať (alebo naopak).
-      - name: Výber pohorí v DMR 5.0 z Drive sedí s areas.json
+      - name: Výber pohorí v dmr5-drive.yml sedí s areas.json
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -265,7 +265,7 @@ jobs:
           sys.exit(1 if bad else 0)
           PY
 
-      # A to isté pre „Skaly z tieňovaných dlaždíc". Ten hľadá skaly na tom
+      # A to isté pre „Dáta · skaly z tieňovaných dlaždíc". Ten hľadá skaly na tom
       # istom výreze, aký si potom Build map vypýta cez `rock_source: tienovanie`
       # – keby sa zoznamy rozišli, dali by sa vyrobiť polygóny pre pohorie,
       # ktoré build nevie zadať (alebo naopak). „Celý región" tu chýba

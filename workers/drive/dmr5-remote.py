@@ -9,7 +9,7 @@ sidecary – a dve cesty cez pyramídy. Výrez, mriežku a dlaždice rieši
 
 PREČO ZVLÁŠŤ. `dmr5-raster.py` mal 853 riadkov a v jednom takom súbore sa
 nedá rýchlo nájsť, čo sa zmenilo (pravidlo 5 v CLAUDE.md, strop 800 stráži
-`Lint workflows`). Rez je v tom mieste, kde sa mení otázka: hore „čo sa dá
+`Kontrola · workflowy a workery`). Rez je v tom mieste, kde sa mení otázka: hore „čo sa dá
 z toho archívu prečítať a ako rýchlo", dole „ktorý kus zeme z toho vyrezať".
 
 DVE CESTY CEZ PYRAMÍDY, a nie sú to to isté:

@@ -24,8 +24,9 @@ docs/          návrhy (iOS / multiplatform), podrobný popis pipeline
 ## Ako funguje pipeline
 
 ```
-Build map                    deväť jobov, tie dlhé bežia súbežne:
-(manuálne, výber regiónu)      plan     región + PBF z osm.fr exportov
+Build map · mapa na Pages a balíky na Drive
+(manuálne, výber regiónu)    deväť jobov, tie dlhé bežia súbežne:
+                               plan     región + PBF z osm.fr exportov
                                tiles    Planetiler ─► {región}.pmtiles
                                contours vrstevnice + skaly z DEM
                                terrain  tieňovanie a 3D ako raster .pmtiles
@@ -35,14 +36,16 @@ Build map                    deväť jobov, tie dlhé bežia súbežne:
                                apple-archive  balíky ešte raz ako .aar
                                         (macOS runner – nástroj `aa`)
 
-Stiahnuť výškové dáta        Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
-(sám, keď terén chýba)       na 1° dlaždice ─► sklad `dem-sonny`:
+Dáta · výškové modely do skladu
+(sám, keď terén chýba)       Sonny 20m / ÚGKK DMR 3.5 ─► rezanie
+                             na 1° dlaždice ─► sklad `dem-sonny`:
                              N49E019.tif + meta.json
                              ▲ Build map ho zavolá automaticky, keď v sklade
                                nie je pre jeho územie ani jedna dlaždica
 
-DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
-(toto si volá Build map)     čítané cez HTTP Range – berie sa len to, čo
+Dáta · DMR 5.0 z Drive
+(toto si volá Build map)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
+                             čítané cez HTTP Range – berie sa len to, čo
                              výrez pretína:
                                výrez (1 m)          ─► `dem-ugkk` ┐ jeden zdroj
                                1° dlaždice (5 m)    ─► `dem-dmr5` ┘ `dmr5`
@@ -52,13 +55,15 @@ DMR 5.0 z Drive (ETRS89)     145 GB BigTIFF + 43 GB pyramíd na Google Drive,
                                lebo model má dve podoby a chýbať môžu naraz
 
 
-Skaly z tieňovaných dlaždíc  POKUS: hillshade JPG z freemap.sk ─► tmavé
-(pokus, na jedno pohorie)    plochy ─► polygóny ─► sklad `dem-rocks-img`
+Dáta · skaly z tieňovaných dlaždíc
+(pokus, na jedno pohorie)    POKUS: hillshade JPG z freemap.sk ─► tmavé
+                             plochy ─► polygóny ─► sklad `dem-rocks-img`
                              ▲ Build map si ich vypýta výberom
                                rock_source: tienovanie
 
-Uložiť úpravy štýlu          style-overrides.json z developer módu
-(po doladení mapy)           ─► kontrola + prečistenie
+Štýl · úpravy z prehliadača do zdrojáku
+(po doladení mapy)           style-overrides.json z developer módu
+                             ─► kontrola + prečistenie
                              ─► poc/web/style-overrides.json v repozitári
 ```
 
@@ -116,7 +121,7 @@ Trails) preto kombinuje OSM s externým DEM. Robíme to rovnako:
 | čo | zdroj | kde sa berie |
 |---|---|---|
 | výšky vrcholov | OSM tag `ele` | už v dlaždiciach, vrstva `mountain_peak` |
-| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš sklad `dem-sonny` na Drive (napĺňa ho workflow *Stiahnuť výškové dáta*) |
+| **vrstevnice a skaly** | **Sonny's LiDAR DTM, model 20m** | náš sklad `dem-sonny` na Drive (napĺňa ho workflow *Dáta · výškové modely do skladu*) |
 | **tieňovanie reliéfu, 3D terén** | **ten istý Sonny DEM** | vlastný raster `.pmtiles` (terrarium PNG vnútri), uložený v sklade `dem-terrain` |
 | tieňovanie a 3D – záloha | AWS Terrain Tiles (Terrarium) | [registry.opendata.aws](https://registry.opendata.aws/terrain-tiles/), keď sa vlastné nevyrobia |
 
@@ -160,7 +165,7 @@ Vidno to aj na jednom bode: v dlaždici `N49E020` vyjde Gerlachovský štít
 Predvolený nie je a podľa tabuľky vyššie ani nemá byť: na skaly je `sonny`
 lepší a `dmr5` ešte lepší. Zmysel dáva tam, kde 20m model nesiaha, alebo keď
 si chceš to porovnanie zopakovať. Doplní sa ako ktorýkoľvek iný zdroj – buď
-sám (`Build map` si ho vypýta), alebo ručne cez *Stiahnuť výškové dáta* so
+sám (`Build map` si ho vypýta), alebo ručne cez *Dáta · výškové modely do skladu* so
 `what: sonny1`.
 
 **Čo v tom priečinku naozaj je** (prečítané 2026-08-11, nie odhadnuté): 15
@@ -822,7 +827,7 @@ prísne prahy, alebo len štvorec padol na lúku pod lesom.
 | iná veľkosť | `options: test_km2=5` |
 | ostrý beh na celom výreze | odškrtnúť switch `test` |
 | iné miesto než stred výrezu | `options: test_at=20.30,49.24` (`lon,lat`) |
-| to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` v „Skaly z tieňovaných dlaždíc“ (tam je to počet km², nie switch) |
+| to isté v samostatnom workflowe so skalami z tieňovania | výber `test: 2` v „Dáta · skaly z tieňovaných dlaždíc“ (tam je to počet km², nie switch) |
 
 Dlaždice majú vlastnú cache podľa výrezu a zoomu, takže druhý build z
 dobrovoľníckeho servera freemap.sk neťahá nič. Tieňovanie na **celý región**
@@ -848,11 +853,11 @@ Tri výbery vo formulári – `contour_source` (vrstevnice), `rock_source`
 |---|---|--:|---|---|
 | **`sonny`** (default) | Sonny's LiDAR DTM | 20 m | celý región | overené |
 | **`dmr35`** | ÚGKK DMR 3.5 (otvorené dáta) | **10 m** | celý región | **overené** ✓ |
-| **`dmr5`** | ÚGKK DMR 5.0 (LiDAR) | **1 m** s výrezom, **5 m** na celý región | oboje | naplniť *DMR 5.0 z Drive* ✓ |
+| **`dmr5`** | ÚGKK DMR 5.0 (LiDAR) | **1 m** s výrezom, **5 m** na celý región | oboje | naplniť *Dáta · DMR 5.0 z Drive* ✓ |
 | `ziadne` | – | – | – | vrstva sa negeneruje |
 
 Navyše: `rock_source: tienovanie` neberie výšky vôbec – vezme hotové polygóny
-z workflowu *Skaly z tieňovaných dlaždíc*.
+z workflowu *Dáta · skaly z tieňovaných dlaždíc*.
 
 Vrstvy môžu mať **rôzny model naraz** – napríklad vrstevnice zo `sonny`
 a skaly z `dmr5`. Build vtedy stiahne oba (každý do `dem/<zdroj>/`) a v mape
@@ -972,14 +977,14 @@ pipeline z Drive nielen číta, ale aj ukladá cache buildu (viď nižšie), a n
 byť „In production"** — v „Testing" platí refresh token 7 dní a pipeline by
 raz do týždňa spadla; pri type *Internal* (Workspace) to neplatí.
 
-**Bez počítača** to spraví workflow *Prihlásenie na Drive (jednorazové)*
+**Bez počítača** to spraví workflow *Údržba · prihlásenie na Drive*
 ([`drive-login.yml`](../.github/workflows/drive-login.yml)): prehliadač je
 telefón, shell je runner. Token sa v ňom **nikde nevypíše** — log public
 repozitára vidí ktokoľvek — ide zo súboru rovno do secretu `DRIVE_REFRESH`.
 Prihlásenie sa dá podať aj po kusoch — `client_id` ako repository **variable**
 `DRIVE_CLIENT` (nie je to tajné) a secrety `DRIVE_SECRET`, `DRIVE_REFRESH`,
 lebo `client_secret` Google druhýkrát neukáže; nekompletná dvojica secretov
-je chyba a `Lint workflows` ju zachytí.
+je chyba a `Kontrola · workflowy a workery` ju zachytí.
 
 Bez secretu beh spadne hneď a s návodom — nie po pol dni na vyčerpanom
 limite. Podrobne (aj kam všade sa ten secret musí dostať, aj postup z telefónu)
@@ -991,7 +996,7 @@ Workflow ich preto predvolene prevádza cez EGM2008; kontrola na Gerlachu dá
 po prevode 2 653,92 m, čiže rozdiel 0,5 m na 1 m mriežke. Na skaly a
 tieňovanie by to bolo jedno (sklon sa geoidom nemení), na vrstevnice nie.
 
-To je workflow **DMR 5.0 z Drive**
+To je workflow **Dáta · DMR 5.0 z Drive**
 ([`dmr5-drive.yml`](../.github/workflows/dmr5-drive.yml)), jeden job:
 
 ```
@@ -1121,7 +1126,7 @@ nastavenia vypíše workflow do súhrnu behu, aby sa nemuseli hádať.
 
 **Spúšťaš len jednu pipeline.** `Build map` sa sám pozrie, čo mu v sklade
 chýba, a doplnenie si spustí ako svoju úlohu. Ručne netreba spúšťať nič –
-vrátane `dmr5`, ktorý sa dopĺňa cez `DMR 5.0 z Drive` (číta cez HTTP Range len
+vrátane `dmr5`, ktorý sa dopĺňa cez `Dáta · DMR 5.0 z Drive` (číta cez HTTP Range len
 to, čo územie pretína, takže to nie je „prekvapenie na osem hodín", ako keby sa
 mal sťahovať celý model).
 
@@ -1129,10 +1134,10 @@ mal sťahovať celý model).
 Build map
   └─ check-dem        čo chýba pre vrstevnice / skaly / tieňovanie?
        ├─ (výrez chýba)    → Doplniť DMR 5.0 (výrez)    ← spustí sa sám
-       │                       DMR 5.0 z Drive, area: <pohorie>
+       │                       Dáta · DMR 5.0 z Drive, area: <pohorie>
        │                       → ugkk-<pohorie>.tif do dem-ugkk
        ├─ (dlaždice chýbajú) → Doplniť DMR 5.0 (dlaždice)  ← spustí sa sám
-       │                       DMR 5.0 z Drive, area: <bbox stupňov>,
+       │                       Dáta · DMR 5.0 z Drive, area: <bbox stupňov>,
        │                       tiles: true → N49E020.tif do dem-dmr5
        ├─ contours    stiahne výrez z releasu a počíta
        └─ terrain     stiahne dlaždice z releasu a tieňuje
@@ -1210,7 +1215,7 @@ ktorým začať.
 
 **Prakticky:** `dmr5` **s výrezom** (teda plné metrové rozlíšenie) funguje len
 vtedy, keď je ten výrez už v releasi `dem-ugkk`. Dostane sa tam **workflowom
-[*DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range)** (`area:
+[*Dáta · DMR 5.0 z Drive*](#dmr-50-z-drive-145-gb-cez-http-range)** (`area:
 <pohorie>`) – to si build spúšťa sám – alebo jednorazovým exportom zo
 ZBGIS Mapového klienta (Terén → Export údajov → DMR 5.0, do 400 km²)
 a nahratím ako `ugkk-<vyrez>.tif`. Inak build spadne späť na Sonnyho a napíše
@@ -1418,7 +1423,7 @@ Hotové skaly a vrstevnice si každý build odloží aj do **skladu `vysledky`**
 (`teren-{región}-s{prah}-g{mriežka}-{dátum}-r{beh}.tar.zst`) – aj s GPKG
 geometriou, takže sa dajú stiahnuť a pozrieť v QGISe bez ďalšieho buildu.
 Kedysi to bol artefakt behu s 90-dňovou lehotou; do GitHubu sa už nepublikuje
-nič a sklad na Drive prerieďuje na tých istých 90 dní workflow *Upratať cache*.
+nič a sklad na Drive prerieďuje na tých istých 90 dní workflow *Údržba · upratať*.
 
 Podiel plochy nad prahom (merané pri 40°, teda hornom odhade):
 
@@ -1556,9 +1561,9 @@ stupeň je tu"), ani to, ktorý sklad ktorá vrstva hľadá. Celý rozpis je vo
 Krátkodobé artefakty (`site-*`, `steps-*` s `retention-days: 1`) ostávajú a nie
 sú publikovanie — sú to prepravky, ktorými si joby jedného behu podávajú kusy
 `_site`. Čokoľvek s dlhšou retenciou ide do skladu `vysledky` cez
-[`workers/deploy/publish-results.sh`](deploy/publish-results.sh) a *Lint workflows* to
-kontroluje. Staré releasy, ich tagy aj artefakty zmaže *Upratať GitHub*
-([`cleanup-actions.yml`](../.github/workflows/cleanup-actions.yml)) v režime
+[`workers/deploy/publish-results.sh`](deploy/publish-results.sh) a *Kontrola · workflowy a workery* to
+kontroluje. Staré releasy, ich tagy aj artefakty zmaže *Údržba · upratať*
+([`cleanup.yml`](../.github/workflows/cleanup.yml)) v režime
 `releasy_a_artefakty`.
 
 ### Cache leží na Google Drive
@@ -1583,10 +1588,11 @@ Dve veci, ktoré z toho plynú:
   `drive.readonly`). `python3 workers/drive/cache.py --check` povie, či vie —
   aj koľko miesta na účte ešte je.
 - **Nič sa nemaže samo.** GitHub staré záznamy vyhadzoval sám, Drive nie.
-  Preriedi ich workflow *Upratať cache*
-  ([`cleanup-cache.yml`](../.github/workflows/cleanup-cache.yml)) — raz za týždeň,
-  alebo ručne. Ten istý workflow vyprázdni aj GitHub cache, ktorú už nikto
-  nehľadá.
+  Preriedi ich workflow *Údržba · upratať*
+  ([`cleanup.yml`](../.github/workflows/cleanup.yml)) — raz za týždeň, alebo
+  ručne. Ten istý workflow vyprázdni aj GitHub cache, ktorú už nikto nehľadá,
+  a preriedi sklad `vysledky`. Kým to boli dva workflowy, mali dva plány
+  posunuté o pol hodiny, aby si nelezli do cesty.
 
 ### Hotová mapa ide aj na Drive – tri ZIPy so stálym menom
 
@@ -1651,7 +1657,7 @@ REGION_KEY=presovsky AREA_KEY=cely TILES_MAXZOOM=14 \
 
 ### Články z Wikipédie k objektom v regióne
 
-**Vlastný workflow: `Wikipédia k mape` (`.github/workflows/wiki.yml`).** Bol to
+**Vlastný workflow: `Build wiki` (`.github/workflows/wiki.yml`).** Bol to
 job v Build map a odsťahoval sa, lebo sú to tri rôzne veci naraz: **iná sieť**
 (cudzí server, ktorý sa nemá čím nahradiť – keď nepustí, nemá to zhodiť
 hodinový build mapy), **iná životnosť** (mapa sa prerába pri zmene dát alebo
@@ -1897,8 +1903,10 @@ prehľad, **čo prišlo z cache a čo sa naozaj počítalo** – takže sa hneď
 
 #### Nastavenia tohto behu
 
-Súhrn vypíše aj celý formulár, s akým bol beh spustený, a označí, čo bolo iné
-než predvolené:
+Píše ich **prvý job behu** – `settings`
+([workers/plan/settings.sh](plan/settings.sh)) – a nie súhrn na konci: keď beh
+po hodine spadne, práve vtedy treba vedieť, s čím išiel. Vypíše celý formulár
+a označí, čo bolo iné než predvolené:
 
 | pole | hodnota | |
 |---|---|---|
@@ -1913,6 +1921,16 @@ nikde nie je. Keď teda chceš beh zopakovať a zmeniť jedinú vec (typicky
 `rebuild`), z tohto bloku vidíš, čo treba nastaviť späť. Predvolené hodnoty
 si blok číta priamo z workflowu ([workers/plan/summary-inputs.py](plan/summary-inputs.py)),
 takže sa s formulárom nemôžu rozísť.
+
+Za formulárom je druhá tabuľka: **`env:` workflowu**, teda nastavenia, ktoré
+vo formulári nie sú a menia sa prepísaním `build-map.yml` – prahy skál,
+hladenie vrstevníc, mená skladov, rozpočty veľkosti na vrstvu. Kľúče sú
+z workflowu, hodnoty z prostredia behu, takže je vidieť to, s čím beh naozaj
+ide. Čo je v YAMLe `secrets.*`, sa nevypisuje: repozitár je public a súhrn
+behu vidí ktokoľvek.
+
+A keď je vo formulári nezmysel (neznáma voľba v `options`), spadne to práve
+tu – po pár sekundách, nie o desať jobov neskôr.
 
 
 ## Značené trasy (turistika, cyklo, bežky)
@@ -2501,7 +2519,7 @@ prejavia v mape.
 mapa na Pages ─► 🛠 developer mode ─► „Stiahnuť style-overrides.json"
                                        │
                                        ▼
-              Actions ─► „Uložiť úpravy štýlu do zdrojáku" (vlož obsah súboru)
+              Actions ─► „Štýl · úpravy z prehliadača do zdrojáku" (vlož obsah súboru)
                                        │
                        workers/styles/overrides.mjs – kontrola a prečistenie
                                        │
@@ -2514,7 +2532,7 @@ mapa na Pages ─► 🛠 developer mode ─► „Stiahnuť style-overrides.jso
 vyrobí odvodené vrstvy `<id>__pattern` a `<id>__outline` (okraj plochy nad
 ňou, obrys čiary pod ňou), takže sa dajú kedykoľvek odobrať bez stopy.
 
-Workflow **Uložiť úpravy štýlu do zdrojáku** berie obsah súboru ako vstup
+Workflow **Štýl · úpravy z prehliadača do zdrojáku** berie obsah súboru ako vstup
 (prípadne `overrides_url` pri väčšom súbore), overí ho tou istou funkciou ako
 prehliadač – neznáma farba, neplatný hex, neprepísateľná vlastnosť či
 prehodený rozsah zoomu skončia varovaním a vyhodia sa – a až potom ho
@@ -2652,7 +2670,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    ktorý po každom pushi nasadí koreň repozitára a mapu prepíše. Keby na to
    token nemal práva, beh sa zastaví v tretej sekunde s návodom –
    Settings → Pages → Build and deployment → Source: **GitHub Actions**.
-2. Actions → **Build map (PBF → PMTiles) & deploy Pages** → *Run workflow*.
+2. Actions → **Build map · mapa na Pages a balíky na Drive** → *Run workflow*.
    Formulár má **desať polí** – viac `workflow_dispatch` inputov GitHub
    neprijme (pri 26 sa workflow prestal načítať a beh skončil ako „failure"
    s nula jobmi). Vo formulári sú preto veci, ktoré sa naozaj menia:
@@ -2704,7 +2722,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
    `dmr5` má dve podoby a rozhoduje rozsah, nie ďalší výber: s vyplneným
    `area` plné 1 m, bez neho dlaždice na 5 m. Zoznamy vo formulári stráži
-   `Lint workflows` proti [workers/data/dem-sources.json](data/dem-sources.json)
+   `Kontrola · workflowy a workery` proti [workers/data/dem-sources.json](data/dem-sources.json)
    – zdroj sa nedá pridať do jedného a zabudnúť v druhom.
 
    Zoznam pohorí v `area` sa berie z

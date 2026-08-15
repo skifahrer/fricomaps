@@ -423,7 +423,7 @@ def main():
         baliky.append(
             ("wikipedia", "články z Wikipédie: articles.ndjson + index.json",
              args.wiki, vsetky_subory(args.wiki) if args.wiki else []))
-    # `--only`: samostatná pipeline (napr. „Wikipédia k mape") vyrába JEDEN
+    # `--only`: samostatná pipeline (napr. „Build wiki") vyrába JEDEN
     # balík a o zvyšok mapy sa nestará. Bez tohto by musela mať vlastný packer
     # a vlastný zápis do katalógu – dve kópie toho istého, ktoré sa raz rozídu.
     # Ostatné balíky sa vtedy ani nemažú: to, že ich tento beh nevyrobil,

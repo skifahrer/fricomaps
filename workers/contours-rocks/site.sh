@@ -2,7 +2,7 @@
 # Hotové vrstevnice a skaly z `contours-out/` do `_site/` + výstupy pre štýl.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to Lint workflows). A hlavne: TENTO KROK MAJÚ DVA
+# ticho neprijme (stráži to „Kontrola · workflowy a workery"). A hlavne: TENTO KROK MAJÚ DVA
 # JOBY. `contours` a `rocks` vychádzajú z jedného výpočtu a každý si z neho
 # berie svoju polovicu, takže v YAMLe stál ten istý blok dvakrát – a dve kópie
 # sa vždy raz rozídu. (Tá druhá už aj prišla o všetky komentáre.)

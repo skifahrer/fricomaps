@@ -72,7 +72,7 @@ if [ -s steps-out/rock-stats.txt ]; then
   . steps-out/rock-stats.txt
 fi
 
-# Skaly z tieňovaných dlaždíc majú vlastnú tabuľku: nemajú sklon,
+# „Dáta · skaly z tieňovaných dlaždíc" majú vlastnú tabuľku: nemajú sklon,
 # mriežku ani bunku DEM, takže tá dole by bola stĺpec otáznikov
 # a pod ním text o izolínii sklonu, ktorá tu nikdy nevznikla.
 if [ "${source:-dem}" = "tienovanie" ]; then
@@ -99,7 +99,7 @@ if [ "${source:-dem}" = "tienovanie" ]; then
       echo "sú v jeho časti tohto behu."
     else
       echo "Tieto skaly sa v tomto behu **nepočítali**. Našiel ich workflow"
-      echo "*Skaly z tieňovaných dlaždíc* ako tmavé plochy v hillshade JPG"
+      echo "*Dáta · skaly z tieňovaných dlaždíc* ako tmavé plochy v hillshade JPG"
       echo "z freemap.sk a build si ich len stiahol z releasu \`dem-rocks-img\`."
       echo "Podrobné čísla (prahy, zoom, koľko dlaždíc) sú v súhrne toho behu."
     fi

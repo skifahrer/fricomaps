@@ -2,7 +2,7 @@
 # Značené trasy z OSM relácií → `{región}-trails.pmtiles`.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to Lint workflows).
+# ticho neprijme (stráži to „Kontrola · workflowy a workery").
 #
 # PREČO PREDFILTER. Celé Slovensko je ~380 MB a index polôh uzlov nad ním by
 # zobral niekoľko GB pamäte. `osmium tags-filter` nechá len relácie trás a ich

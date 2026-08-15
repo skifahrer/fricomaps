@@ -588,7 +588,7 @@ def main():
               "(Drive API neobsluhuje anonymné požiadavky), ale v prostredí "
               "nie je token vlastníka. Doplň premennú DRIVE_CLIENT a secrety "
               "DRIVE_SECRET / DRIVE_REFRESH – vyrobí ich workflow "
-              "„Prihlásenie na Drive (jednorazové)“ (.github/workflows/"
+              "„Údržba · prihlásenie na Drive“ (.github/workflows/"
               "drive-login.yml), z počítača `python3 workers/drive/auth.py "
               "--login`.")
         return 3

@@ -10,7 +10,7 @@ obrysy vo `shading-vector.py`, plán a CLI v `shading-rocks.py`.
 
 PREČO ZVLÁŠŤ. `shading-rocks.py` mal 2023 riadkov – v takom súbore sa nedá
 rýchlo nájsť, čo sa zmenilo ani prečo to spadlo (pravidlo 5 v CLAUDE.md, strop
-800 stráži `Lint workflows`). Rezy sú na hraniciach fáz, ktoré už v tom súbore
+800 stráži `Kontrola · workflowy a workery`). Rezy sú na hraniciach fáz, ktoré už v tom súbore
 boli vyznačené komentárom, a sedia aj s tromi jobmi v `shading-rocks.yml`.
 
 TU SÚ AJ SPOLOČNÉ ZÁKLADY, lebo sú z tejto vrstvy: `WEBMERC`, `R` a `TILE`
