@@ -1,4 +1,4 @@
-name: Stiahnuť výškové dáta
+name: Dáta · výškové modely
 
 # JEDINÁ sťahovacia pipeline. Vyber v `source` model a ona ho zoženie,
 # preveďí na dlaždice a uloží do skladu na Drive, z ktorého si ho berie
@@ -21,7 +21,7 @@ name: Stiahnuť výškové dáta
 # `dmr5` V TEJ TABUĽKE NIE JE a `what: dmr5` je odteraz CHYBA. Tento workflow
 # archív stiahne na runner a rozreže ho; DMR 5.0 má 145 GB (na Drive) resp.
 # 198 GB (ZIP z opendata) a runner má voľných ~60 GB – „stiahni a rozbaľ" tu
-# neexistuje. Číta sa cez HTTP Range pipeline `DMR 5.0 z Drive`
+# neexistuje. Číta sa cez HTTP Range pipeline `Dáta · DMR 5.0`
 # (dmr5-drive.yml), ktorá berie len to, čo územie pretína, a `Build map` si ju
 # volá sama (joby `Doplniť DMR 5.0 …`).
 #
@@ -209,7 +209,7 @@ jobs:
               # DMR 5.0 sem NEPATRÍ a nie je to rozcestník, ale chyba. Tento
               # workflow sťahuje archív na runner a rozreže ho; DMR 5.0 má na
               # Drive 145 GB a runner má voľných ~60 GB, takže sa to spraviť
-              # nedá ani teoreticky. Robí to `DMR 5.0 z Drive` (dmr5-drive.yml)
+              # nedá ani teoreticky. Robí to `Dáta · DMR 5.0` (dmr5-drive.yml)
               # cez HTTP Range – a `Build map` si ju volá sám.
               #
               # KÝM TO TU BOL ROZCESTNÍK, KTORÝ SKONČIL ÚSPECHOM, bola to tichá
@@ -217,7 +217,7 @@ jobs:
               # vypísal, kam ísť ručne, zelene skončil – a build pokračoval do
               # jobu, ktorý si model vypýtal, a spadol tam (beh 31307163093).
               # Doplnenie, ktoré nedopĺňa, musí byť červené hneď.
-              echo "::error::DMR 5.0 sa cez „Stiahnuť výškové dáta“ doplniť nedá (145 GB, runner má ~60 GB). Použi workflow „DMR 5.0 z Drive (ETRS89)“: area: <pohorie> → dem-ugkk, alebo area: <bbox stupňov> s tiles: true → dem-dmr5. Build map si ju volá sám (joby „Doplniť DMR 5.0 …“)."
+              echo "::error::DMR 5.0 sa cez „Dáta · výškové modely“ doplniť nedá (145 GB, runner má ~60 GB). Použi workflow „Dáta · DMR 5.0“: area: <pohorie> → dem-ugkk, alebo area: <bbox stupňov> s tiles: true → dem-dmr5. Build map si ju volá sám (joby „Doplniť DMR 5.0 …“)."
               exit 1 ;;
             vlastné|vlastne|custom)
               URL="$CUSTOM"; REL=dem-dmr35; LABEL="vlastné URL" ;;
@@ -291,7 +291,7 @@ jobs:
             # človeka riešiť práva, ktoré sú v poriadku.
             if [ "${{ steps.src.outputs.key }}" = "sonny1" ] \
                && [ "$MODE" != "auth" ]; then
-              echo "::error::Sonnyho 1″ priečinok sa dá stiahnuť LEN prihlásene: dlaždice v ňom sú skratky (shortcut) na súbory inde na Drive a tie verejný odkaz nesťahuje (odpovie „Only the owner and editors can download this file“, aj keď je cieľ zdieľaný). Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH – vyrobí ich workflow „Prihlásenie na Drive (jednorazové)“. Alebo zvoľ zdroj „sonny“ (20 m), ktorý je zároveň jemnejší vo zvislej osi."
+              echo "::error::Sonnyho 1″ priečinok sa dá stiahnuť LEN prihlásene: dlaždice v ňom sú skratky (shortcut) na súbory inde na Drive a tie verejný odkaz nesťahuje (odpovie „Only the owner and editors can download this file“, aj keď je cieľ zdieľaný). Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH – vyrobí ich workflow „Údržba · prihlásenie Drive“. Alebo zvoľ zdroj „sonny“ (20 m), ktorý je zároveň jemnejší vo zvislej osi."
               exit 1
             fi
             if [ "$MODE" = "auth" ]; then
@@ -303,7 +303,7 @@ jobs:
               # nesmie to byť tiché. Verejný odkaz má denný strop sťahovania
               # na súbor a ten zdieľajú všetci, kto naň siahnu; keď sa vyčerpá,
               # Drive vráti HTTP 200 a HTML stránku namiesto dát.
-              echo "::warning::Sťahujem z Google Drive NEPRIHLÁSENE – platí verejný denný limit sťahovania, zdieľaný so všetkými klientmi. Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH (workflow „Prihlásenie na Drive (jednorazové)“) a pôjde to cez Drive API."
+              echo "::warning::Sťahujem z Google Drive NEPRIHLÁSENE – platí verejný denný limit sťahovania, zdieľaný so všetkými klientmi. Doplň premennú DRIVE_CLIENT a secrety DRIVE_SECRET / DRIVE_REFRESH (workflow „Údržba · prihlásenie Drive“) a pôjde to cez Drive API."
               # Staršie gdown sťahovalo z priečinka najviac 50 súborov a bez
               # --remaining-ok pri prekročení spadlo; v gdown 5 ten prepínač už
               # neexistuje (a limit tiež nie), takže sa pridáva len ak ho daná

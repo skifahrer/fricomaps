@@ -4,7 +4,7 @@
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 KiB a nad ním ho GitHub
 # ticho NEPRIJME – po pushi vznikne beh bez jobov s prázdnym logom. Job, ktorý
 # toto volá, pridal do súboru dva kilobajty a bol už na 125; rozpis teda patrí
-# sem (stráži to `Lint workflows`).
+# sem (stráži to `Kontrola · lint workflowov`).
 #
 # ČO TO ROBÍ. To isté, čo `deploy` spravil so ZIPmi, len s druhou príponou:
 # `publish-map.py --format=aar`. Ten istý obsah, tie isté stále mená, ten istý
@@ -37,7 +37,7 @@ echo "Apple Archive: $(command -v aa)"
 
 # ---------- čo sa ide baliť ----------
 # `ONLY` prázdne = balíky mapy z `_site` (Build map). `ONLY=wikipedia` = jediný
-# balík s článkami z `WIKI` (workflow „Wikipédia k mape"). Je to ten istý
+# balík s článkami z `WIKI` (workflow „Build wiki"). Je to ten istý
 # skript pre obe pipeline zámerne: „ako sa vyrobí .aar a nahrá na Drive" je
 # jedna otázka a dve kópie by sa raz rozišli – jedna by mala strážcu, druhá nie.
 ONLY="${ONLY:-}"

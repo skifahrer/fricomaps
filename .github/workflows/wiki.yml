@@ -1,4 +1,4 @@
-name: Wikipédia k mape (články k bodom, líniám a plochám)
+name: Mapa · Build wiki
 
 # Ku každému objektu v regióne, ktorý má v OSM `wikipedia` alebo `wikidata`
 # tag, stiahne článok – po anglicky a v jazyku krajiny – a publikuje ho na
@@ -277,7 +277,7 @@ jobs:
         run: |
           set -uo pipefail
           {
-            echo "## Wikipédia k mape"
+            echo "## Build wiki"
             echo
             echo "| | |"
             echo "|---|---|"

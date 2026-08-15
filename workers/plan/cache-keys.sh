@@ -2,7 +2,7 @@
 # Kľúče cache pre celý build – na jednom mieste.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to Lint workflows).
+# ticho neprijme (stráži to „Kontrola · lint workflowov").
 #
 # PREČO JEDEN ZDROJ. Kľúč potrebuje restore, save AJ mazanie pri pregenerovaní.
 # Keby bol napísaný trikrát, stačí ho raz zabudnúť opraviť a cache sa ticho

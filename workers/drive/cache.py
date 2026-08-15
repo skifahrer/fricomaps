@@ -34,11 +34,11 @@ kľúča je predponou mena.
 ZAPISOVAŤ SA MUSÍ DAŤ. Token vlastníka mal donedávna rozsah `drive.readonly`
 a pod ním sa cache uloží presne nikdy – Drive vráti 403. `--check` to povie
 jednou vetou a `--save` na tom padne s návodom (nový token vyrobí workflow
-„Prihlásenie na Drive (jednorazové)"). Čítanie readonly tokenu stačí, takže
+„Údržba · prihlásenie Drive"). Čítanie readonly tokenu stačí, takže
 build medzitým beží ďalej, len si nič neuloží.
 
 NIČ SA NEMAŽE SAMO. GitHub si staré záznamy vyhadzoval sám, Drive nie – preto
-je `--prune` a preto ho raz za týždeň spúšťa workflow „Upratať cache".
+je `--prune` a preto ho raz za týždeň spúšťa workflow „Údržba · týždenné upratovanie".
 
 Použitie:
     python3 workers/drive/cache.py --check
@@ -131,7 +131,7 @@ def creds_or_die(what):
             "v prostredí nie je token vlastníka. Doplň secret "
             "GDRIVE_CREDENTIALS (alebo premennú DRIVE_CLIENT a secrety "
             "DRIVE_SECRET / DRIVE_REFRESH) a podaj ho jobu cez `env:` – "
-            "vyrobí ich workflow „Prihlásenie na Drive (jednorazové)“.")
+            "vyrobí ich workflow „Údržba · prihlásenie Drive“.")
     return creds
 
 

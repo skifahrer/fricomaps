@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Kontroly hotového štýlu. Volá ich `Lint workflows`.
+ * Kontroly hotového štýlu. Volá ich `Kontrola · lint workflowov`.
  *
  * TRI VECI, VŠETKY TICHÉ:
  *   1. `fill` vrstva nad zmiešanou geometriou musí mať stráž (rozpis nižšie),

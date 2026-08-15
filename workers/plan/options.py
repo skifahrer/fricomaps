@@ -163,11 +163,11 @@ MOVED = {
     # (`.github/workflows/wiki.yml`) a s ním vlastné inputy. Kto sem napíše
     # `wiki_langs=…`, čakal by, že build stiahne články – a ten ich už nerobí.
     "wikipedia": "už nie je: články z Wikipédie robí samostatný workflow "
-                 "„Wikipédia k mape“ (wiki.yml), nie Build map",
-    "wiki_langs": "je input workflowu „Wikipédia k mape“ (wiki.yml) – "
+                 "„Build wiki“ (wiki.yml), nie Build map",
+    "wiki_langs": "je input workflowu „Build wiki“ (wiki.yml) – "
                   "angličtina a jazyk krajiny sa doplnia samy",
-    "wiki_format": "je input workflowu „Wikipédia k mape“ (wiki.yml)",
-    "wiki_max": "je input workflowu „Wikipédia k mape“ (wiki.yml)",
+    "wiki_format": "je input workflowu „Build wiki“ (wiki.yml)",
+    "wiki_max": "je input workflowu „Build wiki“ (wiki.yml)",
     "dem_source": "sa rozpadol na tri inputy vo formulári – `contour_source`, "
                   "`rock_source` a `shading_source`, každá vrstva má svoj "
                   "zdroj",
@@ -182,7 +182,7 @@ MOVED = {
 NONE = "ziadne"
 
 # Skaly majú okrem výškových modelov ešte jeden zdroj, ktorý DEM vôbec
-# nečíta: hotové polygóny z workflowu „Skaly z tieňovaných dlaždíc".
+# nečíta: hotové polygóny z workflowu „Dáta · tieňované skaly".
 ROCK_FROM_SHADING = "tienovanie"
 
 # `rebuild` je jeden výber namiesto troch zaškrtávatiek – tri booleany boli
@@ -193,7 +193,7 @@ REBUILD = {
     "skaly": ("rocks_rebuild",),
     "teren": ("terrain_rebuild",),
     # `clanky` tu už nie je: pregenerovanie článkov je switch `rebuild`
-    # vo workflowe „Wikipédia k mape“, ktorý ich jediný sťahuje.
+    # vo workflowe „Build wiki“, ktorý ich jediný sťahuje.
     "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"),
 }
 # Príznaky, ktoré `rebuild` prepína. Zoznam je jeden, nech sa nedá pridať
@@ -325,7 +325,7 @@ def main():
 
     # ---------- tri výbery zdroja ----------
     # Čo sa smie kde vybrať, hovorí `for` v dem-sources.json – ten istý
-    # zoznam, aký stráži `Lint workflows` proti výberom vo formulári.
+    # zoznam, aký stráži `Kontrola · lint workflowov` proti výberom vo formulári.
     srcs = dem_sources(args.dem_sources or None)
     contour_src = pick_source(
         "vrstevnice (contour_source)", args.contour_source,

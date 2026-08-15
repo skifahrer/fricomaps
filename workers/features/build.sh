@@ -2,7 +2,7 @@
 # Krajinné prvky mimo schémy OpenMapTiles → `{región}-features.pmtiles`.
 #
 # PREČO SAMOSTATNÝ SKRIPT: `build-map.yml` má strop 128 kB a nad ním ho GitHub
-# ticho neprijme (stráži to Lint workflows).
+# ticho neprijme (stráži to „Kontrola · lint workflowov").
 #
 # Zoznam tagov je vo `workers/features/filter.txt` vedľa schémy
 # `workers/features/features.yml`, nech sa obe menia na jednom mieste. Bez predfiltra by

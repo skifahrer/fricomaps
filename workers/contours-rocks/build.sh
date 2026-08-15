@@ -131,11 +131,11 @@ fetch_dem() { # $1 = zdroj → DEM_VRT, DEM_GOT (čo sa NAOZAJ použilo)
     # použilo, takže atribúcia v mape nebude tvrdiť DMR 5.0 tam, kde je Sonny.
     local how
     if [ "$src" = 'dmr5' ] && [ "$AREA_KEY_IN" != 'cely' ]; then
-      how="workflow 'DMR 5.0 z Drive (ETRS89)' s area: $AREA_KEY_IN"
+      how="workflow 'Dáta · DMR 5.0' s area: $AREA_KEY_IN"
     elif [ "$src" = 'dmr5' ]; then
-      how="workflow 'DMR 5.0 z Drive (ETRS89)' s area: cele_slovensko"
+      how="workflow 'Dáta · DMR 5.0' s area: cele_slovensko"
     else
-      how="workflow 'Stiahnuť výškové dáta' so zdrojom $src"
+      how="workflow 'Dáta · výškové modely' so zdrojom $src"
     fi
     if [ "$OPT_UGKK_FALLBACK" != 'true' ]; then
       echo "::error::Model $src pre toto územie nie je k dispozícii a ugkk_fallback je vypnutý. Naplň ho ($how), zapni fallback, alebo vyber iný zdroj."
@@ -764,7 +764,7 @@ echo "$CZ" > contours-out/maxzoom.txt
 # dvomi zloženými zátvorkami za sebou a GitHub taký súbor NEPRIJME –
 # workflow sa po pushnutí objaví ako beh bez jobov, pomenovaný
 # cestou k súboru. Stráži to krok „Zátvorky výrazov v run blokoch"
-# v Lint workflows; aj tento komentár preto tie dve zátvorky
+# v „Kontrola · lint workflowov"; aj tento komentár preto tie dve zátvorky
 # opisuje slovami.
 DEM_FOR_STYLE="$CONTOUR_DEM"
 [ -n "$DEM_FOR_STYLE" ] || DEM_FOR_STYLE="$ROCK_DEM_USED"

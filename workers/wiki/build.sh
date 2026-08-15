@@ -2,7 +2,7 @@
 # Články z Wikipédie ku všetkému, čo v regióne odkazuje na wiki.
 #
 # PREČO SAMOSTATNÝ SKRIPT A NIE `run:` V WORKFLOWE: `build-map.yml` má strop
-# 128 KiB a nad ním ho GitHub ticho neprijme (stráži to Lint workflows).
+# 128 KiB a nad ním ho GitHub ticho neprijme (stráži to „Kontrola · lint workflowov").
 #
 # ČO TU JE a čo je vo `collect.py`: tu inštalácia, voľby z formulára a výstupy
 # pre ďalšie joby; tam celý výpočet (hľadanie odkazov, wikidata, sťahovanie).
@@ -11,7 +11,7 @@
 # ich z regionálneho PBF vyberie za sekundy – ten istý nástroj, ktorým si trasy
 # predfiltrujú relácie.
 #
-# Hodnoty z prostredia (viď workflow `Wikipédia k mape`, wiki.yml):
+# Hodnoty z prostredia (viď workflow `Build wiki`, wiki.yml):
 #   REGION_KEY WIKI_COUNTRY OPT_WIKI_LANGS OPT_WIKI_FORMAT OPT_WIKI_MAX
 set -euo pipefail
 

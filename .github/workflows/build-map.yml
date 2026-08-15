@@ -1,4 +1,4 @@
-name: Build map (PBF → PMTiles) & deploy Pages
+name: Mapa · Build map
 
 # Stiahne PBF export IBA zvoleného regiónu z osm.fr regionálnych exportov
 # (https://download.openstreetmap.fr/extracts/ – Európa aj svet, rezané po
@@ -85,7 +85,7 @@ on:
       # z hrubšieho, ktorý pokrýva celý región. `ziadne` vrstvu vypne –
       # zapínač je tým pádom v tom istom poli ako zdroj a nie vedľa neho,
       # takže sa nedá zadať „generuj vrstevnice, zdroj žiadny".
-      # Zoznam zdrojov drží workers/data/dem-sources.json (stráži to Lint workflows).
+      # Zoznam zdrojov drží workers/data/dem-sources.json (stráži to „Kontrola · lint workflowov").
       # sonny = 20 m, celý región. dmr35 = ÚGKK DMR 3.5, 10 m.
       # dmr5 = ÚGKK DMR 5.0 (LiDAR): s vyplneným `area` plné 1 m, bez neho
       # dlaždice na 5 m. Rozhoduje rozsah, nie ďalší výber: pri 1 m má jedna
@@ -187,7 +187,7 @@ env:
   # krokov (`.github/actions/cache-restore` a `-save`, rozpis vo
   # `workers/drive/cache.py`). Keby token stál pri každom jobe zvlášť, stačí na
   # jeden zabudnúť a ten sa ticho vráti k počítaniu všetkého odznova. Stráži to
-  # „Lint workflows".
+  # „Kontrola · lint workflowov".
   GDRIVE_CREDENTIALS: ${{ secrets.GDRIVE_CREDENTIALS }}
   DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
   DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
@@ -201,16 +201,16 @@ env:
   # celý formát skladu, prihlásenie aj „clobber" je vo `workers/drive/store.py`
   # a mená súborov ostali tie isté, aké mali assety (meno je sľub o rozsahu).
   #
-  # Sklad s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Update DEM").
+  # Sklad s dlaždicami Sonny's LiDAR DTM (napĺňa ho workflow "Dáta · výškové modely").
   DEM_STORE: dem-sonny
   # Druhý Sonnyho model (1″ .hgt z Drive). Zvislý krok 1 m namiesto 0,1 m,
   # takže skaly z neho vyjdú polámanejšie – rozpis v data/dem-sources.json.
   SONNY1_STORE: dem-sonny1
   # Otvorené dáta ÚGKK (DMR 3.5). Tie isté 1°×1° dlaždice ako Sonny, len
-  # z iného modelu – napĺňa ich „Stiahnuť výškové dáta" so `source: dmr35`.
+  # z iného modelu – napĺňa ich „Dáta · výškové modely" so `source: dmr35`.
   DMR35_STORE: dem-dmr35
   # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
-  # ich job `mirror-dmr5-tiles` cez „DMR 5.0 z Drive" – po stupňoch, ktoré
+  # ich job `mirror-dmr5-tiles` cez „Dáta · DMR 5.0" – po stupňoch, ktoré
   # bbox pretína (celé Slovensko naraz netreba).
   DMR5_STORE: dem-dmr5
   # Výrez DMR 5.0 v plnom 1 m rozlíšení, jeden COG na pohorie.
@@ -281,7 +281,7 @@ env:
   # nabudúce len stiahnu.
   ROCK_STORE: dem-rocks
   # Skaly nájdené ako tmavé plochy v tieňovaných dlaždiciach – napĺňa ich
-  # workflow „Skaly z tieňovaných dlaždíc". Build ich nikdy nepočíta, len
+  # workflow „Dáta · tieňované skaly". Build ich nikdy nepočíta, len
   # si ich vypýta výberom `rock_source: tienovanie`.
   ROCK_IMG_STORE: dem-rocks-img
   # Sklad častí rastra sklonu (workers/contours-rocks/slope-chunks.py). Na rozdiel od cache
@@ -392,6 +392,32 @@ env:
 # platí práve tých 360. Preto stále platí pravidlo 5 – dlhé fázy patria každá
 # do svojho jobu, lebo tých 360 minút sa počíta na job, nie na beh.
 jobs:
+  # ---------- s čím tento beh ide ----------
+  # PRVÝ job a je to jediné, čo robí: vypíše formulár, `env:` workflowu a to,
+  # čo z volieb vyšlo. Rozpis aj dôvod, prečo je to job a nie krok prípravy,
+  # sú vo `workers/plan/settings.sh`.
+  settings:
+    name: Nastavenia behu (formulár a voľby)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Vypíš nastavenia behu
+        env:
+          # Celý formulár naraz – po jednom by sa na nové pole zabudlo
+          # a v tabuľke by ticho chýbalo.
+          INPUTS_JSON: ${{ toJSON(inputs) }}
+          OPT_OPTIONS: ${{ inputs.options }}
+          OPT_REBUILD: ${{ inputs.rebuild }}
+          OPT_CONTOUR_SOURCE: ${{ inputs.contour_source }}
+          OPT_ROCK_SOURCE: ${{ inputs.rock_source }}
+          OPT_SHADING_SOURCE: ${{ inputs.shading_source }}
+          OPT_TEST: ${{ inputs.test }}
+        run: workers/plan/settings.sh
+
   # ---------- je v sklade terén pre toto územie? ----------
   # Iný zdroj výšok nemáme (Copernicus je zámerne vypnutý), takže bez dlaždíc
   # by build po pár minútach zlyhal. Radšej sa najprv pozrieme, či v sklade
@@ -414,7 +440,7 @@ jobs:
       mirror_rocks: ${{ steps.check.outputs.mirror_rocks }}
       mirror_terrain: ${{ steps.check.outputs.mirror_terrain }}
       # DMR 5.0 sa nedopĺňa cez update-dem.yml (ten ho stiahnuť nevie), ale
-      # cez `DMR 5.0 z Drive`. A dopĺňa sa PODĽA PODOBY, nie podľa vrstvy:
+      # cez `Dáta · DMR 5.0`. A dopĺňa sa PODĽA PODOBY, nie podľa vrstvy:
       # výrez v plnom rozlíšení a 1° dlaždice sú dva rôzne assety v dvoch
       # rôznych releasoch, takže si aj pri jedinom `dmr5` vo formulári môžu
       # chýbať oba naraz (vrstevnice chcú výrez, tieňovanie dlaždice).
@@ -525,7 +551,7 @@ jobs:
   # DMR 5.0 nechodí cez `update-dem.yml`. Ten sťahuje archív na runner a rozreže
   # ho; DMR 5.0 má 145 GB a runner má voľných ~60 GB, takže sa to spraviť nedá.
   # Číta sa cez HTTP Range priamo z Drive – berie sa len to, čo územie pretína –
-  # a robí to `DMR 5.0 z Drive` (dmr5-drive.yml).
+  # a robí to `Dáta · DMR 5.0` (dmr5-drive.yml).
   #
   # KÝM SEM VIEDLA CESTA CEZ `update-dem.yml`, DOPĹŇANIE BOLO TICHÉ NIČ: `dmr5`
   # tam bol len rozcestník, ktorý vypísal, kam ísť ručne, a skončil úspechom.
@@ -781,14 +807,10 @@ jobs:
         id: opts
         run: |
           set -euo pipefail
-          # Čo bolo vo FORMULÁRI (nie čo z toho vyšlo) – ten istý blok, aký
-          # bol dovtedy až v súhrne na konci. Súhrn prípravy je na stránke
-          # behu prvý, takže je to vidieť hneď po spustení, nie až po hodine.
-          # `|| true`: beh nemá padnúť na tom, že sa nevykreslila tabuľka.
-          python3 workers/plan/summary-inputs.py \
-            --inputs='${{ toJSON(inputs) }}' \
-            --workflow=.github/workflows/build-map.yml \
-            >> "$GITHUB_STEP_SUMMARY" || true
+          # BEZ `--summary`: čo bolo vo formulári a čo z volieb vyšlo, vypisuje
+          # job `settings` – prvý job behu. Kým to písali obe miesta, boli
+          # v súhrne dve tabuľky toho istého (pravidlo 1). Tu ostáva iba to,
+          # čo z volieb potrebuje zvyšok behu, teda `--out`.
           python3 workers/plan/options.py \
             --options='${{ inputs.options }}' \
             --rebuild='${{ inputs.rebuild }}' \
@@ -796,8 +818,7 @@ jobs:
             --rock-source='${{ inputs.rock_source }}' \
             --shading-source='${{ inputs.shading_source }}' \
             --test='${{ inputs.test }}' \
-            --out="$GITHUB_OUTPUT" \
-            --summary="$GITHUB_STEP_SUMMARY"
+            --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
         id: day
@@ -1102,7 +1123,7 @@ jobs:
   # ---------- vrstevnice a skaly ----------
       # OSM výškový model neobsahuje (má len bodový tag `ele`), takže terén
       # ide z externého DEM: **Sonny's LiDAR DTM** z releasu `dem-sonny`
-      # (napĺňa ho workflow "Update DEM"). Je to LiDAR *model terénu*, teda
+      # (napĺňa ho workflow "Dáta · výškové modely"). Je to LiDAR *model terénu*, teda
       # bez stromov a striech.
       #
       # Copernicus GLO-30 ako záloha je zámerne VYPNUTÝ. Je to model povrchu:
@@ -1262,7 +1283,7 @@ jobs:
       # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
       # nič. Zoznam súborov je vo `workers/deploy/publish-results.sh`, lebo ten istý
       # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
-      # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
+      # rozídu. Sklad `vysledky` prerieďuje „Údržba · týždenné upratovanie" na 90 dní – presne
       # tá retencia, ktorú mal artefakt.
       - name: Odlož skaly a vrstevnice do skladu
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}
@@ -1461,7 +1482,7 @@ jobs:
       # Do skladu na Drive, nie ako artefakt behu: do GitHubu sa nepublikuje
       # nič. Zoznam súborov je vo `workers/deploy/publish-results.sh`, lebo ten istý
       # krok majú dva joby (`contours` a `rocks`) a dve kópie sa vždy raz
-      # rozídu. Sklad `vysledky` prerieďuje „Upratať cache" na 90 dní – presne
+      # rozídu. Sklad `vysledky` prerieďuje „Údržba · týždenné upratovanie" na 90 dní – presne
       # tá retencia, ktorú mal artefakt.
       - name: Odlož skaly a vrstevnice do skladu
         if: ${{ needs.plan.outputs.opt_contours == 'true' && hashFiles('data/rock.gpkg') != '' }}

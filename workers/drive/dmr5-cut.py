@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-DMR 5.0 z Drive: okno, bloky a výstupy – teda „ktorý kus a v akom tvare".
+„Dáta · DMR 5.0": okno, bloky a výstupy – teda „ktorý kus a v akom tvare".
 
 ČO JE TU. Geometria a zápis: z WGS84 bboxu okno v projekcii zdroja, rozdelenie
 na bloky, ich súbežné čítanie z Drive a nakoniec dva možné výstupy – jeden COG
@@ -10,7 +10,7 @@ berie.
 
 PREČO ZVLÁŠŤ. `dmr5-drive.py` mal 888 riadkov a v jednom takom súbore sa nedá
 rýchlo nájsť, čo sa zmenilo (pravidlo 5 v CLAUDE.md, strop 800 stráži
-`Lint workflows`). Rez je tam, kde sa mení otázka: tam „ako sa k tým dátam
+`Kontrola · lint workflowov`). Rez je tam, kde sa mení otázka: tam „ako sa k tým dátam
 dostať a čo to bude stáť", tu „ktorý kus zeme a v akom tvare z nich urobiť".
 
 DENNÍK JE TU, NIE VEDĽA. `LOG`, `log()` a `run()` používajú obe strany, a keby
