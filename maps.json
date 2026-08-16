@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-16T12:38:44Z",
+  "_updated_at": "2026-08-16T12:54:54Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -103,22 +103,22 @@
             "updated_at": "2026-08-14T13:57:04Z"
           },
           "wikipedia": {
-            "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
+            "download": "https://drive.google.com/uc?export=download&id=1w3_W91hf7JnzW7SO7iqnogprQaDn1m20",
             "file": "bratislavsky-wikipedia.zip",
             "formats": {
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
+                "download": "https://drive.google.com/uc?export=download&id=1w3_W91hf7JnzW7SO7iqnogprQaDn1m20",
                 "file": "bratislavsky-wikipedia.zip",
-                "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
-                "run": "2",
-                "size": 3831311,
-                "updated_at": "2026-08-14T13:52:22Z"
+                "link": "https://drive.google.com/file/d/1w3_W91hf7JnzW7SO7iqnogprQaDn1m20/view",
+                "run": "3",
+                "size": 3831433,
+                "updated_at": "2026-08-16T12:54:54Z"
               }
             },
-            "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
-            "run": "2",
-            "size": 3831311,
-            "updated_at": "2026-08-14T13:52:22Z"
+            "link": "https://drive.google.com/file/d/1w3_W91hf7JnzW7SO7iqnogprQaDn1m20/view",
+            "run": "3",
+            "size": 3831433,
+            "updated_at": "2026-08-16T12:54:54Z"
           }
         },
         "maxzoom": 16,
