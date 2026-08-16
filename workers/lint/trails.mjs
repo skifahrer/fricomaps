@@ -47,6 +47,11 @@
  *      strane ostane biely klin, na vnútornej sa prekryjú – čiže v každej
  *      zákrute je z pásika plocha inej hrúbky. Bez limitu zas z vlásenky
  *      vypadne výbežok dlhý ako pol obrazovky.
+ *  10. DÁTA NENECHAJÚ ZLOM, KTORÝ SPOJ NEZOŠIJE. Hranica, od ktorej `routes.py`
+ *      zlomy delí (`EASE_ABOVE_DEG`), nie je vlastné číslo – vychádza
+ *      z `line-miter-limit` v štýle (limit 2 = zlom 120°, lebo posun vrcholu
+ *      je `odstup / cos(zlom/2)`). Keď sa rozídu, pásik sa v ostrej zákrute
+ *      zúži a nič to nepovie.
  *
  * Spustenie (aj lokálne):
  *   node workers/lint/trails.mjs
@@ -270,6 +275,39 @@ for (const layer of trailStyle.layers) {
         "stane výbežok dlhý ako pol obrazovky (odstup delený kosínusom " +
         "polovičného uhla rastie nad všetky medze)."
     );
+  }
+}
+
+// ---- 10. dáta nenechajú zlom, ktorý spoj nezošije ----
+// `miter` posunie vrchol o `odstup / cos(zlom/2)` a MapLibre sa nad
+// `line-miter-limit` nedostane (posun pakuje do bajtu), takže ostrejší zlom
+// zreže a pásik v zákrute vyzerá zúžený. Hranica, od ktorej musí `routes.py`
+// zlomy deliť, teda NIE JE vlastné číslo – vychádza z limitu v štýle.
+const miterMaxTurn = (2 * Math.acos(1 / TRAIL_JOIN["line-miter-limit"]) * 180) / Math.PI;
+const num = (name) => {
+  const m2 = py.match(new RegExp(`^${name}\\s*=\\s*([0-9.]+)`, "m"));
+  return m2 ? Number(m2[1]) : null;
+};
+const easeAbove = num("EASE_ABOVE_DEG");
+const easeStep = num("MAX_TURN_DEG");
+if (!/def ease_corners\(/.test(py) || !/coords, eased = ease_corners\(coords\)/.test(py)) {
+  bad.push(
+    "workers/trails/routes.py nedelí zlomy cez `ease_corners` – zlom nad " +
+      `${miterMaxTurn.toFixed(0)}° spoj "${TRAIL_JOIN["line-join"]}" nezošije, ` +
+      "takže sa pásik v zákrute zúži alebo sa na chvíľu stratí."
+  );
+} else {
+  for (const [name, value] of [["EASE_ABOVE_DEG", easeAbove], ["MAX_TURN_DEG", easeStep]]) {
+    if (value === null) {
+      bad.push(`workers/trails/routes.py nemá ${name} – nedá sa overiť, či ` +
+        "zlomy, ktoré po delení ostanú, vie spoj v štýle zošiť.");
+    } else if (value > miterMaxTurn) {
+      bad.push(
+        `${name} je ${value}°, ale \`line-miter-limit\` ` +
+          `${TRAIL_JOIN["line-miter-limit"]} zošije zlom najviac ${miterMaxTurn.toFixed(0)}°. ` +
+          "Ostrejší MapLibre zreže a pásik sa v zákrute zúži."
+      );
+    }
   }
 }
 

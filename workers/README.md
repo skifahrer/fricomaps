@@ -2078,14 +2078,33 @@ Geometria sa pritom **neupravuje**: pásik má presne tie body, ktoré má cesta
 v OSM. Zaobliť zlom v dátach by znamenalo, že pásik zákrutu odreže a ide
 inokade než chodník pod ním – a to je horšie než ten klin.
 
-`line-miter-limit` je poistka pre vlásenky: `odstup / cos(zlom/2)` rastie nad
-všetky medze (pri zlome 173° je to 16-násobok odstupu, čiže výbežok cez pol
-obrazovky). Nad dvojnásobok – čo je zlom 120° – MapLibre spoj zreže (`bevel`),
-takže špička vlásenky je useknutá rovno a obe ramená ostanú rovnobežné so
-svojím chodníkom. Je to predvolená hodnota MapLibre, ale v štýle je napísaná
-naschvál (`TRAIL_JOIN`): je to poistka, nie detail, a `workers/lint/trails.mjs`
-ju stráži na každej `trail-*` čiarovej vrstve – aj na podklade pásikov, ktorý
-sa musí v zákrute ohnúť rovnako ako to, čo podkladá.
+`line-miter-limit` je strop toho posunu: `odstup / cos(zlom/2)` rastie nad
+všetky medze (pri zlome 173° je to 16-násobok odstupu) a MapLibre ho pakuje do
+bajtu, takže sa nad **dvojnásobok** nedostane. Dvojnásobok je presne zlom
+**120°** – ostrejší zlom zreže na `bevel`, čiže obe ramená pásika sa skončia
+pred zlomom a v zákrute ostane diera. V mape to vyzerá, že sa pásik zúžil.
+
+Preto na to nadväzuje jediná úprava geometrie, ktorú trasy majú: `ease_corners`
+v [`routes.py`](trails/routes.py) **rozdelí zlom nad 120° na niekoľko po 60°**
+(posun 1,15× odstupu, hlboko pod stropom), takže ich už `miter` zošije a pásik
+ide zákrutou v rovnakej hrúbke. Nie je to zaobľovanie: reže sa **2 m**, čiže
+pásik je od zlomu chodníka najviac **1 m** – pri z16 0,6 px, pri z14 (strop
+dlaždíc trás) 0,15 px. Menej sa rezať nedá, dlaždice majú pri z14 rozlíšenie
+0,39 m a Planetiler ich pred zápisom ešte zjednodušuje (~0,6 m), takže kratší
+oblúk by sa v nich stratil a zlom by bol späť.
+
+Zlomov nad 120° je málo – namerané na 419 tatranských cestách z Overpassu
+(22 238 bodov): **354, teda 1,6 % vrcholov**, a geometria z toho narastie
+o 6,3 %. Deliť aj miernejšie zlomy nemá zmysel (`miter` ich zošije) a nie je
+zadarmo: pri hranici 30° má zlom nad ňou tretina vrcholov a bodov by bolo
+o 108 % viac. Vlásenka nad ~150° ostane vlásenkou – tam sa pásik pri hrote
+skončí, lebo zošiť ju by znamenalo odrezať špičku o desiatky metrov.
+
+Že to drží: `workers/lint/trails.mjs` stráži `miter` aj ten limit na každej
+`trail-*` čiarovej vrstve (aj na podklade pásikov, ktorý sa musí v zákrute
+ohnúť rovnako ako to, čo podkladá) a k tomu to, že hranica delenia v `routes.py`
+**vychádza z toho limitu** – `line-miter-limit` 2 znamená 120°, takže sa tie
+dve čísla nemôžu ticho rozísť.
 
 ### Farba ide z OSM, odtieň z palety
 
