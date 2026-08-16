@@ -685,6 +685,7 @@ jobs:
       opt_terrain: ${{ steps.opts.outputs.opt_terrain }}
       opt_trails: ${{ steps.opts.outputs.opt_trails }}
       opt_features: ${{ steps.opts.outputs.opt_features }}
+      opt_search: ${{ steps.opts.outputs.opt_search }}
       # Tri výbery zdroja tak, ako ich rozobrala parse-options.py.
       # `opt_rock_dem` je zdroj skál, LEN keď je to výškový model – pri
       # `tienovanie` a `ziadne` je prázdny, takže nikto nesiahne na DEM.

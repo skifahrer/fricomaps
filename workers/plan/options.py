@@ -107,6 +107,9 @@ DEFAULTS = {
     # prieseky, pramene, jaskyne, rozhľadne, parkoviská, zjazdovky. Rovnako
     # ako trasy nemajú výber zdroja – idú z toho istého PBF ako mapa.
     "features": ("true", "generovať krajinné prvky, ktoré OpenMapTiles nemá"),
+    # Vyhľadávací index: offline FTS5. Bez výberu zdroja - idú z toho istého
+    # PBF ako mapa. Zapínač je tu namiesto vo formulári.
+    "search": ("true", "generovať vyhľadávací index pre offline hľadávanie"),
     # INTERVAL VRSTEVNÍC. Bol to input vo formulári a presťahoval sa sem, keď
     # si miesto vzal switch `wikipedia` (ten sa medzitým odsťahoval do
     # `wiki.yml`) – `workflow_dispatch` dovolí najviac 10 inputov. Je to ten
@@ -387,6 +390,12 @@ def main():
     if values["features"] not in ("true", "false"):
         print(f"::error::Voľba „features“ musí byť true alebo false, "
               f"nie „{values['features']}“.", file=sys.stderr)
+        return 1
+    # To isté pre vyhľadávací index – `search=0` by ho ticho vyplo
+    # a v aplikácii by chýbalo offline hľadávanie.
+    if values["search"] not in ("true", "false"):
+        print(f"::error::Voľba search=... musí byť true alebo false, "
+              f"nie {values['search']}.", file=sys.stderr)
         return 1
 
     # A to isté pre publikovanie na Drive: `publish=0` by ho ticho vyplo
