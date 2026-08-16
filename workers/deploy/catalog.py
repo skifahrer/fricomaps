@@ -196,7 +196,7 @@ def zapis(path, data, popis):
 
 
 def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
-                  kat=None, layers=None):
+                  kat=None, layers=None, spravuje=None):
     """Doplň (alebo prepíš) položku v `maps.json`. Vracia True, keď sa zmenil.
 
     `baliky` je zoznam `(druh, meno, veľkosť, id, formát)` – to, čo sa naozaj
@@ -216,6 +216,16 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
     ZIPy: keby prepisoval, katalóg by o ZIPoch prestal vedieť. Pri bežnom
     behu (`merge=False`) sa naopak MUSÍ nahradiť – inak by v katalógu ostali
     odkazy na balíky, ktoré tento build nevyrobil.
+
+    `spravuje` sú DRUHY BALÍKOV, O KTORÝCH TENTO BEH ROZHODUJE – ten istý
+    zoznam, podľa ktorého `publish-map.py` maže starý balík na Drive. Balík,
+    ktorý v ňom nie je, sa v položke NECHÁ TAK: `wikipedia` robí vlastná
+    pipeline (`wiki.yml`) a Build map o nej nič nevie, takže „nevyrobil som
+    ho" tam neznamená „v mape nie je". Na Drive to rozlíšenie platí od
+    začiatku vlastnej pipeline, v katalógu chýbalo – a tak ho každý build
+    mapy, teda každá zmena štýlu, z `maps.json` ticho zmazal, hoci
+    `…-wikipedia.zip` na Drive ležal ďalej (behy 31892120453 a staršie:
+    najprv prišiel o balík `bratislavsky`, potom aj `presovsky`).
     """
     try:
         with open(path) as f:
@@ -327,7 +337,23 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
         except ValueError:
             pass
     stare_maps = uzol.get("maps") or {}
-    polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()} if merge else {}
+    if merge:
+        polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()}
+    else:
+        # PREPIS SA TÝKA LEN TOHO, O ČOM TENTO BEH ROZHODUJE. Balík, ktorý
+        # robí iná pipeline, tu ostáva aj vtedy, keď ho tento beh nenahral –
+        # inak by ho z katalógu zmazal, hoci jeho súbor na Drive leží ďalej
+        # (a mazať ho tam beh nesmie, viď `publish-map.py`). Balík, o ktorom
+        # beh rozhoduje a nevyrobil ho, naopak zmizne – to je tá istá vec ako
+        # zmazanie starého ZIPu na Drive, len z druhej strany.
+        if spravuje is None:
+            raise SystemExit(
+                "::error::`zapis_katalog` bez `spravuje=`: nedá sa povedať, "
+                "ktoré balíky tento beh rieši a ktoré patria inej pipeline. "
+                "Podaj druhy z `baliky` (robí to `publish-map.py`).")
+        riesi = set(spravuje)
+        polozka["maps"] = {k: dict(v) for k, v in stare_maps.items()
+                           if k not in riesi}
     if merge:
         # ČO TENTO BEH NEVIE, TO NESMIE ZMAZAŤ. Položka sa zapisuje celá
         # (`uzol.clear()`), takže beh, ktorý pridáva len ďalší formát, by
@@ -350,6 +376,12 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
     uzol.update(polozka)
     uzol.update(zachovaj)
 
+    # Koľko balíkov v položke ostalo po INEJ pipeline – nech je na logu vidieť,
+    # že sa nezmazali, a nie až na tom, že v katalógu chýbajú.
+    cudzie = [k for k in polozka["maps"]
+              if k not in {(kind or "mapa") for kind, *_ in baliky}]
     return zapis(path, data, f"zapísaná mapa {'/'.join(kat)} "
                              f"({len(polozka['maps'])} balíkov, "
-                             f"priečinok {'/'.join(parts)})")
+                             + (f"z toho {len(cudzie)} z inej pipeline "
+                                f"({', '.join(sorted(cudzie))}), " if cudzie else "")
+                             + f"priečinok {'/'.join(parts)})")

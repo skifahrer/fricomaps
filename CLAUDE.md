@@ -461,7 +461,11 @@ to JEDINÉ miesto, kde beh zapisuje do repozitára, a preto má job `deploy`
 krajina** (rovno v koreni), pod ňou `regions` (kraj) a `subregions` (výsek) a
 v každej úrovni `maps` s tromi odkazmi; metadáta katalógu majú v koreni prefix
 `_` (`_comment`, `_updated_at`), tak ako `_comment` v `data/areas.json`. Zápis je
-„nahraď celú položku" a `subregions` pri tom ostávajú. **Rýchly test sa
+„nahraď celú položku" a `subregions` pri tom ostávajú – **a prepis sa týka len
+balíkov, o ktorých beh ROZHODUJE** (`spravuje=`, ten istý zoznam ako pri mazaní
+starého balíka na Drive): `wikipedia` robí vlastná pipeline, takže „nevyrobil
+som ju" neznamená „v mape nie je" a v položke ostane. Kým to tam nebolo, mazal
+ju z katalógu každý build mapy, hoci ZIP na Drive ležal ďalej. **Rýchly test sa
 zapisuje tiež, ale do VLASTNÉHO uzla** (`vysoke_tatry_test4km2` – tá istá
 prípona, akú nesú jeho balíky): na Drive leží v priečinku ostrej mapy, takže
 bez katalógu sa o ňom bez tokenu nedá dozvedieť, ale na jej položku sadnúť
