@@ -1037,6 +1037,26 @@ export const TRAIL_MARK_COLOURS = [
 // berú po indexoch.
 export const TRAIL_OFFSET_ZOOMS = [9, 11, 13, 14, 16, 20];
 
+/**
+ * ŠÍRKA PÁSIKA – a zároveň ROZOSTUP dvoch trás na tej istej ceste.
+ *
+ * Je to JEDNA krivka naschvál: rozostup nie je vlastné číslo, ktoré by sa
+ * dalo naladiť, je to šírka pásika. Kým to boli dve krivky, rozišli sa –
+ * nie v hodnotách pri zlomoch, ale MEDZI nimi: šírka sa interpoluje
+ * `exponential 1.5` (ako všetky hrúbky v štýle), rozostup sa interpoloval
+ * lineárne, takže pri z18 bol rozostup 4,3 px na pásik široký 3,65 px.
+ * Tá sedmina pixela medzery nie je biela – je v nej vidieť podklad pásikov
+ * (`trail-halo`), čiže medzi červenou a modrou trasou viedla tmavá čiara
+ * a vyzeralo to, že sú trasy od seba odsunuté. Preto ju teraz kreslí tá istá
+ * krivka aj s tým istým druhom interpolácie a pásiky sa dotýkajú na KAŽDOM
+ * zoome, nie len na tých šiestich, kde sú zlomy.
+ */
+export const TRAIL_STRIPE = [
+  [9, 0.9], [11, 1.11], [13, 1.54], [14, 1.9], [16, 2.6], [20, 6]
+];
+/** Rozostup dvoch trás = šírka pásika. Tá istá krivka, nie kópia. */
+export const TRAIL_PITCH = TRAIL_STRIPE;
+
 // Odstup osi prvého pásika od osi cesty, v pixeloch. Nie je to odhad – je to
 // spočítané z toho, aké široké sú v štýle čiary pod ním: polovica čiary +
 // polovica pásika (a pri ceste ešte obrys, ktorý `widen` pridáva k CELEJ
@@ -1052,18 +1072,59 @@ export const TRAIL_OFFSET_ZOOMS = [9, 11, 13, 14, 16, 20];
 // účelová – pásik sa presne dotýka MIESTNEJ cesty, po ktorej trasy chodia
 // najčastejšie. Rozlišovať triedu cesty by znamenalo dotiahnuť ju do dlaždíc
 // trás a to za tie dve desatiny pixela nestojí.
+//
+// POD z16 UŽ NEROZHODUJE ŠÍRKA ČIARY, ALE METRE. Pixel je pri z13 dvanásť
+// metrov, takže odstup 2,6 px odsunul pásik od chodníka o 33 m – viac, než je
+// v horách rozostup ramien serpentíny. `line-offset` posúva každý vrchol po
+// osi zlomu, takže taký pásik obieha vlásenku oblúkom širším než je samotná
+// zákruta, ramená sa navzájom prekryjú a v mape je z toho farebná PLOCHA,
+// nie čiara. Odstup je preto zhora ohraničený tým, koľko je pri ceste miesta
+// V TERÉNE: 8 m pri chodníku, 12 m pri ceste (chodník má serpentíny tesnejšie
+// než cesta). Nad z16 je ohraničenie voľnejšie než výpočet zo šírky čiary,
+// takže tam neplatí nič nové – kde bol pásik pri z16 a vyššie, tam ostal.
+// Stráži to `workers/lint/trails.mjs`, aby sa veľké čísla nevrátili.
+//
+//   metrov na pixel (48,7° s. š.):  z13 12,6   z14 6,31   z16 1,58   z20 0,10
 export const TRAIL_OFFSET_ROAD = [
-  [9, 0.8], [11, 1.5], [13, 2.6], [14, 3.5], [16, 6.6], [20, 19.8]
+  [9, 0.06], [11, 0.24], [13, 0.95], [14, 1.9], [16, 6.6], [20, 19.8]
 ];
 export const TRAIL_OFFSET_PATH = [
-  [9, 0.8], [11, 1.0], [13, 1.5], [14, 2.4], [16, 3.6], [20, 11.0]
+  [9, 0.04], [11, 0.16], [13, 0.63], [14, 1.27], [16, 3.6], [20, 11.0]
 ];
-// Rozostup dvoch trás na tej istej ceste = ŠÍRKA PÁSIKA, čiže sú nalepené na
-// seba bez medzery. Tri značky na jednom chodníku majú vyzerať ako jeden
-// trojfarebný pás, nie ako tri čiary rozhádzané do polovice obrazovky.
-export const TRAIL_PITCH = [
-  [9, 0.9], [11, 1.15], [13, 1.6], [14, 1.9], [16, 2.6], [20, 6]
-];
+
+/** Koľko metrov od cesty smie pásik najviac ísť (rozpis vyššie). */
+export const TRAIL_OFFSET_LIMIT_M = { road: 12, path: 8 };
+
+/**
+ * SPOJ PÁSIKA V ZÁKRUTE. `miter`, nie `round` – a je to tá vec, ktorá drží
+ * pásik v ostrej zákrute rovnako tenký ako na rovine.
+ *
+ * MapLibre kreslí `line-offset` tak, že KAŽDÝ VRCHOL posunie po osi jeho
+ * zlomu, a dĺžku toho posunu berie z toho, aký spoj je nastavený:
+ *
+ *   `round`  posunie vrchol o odstup po NORMÁLE každého ramena zvlášť. Pásik
+ *            sa teda k zlomu dostane dvoma rovnobežkami, ktoré sa nestretnú:
+ *            na vonkajšej strane ostane medzi nimi KLIN (v mape biely zárez
+ *            uprostred farebného pásika) a na vnútornej sa prekryjú. Pri troch
+ *            značkách na jednej ceste si k tomu farby ešte prelezú cez seba.
+ *   `miter`  posunie vrchol po OSI zlomu o `odstup / cos(zlom/2)`, čo je
+ *            presne roh rovnobežky – pásik má v zákrute ten istý ostrý uhol
+ *            ako chodník pod ním a rovnakú hrúbku.
+ *
+ * `line-miter-limit` je poistka pre vlásenky: `odstup / cos(zlom/2)` rastie
+ * nad všetky medze (pri zlome 173° je to 16-násobok odstupu, teda výbežok cez
+ * pol obrazovky), takže nad dvojnásobok – čo je zlom 120° – MapLibre spoj
+ * zreže (`bevel`). Špička vlásenky je potom useknutá rovno; obe ramená ostanú
+ * rovnobežné so svojím chodníkom a nič sa neroztiahne. Je to predvolená
+ * hodnota MapLibre, ale píše sa sem naschvál: je to poistka, nie detail.
+ *
+ * Geometria sa pritom NEUPRAVUJE. Pásik má presne tie body, ktoré má cesta
+ * v OSM – zaobliť zlom v dátach by znamenalo, že pásik zákrutu odreže a ide
+ * inokade než chodník pod ním.
+ */
+export const TRAIL_JOIN = { "line-join": "miter", "line-miter-limit": 2 };
+/** Metrov na pixel pri z0 v strede Slovenska (48,7° s. š.). */
+export const METRES_PER_PX_Z0 = 156543.03 * Math.cos((48.7 * Math.PI) / 180);
 
 /** Referenčný zoom, v ktorom sa odstupy zadávajú aj ladia. */
 export const TRAIL_GAP_ZOOM = 16;
@@ -3257,6 +3318,9 @@ export function buildStyle({
     // ROZOSTUP DVOCH TRÁS je šírka pásika, teda druhá trasa je nalepená na
     // prvú bez medzery. Tri značky na jednom chodníku majú vyzerať ako jeden
     // trojfarebný pás, nie ako tri čiary rozhádzané do polovice obrazovky.
+    // Preto je to tá istá krivka (`TRAIL_STRIPE`), ktorou sa o kus nižšie
+    // kreslí `line-width` pásika, a interpoluje sa tak isto – inak by sa medzi
+    // zlomami rozišli a medzi trasami by presvital ich podklad.
     //
     // Čísla sú pixely pri z16 (referenčný zoom, v ktorom sa to ladí) a celá
     // krivka sa škáluje pomerom voči nim, keď ich developer mode prepíše.
@@ -3270,9 +3334,14 @@ export function buildStyle({
     // `["zoom"]` smie byť len vstupom najvrchnejšieho `interpolate`, preto sa
     // celý výpočet skladá až vo výstupoch stopov – `["*", ["interpolate", …]]`
     // by MapLibre odmietol. Stopy majú preto všetky tri krivky rovnaké.
+    //
+    // `exponential 1.5` je to isté, čím sa interpoluje `line-width` (`zw`):
+    // rozostup JE šírka pásika, takže musí rásť rovnako. S lineárnou
+    // interpoláciou sa medzi zlomami rozchádzali – pri z18 bola medzi
+    // susednými pásikmi medzera 0,65 px a presvital cez ňu ich podklad.
     const trailOffset = [
       "interpolate",
-      ["linear"],
+      ["exponential", 1.5],
       ["zoom"],
       ...TRAIL_OFFSET_ZOOMS.flatMap((z, i) => [
         z,
@@ -3339,7 +3408,9 @@ export function buildStyle({
         source: "trails",
         "source-layer": "trail",
         minzoom: 11,
-        layout: { "line-cap": "butt", "line-join": "round" },
+        // Ten istý spoj ako pásiky nad ním (rozpis pri `TRAIL_JOIN`) – inak
+        // by sa podklad v zákrute rozišiel s tým, čo podkladá.
+        layout: { "line-cap": "butt", ...TRAIL_JOIN },
         paint: {
           "line-color": c.trailHalo,
           "line-width": zw([[11, 2.4], [14, 3.4], [16, 4.8], [20, 10]]),
@@ -3360,10 +3431,12 @@ export function buildStyle({
           "source-layer": "trail",
           minzoom: 9,
           filter,
-          layout: { "line-cap": "butt", "line-join": "round" },
+          layout: { "line-cap": "butt", ...TRAIL_JOIN },
           paint: {
             "line-color": trailColour(paletteKey),
-            "line-width": zw([[9, 0.9], [12, 1.3], [14, 1.9], [16, 2.6], [20, 6]]),
+            // Tá istá krivka, ktorá je aj rozostupom dvoch trás – pásiky sa
+            // tak dotýkajú na každom zoome, nie len na zlomoch.
+            "line-width": zw(TRAIL_STRIPE),
             "line-offset": trailOffset,
             "line-opacity": zl([[9, 0.75], [13, 0.95]]),
             ...(dashArray(dash) ? { "line-dasharray": dashArray(dash) } : {})

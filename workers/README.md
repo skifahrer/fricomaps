@@ -2091,18 +2091,84 @@ trasa vedie – a štýl má dva odstupy:
 |---|---|---:|---|
 | cesta (asfaltka, spevnená) | `road` | 6,6 px | pásik ide **tesne za okraj** cesty aj s jej obrysom: žiadna medzera, ale ani prekryv |
 | chodník, lesná a poľná cesta | `path` | 3,6 px | **jemný odstup**, nech je pod pásikom vidieť aj samotný chodník a to, že je prerušovaný |
-| rozostup dvoch trás | – | 2,6 px | presne šírka pásika, čiže sú nalepené na sebe; tri značky na jednom chodníku vyzerajú ako jeden trojfarebný pás |
+| rozostup dvoch trás | – | 2,6 px | **šírka pásika**, čiže sú nalepené na sebe; tri značky na jednom chodníku vyzerajú ako jeden trojfarebný pás |
 
 Čísla nie sú odhad – sú spočítané zo šírok čiar v štýle (polovica čiary +
 obrys + polovica pásika) a sedia pri **miestnej ceste**, po ktorej trasy
 chodia najčastejšie. Celá krivka (z9 až z20) sa škáluje pomerom voči hodnote
 pri z16, takže v developer móde stačí prepísať jedno číslo.
 
+**Rozostup nie je vlastné číslo, je to šírka pásika** – doslova tá istá krivka
+(`TRAIL_STRIPE`), ktorou sa kreslí `line-width`, aj ten istý druh interpolácie.
+Kým to boli dve krivky, sedeli si len v šiestich zlomoch: šírka rastie
+`exponential 1.5` (ako všetky hrúbky v štýle), rozostup rástol lineárne, takže
+pri z18 bol rozostup 4,3 px na pásik široký 3,65 px. Tá sedmina pixela nie je
+biela – presvital cez ňu podklad pásikov (`trail-halo`), takže medzi červenou
+a modrou trasou viedla tmavá čiara a vyzeralo to, že sú trasy od seba odsunuté.
+
+**Pod z16 rozhoduje o odstupe METER, nie pixel.** Pixel je pri z13 dvanásť
+metrov, takže „2,6 px od chodníka" znamenalo 33 m – viac, než je v horách
+rozostup ramien serpentíny. `line-offset` posúva každý vrchol po osi jeho
+zlomu, takže taký pásik obehne vlásenku oblúkom širším než samotná zákruta,
+ramená sa navzájom prekryjú a v mape je z toho farebná **plocha**, nie čiara.
+Odstup je preto zhora ohraničený tým, koľko je pri ceste miesta v teréne
+(`TRAIL_OFFSET_LIMIT_M`: 12 m pri ceste, 8 m pri chodníku – ten má serpentíny
+tesnejšie). Nad z16 je to ohraničenie voľnejšie než výpočet zo šírky čiary,
+takže tam ostalo všetko tak, ako bolo:
+
+| | z13 | z14 | z15 | z16 | z18 | z20 |
+|---|---:|---:|---:|---:|---:|---:|
+| chodník, predtým | 19 m | 15 m | 9,4 m | 5,7 m | 2,3 m | 1,1 m |
+| chodník, teraz | 7,9 m | 8,0 m | 6,9 m | 5,7 m | 2,3 m | 1,1 m |
+
 Že to drží spolu naprieč tromi súbormi (`routes.py` číslu je rady,
 `trails.yml` to pustí do dlaždíc, `themes.js` z toho ráta `line-offset`),
 stráži [`workers/lint/trails.mjs`](lint/trails.mjs) – rozídené strany, posunutý
-zlom krivky ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
+zlom krivky, rozostup, ktorý prestal byť šírkou pásika, odstup nad limit
+v metroch ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
 tej istej strane ako turistické, prípadne pásiky preskakujú.
+
+### Ostrý zlom: pásik má ten istý uhol ako chodník (`line-join: miter`)
+
+`line-offset` posúva KAŽDÝ VRCHOL čiary a dĺžku toho posunu berie z toho, aký
+spoj je nastavený. Práve preto bola v zákrute z pásika plocha:
+
+| spoj | čo urobí s vrcholom | ako to vyzerá |
+|---|---|---|
+| `round` | posunie ho o odstup po **normále každého ramena zvlášť** | rovnobežky sa v zlome nestretnú: na vonkajšej strane ostane medzi nimi **klin** (biely zárez uprostred pásika), na vnútornej sa prekryjú – a pri troch značkách na jednej ceste si k tomu farby prelezú cez seba |
+| `miter` | posunie ho po **osi zlomu** o `odstup / cos(zlom/2)` | presne roh rovnobežky: pásik má v zákrute **ten istý ostrý uhol ako chodník pod ním** a rovnakú hrúbku |
+
+Geometria sa pritom **neupravuje**: pásik má presne tie body, ktoré má cesta
+v OSM. Zaobliť zlom v dátach by znamenalo, že pásik zákrutu odreže a ide
+inokade než chodník pod ním – a to je horšie než ten klin.
+
+`line-miter-limit` je strop toho posunu: `odstup / cos(zlom/2)` rastie nad
+všetky medze (pri zlome 173° je to 16-násobok odstupu) a MapLibre ho pakuje do
+bajtu, takže sa nad **dvojnásobok** nedostane. Dvojnásobok je presne zlom
+**120°** – ostrejší zlom zreže na `bevel`, čiže obe ramená pásika sa skončia
+pred zlomom a v zákrute ostane diera. V mape to vyzerá, že sa pásik zúžil.
+
+Preto na to nadväzuje jediná úprava geometrie, ktorú trasy majú: `ease_corners`
+v [`routes.py`](trails/routes.py) **rozdelí zlom nad 120° na niekoľko po 60°**
+(posun 1,15× odstupu, hlboko pod stropom), takže ich už `miter` zošije a pásik
+ide zákrutou v rovnakej hrúbke. Nie je to zaobľovanie: reže sa **2 m**, čiže
+pásik je od zlomu chodníka najviac **1 m** – pri z16 0,6 px, pri z14 (strop
+dlaždíc trás) 0,15 px. Menej sa rezať nedá, dlaždice majú pri z14 rozlíšenie
+0,39 m a Planetiler ich pred zápisom ešte zjednodušuje (~0,6 m), takže kratší
+oblúk by sa v nich stratil a zlom by bol späť.
+
+Zlomov nad 120° je málo – namerané na 419 tatranských cestách z Overpassu
+(22 238 bodov): **354, teda 1,6 % vrcholov**, a geometria z toho narastie
+o 6,3 %. Deliť aj miernejšie zlomy nemá zmysel (`miter` ich zošije) a nie je
+zadarmo: pri hranici 30° má zlom nad ňou tretina vrcholov a bodov by bolo
+o 108 % viac. Vlásenka nad ~150° ostane vlásenkou – tam sa pásik pri hrote
+skončí, lebo zošiť ju by znamenalo odrezať špičku o desiatky metrov.
+
+Že to drží: `workers/lint/trails.mjs` stráži `miter` aj ten limit na každej
+`trail-*` čiarovej vrstve (aj na podklade pásikov, ktorý sa musí v zákrute
+ohnúť rovnako ako to, čo podkladá) a k tomu to, že hranica delenia v `routes.py`
+**vychádza z toho limitu** – `line-miter-limit` 2 znamená 120°, takže sa tie
+dve čísla nemôžu ticho rozísť.
 
 ### Farba ide z OSM, odtieň z palety
 

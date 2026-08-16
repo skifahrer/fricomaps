@@ -2269,7 +2269,9 @@ export function initDevMode({
     const gapFields = [
       ["road", "Pri ceste", "pásik ide tesne za okraj cesty aj s jej obrysom"],
       ["path", "Pri chodníku a lesnej ceste", "jemný odstup, nech je pod pásikom vidieť aj chodník"],
-      ["pitch", "Rozostup dvoch trás", "0 = druhá trasa nalepená na prvú bez medzery"]
+      ["pitch", "Rozostup dvoch trás",
+        "predvolené = šírka pásika, čiže nalepené na seba; menej znamená, " +
+        "že sa prekrývajú a spodná farba nie je vidieť"]
     ].map(([key, label, note]) =>
       el("div", { class: `dev-sub${overrides.trails.gap[key] != null ? " changed" : ""}` }, [
         numberField({
