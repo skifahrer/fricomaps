@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-16T12:38:02Z",
+  "_updated_at": "2026-08-16T12:38:44Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -466,6 +466,14 @@
                 "download": "https://drive.google.com/uc?export=download&id=1bOziKbSxZT0cC-VMnMoSEQ1zTARisrqp",
                 "file": "presovsky-vysoke_tatry-test4km2.zip",
                 "formats": {
+                  "aar": {
+                    "download": "https://drive.google.com/uc?export=download&id=1X4krZHdUJL6vM-Vukv-xhVMv7l9Sl_VK",
+                    "file": "presovsky-vysoke_tatry-test4km2.aar",
+                    "link": "https://drive.google.com/file/d/1X4krZHdUJL6vM-Vukv-xhVMv7l9Sl_VK/view",
+                    "run": "127",
+                    "size": 217387086,
+                    "updated_at": "2026-08-16T12:38:44Z"
+                  },
                   "zip": {
                     "download": "https://drive.google.com/uc?export=download&id=1bOziKbSxZT0cC-VMnMoSEQ1zTARisrqp",
                     "file": "presovsky-vysoke_tatry-test4km2.zip",
@@ -484,6 +492,14 @@
                 "download": "https://drive.google.com/uc?export=download&id=1POaaxwa8Ky8thB50_qGjhbG4VdGehUiw",
                 "file": "presovsky-vysoke_tatry-test4km2-tienovanie.zip",
                 "formats": {
+                  "aar": {
+                    "download": "https://drive.google.com/uc?export=download&id=1GFho_4kKGEGO2-XK_Z6ipI5RLKID5j8k",
+                    "file": "presovsky-vysoke_tatry-test4km2-tienovanie.aar",
+                    "link": "https://drive.google.com/file/d/1GFho_4kKGEGO2-XK_Z6ipI5RLKID5j8k/view",
+                    "run": "127",
+                    "size": 2581,
+                    "updated_at": "2026-08-16T12:38:44Z"
+                  },
                   "zip": {
                     "download": "https://drive.google.com/uc?export=download&id=1POaaxwa8Ky8thB50_qGjhbG4VdGehUiw",
                     "file": "presovsky-vysoke_tatry-test4km2-tienovanie.zip",
@@ -502,6 +518,14 @@
                 "download": "https://drive.google.com/uc?export=download&id=19S5nxWF7A-SII6E2d0iygk22Z6q81_L3",
                 "file": "presovsky-vysoke_tatry-test4km2-vrstevnice-skaly.zip",
                 "formats": {
+                  "aar": {
+                    "download": "https://drive.google.com/uc?export=download&id=1qilfedVEr-1_ojOfbcmf1vQQo_KoCI-u",
+                    "file": "presovsky-vysoke_tatry-test4km2-vrstevnice-skaly.aar",
+                    "link": "https://drive.google.com/file/d/1qilfedVEr-1_ojOfbcmf1vQQo_KoCI-u/view",
+                    "run": "127",
+                    "size": 2063246,
+                    "updated_at": "2026-08-16T12:38:44Z"
+                  },
                   "zip": {
                     "download": "https://drive.google.com/uc?export=download&id=19S5nxWF7A-SII6E2d0iygk22Z6q81_L3",
                     "file": "presovsky-vysoke_tatry-test4km2-vrstevnice-skaly.zip",
@@ -535,7 +559,7 @@
               "trails": "tiles/presovsky_test4-trails.pmtiles"
             },
             "trails_maxzoom": 14,
-            "updated_at": "2026-08-16T12:38:02Z"
+            "updated_at": "2026-08-16T12:38:44Z"
           }
         },
         "terrain_maxzoom": 14,
