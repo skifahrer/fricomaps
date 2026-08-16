@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-16T21:32:44Z",
+  "_updated_at": "2026-08-16T21:33:06Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -604,6 +604,14 @@
         "download": "https://drive.google.com/uc?export=download&id=1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW",
         "file": "svet.zip",
         "formats": {
+          "aar": {
+            "download": "https://drive.google.com/uc?export=download&id=13yKCLTlKEtHlPNL4u-D-HCJoO1VXxLxc",
+            "file": "svet.aar",
+            "link": "https://drive.google.com/file/d/13yKCLTlKEtHlPNL4u-D-HCJoO1VXxLxc/view",
+            "run": "3",
+            "size": 49516821,
+            "updated_at": "2026-08-16T21:33:06Z"
+          },
           "zip": {
             "download": "https://drive.google.com/uc?export=download&id=1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW",
             "file": "svet.zip",
@@ -625,6 +633,6 @@
     "tiles": {
       "pmtiles": "tiles/svet.pmtiles"
     },
-    "updated_at": "2026-08-16T21:32:44Z"
+    "updated_at": "2026-08-16T21:33:06Z"
   }
 }
