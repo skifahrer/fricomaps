@@ -234,6 +234,85 @@ if csh and "reset --mixed" not in csh:
                f"niesol aj cudzí zápis, rebase by ho pridával druhýkrát "
                f"a katalóg by sa zakaždým ticho zahodil.")
 
+# ---- balík z INEJ pipeline prežije build mapy ----
+# Toto sa staticky prečítať nedá, a bola to presne tá tichá chyba: `wikipedia`
+# robí `wiki.yml`, ale položku regiónu prepisuje Build map – a ten ju pri
+# každom builde (teda pri každej zmene štýlu) z katalógu zmazal, hoci
+# `…-wikipedia.zip` na Drive ležal ďalej, lebo TAM sa balík, o ktorom beh
+# nerozhoduje, nemaže. Katalóg sa preto skúša naostro: zapíše sa mapa, doplní
+# sa cudzí balík a mapa sa zapíše znova.
+def _skuska_katalogu():
+    """Vráti zoznam chýb – prázdny, keď sa katalóg správa, ako má."""
+    import contextlib
+    import importlib.util
+    import io
+    import tempfile
+
+    spec = importlib.util.spec_from_file_location("_lint_catalog", CATALOG_PY)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_lint_catalog"] = mod
+    spec.loader.exec_module(mod)
+
+    regions = {"bratislavsky": {"name": "Bratislavský kraj",
+                                "country": "slovensko"}}
+    man = {"default_region": "bratislavsky",
+           "regions": {"bratislavsky": {"bbox": [16.8, 48.0, 17.5, 48.6],
+                                        "maxzoom": 16}}}
+    parts = ["slovensko", "bratislavsky"]
+    mapove = ["mapa", "vrstevnice-skaly", "tienovanie"]
+    mapa_baliky = [("", "bratislavsky.zip", 1, "id1", "zip"),
+                   ("vrstevnice-skaly", "bratislavsky-vrstevnice-skaly.zip",
+                    1, "id2", "zip"),
+                   ("tienovanie", "bratislavsky-tienovanie.zip", 1, "id3", "zip")]
+
+    def maps_v(path):
+        with open(path) as f:
+            return json.load(f)["slovensko"]["regions"]["bratislavsky"]["maps"]
+
+    chyby = []
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/maps.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            mod.zapis_katalog(path, parts, regions, mapa_baliky, man,
+                              spravuje=mapove)
+            # `wiki.yml`: `--only=wikipedia`, teda doplnenie jedného balíka
+            mod.zapis_katalog(path, parts, regions,
+                              [("wikipedia", "bratislavsky-wikipedia.zip",
+                                1, "id4", "zip")], {}, iba="wikipedia")
+            po_wiki = maps_v(path)
+            # a teraz ďalší build mapy – o `wikipedia` nerozhoduje
+            mod.zapis_katalog(path, parts, regions, mapa_baliky, man,
+                              spravuje=mapove)
+            po_mape = maps_v(path)
+            # beh, ktorý o `wikipedia` ROZHODUJE a nemá ju (články sa vypli):
+            # ten ju zmazať MUSÍ – na Drive sa starý balík maže tiež
+            mod.zapis_katalog(path, parts, regions, mapa_baliky, man,
+                              spravuje=mapove + ["wikipedia"])
+            po_vypnuti = maps_v(path)
+    if "wikipedia" not in po_wiki:
+        chyby.append(f"{CATALOG_PY}: `--only=wikipedia` balík do položky "
+                     f"nedoplní – pipeline článkov by nahrala ZIP na Drive "
+                     f"a v katalógu by po ňom nezostalo nič.")
+    elif "wikipedia" not in po_mape:
+        chyby.append(f"{CATALOG_PY}: build mapy zmazal z položky balík "
+                     f"`wikipedia`, o ktorom nerozhoduje (nemá ho v "
+                     f"`spravuje`). Na Drive ten ZIP ostáva ležať, takže "
+                     f"katalóg by o ňom mlčal po každej zmene štýlu.")
+    if "wikipedia" in po_vypnuti:
+        chyby.append(f"{CATALOG_PY}: balík, o ktorom beh ROZHODUJE a "
+                     f"nevyrobil ho, ostal v katalógu – odkazoval by na "
+                     f"súbor, ktorý ten istý beh na Drive zmazal.")
+    return chyby
+
+
+try:
+    bad += _skuska_katalogu()
+except SystemExit as exc:
+    bad.append(f"{CATALOG_PY}: zápis katalógu spadol ({exc}) – skúška je "
+               f"volanie, aké robí `publish-map.py`.")
+except Exception as exc:                      # noqa: BLE001 – čokoľvek je chyba
+    bad.append(f"{CATALOG_PY} sa nedá skúšobne spustiť ({exc!r}).")
+
 for b in bad:
     print(f"::error::{b}")
 print(f"katalóg máp: {len(bad)} chýb")

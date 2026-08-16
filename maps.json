@@ -101,6 +101,24 @@
             "run": "125",
             "size": 48557805,
             "updated_at": "2026-08-14T13:57:04Z"
+          },
+          "wikipedia": {
+            "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
+            "file": "bratislavsky-wikipedia.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy",
+                "file": "bratislavsky-wikipedia.zip",
+                "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
+                "run": "2",
+                "size": 3831311,
+                "updated_at": "2026-08-14T13:52:22Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/1PU9iIGgTi3UL0iTP9nMdPEsTgXa8JUgy/view",
+            "run": "2",
+            "size": 3831311,
+            "updated_at": "2026-08-14T13:52:22Z"
           }
         },
         "maxzoom": 16,
@@ -344,6 +362,20 @@
             "run": "126",
             "size": 166826991,
             "updated_at": "2026-08-15T17:20:30Z"
+          },
+          "wikipedia": {
+            "download": "https://drive.google.com/uc?export=download&id=1m0Z10IEjZlUYDfoAQBbngr-hLJPgVVYO",
+            "file": "presovsky-wikipedia.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1m0Z10IEjZlUYDfoAQBbngr-hLJPgVVYO",
+                "file": "presovsky-wikipedia.zip",
+                "link": "https://drive.google.com/file/d/1m0Z10IEjZlUYDfoAQBbngr-hLJPgVVYO/view",
+                "size": 6277896
+              }
+            },
+            "link": "https://drive.google.com/file/d/1m0Z10IEjZlUYDfoAQBbngr-hLJPgVVYO/view",
+            "size": 6277896
           }
         },
         "maxzoom": 16,

@@ -442,6 +442,11 @@ def main():
         raise SystemExit(f"::error::V {args.site} nie je ani jeden súbor – nie je "
                          f"čo publikovať. (Zbehol job `deploy` až po zloženie "
                          f"webu?)")
+    # O ČOM TENTO BEH ROZHODUJE – jeden zoznam pre obe strany. Podľa neho sa
+    # nižšie maže starý balík na Drive a podľa neho sa prepisujú balíky
+    # v katalógu; keby si to katalóg počítal sám, prišiel by o `wikipedia`
+    # presne v tom behu, ktorý ju na Drive nechal ležať (pravidlo 1).
+    spravuje = [kind or "mapa" for kind, *_ in baliky]
     for kind, popis, _base, subory in baliky:
         stav = (f"{len(subory)} súborov, "
                 f"{folder.human(sum(os.path.getsize(p) for p in subory))}"
@@ -537,7 +542,7 @@ def main():
             # o balík vyššie: samostatná pipeline pozná jediný balík.
             [(k, n, v, i, f) for k, n, _p, v, _pr, i, f in hotove],
             man, iba=args.only, merge="zip" not in formaty, kat=kat,
-            layers=vrstvy())
+            layers=vrstvy(), spravuje=spravuje)
         if args.summary and zmenene:
             with open(args.summary, "a") as f:
                 f.write(f"Katalóg `{args.maps}` v repozitári je "

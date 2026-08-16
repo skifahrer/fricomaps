@@ -1871,11 +1871,23 @@ nezostal odkaz na súbor, ktorý sa medzitým zmazal. `subregions` pri tom ostá
 čítať pozorne: to je bbox **mapy**, teda celého regiónu aj pri builde na výrez –
 kde v tej mape naozaj sú vrstevnice a skaly, hovorí `area_bbox`.
 
-Dve veci, ktoré katalóg zámerne **nerobí**: rýchly test doň nezapisuje vôbec
-(mapa je len na pár km² a prepísala by položku ostrej mapy) a po neúspešnom
-nahratí sa nezapíše tiež (`if: steps.publish.outcome == 'success'`) – zoznam,
-ktorý ukazuje na súbory, čo na Drive nie sú, je horší než žiadny. Že to tak
-ostane, stráži [`workers/lint/catalog.py`](lint/catalog.py).
+**Ten prepis sa ale týka len balíkov, o ktorých beh ROZHODUJE** (`spravuje=` –
+ten istý zoznam, podľa ktorého sa maže starý balík na Drive). `wikipedia` robí
+vlastná pipeline a Build map o nej nič nevie, takže „nevyrobil som ju"
+neznamená „v mape nie je" – v položke preto ostane. Na Drive to rozlíšenie
+platilo od začiatku vlastnej pipeline, v katalógu chýbalo: každý build mapy,
+teda každá zmena štýlu, z `maps.json` balík článkov ticho zmazal, hoci ZIP na
+Drive ležal ďalej. Balík, o ktorom beh rozhoduje a nevyrobil ho (vypnuté skaly,
+vypnutý terén), naopak z položky zmizne – to je to isté mazanie ako na Drive,
+len z druhej strany.
+
+Dve veci, ktoré katalóg zámerne **nerobí**: nezapisuje rýchly test na miesto
+ostrej mapy (má vlastný uzol `…_test4km2` – zapisovať sa musí, inak sa o jeho
+balíkoch bez tokenu na Drive nikto nedozvie) a po neúspešnom nahratí sa
+nezapíše vôbec (`if: steps.publish.outcome == 'success'`) – zoznam, ktorý
+ukazuje na súbory, čo na Drive nie sú, je horší než žiadny. Že to tak ostane,
+stráži [`workers/lint/catalog.py`](lint/catalog.py) – vrátane prežitia cudzieho
+balíka, ktoré sa staticky prečítať nedá, a tak ho skúša naostro.
 
 ### Súhrn buildu
 
