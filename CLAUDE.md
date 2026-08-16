@@ -580,6 +580,7 @@ node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
+python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
 python3 workers/lib/region-mask.py --poly=… --bbox=… --zoom=14  # čo padne mimo kraj
@@ -604,7 +605,11 @@ všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
 trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
-zlomy kriviek odstupu a atribúty v schéme dlaždíc), že sa
+zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **každý job, ktorý
+púšťa Planetiler, má aj `setup-java` s tou istou verziou**
+(`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do
+`workers/lib/planetiler.sh` presunúť nedá, takže je to jedna veta na šiestich
+miestach a šiesty na ňu zabudol), že sa
 ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
 v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`
 by ticho vypol kontroly, ktoré cesty hľadajú vzorom). **Keď

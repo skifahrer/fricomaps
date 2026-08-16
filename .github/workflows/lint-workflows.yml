@@ -553,6 +553,15 @@ jobs:
       - name: "Mapa sveta: štýl kreslí to, čo schéma vyrába"
         run: python3 workers/lint/world.py
 
+      # `actions/setup-java` je AKCIA, takže sa – na rozdiel od sťahovania
+      # jaru – do `workers/lib/planetiler.sh` presunúť nedá a musí stáť pri
+      # každom jobe zvlášť. Je to jedna veta zapísaná na šiestich miestach
+      # a šiesty (mapa sveta) na ňu zabudol: beh 31948543768 stiahol 100 MB
+      # podkladov a padol až za nimi na `UnsupportedClassVersionError`.
+      # Rozpis: `workers/lint/planetiler.py`.
+      - name: Kto púšťa Planetiler, má aj Javu, na ktorej sa spustí
+        run: python3 workers/lint/planetiler.py
+
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
       # vedieť spamätať z jedného stratného spojenia. Oboje je tiché a beh
       # 31338803278 na tom padol dve časti pred koncom. Rozpis:
