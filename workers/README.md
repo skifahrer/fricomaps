@@ -2027,18 +2027,78 @@ trasa vedie – a štýl má dva odstupy:
 |---|---|---:|---|
 | cesta (asfaltka, spevnená) | `road` | 6,6 px | pásik ide **tesne za okraj** cesty aj s jej obrysom: žiadna medzera, ale ani prekryv |
 | chodník, lesná a poľná cesta | `path` | 3,6 px | **jemný odstup**, nech je pod pásikom vidieť aj samotný chodník a to, že je prerušovaný |
-| rozostup dvoch trás | – | 2,6 px | presne šírka pásika, čiže sú nalepené na sebe; tri značky na jednom chodníku vyzerajú ako jeden trojfarebný pás |
+| rozostup dvoch trás | – | 2,6 px | **šírka pásika**, čiže sú nalepené na sebe; tri značky na jednom chodníku vyzerajú ako jeden trojfarebný pás |
 
 Čísla nie sú odhad – sú spočítané zo šírok čiar v štýle (polovica čiary +
 obrys + polovica pásika) a sedia pri **miestnej ceste**, po ktorej trasy
 chodia najčastejšie. Celá krivka (z9 až z20) sa škáluje pomerom voči hodnote
 pri z16, takže v developer móde stačí prepísať jedno číslo.
 
+**Rozostup nie je vlastné číslo, je to šírka pásika** – doslova tá istá krivka
+(`TRAIL_STRIPE`), ktorou sa kreslí `line-width`, aj ten istý druh interpolácie.
+Kým to boli dve krivky, sedeli si len v šiestich zlomoch: šírka rastie
+`exponential 1.5` (ako všetky hrúbky v štýle), rozostup rástol lineárne, takže
+pri z18 bol rozostup 4,3 px na pásik široký 3,65 px. Tá sedmina pixela nie je
+biela – presvital cez ňu podklad pásikov (`trail-halo`), takže medzi červenou
+a modrou trasou viedla tmavá čiara a vyzeralo to, že sú trasy od seba odsunuté.
+
+**Pod z16 rozhoduje o odstupe METER, nie pixel.** Pixel je pri z13 dvanásť
+metrov, takže „2,6 px od chodníka" znamenalo 33 m – viac, než je v horách
+rozostup ramien serpentíny. `line-offset` posúva každý vrchol po osi jeho
+zlomu, takže taký pásik obehne vlásenku oblúkom širším než samotná zákruta,
+ramená sa navzájom prekryjú a v mape je z toho farebná **plocha**, nie čiara.
+Odstup je preto zhora ohraničený tým, koľko je pri ceste miesta v teréne
+(`TRAIL_OFFSET_LIMIT_M`: 12 m pri ceste, 8 m pri chodníku – ten má serpentíny
+tesnejšie). Nad z16 je to ohraničenie voľnejšie než výpočet zo šírky čiary,
+takže tam ostalo všetko tak, ako bolo:
+
+| | z13 | z14 | z15 | z16 | z18 | z20 |
+|---|---:|---:|---:|---:|---:|---:|
+| chodník, predtým | 19 m | 15 m | 9,4 m | 5,7 m | 2,3 m | 1,1 m |
+| chodník, teraz | 7,9 m | 8,0 m | 6,9 m | 5,7 m | 2,3 m | 1,1 m |
+
 Že to drží spolu naprieč tromi súbormi (`routes.py` číslu je rady,
 `trails.yml` to pustí do dlaždíc, `themes.js` z toho ráta `line-offset`),
 stráži [`workers/lint/trails.mjs`](lint/trails.mjs) – rozídené strany, posunutý
-zlom krivky ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
+zlom krivky, rozostup, ktorý prestal byť šírkou pásika, odstup nad limit
+v metroch ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
 tej istej strane ako turistické, prípadne pásiky preskakujú.
+
+### Ostrý zlom sa zaobľuje, inak z pásika vypadne plocha
+
+`line-offset` posúva vrchol po osi jeho zlomu a dĺžka toho posunu je odstup
+delený kosínusom polovičného uhla. Výbežok, ktorý z toho vypadne, je pri z16
+(odstup od chodníka 3,6 px) takýto:
+
+| zlom | 45° | 60° | 75° | 90° | 120° | 150° |
+|---|---:|---:|---:|---:|---:|---:|
+| výbežok | 0,3 px | 0,6 px | 1,0 px | 1,5 px | 3,6 px | 10,3 px |
+
+Zo serpentíny preto vypadol trojuholníkový výbežok dlhý desiatky pixelov:
+v mape farebná plocha namiesto čiary, a susedné pásiky sa v nej stratili.
+`ease_corners` v [`routes.py`](trails/routes.py) preto pred zápisom nahradí
+každý zlom ostrejší než **75°** krátkym oblúkom rozdeleným na kúsky po **45°**
+(kvadratická Bezierova krivka s pôvodným vrcholom ako riadiacim bodom):
+
+- pri 45° je výbežok 0,3 px, čiže **pásik je v zákrute taký hrubý ako na
+  rovine**;
+- **prečo až od 75°**: pod ním výbežok nie je vidieť, a zaobľovať aj tie zlomy
+  by nebolo zadarmo. Chodníky v Tatrách sú obkreslené z GPS stôp, takže
+  tretina vrcholov má zlom nad 30° – namerané na 419 cestách (22 238 bodov)
+  by geometria narástla o **108 %**. Od 75° je to **+25 %** a zaoblí sa
+  1490 zlomov, po ktorých ostane nad 75° už len 13 (to sú tie vlásenky);
+- vrchol sa pohne najviac o **1,5 m** – to je pod presnosťou, s akou sú
+  chodníky v OSM zakreslené, a pri z16 je to jeden pixel;
+- reže sa najviac do 45 % ramena, takže hustá geometria sa zaobľuje len
+  o toľko, koľko je medzi bodmi miesta, a **krajné body sa nehýbu vôbec**
+  (cesty musia nadväzovať tými istými uzlami, inak Planetiler úseky nezlepí);
+- vlásenka nad ~150° ostane vlásenkou: zaobliť ju by znamenalo odrezať jej
+  špičku o desiatky metrov (pri zlome 173° a ramene 50 m by to bolo 20 m).
+  Tam už `line-offset` pásik neroztiahne, len ho pri hrote zreže – a to je to
+  menšie zlo.
+
+Koľko zlomov sa zaoblilo a o koľko bodov z toho geometria narástla, píše
+`routes.py` do súhrnu behu aj do `trail-stats.txt` (`eased=`).
 
 ### Farba ide z OSM, odtieň z palety
 

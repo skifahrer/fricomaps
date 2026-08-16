@@ -32,6 +32,20 @@
  *      sa kreslili v poradí, v akom ich nakreslil ten, kto ich zadával, a
  *      pásik by preskakoval z jednej strany chodníka na druhú. Nespadne to,
  *      len to vyzerá zle na mape.
+ *   7. ROZOSTUP JE ŠÍRKA PÁSIKA – tá istá krivka aj ten istý druh
+ *      interpolácie. Kým to boli dve krivky (jedna `linear`, druhá
+ *      `exponential 1.5`), sedeli si len v šiestich zlomoch a medzi nimi sa
+ *      rozchádzali: pri z18 bola medzi trasami medzera 0,65 px, presvital cez
+ *      ňu ich podklad a vyzeralo to, že sú trasy od seba odsunuté.
+ *   8. ODSTUP OD CESTY NEPRESIAHNE `TRAIL_OFFSET_LIMIT_M` METROV. Pixel je pri
+ *      z13 dvanásť metrov, takže „2,6 px od chodníka" znamená 33 m – viac než
+ *      je v horách rozostup ramien serpentíny. `line-offset` potom obieha
+ *      vlásenku oblúkom širším než je zákruta a v mape je z pásika farebná
+ *      plocha. Toto je to číslo, ktoré sa nesmie ticho vrátiť späť.
+ *   9. OSTRÉ ZLOMY SA ZAOBĽUJÚ (`ease_corners` v routes.py a naozaj sa aj
+ *      volá). Posun vrcholu pri `line-offset` je odstup delený kosínusom
+ *      polovičného uhla, čiže pri ostrom zlome rastie nad všetky medze –
+ *      z pásika vypadne výbežok dlhý desiatky pixelov.
  *
  * Spustenie (aj lokálne):
  *   node workers/lint/trails.mjs
@@ -45,8 +59,13 @@ import {
   TRAIL_OFFSET_ROAD,
   TRAIL_OFFSET_PATH,
   TRAIL_PITCH,
+  TRAIL_STRIPE,
+  TRAIL_OFFSET_LIMIT_M,
+  METRES_PER_PX_Z0,
   TRAIL_GAP_DEFAULTS,
-  TRAIL_GAP_ZOOM
+  TRAIL_GAP_ZOOM,
+  THEMES,
+  buildStyle
 } from "../../poc/web/themes.js";
 import { DASH_IDS } from "../../poc/web/patterns.js";
 
@@ -161,6 +180,85 @@ for (const key of ["side", "off", "way"]) {
         "sadnú na jednu kopu vedľa cesty."
     );
   }
+}
+
+// ---- 7. rozostup dvoch trás JE šírka pásika ----
+// Nie „rovnaké čísla v zlomoch", ale tá istá krivka aj ten istý druh
+// interpolácie – medzi zlomami sa `linear` a `exponential 1.5` rozchádzajú.
+const sameStops = (a, b) =>
+  a.length === b.length && a.every(([z, v], i) => z === b[i][0] && v === b[i][1]);
+if (!sameStops(TRAIL_PITCH, TRAIL_STRIPE)) {
+  bad.push(
+    "TRAIL_PITCH nie je TRAIL_STRIPE – rozostup dvoch trás musí byť šírka " +
+      "pásika, inak medzi nimi presvitá ich podklad a vyzerá to, že sú trasy " +
+      "od seba odsunuté."
+  );
+}
+const trailStyle = buildStyle({
+  theme: Object.keys(THEMES)[0],
+  tilesUrl: "https://x/tiles.pmtiles",
+  spriteUrl: "https://x/sprite",
+  glyphsUrl: "https://x/fonts/{fontstack}/{range}.pbf",
+  trailsUrl: "https://x/trails.pmtiles"
+});
+const stripeLayer = trailStyle.layers.find((l) => l.id === "trail-hiking");
+if (!stripeLayer) {
+  bad.push("V štýle nie je vrstva `trail-hiking` – pásik trasy sa nekreslí.");
+} else {
+  const width = stripeLayer.paint["line-width"];
+  const offset = stripeLayer.paint["line-offset"];
+  const widthStops = width.slice(3).filter((_, i) => i % 2 === 0);
+  const wanted = TRAIL_STRIPE.map(([z]) => z);
+  if (widthStops.length !== wanted.length ||
+      widthStops.some((z, i) => z !== wanted[i])) {
+    bad.push(
+      `Šírka pásika má zlomy [${widthStops}], ale rozostup [${wanted}]. ` +
+        "Musí to byť tá istá krivka (TRAIL_STRIPE), inak sa medzi zlomami " +
+        "rozídu a medzi trasami vznikne medzera."
+    );
+  }
+  if (JSON.stringify(width[1]) !== JSON.stringify(offset[1])) {
+    bad.push(
+      `Šírka pásika sa interpoluje ${JSON.stringify(width[1])}, ale odstup ` +
+        `${JSON.stringify(offset[1])}. Rozostup JE šírka pásika, takže musí ` +
+        "rásť rovnako – inak sedia na seba len v zlomoch."
+    );
+  }
+}
+
+// ---- 8. odstup od cesty v METROCH ----
+// Pixel je pri z13 dvanásť metrov. Odstup, ktorý je v pixeloch nenápadný, je
+// v teréne širší než serpentína, po ktorej trasa ide – a `line-offset` z toho
+// urobí plochu namiesto čiary.
+for (const [key, stops] of [["road", TRAIL_OFFSET_ROAD], ["path", TRAIL_OFFSET_PATH]]) {
+  const limit = TRAIL_OFFSET_LIMIT_M[key];
+  for (const [z, px] of stops) {
+    const metres = px * (METRES_PER_PX_Z0 / 2 ** z);
+    if (metres > limit * 1.05) {
+      bad.push(
+        `Odstup pásika od ${key === "road" ? "cesty" : "chodníka"} je pri z${z} ` +
+          `${px} px, čo je v teréne ${metres.toFixed(0)} m – limit je ` +
+          `${limit} m (TRAIL_OFFSET_LIMIT_M). Toľko miesta pri chodníku ` +
+          "v horách nie je: pásik obehne vlásenku oblúkom širším než zákruta " +
+          "a v mape z neho bude farebná plocha."
+      );
+    }
+  }
+}
+
+// ---- 9. ostré zlomy sa zaobľujú ----
+if (!/def ease_corners\(/.test(py)) {
+  bad.push(
+    "workers/trails/routes.py nemá `ease_corners` – pri ostrom zlome je posun " +
+      "vrcholu odstup delený kosínusom polovičného uhla, takže z pásika " +
+      "vypadne výbežok dlhý desiatky pixelov."
+  );
+} else if (!/coords, eased = ease_corners\(coords\)/.test(py)) {
+  bad.push(
+    "workers/trails/routes.py `ease_corners` nepoužíva na geometriu ciest – " +
+      "zaoblenie sa spočíta a zahodí, takže v serpentínach ostanú z pásikov " +
+      "plochy a nič to nepovie."
+  );
 }
 
 for (const m of bad) console.log(`::error::${m}`);
