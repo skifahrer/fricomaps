@@ -19,6 +19,14 @@ ale na štyroch jobov naraz (beh 31412152523: `check-dem`, `contours`,
 cesty vo všetkých workeroch aj workflowoch. Komentáre sa vyhadzujú – texty
 o chybách (aj tá hlavička hore) o zlých cestách píšu zámerne.
 
+A DRUHÁ POLOVICA TEJ ISTEJ OTÁZKY: skript, ktorý existuje, ale nemá príznak
+`+x`, dopadne rovnako – workflow ho púšťa priamo (`run: workers/<job>/x.sh`),
+takže bash vráti „Permission denied" a kód 126, súrodenca 127 od chýbajúceho
+súboru. Beh 31947366438 na tom zhodil mapu sveta v prvom kroku: nový
+`workers/world/build.sh` prišiel do repozitára ako `100644`, čo na ničom
+inom vidieť nie je – v diffe je to jeden riadok hlavičky a lokálne to nikto
+nespustí, lebo skript chce env z workflowu.
+
 Spustiť sa dá aj lokálne: `python3 workers/lint/worker-paths.py`.
 """
 import glob
@@ -127,8 +135,27 @@ def chyby_v(path, text, styl):
     return zle
 
 
+def nespustitelne():
+    """`workers/**/*.sh` bez príznaku `+x` – workflow ich púšťa priamo.
+
+    Vracia zoznam ciest. Kontroluje sa KAŽDÝ skript, nielen ten, na ktorý sa
+    dá nájsť `run:` vo workflowe: skripty si volajú aj samy navzájom
+    (`world/build.sh` púšťa `lib/planetiler.sh` aj `assets/glyphs.sh`) a
+    „zatiaľ ho nikto nevolá" je stav, ktorý o priečinok ďalej prestane platiť.
+    """
+    return sorted(f for f in glob.glob("workers/**/*.sh", recursive=True)
+                  if not os.access(f, os.X_OK))
+
+
 def main():
     bad = 0
+    for f in nespustitelne():
+        print(f"::error file={f}::skript nemá príznak `+x`, takže `run: {f}` "
+              f"skončí na „Permission denied“ (kód 126). Priečinok je job, "
+              f"súbor je krok a kroky sa púšťajú priamo – naprav to cez "
+              f"`git update-index --chmod=+x {f}` (samotný `chmod` mimo git "
+              f"index nestačí).")
+        bad += 1
     subory = ([(f, "sh") for f in glob.glob("workers/**/*.sh", recursive=True)]
               + [(f, "py") for f in glob.glob("workers/**/*.py", recursive=True)]
               + [(f, "js") for f in glob.glob("workers/**/*.mjs", recursive=True)]
