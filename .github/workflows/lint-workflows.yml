@@ -544,6 +544,15 @@ jobs:
       - name: "Štýl: vrstevnice a skaly majú v schéme a v štýle to isté dno"
         run: python3 workers/lint/zoom-floor.py
 
+      # To isté o krok ďalej pri mape sveta: okrem dna zoomu sa tam dá pomýliť
+      # aj v MENE vrstvy (`source-layer: downloads` proti vrstve `download`)
+      # a MapLibre na to nepovie nič – regióny sťahovania v mape jednoducho
+      # nebudú. Kontrola štýl aj SPUSTÍ, takže chyba v `style.mjs` sa nájde tu
+      # a nie až v behu, ktorý predtým počítal dlaždice. Rozpis:
+      # `workers/lint/world.py`.
+      - name: "Mapa sveta: štýl kreslí to, čo schéma vyrába"
+        run: python3 workers/lint/world.py
+
       # Shim nad Drive musí zniesť nápor súbežných gdalwarpov a GDAL sa musí
       # vedieť spamätať z jedného stratného spojenia. Oboje je tiché a beh
       # 31338803278 na tom padol dve časti pred koncom. Rozpis:

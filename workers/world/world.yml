@@ -1,0 +1,186 @@
+# Planetiler custom schema – ZÁKLADNÁ MAPA SVETA.
+#
+# Tri veci a nič viac: vodstvo, hranice štátov a regióny, na ktoré je OSM
+# rozdelené na sťahovanie. Je to podklad pod výber „ktorý kus si stiahnuť",
+# nie mapa na chodenie – tá vzniká v `build-map.yml` z regionálneho PBF.
+#
+# Vstup vyrába `workers/world/sources.py` (prečo práve tieto zdroje a prečo nie
+# `planet.osm.pbf`, je rozpísané tam):
+#   OSM pobrežné čiary  → data/world/water.gpkg
+#   Natural Earth 10m   → data/world/{lakes,boundaries,countries}.geojson
+#   Geofabrik index-v1  → data/world/downloads.geojson
+#
+# POPISKY SÚ VLASTNÉ VRSTVY (`place`, `download_label`), nie body pri plochách
+# v tej istej vrstve. Dôvod je ten istý, prečo `workers/lint/style.mjs`
+# existuje: `fill` vrstva v MapLibre nepreskočí čiary ani body – prvok pustí do
+# výplne bez ohľadu na geometriu. Kým je vrstva čisto plošná, štýl nad ňou
+# nepotrebuje stráž a nedá sa to pokaziť ani neskôr.
+#
+# ZOOMY SÚ TU TO HLAVNÉ ROZHODNUTIE. Regiónov sťahovania je ~500 a pri pohľade
+# na celý svet by z nich bola kaša, v ktorej sa nedá ťuknúť na ten správny.
+# Preto sa odkrývajú po úrovniach stromu: svetadiel od z0, štát od z2, výsek
+# od z5. To isté platí pre popisky štátov a malé jazerá.
+#
+# POZOR NA `min_zoom` NAD MAXZOOMOM ARCHÍVU: čo má vyšší `min_zoom`, než je
+# maxzoom vygenerovaných dlaždíc, Planetiler ticho zahodí (stálo to raz ploty
+# v krajinných prvkoch – viď `workers/features/features.yml`). Najvyšší
+# `min_zoom` je tu 5 a `workers/world/build.sh` ho porovná so zvoleným
+# maxzoomom a rozdiel ohlási.
+schema_name: FricoMaps svet
+schema_description: >-
+  Základná mapa sveta – vodstvo z pobrežných čiar OSM, hranice štátov
+  a jazerá z Natural Earth a regióny, na ktoré je OSM rozdelené na sťahovanie
+attribution: >-
+  <a href="https://www.openstreetmap.org/copyright">© OpenStreetMap
+  prispievatelia</a> (vodstvo, regióny sťahovania: <a
+  href="https://download.geofabrik.de/">Geofabrik</a>) /
+  <a href="https://www.naturalearthdata.com/">Natural Earth</a>
+
+sources:
+  # Vodné plochy z pobrežných čiar OSM. Premietnuté do EPSG:4326 už pri
+  # príprave, takže tu netreba nič dohadovať.
+  water:
+    type: geopackage
+    local_path: data/world/water.gpkg
+    projection: EPSG:4326
+  lakes:
+    type: geojson
+    local_path: data/world/lakes.geojson
+  boundaries:
+    type: geojson
+    local_path: data/world/boundaries.geojson
+  countries:
+    type: geojson
+    local_path: data/world/countries.geojson
+  downloads:
+    type: geojson
+    local_path: data/world/downloads.geojson
+
+layers:
+  # ==================== VODSTVO ====================
+  # Jedna vrstva pre more aj jazerá – kreslia sa rovnako a `kind` ich odlíši,
+  # keby ich niekedy niekto chcel odlíšiť.
+  - id: water
+    features:
+      - source: water
+        geometry: polygon
+        min_zoom: 0
+        attributes:
+          - key: kind
+            value: ocean
+      # Veľké jazerá patria k tvaru svetadielu (Bajkal, Veľké jazerá).
+      - source: lakes
+        geometry: polygon
+        min_zoom: 2
+        include_when:
+          rank: major
+        attributes: &lake_attributes
+          - key: kind
+          - key: name
+      # Malé až vtedy, keď je na ne v mape miesto.
+      - source: lakes
+        geometry: polygon
+        min_zoom: 5
+        include_when:
+          rank: minor
+        attributes: *lake_attributes
+
+  # ==================== HRANICE ŠTÁTOV ====================
+  - id: boundary
+    features:
+      - source: boundaries
+        geometry: line
+        min_zoom: 0
+        include_when:
+          kind: country
+        attributes:
+          - key: kind
+      # Sporný priebeh ide o dva zoomy neskôr a štýl ho kreslí prerušovane:
+      # mapa nemá tvrdiť, že hranica, na ktorej sa strany nezhodnú, je istá.
+      - source: boundaries
+        geometry: line
+        min_zoom: 2
+        include_when:
+          kind: disputed
+        attributes:
+          - key: kind
+
+  # ==================== POPISKY ŠTÁTOV ====================
+  # Bod počíta Planetiler z polygónu (`centroid`) – plocha štátu sa nekreslí,
+  # pevninu robí podklad pod vodstvom.
+  - id: place
+    features:
+      - source: countries
+        geometry: centroid
+        min_zoom: 1
+        include_when:
+          rank: major
+        attributes: &country_attributes
+          - key: name
+          - key: name_en
+          - key: iso
+          - key: continent
+          - key: rank
+      - source: countries
+        geometry: centroid
+        min_zoom: 3
+        include_when:
+          rank: mid
+        attributes: *country_attributes
+      - source: countries
+        geometry: centroid
+        min_zoom: 4
+        include_when:
+          rank: minor
+        attributes: *country_attributes
+
+  # ==================== REGIÓNY SŤAHOVANIA ====================
+  # Plochy toho, na aké kusy je OSM rozdelené na stiahnutie. `pbf` je odkaz,
+  # ktorý sa dá naozaj stiahnuť – kvôli nemu je táto vrstva v mape.
+  - id: download
+    features:
+      - source: downloads
+        geometry: polygon
+        min_zoom: 0
+        include_when:
+          level: continent
+        attributes: &download_attributes
+          - key: id
+          - key: name
+          - key: parent
+          - key: level
+          - key: pbf
+      - source: downloads
+        geometry: polygon
+        min_zoom: 2
+        include_when:
+          level: country
+        attributes: *download_attributes
+      - source: downloads
+        geometry: polygon
+        min_zoom: 5
+        include_when:
+          level: subregion
+        attributes: *download_attributes
+
+  # Popisok regiónu – vlastná vrstva s bodmi (viď hlavička).
+  - id: download_label
+    features:
+      - source: downloads
+        geometry: centroid
+        min_zoom: 2
+        include_when:
+          level: continent
+        attributes: *download_attributes
+      - source: downloads
+        geometry: centroid
+        min_zoom: 3
+        include_when:
+          level: country
+        attributes: *download_attributes
+      - source: downloads
+        geometry: centroid
+        min_zoom: 5
+        include_when:
+          level: subregion
+        attributes: *download_attributes

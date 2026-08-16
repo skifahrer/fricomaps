@@ -185,7 +185,19 @@ def vrstvy():
     Vrstva sa do mena zapíše aj vtedy, keď v mape NIE JE (`bez_vrstevnic`).
     Mlčanie by sa dalo čítať dvoma spôsobmi – „nie sú" aj „zabudlo sa to
     dopísať" – a to je presne ten rozdiel, kvôli ktorému sa mená píšu.
+
+    `MAP_LAYERS` je pre pipeline, ktorá NEROBÍ mapu kraja a tento zoznam
+    vrstiev na ňu nesadá – zatiaľ mapa sveta (`world-map.yml`). Bez toho by
+    o sebe napísala „bez_vrstevnic, bez_skal, bez_tienovania", čo je pri mape,
+    ktorá nemá ani cesty, mätúce: znie to ako mapa kraja s vypnutým terénom.
+    Podáva sa prostredím a nie prepínačom zámerne – ten istý zoznam potrebuje
+    aj job, čo dobalí `.aar` (položku katalógu prepisuje navrch), a env stojí
+    v oboch jobov na tom istom mieste vo workflowe.
     """
+    vlastne = env("MAP_LAYERS")
+    if vlastne:
+        return [safe(k) for k in vlastne.split(",") if k.strip()]
+
     out = []
     if env("CONTOURS_ENABLED") == "true":
         interval = env("CONTOUR_INTERVAL", "10")

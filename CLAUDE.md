@@ -31,6 +31,7 @@ a v každej patria kusy k sebe. Toto je celý obrázok:
         │   ┌── Mapa ─── čo z regiónu vypadne von ──────────────────┐
         ├──►│ Build map      PBF → dlaždice → _site + ZIPy          │──► Pages
         ├──►│ Build wiki     objekty s wikipedia/wikidata → články  │──► Drive
+        ├──►│ Build svet     vodstvo, hranice, regióny sťahovania   │──► Drive
         └──►│ úpravy štýlu   style-overrides.json z developer módu  │──► repozitár
             └───────────────────────────────────────────────────────┘
                  │  Build map si dopĺňa, čo mu v sklade chýba
@@ -62,6 +63,7 @@ map`; z toho sa nedalo prečítať, čo je vstup, čo výstup a čo tam nemá č
 |---|---|---|
 | `build-map.yml` | Mapa · Build map | **áno** – toto je tá pipeline |
 | `wiki.yml` | Mapa · Build wiki | áno, vedľa mapy toho istého regiónu |
+| `world-map.yml` | Mapa · Build svet | áno, ale raz za dlho – svet sa nemení |
 | `save-style-overrides.yml` | Mapa · úpravy štýlu | áno, po ladení štýlu v developer móde |
 | `update-dem.yml` | Dáta · výškové modely | volá si ho Build map (aj ručne) |
 | `dmr5-drive.yml` | Dáta · DMR 5.0 | volá si ho Build map, dvoma jobmi |
@@ -109,6 +111,7 @@ workers/rocks-shading/   `shading-rocks.yml`: dlaždice → raster → vektor
 workers/terrain/         job `terrain` (tieňovanie a 3D)
 workers/trails/          job `trails`      workers/features/  job `features`
 workers/wiki/            `wiki.yml`: články z Wikipédie k objektom mapy
+workers/world/           `world-map.yml`: základná mapa sveta (podklad pod výber)
 workers/tiles/           job `tiles`       workers/assets/    job `assets`
 workers/styles/          štýly pre web aj iOS (deploy + save-style-overrides)
 workers/deploy/          job `deploy`: zloženie, kontrola, súhrn, publikovanie
@@ -496,6 +499,50 @@ zoznam, ktorý ukazuje na neexistujúce súbory, je horší než žiadny. Čo sa
 katalógu píše, skladá `workers/deploy/catalog.py` (`publish-map.py` prerástol
 strop 800 riadkov); stráži to `workers/lint/catalog.py`.
 
+## Build svet: vlastná pipeline, `svet.zip` a `svet.aar`
+
+`world-map.yml` robí **základnú mapu celého sveta** – vodstvo, hranice štátov
+a regióny, na aké kusy je OSM rozdelené na sťahovanie. Nie je to mapa na
+chodenie (nie sú v nej cesty, sídla ani terén), je to **podklad pod výber
+„ktorý kus si stiahnuť"**: v `download` vrstve má každý región `id`, `name`,
+`level` a `pbf`, teda odkaz, ktorý sa dá naozaj stiahnuť.
+
+```
+<koreň>/svet/svet.zip     dlaždice, štýly (4 témy), glyfy, manifest
+<koreň>/svet/svet.aar     to isté ako Apple Archive (job na macOS)
+```
+
+**Vlastná pipeline z tých istých troch dôvodov ako `Build wiki`**: iné dáta (nie
+regionálne PBF), iná životnosť (hranice štátov sa nemenia pri každej zmene
+štýlu) a iný výstup (nejde na Pages a nemá čo robiť v rozpočte stránky).
+**Packer a zápis do katalógu to ale nerušia** – balí `publish-map.py` a `.aar`
+`deploy/apple-archive.sh`, tie isté ako pri mape kraja. V katalógu je `svet`
+vlastný koreňový uzol (hlavný kľúč je krajina, svet je nad nimi).
+
+**`planet.osm.pbf` sa NEPOUŽÍVA a je to zámer**: planéta má cez 80 GB
+a Planetiler nad ňou potrebuje rádovo terabajt a hodiny, kým runner má ~60 GB
+a strop 360 minút. Mapa preto stojí na podkladoch, z ktorých si nízke zoomy
+skladá aj Planetiler sám – Natural Earth (hranice, jazerá, štáty) –
+a na pobrežiach na OSM (`simplified-water-polygons`, robené na z0–z9). Regióny
+sťahovania sú z `index-v1.json` Geofabriku: je to jediná odpoveď na „na aké
+kusy je OSM delené", ktorá je v JEDNOM súbore aj s polygónmi. Naše buildy
+sťahujú PBF z osm.fr, ktorý polygóny svojich výrezov nepublikuje – delenie je
+u oboch to isté, a to, čo mapa ukazuje, je delenie, nie náš zoznam.
+
+**Ticho tam nesmie ostať prázdna vrstva.** Cudzí server vráti chybovú stránku
+a mapa by len „nemala hranice", tak má každý výstup v `workers/world/sources.py`
+dolnú hranicu počtu prvkov a pod ňou to je tvrdá chyba. Druhá tichá vec je
+MENO vrstvy: keď v štýle stojí `source-layer: downloads` a schéma vrstvu volá
+`download`, MapLibre nepovie nič a regióny v mape jednoducho nebudú – stráži to
+`workers/lint/world.py` (a k tomu dno zoomu, tak ako `zoom-floor.py` pri
+vrstevniciach).
+
+**Čo je v mape, hovorí `MAP_LAYERS`.** Bez neho by si `publish-map.py` vypýtal
+vrstvy mapy kraja a do `obsah.json` aj do `maps.json` napísal „bez_vrstevnic,
+bez_skal, bez_tienovania" – to znie ako mapa kraja s vypnutým terénom, a to
+táto mapa nie je. Musí byť **rovnaké v oboch jobov**: `.aar` položku katalógu
+prepisuje navrch, takže inou hodnotou by prebil to, čo napísal ZIP.
+
 ## Než niečo pushneš
 
 ```bash
@@ -532,6 +579,8 @@ python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
+python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
+python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
 python3 workers/lib/region-mask.py --poly=… --bbox=… --zoom=14  # čo padne mimo kraj
 python3 workers/drive/store.py --check # čo je v sklade (chce token)

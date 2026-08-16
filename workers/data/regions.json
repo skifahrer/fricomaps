@@ -1,4 +1,12 @@
 {
+  "svet": {
+    "name": "Svet",
+    "country": "svet",
+    "osm_name": "World",
+    "admin_level": 2,
+    "bbox": [-180, -85.05, 180, 85.05],
+    "note": "Základná mapa sveta z vlastnej pipeline (world-map.yml). `osmfr` tu zámerne NIE JE: nestavia sa z regionálneho PBF, ale z pobrežných čiar OSM, Natural Earth a indexu Geofabriku (workers/world/sources.py). `admin_level: 2` znamená, že balík leží na Drive rovno v `svet/`, bez úrovne kraja."
+  },
   "slovensko": {
     "name": "Slovensko",
     "country": "slovensko",
