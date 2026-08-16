@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-16T13:09:27Z",
+  "_updated_at": "2026-08-16T21:32:44Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -584,5 +584,47 @@
         "updated_at": "2026-08-15T17:21:23Z"
       }
     }
+  },
+  "svet": {
+    "bbox": [
+      -180,
+      -85.05,
+      180,
+      85.05
+    ],
+    "drive": "svet",
+    "layers": [
+      "hranice",
+      "vodstvo",
+      "jazera",
+      "regiony_stahovania"
+    ],
+    "maps": {
+      "mapa": {
+        "download": "https://drive.google.com/uc?export=download&id=1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW",
+        "file": "svet.zip",
+        "formats": {
+          "zip": {
+            "download": "https://drive.google.com/uc?export=download&id=1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW",
+            "file": "svet.zip",
+            "link": "https://drive.google.com/file/d/1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW/view",
+            "run": "3",
+            "size": 52629738,
+            "updated_at": "2026-08-16T21:32:44Z"
+          }
+        },
+        "link": "https://drive.google.com/file/d/1Scop0flIDNJOp0JOHteBTYNoE6UIIMMW/view",
+        "run": "3",
+        "size": 52629738,
+        "updated_at": "2026-08-16T21:32:44Z"
+      }
+    },
+    "maxzoom": 6,
+    "name": "Svet",
+    "run": "3",
+    "tiles": {
+      "pmtiles": "tiles/svet.pmtiles"
+    },
+    "updated_at": "2026-08-16T21:32:44Z"
   }
 }
