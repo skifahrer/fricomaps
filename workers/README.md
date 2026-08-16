@@ -2064,41 +2064,28 @@ zlom krivky, rozostup, ktorý prestal byť šírkou pásika, odstup nad limit
 v metroch ani zahodené reťazenie smerov nespadnú, len sú cyklotrasy zrazu na
 tej istej strane ako turistické, prípadne pásiky preskakujú.
 
-### Ostrý zlom sa zaobľuje, inak z pásika vypadne plocha
+### Ostrý zlom: pásik má ten istý uhol ako chodník (`line-join: miter`)
 
-`line-offset` posúva vrchol po osi jeho zlomu a dĺžka toho posunu je odstup
-delený kosínusom polovičného uhla. Výbežok, ktorý z toho vypadne, je pri z16
-(odstup od chodníka 3,6 px) takýto:
+`line-offset` posúva KAŽDÝ VRCHOL čiary a dĺžku toho posunu berie z toho, aký
+spoj je nastavený. Práve preto bola v zákrute z pásika plocha:
 
-| zlom | 45° | 60° | 75° | 90° | 120° | 150° |
-|---|---:|---:|---:|---:|---:|---:|
-| výbežok | 0,3 px | 0,6 px | 1,0 px | 1,5 px | 3,6 px | 10,3 px |
+| spoj | čo urobí s vrcholom | ako to vyzerá |
+|---|---|---|
+| `round` | posunie ho o odstup po **normále každého ramena zvlášť** | rovnobežky sa v zlome nestretnú: na vonkajšej strane ostane medzi nimi **klin** (biely zárez uprostred pásika), na vnútornej sa prekryjú – a pri troch značkách na jednej ceste si k tomu farby prelezú cez seba |
+| `miter` | posunie ho po **osi zlomu** o `odstup / cos(zlom/2)` | presne roh rovnobežky: pásik má v zákrute **ten istý ostrý uhol ako chodník pod ním** a rovnakú hrúbku |
 
-Zo serpentíny preto vypadol trojuholníkový výbežok dlhý desiatky pixelov:
-v mape farebná plocha namiesto čiary, a susedné pásiky sa v nej stratili.
-`ease_corners` v [`routes.py`](trails/routes.py) preto pred zápisom nahradí
-každý zlom ostrejší než **75°** krátkym oblúkom rozdeleným na kúsky po **45°**
-(kvadratická Bezierova krivka s pôvodným vrcholom ako riadiacim bodom):
+Geometria sa pritom **neupravuje**: pásik má presne tie body, ktoré má cesta
+v OSM. Zaobliť zlom v dátach by znamenalo, že pásik zákrutu odreže a ide
+inokade než chodník pod ním – a to je horšie než ten klin.
 
-- pri 45° je výbežok 0,3 px, čiže **pásik je v zákrute taký hrubý ako na
-  rovine**;
-- **prečo až od 75°**: pod ním výbežok nie je vidieť, a zaobľovať aj tie zlomy
-  by nebolo zadarmo. Chodníky v Tatrách sú obkreslené z GPS stôp, takže
-  tretina vrcholov má zlom nad 30° – namerané na 419 cestách (22 238 bodov)
-  by geometria narástla o **108 %**. Od 75° je to **+25 %** a zaoblí sa
-  1490 zlomov, po ktorých ostane nad 75° už len 13 (to sú tie vlásenky);
-- vrchol sa pohne najviac o **1,5 m** – to je pod presnosťou, s akou sú
-  chodníky v OSM zakreslené, a pri z16 je to jeden pixel;
-- reže sa najviac do 45 % ramena, takže hustá geometria sa zaobľuje len
-  o toľko, koľko je medzi bodmi miesta, a **krajné body sa nehýbu vôbec**
-  (cesty musia nadväzovať tými istými uzlami, inak Planetiler úseky nezlepí);
-- vlásenka nad ~150° ostane vlásenkou: zaobliť ju by znamenalo odrezať jej
-  špičku o desiatky metrov (pri zlome 173° a ramene 50 m by to bolo 20 m).
-  Tam už `line-offset` pásik neroztiahne, len ho pri hrote zreže – a to je to
-  menšie zlo.
-
-Koľko zlomov sa zaoblilo a o koľko bodov z toho geometria narástla, píše
-`routes.py` do súhrnu behu aj do `trail-stats.txt` (`eased=`).
+`line-miter-limit` je poistka pre vlásenky: `odstup / cos(zlom/2)` rastie nad
+všetky medze (pri zlome 173° je to 16-násobok odstupu, čiže výbežok cez pol
+obrazovky). Nad dvojnásobok – čo je zlom 120° – MapLibre spoj zreže (`bevel`),
+takže špička vlásenky je useknutá rovno a obe ramená ostanú rovnobežné so
+svojím chodníkom. Je to predvolená hodnota MapLibre, ale v štýle je napísaná
+naschvál (`TRAIL_JOIN`): je to poistka, nie detail, a `workers/lint/trails.mjs`
+ju stráži na každej `trail-*` čiarovej vrstve – aj na podklade pásikov, ktorý
+sa musí v zákrute ohnúť rovnako ako to, čo podkladá.
 
 ### Farba ide z OSM, odtieň z palety
 

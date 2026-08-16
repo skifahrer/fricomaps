@@ -196,9 +196,6 @@ if [ -s steps-out/trail-stats.txt ]; then
     echo "| lyžiarske / jazdecké | ${type_ski:-0} / ${type_horse:-0} |"
     echo "| diaľkové (medzinárodné + národné) | $(( ${tier_international:-0} + ${tier_national:-0} )) |"
     echo "| farby značiek | ${colours:-–} |"
-    # Zlom ostrejší než 75° + `line-offset` = výbežok namiesto pásika
-    # (rozpis vo workers/trails/routes.py).
-    echo "| zaoblených ostrých zlomov | ${eased:-0} |"
     echo
     echo "Trasa sa kreslí ako farebný pásik **vedľa** cesty, každá vo"
     echo "svojom pruhu – po jednej ceste ich vedie aj ${max_lanes:-1} naraz"

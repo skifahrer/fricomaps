@@ -55,13 +55,6 @@ Nad PBF sa preto ide TRIKRÁT: relácie (kto kade vedie) → koncové uzly ciest
 (kto s kým susedí, bez súradníc, takže bez indexu) → geometria. Tretí priechod
 je jediný drahý; medzi druhým a tretím sa rozhodne o smeroch.
 
-**Ostré zlomy sa zaobľujú (`ease_corners`).** `line-offset` posúva každý
-vrchol po osi jeho zlomu a ten posun je odstup delený kosínusom polovičného
-uhla – na serpentíne teda z pásika vypadne výbežok dlhý desiatky pixelov
-a v mape je z neho farebná plocha. Zlom ostrejší než 75° sa preto pred zápisom
-nahradí krátkym oblúkom po 45°; vrchol sa pritom pohne najviac o 1,5 m
-a krajné body ostávajú (cesty musia nadväzovať tými istými uzlami).
-
 Vstup je PBF **predfiltrovaný** na `type=route` aj s členmi:
 
     osmium tags-filter region.osm.pbf \\
@@ -74,7 +67,6 @@ Použitie:
 """
 import argparse
 import json
-import math
 import os
 import re
 import sys
@@ -131,111 +123,6 @@ def way_class(tags):
     """Po čom trasa vedie: `path` (chodník, lesná cesta) alebo `road`."""
     return "path" if (tags.get("highway") or "").strip().lower() \
         in PATH_HIGHWAYS else "road"
-
-# --------------------------------------------------------- zjemnenie zlomov
-# PREČO SA GEOMETRIA VÔBEC UPRAVUJE. Pásik trasy sa kreslí `line-offset`, teda
-# posunutím KAŽDÉHO VRCHOLA čiary po osi jeho zlomu. Dĺžka toho posunu je
-# odstup delený kosínusom polovičného uhla – pri ostrom zlome teda rastie nad
-# všetky medze. Na serpentíne (zlom aj 150°) z toho vypadne trojuholníkový
-# výbežok dlhý desiatky pixelov: v mape to vyzerá ako farebná PLOCHA, nie ako
-# čiara, a susedné pásiky sa v nej stratia. Presne o tom je táto úprava.
-#
-# ČO S TÝM. Zlom sa nahradí krátkym oblúkom rozdeleným na kúsky pod MAX_TURN.
-#
-# KTORÝ ZLOM SA OPLATÍ ZAOBLIŤ. Výbežok je dlhý `odstup × (1/cos(zlom/2) − 1)`,
-# takže pri z16 (odstup od chodníka 3,6 px) to je:
-#
-#     zlom      45°     60°     75°     90°    120°    150°
-#     výbežok  0,3 px  0,6 px  1,0 px  1,5 px  3,6 px  10,3 px
-#
-# Pod 75° teda o výbežku niet čo povedať – a zaobľovať aj tie zlomy by nebolo
-# zadarmo: chodníky v Tatrách sú obkreslené z GPS stôp, takže tretina ich
-# vrcholov má zlom nad 30° (namerané na 419 cestách: 22 238 bodov) a geometria
-# by narástla o 108 %. Preto sa zaobľuje od EASE_ABOVE_DEG a delí sa na kúsky
-# po MAX_TURN_DEG – tam je výbežok 0,3 px, čiže žiadny.
-#
-# CENA. Vrchol sa posunie najviac o polovicu CUT_M, teda o 1,5 m – to je pod
-# presnosťou, s akou sú chodníky v OSM zakreslené, a pri z16 je to jeden
-# pixel. Rezať sa smie najviac do 45 % ramena, takže hustá geometria (body po
-# metroch) sa zaobľuje len o toľko, koľko je medzi bodmi miesta.
-EASE_ABOVE_DEG = 75.0
-MAX_TURN_DEG = 45.0
-CUT_M = 3.0
-# Body bližšie než toto sú po zaoblení to isté miesto – dva vrcholy na sebe
-# nemajú definovaný smer, takže by z nich `line-offset` vyrobil ďalší výbežok.
-MIN_STEP_M = 0.2
-
-
-def ease_corners(coords, above_deg=EASE_ABOVE_DEG, max_turn_deg=MAX_TURN_DEG,
-                 cut_m=CUT_M):
-    """Zaoblí zlomy ostrejšie než `above_deg`; vracia `(body, počet)`.
-
-    Oblúk sa delí na kúsky pod `max_turn_deg`. Počíta sa v metroch (rovinná
-    aproximácia okolo stredu čiary – pri dĺžke cesty do pár kilometrov je
-    skreslenie pod percento), krajné body sa nehýbu: cesty na seba musia
-    nadväzovať tými istými uzlami ako v OSM.
-    """
-    if len(coords) < 3:
-        return coords, 0
-    lat_mid = sum(c[1] for c in coords) / len(coords)
-    mx = 111320.0 * math.cos(math.radians(lat_mid))
-    my = 110540.0
-    pts = [((lon - coords[0][0]) * mx, (lat - coords[0][1]) * my)
-           for lon, lat in coords]
-    max_turn = math.radians(max_turn_deg)
-    above = math.radians(above_deg)
-
-    out = [pts[0]]
-    eased = 0
-    for i in range(1, len(pts) - 1):
-        (px, py), (x, y), (nx, ny) = pts[i - 1], pts[i], pts[i + 1]
-        ax, ay, bx, by = x - px, y - py, nx - x, ny - y
-        la, lb = math.hypot(ax, ay), math.hypot(bx, by)
-        if la == 0 or lb == 0:
-            continue
-        dot = max(-1.0, min(1.0, (ax * bx + ay * by) / (la * lb)))
-        turn = math.acos(dot)
-        if turn <= above:
-            out.append((x, y))
-            continue
-        eased += 1
-        cut = min(cut_m, la * 0.45, lb * 0.45)
-        a = (x - ax / la * cut, y - ay / la * cut)
-        b = (x + bx / lb * cut, y + by / lb * cut)
-        # Kvadratická Bezierova krivka s pôvodným vrcholom ako riadiacim
-        # bodom: začína aj končí v smere ramena, takže na oblúk nadväzuje bez
-        # zlomu, a rozdelí zlom na `n` kúskov. Kúsok navyše je preto, že
-        # Bezier nerozdeľuje uhol rovnomerne – bez neho ostane na jeho konci
-        # zlom o pár stupňov väčší, než je MAX_TURN.
-        n = max(2, math.ceil(turn / max_turn) + 1)
-        out.append(a)
-        for k in range(1, n):
-            t = k / n
-            s = 1 - t
-            out.append((s * s * a[0] + 2 * s * t * x + t * t * b[0],
-                        s * s * a[1] + 2 * s * t * y + t * t * b[1]))
-        out.append(b)
-    out.append(pts[-1])
-
-    # Späť na stupne; body, ktoré po zaoblení splynuli, sa zahodia. Krajné
-    # body sa NEPREPOČÍTAVAJÚ, berú sa pôvodné: cesty na seba nadväzujú
-    # spoločným uzlom a ten sa nesmie pohnúť ani o stotinu sekundy, inak
-    # Planetiler susedné úseky trasy nezlepí a popisok nemá na čom stáť.
-    lon0, lat0 = coords[0]
-    res = []
-    for j, (x, y) in enumerate(out):
-        last = j == len(out) - 1
-        if res and not last and \
-                math.hypot(x - res[-1][1], y - res[-1][2]) < MIN_STEP_M:
-            continue
-        if j == 0:
-            res.append((list(coords[0]), x, y))
-        elif last:
-            res.append((list(coords[-1]), x, y))
-        else:
-            res.append(([round(lon0 + x / mx, 7),
-                         round(lat0 + y / my, 7)], x, y))
-    return [ll for ll, _, _ in res], eased
 
 # ------------------------------------------------------------------- siete
 # `network` hovorí, aká je trasa dôležitá: i = medzinárodná, n = národná,
@@ -522,11 +409,6 @@ class Ways(osmium.SimpleHandler):
         self.by_way_class = Counter()
         self.lanes = Counter()
         self.named = set()
-        # Koľko zlomov sa zaoblilo a o koľko bodov z toho geometria narástla
-        # – z toho je vidieť, či úprava nezačala robiť niečo iné, než má.
-        self.eased = 0
-        self.points_in = 0
-        self.points_out = 0
 
     def way(self, w):
         routes = self.by_way.get(w.id)
@@ -548,14 +430,6 @@ class Ways(osmium.SimpleHandler):
         # preskakoval na druhú stranu na každom druhom úseku.
         if w.id in self.flipped:
             coords.reverse()
-
-        # Ostrý zlom + `line-offset` = výbežok dlhý desiatky pixelov (rozpis
-        # pri `ease_corners`). Geometria sa preto zaoblí RAZ na cestu, nie raz
-        # na pruh – všetky pruhy tej istej cesty kreslia tú istú čiaru.
-        self.points_in += len(coords)
-        coords, eased = ease_corners(coords)
-        self.points_out += len(coords)
-        self.eased += eased
 
         lanes = self.lane_order(routes)
         way = way_class({t.k: t.v for t in w.tags})
@@ -703,10 +577,6 @@ def main():
     multi = sum(n for lanes, n in ways.lanes.items() if lanes > 1)
     print(f"  ciest s viac než jednou trasou: {multi} "
           f"(najviac naraz: {max(ways.lanes, default=0)})")
-    grew = 100.0 * (ways.points_out - ways.points_in) / max(1, ways.points_in)
-    print(f"  zaoblených zlomov nad {EASE_ABOVE_DEG:.0f}°: {ways.eased} "
-          f"(bodov {ways.points_in} → {ways.points_out}, {grew:+.1f} %) – bez "
-          "toho z nich `line-offset` robí namiesto pásika farebnú plochu")
 
     if args.stats:
         with open(args.stats, "w", encoding="utf-8") as fh:
@@ -717,7 +587,6 @@ def main():
             fh.write(f"multi={multi}\n")
             fh.write(f"chains={chains}\n")
             fh.write(f"side_flips={conflicts}\n")
-            fh.write(f"eased={ways.eased}\n")
             fh.write(f"max_lanes={max(ways.lanes, default=0)}\n")
             for key, count in ways.by_type.items():
                 fh.write(f"type_{key}={count}\n")

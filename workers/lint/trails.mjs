@@ -42,10 +42,11 @@
  *      je v horách rozostup ramien serpentíny. `line-offset` potom obieha
  *      vlásenku oblúkom širším než je zákruta a v mape je z pásika farebná
  *      plocha. Toto je to číslo, ktoré sa nesmie ticho vrátiť späť.
- *   9. OSTRÉ ZLOMY SA ZAOBĽUJÚ (`ease_corners` v routes.py a naozaj sa aj
- *      volá). Posun vrcholu pri `line-offset` je odstup delený kosínusom
- *      polovičného uhla, čiže pri ostrom zlome rastie nad všetky medze –
- *      z pásika vypadne výbežok dlhý desiatky pixelov.
+ *   9. SPOJ V ZÁKRUTE je `miter` a má `line-miter-limit`. So `round` sa pásik
+ *      k zlomu dostane dvoma rovnobežkami, ktoré sa nestretnú: na vonkajšej
+ *      strane ostane biely klin, na vnútornej sa prekryjú – čiže v každej
+ *      zákrute je z pásika plocha inej hrúbky. Bez limitu zas z vlásenky
+ *      vypadne výbežok dlhý ako pol obrazovky.
  *
  * Spustenie (aj lokálne):
  *   node workers/lint/trails.mjs
@@ -61,6 +62,7 @@ import {
   TRAIL_PITCH,
   TRAIL_STRIPE,
   TRAIL_OFFSET_LIMIT_M,
+  TRAIL_JOIN,
   METRES_PER_PX_Z0,
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
@@ -246,19 +248,29 @@ for (const [key, stops] of [["road", TRAIL_OFFSET_ROAD], ["path", TRAIL_OFFSET_P
   }
 }
 
-// ---- 9. ostré zlomy sa zaobľujú ----
-if (!/def ease_corners\(/.test(py)) {
-  bad.push(
-    "workers/trails/routes.py nemá `ease_corners` – pri ostrom zlome je posun " +
-      "vrcholu odstup delený kosínusom polovičného uhla, takže z pásika " +
-      "vypadne výbežok dlhý desiatky pixelov."
-  );
-} else if (!/coords, eased = ease_corners\(coords\)/.test(py)) {
-  bad.push(
-    "workers/trails/routes.py `ease_corners` nepoužíva na geometriu ciest – " +
-      "zaoblenie sa spočíta a zahodí, takže v serpentínach ostanú z pásikov " +
-      "plochy a nič to nepovie."
-  );
+// ---- 9. spoj pásika v zákrute je `miter` ----
+// So `round` sa pásik k zlomu dostane dvoma rovnobežkami, ktoré sa nestretnú:
+// na vonkajšej strane zlomu ostane biely klin, na vnútornej sa prekryjú.
+// Nič nespadne, len je z pásika v každej zákrute plocha inej hrúbky.
+for (const layer of trailStyle.layers) {
+  if (layer.type !== "line" || !layer.id.startsWith("trail-")) continue;
+  const join = (layer.layout || {})["line-join"];
+  const limit = (layer.layout || {})["line-miter-limit"];
+  if (join !== TRAIL_JOIN["line-join"]) {
+    bad.push(
+      `Vrstva \`${layer.id}\` má spoj "${join}", ale pásik trasy potrebuje ` +
+        `"${TRAIL_JOIN["line-join"]}" (TRAIL_JOIN). Inak sa v ostrej zákrute ` +
+        "rovnobežky nestretnú a v pásiku ostane biely klin."
+    );
+  }
+  if (limit !== TRAIL_JOIN["line-miter-limit"]) {
+    bad.push(
+      `Vrstva \`${layer.id}\` nemá \`line-miter-limit\` ` +
+        `${TRAIL_JOIN["line-miter-limit"]} – bez tej poistky sa z vlásenky ` +
+        "stane výbežok dlhý ako pol obrazovky (odstup delený kosínusom " +
+        "polovičného uhla rastie nad všetky medze)."
+    );
+  }
 }
 
 for (const m of bad) console.log(`::error::${m}`);

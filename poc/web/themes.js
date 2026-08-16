@@ -1094,6 +1094,35 @@ export const TRAIL_OFFSET_PATH = [
 
 /** Koľko metrov od cesty smie pásik najviac ísť (rozpis vyššie). */
 export const TRAIL_OFFSET_LIMIT_M = { road: 12, path: 8 };
+
+/**
+ * SPOJ PÁSIKA V ZÁKRUTE. `miter`, nie `round` – a je to tá vec, ktorá drží
+ * pásik v ostrej zákrute rovnako tenký ako na rovine.
+ *
+ * MapLibre kreslí `line-offset` tak, že KAŽDÝ VRCHOL posunie po osi jeho
+ * zlomu, a dĺžku toho posunu berie z toho, aký spoj je nastavený:
+ *
+ *   `round`  posunie vrchol o odstup po NORMÁLE každého ramena zvlášť. Pásik
+ *            sa teda k zlomu dostane dvoma rovnobežkami, ktoré sa nestretnú:
+ *            na vonkajšej strane ostane medzi nimi KLIN (v mape biely zárez
+ *            uprostred farebného pásika) a na vnútornej sa prekryjú. Pri troch
+ *            značkách na jednej ceste si k tomu farby ešte prelezú cez seba.
+ *   `miter`  posunie vrchol po OSI zlomu o `odstup / cos(zlom/2)`, čo je
+ *            presne roh rovnobežky – pásik má v zákrute ten istý ostrý uhol
+ *            ako chodník pod ním a rovnakú hrúbku.
+ *
+ * `line-miter-limit` je poistka pre vlásenky: `odstup / cos(zlom/2)` rastie
+ * nad všetky medze (pri zlome 173° je to 16-násobok odstupu, teda výbežok cez
+ * pol obrazovky), takže nad dvojnásobok – čo je zlom 120° – MapLibre spoj
+ * zreže (`bevel`). Špička vlásenky je potom useknutá rovno; obe ramená ostanú
+ * rovnobežné so svojím chodníkom a nič sa neroztiahne. Je to predvolená
+ * hodnota MapLibre, ale píše sa sem naschvál: je to poistka, nie detail.
+ *
+ * Geometria sa pritom NEUPRAVUJE. Pásik má presne tie body, ktoré má cesta
+ * v OSM – zaobliť zlom v dátach by znamenalo, že pásik zákrutu odreže a ide
+ * inokade než chodník pod ním.
+ */
+export const TRAIL_JOIN = { "line-join": "miter", "line-miter-limit": 2 };
 /** Metrov na pixel pri z0 v strede Slovenska (48,7° s. š.). */
 export const METRES_PER_PX_Z0 = 156543.03 * Math.cos((48.7 * Math.PI) / 180);
 
@@ -3379,7 +3408,9 @@ export function buildStyle({
         source: "trails",
         "source-layer": "trail",
         minzoom: 11,
-        layout: { "line-cap": "butt", "line-join": "round" },
+        // Ten istý spoj ako pásiky nad ním (rozpis pri `TRAIL_JOIN`) – inak
+        // by sa podklad v zákrute rozišiel s tým, čo podkladá.
+        layout: { "line-cap": "butt", ...TRAIL_JOIN },
         paint: {
           "line-color": c.trailHalo,
           "line-width": zw([[11, 2.4], [14, 3.4], [16, 4.8], [20, 10]]),
@@ -3400,7 +3431,7 @@ export function buildStyle({
           "source-layer": "trail",
           minzoom: 9,
           filter,
-          layout: { "line-cap": "butt", "line-join": "round" },
+          layout: { "line-cap": "butt", ...TRAIL_JOIN },
           paint: {
             "line-color": trailColour(paletteKey),
             // Tá istá krivka, ktorá je aj rozostupom dvoch trás – pásiky sa
