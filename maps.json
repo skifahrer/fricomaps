@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-17T12:26:26Z",
+  "_updated_at": "2026-08-17T12:36:19Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -175,82 +175,76 @@
         ],
         "maps": {
           "mapa": {
-            "download": "https://drive.google.com/uc?export=download&id=12bHwKc3mheU-zf6aQom5j7mVF5aOlXVd",
+            "download": "https://drive.google.com/uc?export=download&id=1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n",
             "file": "bratislavsky-test4km2.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=1SE5jvp5NYHhKy07MmD-ilFtFySbGEqvA",
-                "file": "bratislavsky-test4km2.aar",
-                "link": "https://drive.google.com/file/d/1SE5jvp5NYHhKy07MmD-ilFtFySbGEqvA/view",
-                "run": "133",
-                "size": 127904329,
-                "updated_at": "2026-08-17T12:26:26Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=12bHwKc3mheU-zf6aQom5j7mVF5aOlXVd",
+                "download": "https://drive.google.com/uc?export=download&id=1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n",
                 "file": "bratislavsky-test4km2.zip",
-                "link": "https://drive.google.com/file/d/12bHwKc3mheU-zf6aQom5j7mVF5aOlXVd/view",
-                "run": "133",
-                "size": 133833749,
-                "updated_at": "2026-08-17T12:25:54Z"
+                "link": "https://drive.google.com/file/d/1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n/view",
+                "run": "134",
+                "size": 133833751,
+                "updated_at": "2026-08-17T12:36:19Z"
               }
             },
-            "link": "https://drive.google.com/file/d/12bHwKc3mheU-zf6aQom5j7mVF5aOlXVd/view",
-            "run": "133",
-            "size": 133833749,
-            "updated_at": "2026-08-17T12:25:54Z"
+            "link": "https://drive.google.com/file/d/1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n/view",
+            "run": "134",
+            "size": 133833751,
+            "updated_at": "2026-08-17T12:36:19Z"
+          },
+          "search": {
+            "download": "https://drive.google.com/uc?export=download&id=1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e",
+            "file": "bratislavsky-test4km2-search.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e",
+                "file": "bratislavsky-test4km2-search.zip",
+                "link": "https://drive.google.com/file/d/1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e/view",
+                "run": "134",
+                "size": 6284783,
+                "updated_at": "2026-08-17T12:36:19Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e/view",
+            "run": "134",
+            "size": 6284783,
+            "updated_at": "2026-08-17T12:36:19Z"
           },
           "tienovanie": {
-            "download": "https://drive.google.com/uc?export=download&id=11zgJXwKomo-3ynS4UkhNtIqjUICX9xNl",
+            "download": "https://drive.google.com/uc?export=download&id=1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a",
             "file": "bratislavsky-test4km2-tienovanie.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=14B7gOktEiORobvAlOIU-NUdkhD55NZby",
-                "file": "bratislavsky-test4km2-tienovanie.aar",
-                "link": "https://drive.google.com/file/d/14B7gOktEiORobvAlOIU-NUdkhD55NZby/view",
-                "run": "133",
-                "size": 1045165,
-                "updated_at": "2026-08-17T12:26:26Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=11zgJXwKomo-3ynS4UkhNtIqjUICX9xNl",
+                "download": "https://drive.google.com/uc?export=download&id=1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a",
                 "file": "bratislavsky-test4km2-tienovanie.zip",
-                "link": "https://drive.google.com/file/d/11zgJXwKomo-3ynS4UkhNtIqjUICX9xNl/view",
-                "run": "133",
-                "size": 1042996,
-                "updated_at": "2026-08-17T12:25:54Z"
+                "link": "https://drive.google.com/file/d/1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a/view",
+                "run": "134",
+                "size": 1042999,
+                "updated_at": "2026-08-17T12:36:19Z"
               }
             },
-            "link": "https://drive.google.com/file/d/11zgJXwKomo-3ynS4UkhNtIqjUICX9xNl/view",
-            "run": "133",
-            "size": 1042996,
-            "updated_at": "2026-08-17T12:25:54Z"
+            "link": "https://drive.google.com/file/d/1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a/view",
+            "run": "134",
+            "size": 1042999,
+            "updated_at": "2026-08-17T12:36:19Z"
           },
           "vrstevnice-skaly": {
-            "download": "https://drive.google.com/uc?export=download&id=1GvAi8Me3sNppWLQO-zm8kgKWBZtzydlX",
+            "download": "https://drive.google.com/uc?export=download&id=1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M",
             "file": "bratislavsky-test4km2-vrstevnice-skaly.zip",
             "formats": {
-              "aar": {
-                "download": "https://drive.google.com/uc?export=download&id=1SkgoAeC0FEjX8krbTLg7O5U0rACAe1bJ",
-                "file": "bratislavsky-test4km2-vrstevnice-skaly.aar",
-                "link": "https://drive.google.com/file/d/1SkgoAeC0FEjX8krbTLg7O5U0rACAe1bJ/view",
-                "run": "133",
-                "size": 150329,
-                "updated_at": "2026-08-17T12:26:26Z"
-              },
               "zip": {
-                "download": "https://drive.google.com/uc?export=download&id=1GvAi8Me3sNppWLQO-zm8kgKWBZtzydlX",
+                "download": "https://drive.google.com/uc?export=download&id=1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M",
                 "file": "bratislavsky-test4km2-vrstevnice-skaly.zip",
-                "link": "https://drive.google.com/file/d/1GvAi8Me3sNppWLQO-zm8kgKWBZtzydlX/view",
-                "run": "133",
-                "size": 149683,
-                "updated_at": "2026-08-17T12:25:54Z"
+                "link": "https://drive.google.com/file/d/1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M/view",
+                "run": "134",
+                "size": 149686,
+                "updated_at": "2026-08-17T12:36:19Z"
               }
             },
-            "link": "https://drive.google.com/file/d/1GvAi8Me3sNppWLQO-zm8kgKWBZtzydlX/view",
-            "run": "133",
-            "size": 149683,
-            "updated_at": "2026-08-17T12:25:54Z"
+            "link": "https://drive.google.com/file/d/1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M/view",
+            "run": "134",
+            "size": 149686,
+            "updated_at": "2026-08-17T12:36:19Z"
           }
         },
         "maxzoom": 16,
@@ -258,7 +252,7 @@
         "rock_slope": 50,
         "rock_source": "dmr5",
         "rocks_maxzoom": 16,
-        "run": "133",
+        "run": "134",
         "terrain_maxzoom": 15,
         "terrain_source": "dmr5",
         "test_km2": "4",
@@ -271,7 +265,7 @@
           "trails": "tiles/bratislavsky_test4-trails.pmtiles"
         },
         "trails_maxzoom": 14,
-        "updated_at": "2026-08-17T12:26:26Z"
+        "updated_at": "2026-08-17T12:36:19Z"
       },
       "presovsky": {
         "bbox": [
