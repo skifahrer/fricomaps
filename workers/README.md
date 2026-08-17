@@ -390,19 +390,26 @@ takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
   podobu (metrová existuje len na výrez, viď „jeden zdroj, dve podoby").
 - **Každý zoom sa prevzorkuje z DEM nanovo**, nezmenšujú sa hotové dlaždice:
   priemerovať sa musí *výška*, nie zakódovaná farba. **Ktorým resamplingom,
-  rozhoduje smer**: pri zmenšovaní `-r average`, pri zväčšovaní
-  `-r cubicspline`. Na maxzoome sa zväčšuje vždy (viď bod nižšie o `auto`)
-  a `average` tam degeneruje na najbližšieho suseda – z každej bunky modelu
-  vypadne štvorček rovnakých pixelov.
+  rozhoduje pomer pixela a bunky**: `-r average` až od dvojnásobku bunky
+  (`AVERAGE_RATIO`), pod ním `-r cubicspline`. Na maxzoome sa zväčšuje vždy
+  (viď bod nižšie o `auto`) a `average` tam degeneruje na najbližšieho suseda –
+  z každej bunky modelu vypadne štvorček rovnakých pixelov. **A tesne nad
+  bunkou je to to isté, len slabšie**: box filter prekryje raz jednu bunku,
+  raz dve, takže z toho vypadne rytmus plošiniek – preto hranica nie je
+  „pixel hrubší než bunka", ale jej dvojnásobok.
 - **Zvislý krok kódovania ide za vodorovným pixelom** (`krok ≤ 2 % pixelu`,
-  zaokrúhlené na mocninu dvojky): do z11 celý meter, z12 pol metra, z13 štvrť,
-  z15 šestnástina. Kým bol krok vždy metrový (`B = 0`), bol terén rozrezaný na
-  metrové plošinky – a hillshade, ktorý je *derivácia* výšky, z hrany každej
-  z nich spravil čiaru. Spolu s tými štvorčekmi z toho bola v mape **pravidelná
-  tkanina**. Dlaždice sú za to 2–3,5× väčšie a platí sa to len na vysokých
-  zoomoch; namerané čísla sú v hlavičke [`terrain/tiles.py`](terrain/tiles.py),
-  strážia to `workers/lint/terrain.py` a v mene assetu aj v kľúči cache
-  prípona `v3`.
+  zaokrúhlené na mocninu dvojky, a ešte o `FRAC_BITS_MARGIN` bitov nižšie):
+  do z8 celý meter, z12 šestnástina, z13 tridsaťdvatina. Kým bol krok vždy
+  metrový (`B = 0`), bol terén rozrezaný na metrové plošinky – a hillshade,
+  ktorý je *derivácia* výšky, z hrany každej z nich spravil čiaru. Spolu
+  s tými štvorčekmi z toho bola v mape **pravidelná tkanina**.
+  A keď sa krok postavil presne na hranicu viditeľnosti (`SLOPE_EPS × pixel`),
+  ostala z nej **slabšia, ale stále pravidelná mriežka** – lebo pravidelný
+  falošný sklon oko číta aj tesne pod tou hranicou. Preto je krok o tri bity
+  nižšie. Dlaždice sú za to ~2,2× väčšie a platí sa to len tam, kde je pixel
+  jemný; namerané čísla sú v hlavičke [`terrain/tiles.py`](terrain/tiles.py)
+  a pri `FRAC_BITS_MARGIN` v [`lib/cell.py`](lib/cell.py), strážia to
+  `workers/lint/terrain.py` a v mene assetu aj v kľúči cache prípona `v4`.
 - **Dlaždica bez reliéfu nevznikne.** Kde nikde nie je sklon nad tými 2 %
   (hladina, rovina), by hillshade nakreslil rovnú plochu a 3D terén rovinu –
   teda presne to, čo klient dostane aj z rodičovskej dlaždice o zoom nižšie

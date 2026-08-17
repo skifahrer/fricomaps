@@ -26,32 +26,55 @@ bolo správne spočítané a viedlo k zlému záveru: merala sa VEĽKOSŤ odchý
 nie jej TVAR. Oko odchýlku 0,5/255 nevidí, ale pravidelnú mriežku z nej áno.
 
 Krok sa preto volí tak, aby falošný sklon z kvantizácie ostal pod `SLOPE_EPS`
-– a keďže sklon je krok delený pixelom, znamená to jedno pravidlo:
-`krok ≤ SLOPE_EPS × pixel`. Krok je mocnina dvojky, takže bajt B nadobúda len
-2^bits hodnôt a ostane stlačiteľný. Namerané na hladkom umelom teréne
-(mriežka v hillshade ako stredná |Δ| Laplaciánu; hladký povrch = 0,0):
+– a keďže sklon je krok delený pixelom, znamená to `krok ≤ SLOPE_EPS × pixel`.
 
-    zoom   pixel     krok     mriežka        kB/dlaždica
-    z13    12,5 m    1 m      6,0            9,1     ← doteraz
-    z13    12,5 m    1/4 m    1,4           17,5
-    z15     3,1 m    1 m     22,3            4,0     ← doteraz
-    z15     3,1 m    1/16 m   0,9           13,9
+LENŽE NIE TESNE POD ŇOU, ALE S ODSTUPOM. Krok postavený presne na tú hranicu
+posadí falošný sklon na KAŽDOM zoome tesne pod hranicu viditeľnosti a nechá ho
+tam – a keďže je pravidelný, oko ho aj tak číta ako mriežku (na hranách
+schodíkov ju druhá derivácia ešte zvýrazní). Je to presne tá chyba, ktorú
+popisuje odsek vyššie, len spravená druhýkrát: krok sa vybral podľa VEĽKOSTI
+odchýlky a nie podľa toho, že jej TVAR je mriežka. Preto `FRAC_BITS_MARGIN`
+(`workers/lib/cell.py`) posúva krok ešte o tri bity nižšie.
 
-Dlaždice sú 2–3,5× väčšie a to je celá cena. Platí sa len na vysokých
-zoomoch (do z11 vyjde krok na celý meter, čiže presne to, čo bolo doteraz)
+Namerané celou touto cestou na hladkom umelom teréne (mriežka v hillshade ako
+stredná |Δ| Laplaciánu ×10⁻³; hladký povrch = 0,0). Kvantizácia pridáva na
+každom zoome to isté, lebo krok ide s pixelom:
+
+    bity navyše   z12 krok  mriežka  kB/dl.   z13 krok  mriežka  kB/dl.
+    +0 (doteraz)    1/2      10,47    20,3     1/4        9,12    21,2
+    +1              1/4       6,39    26,6     1/8        4,62    30,8
+    +2              1/8       4,68    35,3     1/16       2,33    38,7
+    +3 (dnes)       1/16      4,07    43,7     1/32       1,17    47,4
+
+Každý bit stojí ~30 % veľkosti dlaždice. Na z13 je po mriežke (7,8×), na z12
+sa to zastaví na 4,07 – tam už nedrží kvantizácia, ale prevzorkovanie pri
+pomere pixel/bunka 1,25, čo je blízko Nyquista a bitmi sa to nekúpi.
+Dlaždice sú ~2,2× väčšie a to je celá cena – platí sa len tam, kde je pixel
+jemný (do z8 vyjde krok na celý meter, čiže presne to, čo bolo doteraz)
 a `--budget-mb` sa oň postará sám.
 
-RESAMPLING SA RIADI SMEROM. Dlaždice sa nekreslia zmenšovaním hotových
-dlaždíc, ale pre každý zoom sa DEM prevzorkuje nanovo – priemerovať sa totiž
-musí *výška*, nie zakódovaná farba (priemer bajtov R/G je nezmysel). Pri
-ZMENŠOVANÍ je `-r average` správne. Lenže na maxzoome sa DEM VŽDY zväčšuje:
-`terrain_maxzoom: auto` vyberá prvý zoom, ktorého pixel je jemnejší než bunka
-modelu (Sonny 20 m → z13, pixel 12,5 m), a `average` pri zväčšovaní zdegeneruje
-na najbližšieho suseda – z každej bunky DEM vypadne štvorček rovnakých pixelov
-a hillshade z jeho hrán spraví mriežku. Nad bunku modelu sa preto ide
-`-r cubicspline`: je to B-spline, teda hladký aj v prvej derivácii a bez
-prestrelov na okrajoch dát. Namerané na tom istom teréne (z14, krok 1/8 m):
-mriežka 13,6 s `average` proti 1,9 s `cubicspline`.
+RESAMPLING SA RIADI POMEROM PIXELA A BUNKY. Dlaždice sa nekreslia zmenšovaním
+hotových dlaždíc, ale pre každý zoom sa DEM prevzorkuje nanovo – priemerovať sa
+totiž musí *výška*, nie zakódovaná farba (priemer bajtov R/G je nezmysel).
+
+`average` je box filter cez tie bunky, ktoré cieľový pixel prekryje, takže
+priemerovať má čo až vtedy, keď ich prekryje aspoň dve. Pri ZVÄČŠOVANÍ
+zdegeneruje na najbližšieho suseda – z každej bunky DEM vypadne štvorček
+rovnakých pixelov a hillshade z jeho hrán spraví mriežku. A TESNE NAD BUNKOU
+je to to isté, len slabšie: raz jedna bunka, raz dve, čiže rytmus plošiniek.
+Preto hranica nie je „pixel hrubší než bunka", ale jej DVOJNÁSOBOK
+(`AVERAGE_RATIO` vo `workers/lib/cell.py`); pod ním ide `-r cubicspline` –
+B-spline, teda hladký aj v prvej derivácii a bez prestrelov na okrajoch dát.
+
+Namerané na tom istom teréne (bunka 20 m, mriežka ×10⁻³):
+
+    zoom   pixel    pomer   average   cubicspline
+    z11    50,1 m    2,51     0,65       0,58     ← tu sú si rovné
+    z12    25,1 m    1,25     5,36       0,53     ← toto ostalo vidieť
+    z13    12,5 m    0,63    34,34       0,04
+
+Prvá oprava riešila len zväčšovanie (z13 a vyššie), takže na z12 ostal
+`average` – a mriežku bolo na mape stále vidieť.
 
 Použitie:
     python3 workers/terrain/tiles.py --dem=dem/all.vrt \\
