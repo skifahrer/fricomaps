@@ -39,6 +39,7 @@ ZNAME = {
     "terrain": "job `terrain`",
     "trails": "job `trails`",
     "features": "job `features`",
+    "search": "job `search` (vyhľadávací index)",
     "tiles": "job `tiles`",
     "wiki": "workflow „Build wiki“ (wiki.yml)",
     "world": "workflow „Build svet“ (world-map.yml)",
