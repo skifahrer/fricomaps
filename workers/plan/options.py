@@ -35,7 +35,6 @@ Použitie:
 """
 import argparse
 import json
-import math
 import os
 import shlex
 import sys
@@ -44,6 +43,11 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 # Priečinok = job, súbor = krok; spoločné veci ležia o úroveň vyššie.
 _WORKERS = os.path.dirname(_HERE)          # workers/
 _DATA = os.path.join(_WORKERS, "data")     # číselníky (areas, regions, zdroje)
+
+# „Koľko metrov je jeden pixel dlaždice" sa pýta aj tieňovanie (na inú otázku
+# – či DEM zväčšuje alebo zmenšuje), tak to číslo býva vo `workers/lib/`.
+sys.path.insert(0, os.path.join(_WORKERS, "lib"))
+from cell import terrain_zoom_for, tile_m_per_px  # noqa: E402
 
 # kľúč: (predvolená hodnota, popis)
 DEFAULTS = {
@@ -217,27 +221,6 @@ def dem_sources(path=None):
     with open(path) as f:
         raw = json.load(f)
     return {k: v for k, v in raw.items() if not k.startswith("_")}
-
-
-# Rozlíšenie dlaždice v metroch na pixel na 49° s. š. (stred Slovenska).
-# 156543,03 m/px je zoom 0 na rovníku, `cos(49°)` ho skráti na našu šírku
-# a 2^z na daný zoom. Číslo je tu raz, nech sa výber zoomu a to, čo o ňom
-# hovorí log, nemôžu rozísť.
-def tile_m_per_px(z):
-    return 156543.03 * math.cos(math.radians(49.0)) / (2 ** z)
-
-
-def terrain_zoom_for(cell_m, lo=8, hi=16):
-    """Najnižší zoom, na ktorom je pixel dlaždice jemnejší než bunka modelu.
-
-    Vyššie už dlaždice nesú detail, ktorý v modeli nie je – len štvornásobok
-    súborov na každý ďalší zoom. Sonny (20 m) → z13, DMR 3.5 (10 m) → z14,
-    DMR 5.0 (5 m) → z15.
-    """
-    for z in range(lo, hi + 1):
-        if tile_m_per_px(z) <= cell_m:
-            return z
-    return hi
 
 
 def pick_source(what, value, allowed):

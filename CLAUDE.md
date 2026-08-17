@@ -101,7 +101,7 @@ už neopakuje to, čo hovorí priečinok (`contours-rocks/build.sh` →
 
 ```
 workers/data/            číselníky: areas, regions, dem-sources
-workers/lib/             čo patrí viacerým jobom (watch, planetiler, png, rozpočet)
+workers/lib/             čo patrí viacerým jobom (watch, planetiler, png, rozpočet, bunky)
 workers/plan/            joby `settings`, `plan` a `keys`: čo si vypýtal,
                          voľby, výrez, PBF, kľúče cache
 workers/dem/             job `check-dem` a doplnenie modelu (`update-dem.yml`)
@@ -576,6 +576,7 @@ python3 workers/plan/area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tat
 python3 workers/dem/target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
 python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
+python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
@@ -600,7 +601,11 @@ prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
 (`workers/lint/publishing.py`), že **každá výplň v štýle nad vrstvou so
 zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že
 **„v tomto stupni terén nie je" nerozhodne vzorkovaná štatistika a že sa tá
-odpoveď podpíše** (`workers/lint/dem-empty.py`), že **predfilter PBF pustí
+odpoveď podpíše** (`workers/lint/dem-empty.py`), že **tieňovanie nestratí
+zvislú presnosť, ktorou stojí a padá** (`workers/lint/terrain.py` – výška
+zaokrúhlená na celé metre a `-r average` pri zväčšovaní DEM spravili
+z hillshadu, ktorý je derivácia výšky, pravidelnú tkaninu cez celú mapu; nič
+nespadlo), že **predfilter PBF pustí
 všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py` –
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej

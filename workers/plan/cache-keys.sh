@@ -50,7 +50,12 @@ TS="$OPT_SHADING_SOURCE"
   # skaly z druhého) – kľúč preto nesie obe mená.
   echo "demtiles_contours=demtiles-v2-c$CS$DC-r$RS$DR-$B"
   echo "demtiles_terrain=demtiles-v2-t$TS$DT-$B"
-  echo "terrain=terrain-v2-$TS-$DT-$B-z${OPT_TERRAIN_MAXZOOM}"
+  # `v3`: zvislý krok podľa zoomu a prevzorkovanie podľa smeru (rozpis vo
+  # `workers/terrain/tiles.py`). Staré dlaždice majú výšku na celé metre
+  # a v tieňovaní tkanú mriežku – z cache by sa vrátili ako hotové a oprava
+  # by sa na už spočítanom regióne neprejavila. To isté číslo nesie meno
+  # assetu v sklade (`workers/terrain/build.sh`).
+  echo "terrain=terrain-v3-$TS-$DT-$B-z${OPT_TERRAIN_MAXZOOM}"
   # Sklad častí sklonu. V kľúči je VÝREZ, MODEL a MRIEŽKA – teda
   # presne to, čo mení obsah častí. Prah sklonu v ňom zámerne NIE
   # JE: uplatňuje sa až pri vektorizácii, takže po jeho zmene sa
