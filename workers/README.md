@@ -388,8 +388,27 @@ takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
 - **Áno, dá sa aj z DMR 5.0** – `shading_source: dmr5`. Tieňovanie sa robí
   vždy na celý región, takže `dmr5` tu vyjde na svoju **5 m** dlaždicovú
   podobu (metrová existuje len na výrez, viď „jeden zdroj, dve podoby").
-- **Každý zoom sa prevzorkuje z DEM nanovo** (`-r average`), nezmenšujú sa
-  hotové dlaždice: priemerovať sa musí *výška*, nie zakódovaná farba.
+- **Každý zoom sa prevzorkuje z DEM nanovo**, nezmenšujú sa hotové dlaždice:
+  priemerovať sa musí *výška*, nie zakódovaná farba. **Ktorým resamplingom,
+  rozhoduje smer**: pri zmenšovaní `-r average`, pri zväčšovaní
+  `-r cubicspline`. Na maxzoome sa zväčšuje vždy (viď bod nižšie o `auto`)
+  a `average` tam degeneruje na najbližšieho suseda – z každej bunky modelu
+  vypadne štvorček rovnakých pixelov.
+- **Zvislý krok kódovania ide za vodorovným pixelom** (`krok ≤ 2 % pixelu`,
+  zaokrúhlené na mocninu dvojky): do z11 celý meter, z12 pol metra, z13 štvrť,
+  z15 šestnástina. Kým bol krok vždy metrový (`B = 0`), bol terén rozrezaný na
+  metrové plošinky – a hillshade, ktorý je *derivácia* výšky, z hrany každej
+  z nich spravil čiaru. Spolu s tými štvorčekmi z toho bola v mape **pravidelná
+  tkanina**. Dlaždice sú za to 2–3,5× väčšie a platí sa to len na vysokých
+  zoomoch; namerané čísla sú v hlavičke [`terrain/tiles.py`](terrain/tiles.py),
+  strážia to `workers/lint/terrain.py` a v mene assetu aj v kľúči cache
+  prípona `v3`.
+- **Dlaždica bez reliéfu nevznikne.** Kde nikde nie je sklon nad tými 2 %
+  (hladina, rovina), by hillshade nakreslil rovnú plochu a 3D terén rovinu –
+  teda presne to, čo klient dostane aj z rodičovskej dlaždice o zoom nižšie
+  (MapLibre ju hľadá sám, `TerrainSourceCache.getSourceTile`). Nižný kraj tak
+  neplatí štvornásobkom dlaždíc za každý ďalší zoom nad rovinou a rozpočet
+  ostane horám. Minzoom sa nevynecháva nikdy – je to koreň tej pyramídy.
 - **Zoom je `auto`** (`terrain_maxzoom`): najnižší, na ktorom je pixel
   dlaždice jemnejší než bunka modelu – Sonny (20 m) → **z13**, DMR 3.5 (10 m)
   → **z14**, DMR 5.0 (5 m) → **z15**. Pevná trinástka tu bola dovtedy, kým bol
@@ -403,7 +422,7 @@ takže 3D reliéf nedvíha koruny stromov, kým vrstevnice vedú po zemi.
   nezačne – povie to warningom a čo s tým (menšie územie, vyšší
   `size_limit_mb`). Jemný reliéf celého kraja sa teda nedá dostať zadarmo,
   ale výrez alebo rýchly test ho majú.
-- **Ukladajú sa do skladu `dem-terrain`** ako jeden `.tar.zst` na región,
+- **Ukladajú sa do skladu `dem-terrain`** ako jeden `.pmtiles` na región,
   model a maxzoom. Meno nesie **skutočne vyrobený** maxzoom, nie želaný –
   a ďalší build si zo skladu vezme najvyšší uložený zoom, ktorý nie je vyšší
   než ten želaný, takže sa to isté nepočíta druhýkrát. `terrain_rebuild: áno`

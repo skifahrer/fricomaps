@@ -544,6 +544,13 @@ jobs:
       - name: "Štýl: vrstevnice a skaly majú v schéme a v štýle to isté dno"
         run: python3 workers/lint/zoom-floor.py
 
+      # Tieňovanie roky vyzeralo správne a nebolo: výška zaokrúhlená na celé
+      # metre a `-r average` pri ZVÄČŠOVANÍ DEM spravili z hillshadu (ktorý je
+      # derivácia výšky) pravidelnú tkaninu cez celú mapu. Nič nespadlo – to je
+      # pravidlo 8 v čistej podobe. Rozpis: `workers/lint/terrain.py`.
+      - name: Tieňovanie nestráca presnosť, ktorou stojí a padá
+        run: python3 workers/lint/terrain.py
+
       # To isté o krok ďalej pri mape sveta: okrem dna zoomu sa tam dá pomýliť
       # aj v MENE vrstvy (`source-layer: downloads` proti vrstve `download`)
       # a MapLibre na to nepovie nič – regióny sťahovania v mape jednoducho
