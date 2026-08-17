@@ -110,6 +110,7 @@ workers/contours-rocks/  joby `contours` a `rocks` – jeden skript, dve polovic
 workers/rocks-shading/   `shading-rocks.yml`: dlaždice → raster → vektor
 workers/terrain/         job `terrain` (tieňovanie a 3D)
 workers/trails/          job `trails`      workers/features/  job `features`
+workers/search/          job `search`: vyhľadávací index (SQLite FTS5) z PBF
 workers/wiki/            `wiki.yml`: články z Wikipédie k objektom mapy
 workers/world/           `world-map.yml`: základná mapa sveta (podklad pod výber)
 workers/tiles/           job `tiles`       workers/assets/    job `assets`
