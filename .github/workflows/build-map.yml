@@ -719,6 +719,7 @@ jobs:
       opt_custom_name: ${{ steps.opts.outputs.opt_custom_name }}
       opt_custom_bbox: ${{ steps.opts.outputs.opt_custom_bbox }}
       opt_publish: ${{ steps.opts.outputs.opt_publish }}
+      opt_publish_pages: ${{ steps.opts.outputs.opt_publish_pages }}
       opt_apple_archive: ${{ steps.opts.outputs.opt_apple_archive }}
       opt_contours_rebuild: ${{ steps.opts.outputs.opt_contours_rebuild }}
       opt_rocks_rebuild: ${{ steps.opts.outputs.opt_rocks_rebuild }}
@@ -2177,16 +2178,25 @@ jobs:
           retention-days: 1
           compression-level: 0
 
+      # `publish_pages=false` vypne LEN nasadenie – `_site` sa postaví
+      # a skontroluje rovnako ako pri ostrom behu (na tom istom `_site` stojí
+      # aj balík, ktorý ide na Drive), len sa nenahrá na Pages. `steps.publish`
+      # nižšie (Drive) je nezávislá páka – tá beží ďalej podľa `opt_publish`.
       - name: Upload Pages artifact
+        if: ${{ needs.plan.outputs.opt_publish_pages == 'true' }}
         uses: actions/upload-pages-artifact@v5
         with:
           path: _site
 
       - name: Deploy na GitHub Pages
         id: deployment
+        if: ${{ needs.plan.outputs.opt_publish_pages == 'true' }}
         uses: actions/deploy-pages@v5
 
+      # Bez nasadenia niet čo overovať – `steps.deployment.outputs.page_url`
+      # by bol prázdny a smoke test by kontroloval starú (alebo žiadnu) mapu.
       - name: Smoke test nasadenej mapy
+        if: ${{ needs.plan.outputs.opt_publish_pages == 'true' }}
         env:
           BASE: ${{ steps.deployment.outputs.page_url }}
           REGION: ${{ needs.plan.outputs.key }}
@@ -2275,6 +2285,7 @@ jobs:
           USED_SHADING: ${{ needs.terrain.outputs.dem_source || '(nebežalo)' }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          PUBLISH_PAGES: ${{ needs.plan.outputs.opt_publish_pages }}
           PAGES_BUILD_TYPE: ${{ needs.plan.outputs.pages_build_type }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           TEST_KM2: ${{ needs.plan.outputs.test_km2 }}

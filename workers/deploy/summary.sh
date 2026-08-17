@@ -13,6 +13,7 @@
 #   REGION_NAME  R_PLAN R_CONTOURS R_SHADING_ROCKS R_TRAILS R_FEATURES R_TERRAIN
 #   R_TILES R_ASSETS  SRC_CONTOURS SRC_ROCKS SRC_SHADING
 #   USED_CONTOURS USED_ROCKS USED_SHADING  SIZE_LIMIT_MB  PAGE_URL
+#   PUBLISH_PAGES  (false = beh na Pages vôbec nenasadzoval, PAGE_URL je prázdny)
 #   PAGES_BUILD_TYPE  (`legacy` = mapu prepíše najbližší push)
 #   REGION_KEY  TEST_KM2 TEST_BBOX TEST_FULL_BBOX  (testovací režim)
 #   INPUTS_JSON  (celý formulár ako JSON – blok „Nastavenia tohto behu")
@@ -272,6 +273,11 @@ fi
 
 if [ "$PAGE_URL" != '' ]; then
   echo -e "\n[Otvoriť mapu](${PAGE_URL})" >> "$S"
+elif [ "${PUBLISH_PAGES:-true}" = 'false' ]; then
+  # Nie chyba, len rozhodnutie z formulára – nech je hneď vidieť prečo tu
+  # nie je odkaz, a nie treba hádať, či nasadenie spadlo.
+  echo -e "\n**Na GitHub Pages sa mapa nenasadila** (\`publish_pages=false\`) –" \
+       "hotová je len na Google Drive." >> "$S"
 fi
 
 # ---- Pages berie zdroj z vetvy ----

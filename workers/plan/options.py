@@ -133,6 +133,17 @@ DEFAULTS = {
     # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
     # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
     "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
+    # Popri Drive sa hotová mapa vždy nasadzuje aj na GitHub Pages – živý
+    # odkaz, na ktorom viewer aj smoke test overia, že mapa naozaj funguje.
+    # `publish_pages=false` to vypne: `_site` sa postaví a skontroluje úplne
+    # rovnako (štýly aj manifest ďalej nesú adresu Pages, lebo z toho istého
+    # `_site` sa skladá aj balík na Drive), len sa nenahrá cez
+    # `actions/deploy-pages` a nespustí sa smoke test nasadenej stránky.
+    # Drive (`publish`) tým nie je dotknutý – to sú dve nezávislé páky, presne
+    # preto majú dve mená, nie jeden spoločný switch „publish". Hodí sa to
+    # napr. na forku bez zapnutých Pages, alebo keď sa nemá prepísať živá
+    # mapa polotovarom, kým Drive balík z toho istého behu prepísať treba.
+    "publish_pages": ("true", "nasadiť hotovú mapu aj na GitHub Pages (false = len na Drive)"),
     # To isté ešte raz ako `.aar` (Apple Archive, LZFSE) – iOS a macOS ho
     # rozbalia systémovo, bez tretej knižnice v aplikácii. Robí to vlastný job
     # na macOS, lebo nástroj `aa` je súčasť macOS a inde neexistuje; keď ho
@@ -390,6 +401,12 @@ def main():
     if values["publish"] not in ("true", "false"):
         print(f"::error::Voľba „publish“ musí byť true alebo false, "
               f"nie „{values['publish']}“.", file=sys.stderr)
+        return 1
+    # A to isté pre nasadenie na Pages: `publish_pages=0` by ho ticho vypol
+    # a mapa by na Pages ostala stará, hoci beh dobehol do zelena.
+    if values["publish_pages"] not in ("true", "false"):
+        print(f"::error::Voľba „publish_pages“ musí byť true alebo false, "
+              f"nie „{values['publish_pages']}“.", file=sys.stderr)
         return 1
 
     # Interval vrstevníc je voľba (miesto vo formulári si vzal switch
