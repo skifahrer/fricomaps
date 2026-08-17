@@ -21,7 +21,7 @@ jedna 1°×1° dlaždica má v metri ~48 GB a voľných je ~60 GB.
     gh release delete-asset → --rm
 
 ČO SA TÝM NEMENÍ. Mená súborov ostávajú tie isté, aké mali assety releasov
-(`N49E020.tif`, `ugkk-vysoke_tatry.tif`, `terrain-<kľúč>-<model>-z<zoom>-v3.pmtiles`
+(`N49E020.tif`, `ugkk-vysoke_tatry.tif`, `terrain-<kľúč>-<model>-z<zoom>-v4.pmtiles`
 …), lebo **meno je sľub o rozsahu** – pravidlo 2 v CLAUDE.md. Ostáva aj to,
 ktorý sklad ktorá vrstva hľadá; odpoveď na to má jedno miesto
 (`workers/dem/target.py`) a tento skript sa jej nepýta.

@@ -13,12 +13,18 @@ susedovi spravil PRAVIDELNÚ TKANINU cez celú mapu. Nič nespadlo, nič nezčer
 Oprava je v troch číslach a každé z nich sa dá „zjednodušiť" späť bez toho,
 aby to čokoľvek povedalo. Preto sa strážia:
 
-  1. ZVISLÝ KROK IDE ZA PIXELOM. `frac_bits` musí pre každý zoom vrátiť toľko
-     bitov, aby krok kódovania ostal pod `SLOPE_EPS × pixel` – kým sa nenarazí
-     na `MAX_FRAC_BITS`. Bez toho je krok na vysokých zoomoch znova metrový.
-  2. PRIEMER LEN NADOL. `resampling` smie vrátiť `average` iba vtedy, keď je
-     pixel dlaždice hrubší než bunka modelu. Pri zväčšovaní musí ísť
-     `cubicspline`.
+  1. ZVISLÝ KROK IDE ZA PIXELOM, A S ODSTUPOM. `frac_bits` musí pre každý zoom
+     vrátiť toľko bitov, aby krok kódovania ostal `FRAC_BITS_MARGIN` bitov pod
+     `SLOPE_EPS × pixel` – kým sa nenarazí na `MAX_FRAC_BITS`. Bez toho je krok
+     na vysokých zoomoch znova metrový; a keď sedí presne NA tej hranici,
+     falošný sklon z kvantizácie ostane na každom zoome tesne pod hranicou
+     viditeľnosti – lenže je PRAVIDELNÝ, takže ho oko číta ako mriežku. To bolo
+     na mape vidieť aj po prvej oprave.
+  2. PRIEMERUJE SA, AŽ KEĎ JE ČO PRIEMEROVAŤ. `resampling` smie vrátiť
+     `average` iba vtedy, keď je pixel dlaždice aspoň `AVERAGE_RATIO`× hrubší
+     než bunka modelu. Nielen pri zväčšovaní, ale aj v pásme tesne nad bunkou
+     z neho vypadnú plošinky – a mriežku bolo na mape vidieť aj potom, čo sa
+     opravilo samotné zväčšovanie.
   3. WARP MUSÍ NIESŤ ZLOMOK. `-ot Int16` vo `warp_level` by zlomok zahodil
      ešte pred kódovaním a body 1 a 2 by boli zbytočné – krok by bol metrový
      bez ohľadu na to, koľko bitov mu potom dáme. A `terrarium` musí zlomok
@@ -78,26 +84,53 @@ def main():
                        + (f" (zaráža strop MAX_FRAC_BITS={t.MAX_FRAC_BITS})"
                           if bits >= t.MAX_FRAC_BITS else "")
                        + ". Z plošiniek spraví hillshade pravidelnú tkaninu.")
+        # A NIELEN POD ŇU, ALE S ODSTUPOM. Krok presne na hranici viditeľnosti
+        # nechá falošný sklon na každom zoome tesne pod ňou – a keďže je
+        # PRAVIDELNÝ, oko ho aj tak číta ako mriežku. Presne to ostalo na mape
+        # vidieť po prvej oprave. Strop `MAX_FRAC_BITS` je legitímny dôvod
+        # nedosiahnuť plný odstup, tak sa naň neplače.
+        s_margin = strop / (2 ** t.FRAC_BITS_MARGIN)
+        if krok > s_margin and bits < t.MAX_FRAC_BITS:
+            bad.append(f"z{z}: krok {krok:g} m je len tesne pod hranicou "
+                       f"viditeľnosti ({strop:.3f} m). Kvantizácia robí "
+                       f"falošný sklon PRAVIDELNE, takže má byť "
+                       f"{t.FRAC_BITS_MARGIN} bitov pod ňou, teda najviac "
+                       f"{s_margin:.4f} m – `frac_bits` dala {bits} bitov.")
     # A druhá strana toho istého: na hrubých zoomoch sa nemá platiť za nič.
     if t.frac_bits(t.tile_m_per_px(5)) != 0:
         bad.append("z5: taký hrubý pixel znesie celý meter, ale `frac_bits` "
                    "si pýta zlomkové bity – to je bajt navyše na dlaždicu "
                    "za presnosť, ktorú tam nikto neuvidí.")
 
-    # ---------- 2. priemer len nadol ----------
+    # ---------- 2. priemeruje sa, až keď je čo priemerovať ----------
+    # Hranica NIE JE `pixel >= bunka`. `average` je box filter cez prekryté
+    # bunky, takže tesne nad bunkou mu padne raz jedna, raz dve – striedavo
+    # najbližší sused a priemer dvojice, čiže rytmus plošiniek a z neho tá istá
+    # mriežka ako pri zväčšovaní. Namerané čísla sú pri `AVERAGE_RATIO`
+    # vo `lib/cell.py`.
     for mriezka in (1.0, 5.0, 10.0, 20.0, 31.0):
         for z in ZOOMS:
             px = t.tile_m_per_px(z)
             r = t.resampling(px, mriezka)
-            if px < mriezka and r == "average":
+            if px < t.AVERAGE_RATIO * mriezka and r == "average":
+                bad.append(f"model {mriezka:g} m, z{z} (pixel {px:.1f} m): pixel "
+                           f"nie je ani {t.AVERAGE_RATIO:g}× hrubší než bunka, "
+                           f"ale prevzorkúva sa `average` – ten tu prekryje raz "
+                           f"jednu bunku, raz dve, a z tých plošiniek spraví "
+                           f"hillshade mriežku.")
+            if px >= t.AVERAGE_RATIO * mriezka and r != "average":
                 bad.append(f"model {mriezka:g} m, z{z} (pixel {px:.1f} m): DEM sa "
-                           f"ZVÄČŠUJE, ale prevzorkúva sa `average` – ten pri "
-                           f"zväčšovaní zdegeneruje na najbližšieho suseda "
-                           f"a z každej bunky modelu vypadne štvorček.")
-            if px >= mriezka and r != "average":
-                bad.append(f"model {mriezka:g} m, z{z} (pixel {px:.1f} m): DEM sa "
-                           f"zmenšuje, tam sa musí priemerovať (`average`), "
-                           f"nie `{r}`.")
+                           f"zmenšuje aspoň {t.AVERAGE_RATIO:g}×, tam sa musí "
+                           f"priemerovať (`average`), nie `{r}`.")
+    # A hlavne: v pásme tesne nad bunkou sa `average` vrátiť NESMIE. Je to tá
+    # istá chyba ako pri zväčšovaní a práve tú bolo vidieť na mape aj potom,
+    # čo sa opravilo zväčšovanie.
+    if t.resampling(25.0, 20.0) == "average":
+        bad.append("Pixel 25 m nad bunkou 20 m (z12 pri Sonnym) sa prevzorkúva "
+                   "`average` – nameraných 5,45 proti 4,07 pri `cubicspline` "
+                   "(a 5,36 proti 0,53 na samotnom warpe). To je tá mriežka, "
+                   "ktorú bolo vidieť na mape aj po oprave zväčšovania, "
+                   "a `cubicspline` je tu zadarmo.")
     # Bez známej mriežky sa nesmie hádať – ostáva doterajšie správanie.
     if t.resampling(10.0, 0.0) != "average":
         bad.append("Bez známej mriežky modelu musí `resampling` ostať pri "

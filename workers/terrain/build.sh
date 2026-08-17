@@ -6,14 +6,15 @@
 # regiónom, modelom a maxzoomom ich už len stiahne. (Do GitHub releasov sa
 # nepublikuje nič – rozpis je vo `workers/drive/store.py`.)
 #
-# MENO ASSETU NESIE ZDROJ (`terrain-<kľúč>-<model>-z<maxzoom>-v3.pmtiles`):
+# MENO ASSETU NESIE ZDROJ (`terrain-<kľúč>-<model>-z<maxzoom>-v4.pmtiles`):
 # tieňovanie zo Sonnyho a z DMR 3.5 nie je to isté a jedno sa nesmie vydávať
 # za druhé – preto sa meno pri ústupe na Sonnyho prepočíta.
 #
-# A NESIE AJ PODOBU KÓDOVANIA (`-v3`). Meno je sľub, a pri sklade je to sľub
-# aj o tom, čo v tých dlaždiciach je: `v3` má zvislý krok podľa zoomu
-# a prevzorkovanie podľa smeru (rozpis vo `workers/terrain/tiles.py`), kým
-# staršie majú výšku zaokrúhlenú na celé metre a v tieňovaní tkanú mriežku.
+# A NESIE AJ PODOBU KÓDOVANIA (`-v4`). Meno je sľub, a pri sklade je to sľub
+# aj o tom, čo v tých dlaždiciach je: `v4` priemeruje až od dvojnásobku bunky
+# modelu (rozpis vo `workers/lib/cell.py`), `v3` mal zvislý krok podľa zoomu,
+# ale tesne nad bunkou ešte `average` – a s ním mriežku; staršie majú navyše
+# výšku zaokrúhlenú na celé metre.
 # Bez tej prípony by sa oprava na už spočítanom regióne neprejavila – sklad
 # by vrátil staré dlaždice a build by bol zelený. To isté číslo je v kľúči
 # cache (`workers/plan/cache-keys.sh`), lebo je to tá istá otázka.
@@ -49,7 +50,7 @@ REBUILD="${TERRAIN_REBUILD:-false}"
 # (strop veľkosti ho môže zraziť), takže sa meno skladá funkciou a volá sa
 # dvakrát: raz s tým želaným, keď sa hľadá v sklade, a raz s vyrobeným,
 # keď sa nahráva.
-asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}-v3.pmtiles"; }
+asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}-v4.pmtiles"; }
 
 # Hotové = leží tu hotový archív. Kým to bol strom PNG, stačilo „priečinok
 # nie je prázdny" – lenže polovica stromu je tiež neprázdny priečinok.
