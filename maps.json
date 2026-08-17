@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-17T12:36:19Z",
+  "_updated_at": "2026-08-17T12:37:05Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -178,6 +178,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n",
             "file": "bratislavsky-test4km2.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1qNNzADi79dYsgkYP41hNBG5_cAZCAlJv",
+                "file": "bratislavsky-test4km2.aar",
+                "link": "https://drive.google.com/file/d/1qNNzADi79dYsgkYP41hNBG5_cAZCAlJv/view",
+                "run": "134",
+                "size": 127904606,
+                "updated_at": "2026-08-17T12:37:05Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1l0T0zNDlGN7VN9U5TmE1YP5kDIdtvk2n",
                 "file": "bratislavsky-test4km2.zip",
@@ -196,6 +204,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e",
             "file": "bratislavsky-test4km2-search.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1IlgejBKUmEv3ArhYY-F_6QIklbpMx_bE",
+                "file": "bratislavsky-test4km2-search.aar",
+                "link": "https://drive.google.com/file/d/1IlgejBKUmEv3ArhYY-F_6QIklbpMx_bE/view",
+                "run": "134",
+                "size": 5127774,
+                "updated_at": "2026-08-17T12:37:05Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1XJH4Id4K-2M2I14AVk2K1tAPY7xeLk4e",
                 "file": "bratislavsky-test4km2-search.zip",
@@ -214,6 +230,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a",
             "file": "bratislavsky-test4km2-tienovanie.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=14SWOTmrzHCmKyQvw9_PRgiytsBjEj3Nb",
+                "file": "bratislavsky-test4km2-tienovanie.aar",
+                "link": "https://drive.google.com/file/d/14SWOTmrzHCmKyQvw9_PRgiytsBjEj3Nb/view",
+                "run": "134",
+                "size": 1045165,
+                "updated_at": "2026-08-17T12:37:05Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1IUUndGa9d6jcVB6KVyIkgFtYytwcRA5a",
                 "file": "bratislavsky-test4km2-tienovanie.zip",
@@ -232,6 +256,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M",
             "file": "bratislavsky-test4km2-vrstevnice-skaly.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1UwLHFbN9fqtOD0GvzeE_ff5hn07aZ-Dl",
+                "file": "bratislavsky-test4km2-vrstevnice-skaly.aar",
+                "link": "https://drive.google.com/file/d/1UwLHFbN9fqtOD0GvzeE_ff5hn07aZ-Dl/view",
+                "run": "134",
+                "size": 150331,
+                "updated_at": "2026-08-17T12:37:05Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1HwV43ubH8Ifz0iXP6F3vPWY3_JomNa0M",
                 "file": "bratislavsky-test4km2-vrstevnice-skaly.zip",
@@ -265,7 +297,7 @@
           "trails": "tiles/bratislavsky_test4-trails.pmtiles"
         },
         "trails_maxzoom": 14,
-        "updated_at": "2026-08-17T12:36:19Z"
+        "updated_at": "2026-08-17T12:37:05Z"
       },
       "presovsky": {
         "bbox": [
