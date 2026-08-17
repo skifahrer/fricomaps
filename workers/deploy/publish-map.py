@@ -313,6 +313,22 @@ def tienovanie_subory(site, man):
             if n.endswith("-terrain.pmtiles")]
 
 
+def hladanie_subory(site, man):
+    """Súbory balíka `search` – SQLite FTS5 index na offline hľadanie.
+
+    Jeden súbor, presunutý workers/search/build.sh do `_site/tiles/` ako
+    `search-index.db`. Hľadá sa podľa PRÍPONY MENA a slova „search" v nej
+    (rovnaké pravidlo, akým appka skenuje stiahnutý priečinok, nie pevné
+    meno – `.db` súbor s „search" v mene), z rovnakého dôvodu ako
+    `tienovanie_subory`: `tiles/` je spoločný pre všetky vrstvy.
+    """
+    base = os.path.join(site, "tiles")
+    if not os.path.isdir(base):
+        return []
+    return [os.path.join(base, n) for n in sorted(os.listdir(base))
+            if n.endswith(".db") and "search" in n.lower()]
+
+
 def obsah(kind, man, fmt="zip"):
     """`obsah.json` do balíka – to, čo kedysi nieslo meno súboru."""
     reg = catalog.region_entry(man)
@@ -420,6 +436,8 @@ def main():
          args.site, vrstvy_subory(args.site, man)),
         ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (raster .pmtiles)",
          args.site, tienovanie_subory(args.site, man)),
+        ("search", "vyhľadávací index pre offline hľadanie (SQLite FTS5)",
+         args.site, hladanie_subory(args.site, man)),
     ]
     # WIKIPÉDIA SA PRIDÁ, LEN KEĎ O NEJ TENTO BEH VIE. Odkedy má vlastnú
     # pipeline (`.github/workflows/wiki.yml`), Build map články nesťahuje –

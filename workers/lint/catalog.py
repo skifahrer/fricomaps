@@ -23,11 +23,11 @@ import sys
 
 import yaml
 
-DRUHY = {"mapa", "vrstevnice-skaly", "tienovanie", "wikipedia"}
+DRUHY = {"mapa", "vrstevnice-skaly", "tienovanie", "wikipedia", "search"}
 # Meno balíka: `<kraj>[-<výsek>][-testNkm2]` + prípona druhu. Sedí to s
 # `zaklad()` a `meno()` vo `workers/deploy/publish-map.py`.
 MENO = re.compile(r"^[a-z0-9_]+(-[a-z0-9_]+)*(-test[0-9.]+km2)?"
-                  r"(-vrstevnice-skaly|-tienovanie|-wikipedia)?\.zip$")
+                  r"(-vrstevnice-skaly|-tienovanie|-wikipedia|-search)?\.zip$")
 CATALOG = "maps.json"
 WORKFLOW = ".github/workflows/build-map.yml"
 # Samostatné pipeline, ktoré do TOHO ISTÉHO katalógu zapisujú tiež – tým istým
