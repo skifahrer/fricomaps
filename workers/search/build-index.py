@@ -168,7 +168,7 @@ class SearchHandler(osmium.SimpleHandler):
     def way(self, w):
         """Zbierame cesty so značkami."""
         if w.tags and w.tags.get("name"):
-            self.ways[w.id] = (w.tags.get("name"), dict(w.tags), list(w.nd_ids()))
+            self.ways[w.id] = (w.tags.get("name"), dict(w.tags), [n.ref for n in w.nodes])
 
     def relation(self, r):
         """Zbierame relácie type=route."""
