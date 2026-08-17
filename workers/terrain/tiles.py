@@ -70,26 +70,16 @@ import numpy as np
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _WORKERS = os.path.dirname(_HERE)
 sys.path.insert(0, os.path.join(_WORKERS, "lib"))
-from cell import dem_cell_metres, tile_m_per_px  # noqa: E402
+# `SLOPE_EPS`, `frac_bits` a `resampling` sú čistá aritmetika nad mriežkou
+# a zoomom, tak bývajú vo `lib/cell.py` vedľa `terrain_zoom_for` – je to tá
+# istá otázka z troch strán. A hlavne: `lint/terrain.py` ich musí vedieť
+# spustiť, a lintovací job nemá numpy (viď hlavičku `lib/cell.py`).
+from cell import (SLOPE_EPS, dem_cell_metres, frac_bits,  # noqa: E402
+                  resampling, tile_m_per_px)
 
 R_EARTH = 6378137.0
 ORIGIN = math.pi * R_EARTH  # 20037508.342789244
 TILE = 256
-
-# Sklon, ktorý sa v tieňovaní už nedá odlíšiť od roviny. Pri svetle pod 45°
-# mení sklon σ jas asi o 0,7·σ, takže 2 % sú ~3,6 z 255 odtieňov – a v štýle
-# to ide ešte cez `hillshade-exaggeration` 0,25–0,4, čiže pod jeden odtieň.
-#
-# JEDNO ČÍSLO, DVE POUŽITIA, a obe hovoria to isté („pod týmto nie je čo
-# tieňovať"): vyberá zvislý krok kódovania (`frac_bits`) a rozhoduje, ktorá
-# dlaždica je rovina a nemusí vzniknúť (`je_rovina`). Keby to boli dve čísla,
-# raz by sa rozišli a jedno by tvrdilo, že tam nič nie je, kým druhé by tam
-# platilo bity za presnosť.
-SLOPE_EPS = 0.02
-
-# Jemnejšie než 1/64 m nemá čo pridať: taký krok je pod šumom každého modelu,
-# ktorý sem chodí, a v PNG je to už len nestlačiteľný bajt navyše.
-MAX_FRAC_BITS = 6
 
 
 def merc_x(lon):
@@ -169,30 +159,6 @@ def png_rgb(arr):
         + chunk(b"IDAT", zlib.compress(data, 9))
         + chunk(b"IEND", b"")
     )
-
-
-def frac_bits(px_m):
-    """Koľko zlomkových bitov výšky (bajt B) treba pri pixeli `px_m` metrov.
-
-    Krok kódovania je 2^-bits metra a má ostať pod `SLOPE_EPS × pixel` –
-    viď hlavičku súboru. Nula znamená celé metre, teda presne to, čo sa
-    zapisovalo doteraz; na nízkych zoomoch teda dlaždice nerastú vôbec.
-    """
-    want = SLOPE_EPS * px_m
-    if not (want > 0) or want >= 1.0:
-        return 0
-    return min(MAX_FRAC_BITS, int(math.ceil(-math.log2(want))))
-
-
-def resampling(px_m, cell_m):
-    """`average` keď sa DEM zmenšuje, `cubicspline` keď sa zväčšuje.
-
-    Bez známej bunky modelu ostáva `average`: je to doterajšie správanie
-    a pri zmenšovaní je správne. Zväčšovanie je to, čo robí mriežku.
-    """
-    if not cell_m or px_m >= cell_m:
-        return "average"
-    return "cubicspline"
 
 
 def terrarium(vysky, bits):

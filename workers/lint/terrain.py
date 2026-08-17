@@ -21,7 +21,10 @@ aby to čokoľvek povedalo. Preto sa strážia:
      `cubicspline`.
   3. WARP MUSÍ NIESŤ ZLOMOK. `-ot Int16` vo `warp_level` by zlomok zahodil
      ešte pred kódovaním a body 1 a 2 by boli zbytočné – krok by bol metrový
-     bez ohľadu na to, koľko bitov mu potom dáme.
+     bez ohľadu na to, koľko bitov mu potom dáme. A `terrarium` musí zlomok
+     ZAOKRÚHLIŤ na krok, nie orezať maskou spodných bitov: maska je `floor`,
+     čiže posun každej výšky nadol – systematický, teda nie šum, ale schod
+     na hranici zoomov.
 
   4. A ŠTVRTÁ, INÁ VEC: podoba kódovania je v mene assetu v sklade
      (`workers/terrain/build.sh`) aj v kľúči cache
@@ -31,7 +34,6 @@ aby to čokoľvek povedalo. Preto sa strážia:
 
 Spustiť sa dá aj lokálne: `python3 workers/lint/terrain.py`.
 """
-import importlib.util
 import os
 import re
 import sys
@@ -41,22 +43,22 @@ _WORKERS = os.path.dirname(_HERE)
 TILES = os.path.join(_WORKERS, "terrain", "tiles.py")
 BUILD = os.path.join(_WORKERS, "terrain", "build.sh")
 KEYS = os.path.join(_WORKERS, "plan", "cache-keys.sh")
+# Rozhodovanie („aký krok, ktorý resampling") sa SPÚŠŤA, nie číta zo zdrojáku –
+# a preto býva vo `lib/cell.py`, ktoré nemá numpy. Lintovací job má len
+# `checkout` a holý `python3`: `terrain/tiles.py` by sa tu naimportovať nedalo
+# (numpy) a kontrola by sa musela ticho preskakovať. To, čo je nad poľami
+# (kódovanie do RGB), sa preto kontroluje na texte, tak ako `-ot Int16`.
+sys.path.insert(0, os.path.join(_WORKERS, "lib"))
+import cell  # noqa: E402
 
 # Zoomy, na ktorých tieňovanie naozaj beží: `terrain/build.sh` púšťa
 # `tiles.py` od z5 a `terrain_maxzoom: auto` dá najviac z16.
 ZOOMS = range(5, 17)
 
 
-def load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
 def main():
     bad = []
-    t = load("terrain_tiles", TILES)
+    t = cell
 
     # ---------- 1. zvislý krok ide za pixelom ----------
     # BEZ ÚĽAVY NA `MAX_FRAC_BITS`: ten strop je poistka proti nezmyselne
@@ -82,42 +84,18 @@ def main():
                    "si pýta zlomkové bity – to je bajt navyše na dlaždicu "
                    "za presnosť, ktorú tam nikto neuvidí.")
 
-    # ---------- 1b. kóduje sa zaokrúhlením, nie orezaním ----------
-    # Maskovanie spodných bitov je o riadok kratšie a je to `floor`: posunulo
-    # by KAŽDÚ výšku nadol až o celý krok. Systematicky, takže nie ako šum, ale
-    # ako schod na hranici zoomov – v 3D teréne terén pri priblížení nadskočí.
-    import numpy as np
-    vzorka = np.linspace(100.0, 101.0, 4096).reshape(64, 64)
-    for bits in (0, 2, 4, 6):
-        rgb = t.terrarium(vzorka, bits)
-        v = (rgb[..., 0].astype(np.int64) << 16 | rgb[..., 1].astype(np.int64) << 8
-             | rgb[..., 2].astype(np.int64))
-        spat = v / 256.0 - 32768.0
-        krok = 2.0 ** -bits
-        chyba = float(np.abs(spat - vzorka).max())
-        if chyba > krok / 2 + 1e-9:
-            bad.append(f"`terrarium` pri {bits} bitoch posúva výšku až o "
-                       f"{chyba:g} m, čiže viac než pol kroku ({krok / 2:g} m) "
-                       f"– to nie je zaokrúhlenie, ale orezanie nadol.")
-        hodnoty = np.unique(spat)
-        if len(hodnoty) > 1:
-            rozostup = float(np.diff(hodnoty).min())
-            if abs(rozostup - krok) > 1e-9:
-                bad.append(f"`terrarium` pri {bits} bitoch dáva krok "
-                           f"{rozostup:g} m namiesto {krok:g} m.")
-
     # ---------- 2. priemer len nadol ----------
-    for cell in (1.0, 5.0, 10.0, 20.0, 31.0):
+    for mriezka in (1.0, 5.0, 10.0, 20.0, 31.0):
         for z in ZOOMS:
             px = t.tile_m_per_px(z)
-            r = t.resampling(px, cell)
-            if px < cell and r == "average":
-                bad.append(f"model {cell:g} m, z{z} (pixel {px:.1f} m): DEM sa "
+            r = t.resampling(px, mriezka)
+            if px < mriezka and r == "average":
+                bad.append(f"model {mriezka:g} m, z{z} (pixel {px:.1f} m): DEM sa "
                            f"ZVÄČŠUJE, ale prevzorkúva sa `average` – ten pri "
                            f"zväčšovaní zdegeneruje na najbližšieho suseda "
                            f"a z každej bunky modelu vypadne štvorček.")
-            if px >= cell and r != "average":
-                bad.append(f"model {cell:g} m, z{z} (pixel {px:.1f} m): DEM sa "
+            if px >= mriezka and r != "average":
+                bad.append(f"model {mriezka:g} m, z{z} (pixel {px:.1f} m): DEM sa "
                            f"zmenšuje, tam sa musí priemerovať (`average`), "
                            f"nie `{r}`.")
     # Bez známej mriežky sa nesmie hádať – ostáva doterajšie správanie.
@@ -137,6 +115,22 @@ def main():
     elif not re.search(r'"-ot",\s*"Float32"', warp):
         bad.append("`warp_level` nemá `-ot Float32`; skontroluj, či zlomok "
                    "výšky prežije až po kódovanie.")
+
+    # ---------- 3b. kóduje sa zaokrúhlením, nie orezaním ----------
+    # Maskovanie spodných bitov (`v >> k << k`) je o riadok kratšie a je to
+    # `floor`: posunulo by KAŽDÚ výšku nadol až o celý krok. Systematicky,
+    # takže nie ako šum, ale ako schod na hranici zoomov – v 3D teréne by terén
+    # pri priblížení nadskočil. Kontroluje sa na texte, lebo `terrarium` počíta
+    # nad poľom a numpy tu nie je (viď hlavičku).
+    enc = src[src.index("def terrarium"):]
+    enc = enc[:enc.index("\ndef ", 1)] if "\ndef " in enc[1:] else enc
+    if re.search(r">>\s*\(?\s*8\s*-\s*bits", enc):
+        bad.append("`terrarium` reže zlomok maskou (`>> (8 - bits)`), a to je "
+                   "`floor` – každá výška klesne až o celý krok. Musí sa "
+                   "zaokrúhliť NA krok (`np.rint(… / krok) * krok`).")
+    elif "np.rint" not in enc:
+        bad.append("`terrarium` nezaokrúhľuje (`np.rint`); bez toho sa zlomok "
+                   "oreže nadol a výšky sa systematicky posunú.")
 
     # ---------- 4. podoba kódovania: sklad aj cache ----------
     build = open(BUILD).read()
