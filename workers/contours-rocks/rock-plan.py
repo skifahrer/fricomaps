@@ -23,6 +23,13 @@ import sys
 sys.path.insert(0, os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
 from watch import hms  # noqa: E402
+import cell  # noqa: E402
+
+# Mriežku rastra sa pýta aj tieňovanie (`terrain/tiles.py`) – dva prevody
+# stupňov na metre by sa raz rozišli, tak je ten prevod v `lib/cell.py`.
+# Ostáva pod týmto menom: `rock-areas.py` aj `slope-chunks.py` si ho berú
+# odtiaľto (`plan.dem_cell_metres`) a nemajú dôvod vedieť, kde býva.
+dem_cell_metres = cell.dem_cell_metres
 
 METRIC = "EPSG:3035"  # LAEA Európa – pre naše šírky skresľuje plochy minimálne
 # Sklon sa ukladá ako Int16 v stotinách stupňa. Predtým to bol Byte s krokom
@@ -97,21 +104,6 @@ def to_metric(bbox):
     xs = [float(v) for v in out[0::3]]
     ys = [float(v) for v in out[1::3]]
     return min(xs), min(ys), max(xs), max(ys)
-
-
-def dem_cell_metres(dem, lat):
-    """Rozmer bunky zdrojového DEM v metroch – aby sa dal vypísať skutočný
-    detail, nie len tá mriežka, na ktorej sa sklon počíta."""
-    try:
-        info = json.loads(run(["gdalinfo", "-json", dem]).stdout)
-        gt = info["geoTransform"]
-        wkt = info.get("coordinateSystem", {}).get("wkt", "")
-        dx, dy = abs(gt[1]), abs(gt[5])
-        if wkt.startswith("GEOGCRS") or wkt.startswith("GEOGCS"):
-            return dx * 111320 * math.cos(math.radians(lat)), dy * 110540
-        return dx, dy
-    except Exception:
-        return None, None
 
 
 def chunk_plan(x0, y0, x1, y1, res, chunk_cells, bbox, side_m=0):

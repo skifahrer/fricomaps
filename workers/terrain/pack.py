@@ -106,10 +106,14 @@ def main():
     # zadania by sľuboval územie, ktoré v archíve nie je. Meno je sľub
     # o rozsahu a hlavička `.pmtiles` tiež – klient sa podľa nej rozhoduje,
     # kde vôbec pýtať dlaždice.
+    #
+    # ZO VŠETKÝCH ZOOMOV, nie z maxzoomu. Kým sa vynechávali len dlaždice mimo
+    # kraja, bola množina na maxzoome tá najväčšia a stačila. `tiles.py` ale
+    # vynecháva aj dlaždice bez reliéfu – rovina má vlastnú dlaždicu len na
+    # nízkom zoome – takže by rozsah z maxzoomu opísal hory a klient by nad
+    # rovinou nepýtal dlaždice ANI na tých nízkych zoomoch, kde sú.
     w = s = e = n = None
     for _tid, z, x, y, _p in dlazdice:
-        if z != maxz:
-            continue
         tw, ts, te, tn = tile_bounds(z, x, y)
         w = tw if w is None else min(w, tw)
         s = ts if s is None else min(s, ts)
