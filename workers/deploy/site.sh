@@ -13,9 +13,16 @@
 # a nie vypĺňané prázdnymi hodnotami. Prázdna hodnota by znamenala „vrstva je,
 # len je prázdna", a to je iné tvrdenie.
 set -euo pipefail
-cp poc/web/index.html poc/web/app.js poc/web/themes.js \
-   poc/web/devmode.js poc/web/patterns.js poc/web/icon-sources.js \
-   poc/web/map-types.js poc/web/style-overrides.json _site/
+# CELÝ `poc/web/`, nie vymenovaný zoznam. Zoznam tu bol a rozišiel sa
+# s priečinkom v ten deň, keď pribudol `layer-style.js`: súbor je
+# v repozitári, do `_site` ho nikto neskopíroval a `devmode.js` si ho
+# importuje. Modulový graf tým padol celý – prehliadač nenačíta `app.js`,
+# mapa sa vôbec nevykreslí a NIKTO nič nepovie: build je zelený, `_site`
+# prejde kontrolou (tá pozerá na štýly a dlaždice, nie na moduly) aj smoke
+# test. Priečinok je celý viewer a nič iné, takže „skopíruj ho" je jediná
+# odpoveď, ktorá sa nemá ako rozísť s tým, čo si viewer naozaj pýta
+# (pravidlo 1). Stráži to `workers/lint/viewer.py`.
+cp poc/web/*.js poc/web/*.json poc/web/index.html _site/
 
 # Hranica regiónu (`_site/region.geojson`) je voliteľná: keď sa v `plan`
 # nestiahol polygón, mapa ide bez nej – a v manifeste vtedy nesmie byť.

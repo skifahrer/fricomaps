@@ -439,15 +439,82 @@
   <div id="zoom">zoom –</div>
 
   <div id="error">
-    <h2>Dlaždice sa nepodarilo načítať</h2>
-    <p>Pravdepodobne ešte nebola spustená pipeline, ktorá vygeneruje PMTiles.</p>
-    <p>Spusti workflow <b>„Build map (PBF → PMTiles) &amp; deploy Pages"</b> na GitHube
+    <h2 id="error-title">Dlaždice sa nepodarilo načítať</h2>
+    <p id="error-text">Pravdepodobne ešte nebola spustená pipeline, ktorá vygeneruje PMTiles.
+       Spusti workflow <b>„Mapa · Build map"</b> na GitHube
        (Actions → Run workflow), vyber región a počkaj na nasadenie.</p>
     <p id="error-detail"></p>
   </div>
 
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/pmtiles@3/dist/pmtiles.js"></script>
+  <!--
+    STRÁŽCA ŠTARTU. Nie je to modul a je zámerne inline: keď sa nenačíta
+    niektorý súbor z modulového grafu, `app.js` sa NESPUSTÍ – a s ním ani
+    hláška, ktorú by inak ukázal. Presne to sa raz stalo: `layer-style.js`
+    bol v repozitári, ale `workers/deploy/site.sh` ho nekopíroval do `_site`,
+    `devmode.js` si ho importuje, prehliadač na 404 zahodil celý graf a na
+    stránke bola BIELA PLOCHA. Build zelený, smoke test zelený, mapa žiadna
+    a nikde ani slovo – tichý omyl (pravidlo 8 v CLAUDE.md).
+
+    Chytá sa to z dvoch strán, lebo ani jedna sama nestačí: `error` v capture
+    fáze zachytí zlyhané načítanie súboru (tie eventy nebublajú) aj výnimku
+    v module, a budík zachytí prípad, keď sa nič nezlomí nahlas a viewer len
+    ticho nedobehne. `app.js` na konci nastaví `window.__viewerBooted`.
+  -->
+  <script>
+    (function () {
+      var VYPRSANIE_MS = 15000;
+      var ukazane = false;
+
+      function ukaz(nadpis, detail) {
+        if (ukazane || window.__viewerBooted) return;
+        ukazane = true;
+        var box = document.getElementById("error");
+        var t = document.getElementById("error-title");
+        var p = document.getElementById("error-text");
+        var d = document.getElementById("error-detail");
+        if (!box) return;
+        if (t) t.textContent = nadpis;
+        if (p) {
+          p.innerHTML =
+            "Stránka sa načítala, ale viewer sa nespustil, takže sa nevykreslí " +
+            "žiadna mapa. Nie je to chyba dát – tie sú nasadené; nenabehol " +
+            "kód stránky. Skús obnoviť stránku (Ctrl-F5); ak to trvá, je to " +
+            "chyba buildu a patrí do <b>Actions → Mapa · Build map</b>.";
+        }
+        if (d) d.textContent = detail || "";
+        box.style.display = "block";
+      }
+
+      // Zlyhané načítanie súboru (script/link/img) alebo výnimka v module.
+      window.addEventListener("error", function (e) {
+        var el = e.target;
+        if (el && el !== window && (el.src || el.href)) {
+          // Pri module hlási prehliadač chybu na SAMOTNOM `<script>`, aj keď
+          // v skutočnosti chýba niektorý jeho import – meno tu preto nesmie
+          // znieť ako „toto je ten chýbajúci súbor".
+          ukaz("Časť stránky sa nenačítala",
+               "Nenačítalo sa: " + (el.src || el.href) +
+               " — pri module to znamená ten súbor ALEBO niektorý z jeho " +
+               "importov; ktorý presne, povie záložka Network (hľadaj 404).");
+        } else if (e.message) {
+          ukaz("Viewer spadol pri štarte", e.message);
+        }
+      }, true);
+
+      window.addEventListener("unhandledrejection", function (e) {
+        ukaz("Viewer spadol pri štarte", String((e.reason && e.reason.message) || e.reason || ""));
+      });
+
+      window.addEventListener("load", function () {
+        setTimeout(function () {
+          ukaz("Viewer sa nespustil",
+               "Za " + (VYPRSANIE_MS / 1000) + " s sa mapa neinicializovala.");
+        }, VYPRSANIE_MS);
+      });
+    })();
+  </script>
   <script type="module" src="./app.js"></script>
 </body>
 </html>
