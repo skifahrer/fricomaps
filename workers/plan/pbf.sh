@@ -47,7 +47,11 @@ if [ -n "$CUSTOM_URL" ]; then
   BBOX="$OPT_CUSTOM_BBOX"
   if [ -z "$BBOX" ]; then
     sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
-    BBOX=$(osmium fileinfo -g header.boxes data/region.osm.pbf | head -1 | tr -d '() ')
+    # ŽIADNA RÚRA Z `osmium`: `head -1` (aj `sed …q`) zavrie rúru pod stále
+    # píšucim producentom, ten dostane EPIPE a `pipefail` zhodí priradenie.
+    # Výstup ide najprv do premennej, prvý riadok sa berie až z nej.
+    BOXES=$(osmium fileinfo -g header.boxes data/region.osm.pbf)
+    BBOX=$(head -1 <<<"$BOXES" | tr -d '() ')
   fi
   if [ -z "$BBOX" ]; then
     echo "::error::PBF nemá bbox v hlavičke – vyplň input custom_bbox (west,south,east,north)."

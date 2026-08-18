@@ -82,4 +82,9 @@ echo "count=$COUNT" >> "$GITHUB_OUTPUT"
 echo "mb=$MB" >> "$GITHUB_OUTPUT"
 echo "enabled=$([ "$COUNT" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 echo "Články: $COUNT, $MB MB v wiki-out/ (krajina ${COUNTRY:-?}, jazyky navyše ${LANGS:-žiadne}, formát $FMT)"
-ls -1 wiki-out | head -5
+# `ls … | head -5` je pasca: `head` po piatich riadkoch skončí a zavrie rúru,
+# `ls` dopisuje do zavretej rúry, dostane EPIPE – a `pipefail` hore z toho
+# spraví PÁD SKRIPTU na poslednom riadku, keď je práca dávno hotová. Článkov
+# sú tisíce, takže `ls` písať naozaj má čo. Preto here-string, nie rúra.
+ZOZNAM=$(ls -1 wiki-out)
+head -5 <<<"$ZOZNAM"

@@ -117,14 +117,36 @@ done
 # ostali z predošlého nasadenia. Toto je tá jediná otázka, na ktorej
 # návštevníkovi záleží: čo vidí, keď otvorí adresu. Jekyll z README vyrobí
 # stránku bez `id="map"`.
-if curl -sL "$BASE/" | grep -q 'id="map"'; then
+#
+# STIAHNE SA RAZ DO SÚBORU a až potom sa hľadá. `curl … | grep -q` je pasca:
+# `grep -q` po PRVEJ zhode skončí a zavrie rúru, curl dopíše do zavretej rúry,
+# dostane EPIPE a končí s 23 – a `set -o pipefail` hore z toho spraví nenulový
+# pipeline, HOCI GREP ZHODU NAŠIEL. Je to preteky (zápis curlu proti koncu
+# grepu), takže to padalo len občas a s hláškou „na koreni nie je mapa", kým
+# mapa tam celý čas bola. Beh 32144952677: všetkých 13 kontrol ✓ a spadlo
+# práve toto. Vyskočilo to, keď za `id="map"` pribudlo v `index.html` pár kB
+# (strážca štartu): za zhodou ostávalo 2,7 kB, po zmene 5,8 kB – a čím viac
+# curlu ostane dopísať, tým skôr na zavretú rúru narazí.
+#
+# A opakuje sa to ako všetko ostatné: jedna zaseknutá požiadavka po ÚSPEŠNOM
+# nasadení nemá zhodiť build, keď je mapa na svojom mieste.
+KOREN=$(mktemp)
+trap 'rm -f "$KOREN"' EXIT
+KOD=000
+for attempt in 1 2 3 4 5; do
+  KOD=$(curl -sL -o "$KOREN" -w '%{http_code}' "$BASE/" || echo 000)
+  [ "$KOD" = 200 ] && grep -q 'id="map"' "$KOREN" && break
+  sleep $(( attempt * 5 ))
+done
+
+if grep -q 'id="map"' "$KOREN"; then
   echo "  ✓ na koreni stránky je mapa"
 elif [ "$PAGES_BUILD_TYPE" != 'workflow' ]; then
   # Príčinu poznáme z prvého kroku a opraviť sa dá len v nastaveniach
   # repozitára – červený beh by k tomu nič nepridal.
   echo "::warning::Na $BASE/ nie je mapa, ale README: zdroj Pages je vetva (build_type=$PAGES_BUILD_TYPE), takže obsah prepísal zabudovaný Jekyll builder. Settings → Pages → Source: 'GitHub Actions'."
 else
-  echo "::error::Na $BASE/ nie je mapa, hoci zdroj Pages je Actions – niečo je inak, než čakáme. Pozri, čo sa nasadilo."
+  echo "::error::Na $BASE/ nie je mapa (v HTML nie je \`id=\"map\"\`), hoci zdroj Pages je Actions. Posledná odpoveď: HTTP $KOD, $(wc -c < "$KOREN") B. Prvý riadok: $(head -c 120 "$KOREN" | tr -d '\n')"
   fail=1
 fi
 

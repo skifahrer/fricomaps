@@ -500,6 +500,13 @@ jobs:
       - name: "Viewer: na Pages ide všetko, čo si importuje"
         run: python3 workers/lint/viewer.py
 
+      # `curl … | grep -q` je pasca: `grep -q` po prvej zhode zavrie rúru,
+      # producent dostane EPIPE a `pipefail` z toho spraví pád, HOCI SA ZHODA
+      # NAŠLA. Sú to preteky, takže to prechádza roky a vyskočí, keď za zhodou
+      # pribudne pár kB (beh 32144952677: 13 kontrol ✓ a spadlo práve toto).
+      - name: "Rúry: predčasný čitateľ nevisí na živom producentovi"
+        run: python3 workers/lint/pipes.py
+
       # Dve tiché veci v hotovom štýle naraz (rozpis vo `workers/lint/style.mjs`):
       #
       # 1. `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že
