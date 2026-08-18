@@ -5,8 +5,9 @@ a z troch výberov zdrojov odvodí, čo sa vlastne ide počítať.
 
 PREČO: `workflow_dispatch` dovolí **najviac 10 inputov**. Mali sme ich 26,
 a workflow sa preto prestal načítať – beh skončil ako „failure" s nula jobmi,
-lebo GitHub ten súbor ani neprijal. Deväť najpoužívanejších vecí ostalo
-samostatnými inputmi, zvyšok sa píše do jedného poľa:
+lebo GitHub ten súbor ani neprijal. Desať najpoužívanejších vecí ostalo
+samostatnými inputmi – a to je STROP, formulár je plný, ďalší prepínač musí
+ísť sem – zvyšok sa píše do jedného poľa:
 
     rock_res=1 rock_maxzoom=15 trails=false
 
@@ -16,7 +17,10 @@ predvolené hodnoty. Ktoré to sú, sa časom mení: `rock_res` (mriežka na obr
 skál) sa prestavuje len s iným zdrojom výšok, kým rýchly test sa zapína
 a vypína pri každom behu – tak si vymenili miesto. Zapnutie je switch `test`,
 veľkosť štvorca ostala voľbou (`test_km2`, default 4 km²): jedno sa preklikáva
-stále, druhé skoro nikdy.
+stále, druhé skoro nikdy. To isté sa stalo s nasadením na Pages: bolo to
+voľbou `publish_pages`, ale je to otázka „kam to má ísť" a rozhoduje sa pri
+behu, tak je z toho switch. Publikovanie na Drive ostalo voľbou `publish` –
+sú to dve nezávislé páky a dá sa mať jedno bez druhého.
 
 TRI VÝBERY ZDROJA namiesto jedného `dem_source` a zoznamu `layers`:
 `contour_source` (vrstevnice), `rock_source` (skaly) a `shading_source`
@@ -31,7 +35,8 @@ by inak znamenal, že sa celý beh spustí s iným nastavením, než si myslíš
 Použitie:
     python3 workers/plan/options.py --options="rock_res=1" \\
         --rebuild=skaly --contour-source=sonny --rock-source=dmr5 \\
-        --shading-source=sonny --test=true --out=$GITHUB_OUTPUT
+        --shading-source=sonny --test=true --publish-pages=true \\
+        --out=$GITHUB_OUTPUT
 """
 import argparse
 import json
@@ -133,17 +138,6 @@ DEFAULTS = {
     # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
     # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
     "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
-    # Popri Drive sa hotová mapa vždy nasadzuje aj na GitHub Pages – živý
-    # odkaz, na ktorom viewer aj smoke test overia, že mapa naozaj funguje.
-    # `publish_pages=false` to vypne: `_site` sa postaví a skontroluje úplne
-    # rovnako (štýly aj manifest ďalej nesú adresu Pages, lebo z toho istého
-    # `_site` sa skladá aj balík na Drive), len sa nenahrá cez
-    # `actions/deploy-pages` a nespustí sa smoke test nasadenej stránky.
-    # Drive (`publish`) tým nie je dotknutý – to sú dve nezávislé páky, presne
-    # preto majú dve mená, nie jeden spoločný switch „publish". Hodí sa to
-    # napr. na forku bez zapnutých Pages, alebo keď sa nemá prepísať živá
-    # mapa polotovarom, kým Drive balík z toho istého behu prepísať treba.
-    "publish_pages": ("true", "nasadiť hotovú mapu aj na GitHub Pages (false = len na Drive)"),
     # To isté ešte raz ako `.aar` (Apple Archive, LZFSE) – iOS a macOS ho
     # rozbalia systémovo, bez tretej knižnice v aplikácii. Robí to vlastný job
     # na macOS, lebo nástroj `aa` je súčasť macOS a inde neexistuje; keď ho
@@ -177,6 +171,12 @@ MOVED = {
                    "nie voľba",
     "test": "je switch vo formulári (rýchly test na pár km²), nie voľba. "
             "Veľkosť štvorca je voľba `test_km2`",
+    # Bolo to voľbou, kým bol formulár plný. Desiate miesto sa uvoľnilo, takže
+    # je z toho switch – a starý zápis nesmie ticho prejsť ako neznámy kľúč
+    # ani, čo je horšie, ako platná voľba, ktorú už nikto nečíta.
+    "publish_pages": "je switch vo formulári (nasadiť na GitHub Pages), "
+                     "nie voľba. Publikovanie na Drive je samostatná voľba "
+                     "`publish`",
     # Články z Wikipédie majú od vytiahnutia z Build map VLASTNÝ workflow
     # (`.github/workflows/wiki.yml`) a s ním vlastné inputy. Kto sem napíše
     # `wiki_langs=…`, čakal by, že build stiahne články – a ten ich už nerobí.
@@ -257,6 +257,9 @@ def main():
     ap.add_argument("--test", default="false",
                     help="switch rýchleho testu: true = počítať len štvorec "
                          "s `test_km2` km²")
+    ap.add_argument("--publish-pages", default="true",
+                    help="switch nasadenia na GitHub Pages: false = mapa sa "
+                         "postaví a skontroluje, ale nenasadí")
     ap.add_argument("--dem-sources", default="",
                     help="cesta k dem-sources.json (default vedľa skriptu)")
     ap.add_argument("--out", default="")
@@ -402,12 +405,15 @@ def main():
         print(f"::error::Voľba „publish“ musí byť true alebo false, "
               f"nie „{values['publish']}“.", file=sys.stderr)
         return 1
-    # A to isté pre nasadenie na Pages: `publish_pages=0` by ho ticho vypol
-    # a mapa by na Pages ostala stará, hoci beh dobehol do zelena.
-    if values["publish_pages"] not in ("true", "false"):
-        print(f"::error::Voľba „publish_pages“ musí byť true alebo false, "
-              f"nie „{values['publish_pages']}“.", file=sys.stderr)
+    # Nasadenie na Pages je switch vo formulári, takže sem chodí hotové
+    # true/false z `inputs`. Kontroluje sa aj tak: skript sa dá spustiť ručne
+    # a `--publish-pages=nie` by inak ticho znamenalo „nenasadzuj".
+    pages_on = (args.publish_pages or "true").strip().lower()
+    if pages_on not in ("true", "false"):
+        print(f"::error::Switch „publish_pages“ musí byť true alebo false, "
+              f"nie „{args.publish_pages}“.", file=sys.stderr)
         return 1
+    values["publish_pages"] = pages_on
 
     # Interval vrstevníc je voľba (miesto vo formulári si vzal switch
     # `wikipedia`), takže sa musí kontrolovať tu – `contour_interval=päť` by

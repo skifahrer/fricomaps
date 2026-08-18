@@ -36,6 +36,7 @@ python3 workers/plan/options.py \
   --rock-source="$OPT_ROCK_SOURCE" \
   --shading-source="$OPT_SHADING_SOURCE" \
   --test="$OPT_TEST" \
+  --publish-pages="$OPT_PUBLISH_PAGES" \
   --summary="$OUT"
 
 # Do súhrnu behu aj do logu: súhrn sa číta z mobilu, log sa dá grepovať.

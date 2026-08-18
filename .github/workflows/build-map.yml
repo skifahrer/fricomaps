@@ -160,6 +160,23 @@ on:
           - skaly
           - teren
           - vsetko
+      # DESIATY A POSLEDNÝ INPUT. `workflow_dispatch` ich dovolí najviac 10
+      # a nad tým GitHub workflow ticho neprijme (beh bez jobov, červený
+      # krížik, prázdny log) – ďalší prepínač sa sem už nezmestí a musí ísť
+      # do `options`. Bolo to voľbou `publish_pages=false`, ale nasadenie na
+      # Pages je otázka „kam to má ísť", nie zriedka menené nastavenie:
+      # rozhoduje sa pri behu a je to jedno kliknutie, presne ako `test`.
+      #
+      # Vypnuté NEZNAMENÁ, že sa mapa nepostaví: `_site` vznikne a prejde
+      # kontrolou úplne rovnako (z toho istého `_site` je aj balík na Drive),
+      # len sa nenahrá cez `actions/deploy-pages` a nespustí sa smoke test
+      # nasadenej stránky. Publikovanie na Drive je nezávislá páka –
+      # `options: publish=false` – takže sa dá mať aj jedno bez druhého.
+      publish_pages:
+        description: "Nasadiť hotovú mapu na GitHub Pages (odškrtnuté = len na Drive)"
+        required: false
+        default: true
+        type: boolean
       # Napr. `crop_bbox=18.9,49.1,19.2,49.3 size_limit_mb=1200`.
       # Veľkosť rýchleho testu: `test_km2=8` (default 4).
       # Mriežka na obrys skál: `rock_res=1` (default auto).
@@ -416,6 +433,7 @@ jobs:
           OPT_ROCK_SOURCE: ${{ inputs.rock_source }}
           OPT_SHADING_SOURCE: ${{ inputs.shading_source }}
           OPT_TEST: ${{ inputs.test }}
+          OPT_PUBLISH_PAGES: ${{ inputs.publish_pages }}
         run: workers/plan/settings.sh
 
   # ---------- je v sklade terén pre toto územie? ----------
@@ -820,6 +838,7 @@ jobs:
             --rock-source='${{ inputs.rock_source }}' \
             --shading-source='${{ inputs.shading_source }}' \
             --test='${{ inputs.test }}' \
+            --publish-pages='${{ inputs.publish_pages }}' \
             --out="$GITHUB_OUTPUT"
 
       - name: Dnešný dátum do kľúča cache
