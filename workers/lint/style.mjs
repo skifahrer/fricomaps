@@ -2,12 +2,14 @@
 /**
  * Kontroly hotového štýlu. Volá ich `Kontrola · lint workflowov`.
  *
- * TRI VECI, VŠETKY TICHÉ:
+ * ŠTYRI VECI, VŠETKY TICHÉ:
  *   1. `fill` vrstva nad zmiešanou geometriou musí mať stráž (rozpis nižšie),
  *   2. odvodená vrstva (vzor, okraj) musí byť vidieť práve vtedy, keď je
  *      vidieť jej predloha,
  *   3. vzor plochy, ktorý má byť ROZSYP, nesmie mať prázdny šev dlaždice –
- *      z opakovania by bola mriežka prázdnych uličiek (v mape „raster").
+ *      z opakovania by bola mriežka prázdnych uličiek (v mape „raster"),
+ *   4. dôležitejšia cesta musí byť NAD menej dôležitou – inak sa na každej
+ *      križovatke kreslí účelová cesta cez diaľnicu.
  *
  * ČO STRÁŽI A PREČO. MapLibre `fill` vrstve NEPRESKOČÍ čiary. Prvok pustí do
  * výplne bez ohľadu na typ geometrie a otvorenú lomenú čiaru pošle earcutu,
@@ -33,7 +35,7 @@
  * Použitie:
  *   node workers/lint/style.mjs
  */
-import { THEMES, buildStyle } from "../../poc/web/themes.js";
+import { THEMES, buildStyle, ROAD_DEFS, ROAD_PASSES } from "../../poc/web/themes.js";
 import { MAP_TYPE_IDS, MAP_TYPES, applyMapType } from "../../poc/web/map-types.js";
 import { PATTERNS, renderPattern } from "../../poc/web/patterns.js";
 
@@ -241,6 +243,62 @@ for (const pat of PATTERNS) {
   }
 }
 
+// ---------- 5. dôležitejšia cesta je NAD menej dôležitou ----------
+// PIATA TICHÁ VEC. MapLibre kreslí vrstvy v poradí, v akom sú v štýle: navrchu
+// je tá POSLEDNÁ. Kým sa cesty pridávali od diaľnice nadol (teda v poradí
+// dôležitosti), skončila účelová cesta NAD diaľnicou a na každej križovatke
+// bol cez diaľničný pás prúžok v jej farbe – vyzeralo to ako prerušená
+// diaľnica, hoci dáta aj štýl boli v poriadku. Nič nespadne, nič sa nevypíše.
+//
+// Poradie dôležitosti je `ROAD_DEFS` v `themes.js` – jedna odpoveď na jednom
+// mieste. Kontrola len trvá na tom, že v hotovom štýle idú vrstvy PRESNE
+// naopak, a to v každom z troch priechodov (tunel, povrch, most) zvlášť,
+// pre výplne aj pre obrysy.
+let cestnychDvojic = 0;
+for (const { kde, style } of styles()) {
+  const poradie = new Map(style.layers.map((l, i) => [l.id, i]));
+  for (const suffix of ROAD_PASSES) {
+    for (const casing of ["", "-casing"]) {
+      // Od najmenej dôležitej po najdôležitejšiu – index v štýle musí rásť.
+      const rad = [...ROAD_DEFS]
+        .reverse()
+        .map(([id]) => [`road-${id}${casing}${suffix}`, id])
+        .filter(([layerId]) => poradie.has(layerId));
+      for (let i = 0; i + 1 < rad.length; i += 1) {
+        const [nizsiId, nizsi] = rad[i];
+        const [vyssiId, vyssi] = rad[i + 1];
+        cestnychDvojic += 1;
+        if (poradie.get(nizsiId) < poradie.get(vyssiId)) continue;
+        console.log(
+          `::error file=poc/web/themes.js::v štýle (${kde}) je \`${nizsiId}\` ` +
+          `NAD \`${vyssiId}\`. \`${nizsi}\` je menej dôležitá cesta než ` +
+          `\`${vyssi}\` (poradie hovorí ROAD_DEFS), takže sa v mape kreslí ` +
+          `cez ňu a na križovatkách ju prerušuje. Vrstvy ciest sa pridávajú ` +
+          `OD KONCA ROAD_DEFS – viď \`roadPass\`.`
+        );
+        bad += 1;
+      }
+    }
+  }
+  // Obrysy celého priechodu patria POD jeho výplne: inak by casing susednej
+  // cesty prekryl výplň tej, cez ktorú vedie križovatka.
+  for (const suffix of ROAD_PASSES) {
+    for (const [id] of ROAD_DEFS) {
+      const casing = poradie.get(`road-${id}-casing${suffix}`);
+      const vypln = poradie.get(`road-${id}${suffix}`);
+      if (casing === undefined || vypln === undefined) continue;
+      cestnychDvojic += 1;
+      if (casing < vypln) continue;
+      console.log(
+        `::error file=poc/web/themes.js::v štýle (${kde}) je obrys ` +
+        `\`road-${id}-casing${suffix}\` nad svojou výplňou – obrysy majú ísť ` +
+        `celé pod výplne, inak ich prekryjú križovatky.`
+      );
+      bad += 1;
+    }
+  }
+}
+
 // ---------- 4. maska regiónu ostáva úplne navrchu ----------
 // ŠTVRTÁ TICHÁ VEC. Mapa sa stavia z PBF kraja, ale dlaždice vznikajú po
 // celých dlaždiciach a vodstvo s Natural Earth kreslí Planetiler na celom
@@ -276,6 +334,7 @@ for (const { kde, style } of styles()) {
 console.log(
   `štýl: ${bad} chýb (${checked} výplní nad zmiešanou geometriou, ` +
   `${derived} skúšok odvodených vrstiev, ${vzorov} vzorov plôch na šev, ` +
+  `${cestnychDvojic} dvojíc ciest na poradie, ` +
   `${masiek} štýlov s maskou regiónu, ` +
   `${Object.keys(THEMES).length} tém × ${MAP_TYPE_IDS.length} typov mapy)`
 );

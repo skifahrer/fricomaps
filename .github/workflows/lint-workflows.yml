@@ -501,7 +501,11 @@ jobs:
       # 2. Vzor nad plochou je VLASTNÁ vrstva (`rock-area__pattern`), takže ju
       #    profil typu mapy musí vypnúť spolu s predlohou. Inak ostane vzor
       #    visieť nad prázdnym podkladom – zase bez jediného slova.
-      - name: "Štýl: výplne chcú plochy, vzory držia s predlohou"
+      # 3. MapLibre kreslí vrstvy v poradí zo štýlu, takže navrchu je tá
+      #    POSLEDNÁ. Kým sa cesty pridávali od diaľnice nadol, kreslila sa
+      #    účelová cesta CEZ diaľnicu a na každej križovatke ju prerušil
+      #    prúžok v jej farbe. Poradie dôležitosti hovorí `ROAD_DEFS`.
+      - name: "Štýl: výplne chcú plochy, vzory držia s predlohou, cesty poradie"
         run: node workers/lint/style.mjs
 
       # `maps.json` je zoznam hotových máp, ktorý dopisuje BEH – a to je presne

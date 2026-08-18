@@ -645,7 +645,10 @@ existenciu `needs.*.outputs.*` a `steps.*.outputs.*`, to, že každý
 cache ostane na Drive (žiadne `actions/cache`, každý cache krok sa vie
 prihlásiť), že sa **nepublikuje do releasov ani do dlhodobých artefaktov**
 (`workers/lint/publishing.py`), že **každá výplň v štýle nad vrstvou so
-zmiešanou geometriou chce len plochy** (`workers/lint/style.mjs`), že
+zmiešanou geometriou chce len plochy a dôležitejšia cesta je nad menej
+dôležitou** (`workers/lint/style.mjs` – MapLibre kreslí vrstvy v poradí zo
+štýlu, takže kým sa cesty pridávali od diaľnice nadol, kreslila sa účelová
+cesta cez diaľnicu a na križovatkách ju prerušovala), že
 **„v tomto stupni terén nie je" nerozhodne vzorkovaná štatistika a že sa tá
 odpoveď podpíše** (`workers/lint/dem-empty.py`), že **tieňovanie nestratí
 zvislú presnosť, ktorou stojí a padá** (`workers/lint/terrain.py` – výška

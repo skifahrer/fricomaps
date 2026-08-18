@@ -1945,6 +1945,47 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
 }
 
 /**
+ * Cesty: jeden riadok na triedu, ZORADENÉ OD NAJDÔLEŽITEJŠEJ.
+ *
+ * `[id, popis, triedy, farba výplne, farba obrysu, stopy šírky,
+ *   prídavok obrysu, minzoom]`; šírky sú definované až po z20, aby
+ * overzoomované dlaždice vyzerali správne.
+ *
+ * **PORADIE V TOMTO POLI JE PORADIE DÔLEŽITOSTI, NIE PORADIE KRESLENIA.**
+ * MapLibre kreslí vrstvy tak, ako idú v štýle za sebou, takže navrchu skončí
+ * TÁ POSLEDNÁ – vrstvy sa preto pridávajú OD KONCA tohto poľa (`roadPass`).
+ * Kým sa pridávali v tomto poradí, kreslila sa účelová cesta cez diaľnicu:
+ * na každej križovatke bol cez diaľničný pás prúžok vo farbe tej malej cesty
+ * a vyzeralo to, akoby bola diaľnica prerušená. Je to tichá chyba – štýl je
+ * platný, mapa sa načíta a nikto nič nepovie – takže na ňu je kontrola
+ * (`workers/lint/style.mjs`). Toto pole je jej jediný zdroj pravdy o tom, čo
+ * je dôležitejšie; export je práve preto.
+ */
+export const ROAD_DEFS = [
+  ["motorway", "Diaľnice", ["motorway"], "motorway", "motorwayCasing",
+    [[4, 0.5], [6, 0.9], [10, 3], [14, 8], [16, 18], [20, 60]], 3, 4],
+  ["trunk", "Rýchlostné cesty", ["trunk"], "trunk", "roadCasing",
+    [[5, 0.45], [7, 0.8], [10, 2.6], [14, 7], [16, 16], [20, 52]], 2.6, 5],
+  ["primary", "Cesty I. triedy", ["primary"], "primary", "roadCasing",
+    [[6, 0.4], [8, 0.75], [10, 2.2], [14, 6.5], [16, 15], [20, 48]], 2.4, 6],
+  ["secondary", "Cesty II. triedy", ["secondary"], "secondary", "roadCasing",
+    [[8, 0.4], [10, 0.7], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 8],
+  ["tertiary", "Cesty III. triedy", ["tertiary"], "secondary", "roadCasing",
+    [[9, 0.35], [11, 0.6], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 9],
+  // `living_street` schéma nevydáva – `highway=living_street` mapuje na
+  // `minor` rovnako ako `residential` a `unclassified`.
+  ["minor", "Miestne cesty", ["minor", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
+    [[11, 0.3], [12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 11],
+  ["service", "Účelové cesty", ["service"], "service", "roadCasing",
+    [[12, 0.3], [13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 12],
+  ["pedestrian", "Pešie zóny", ["pedestrian"], "pedestrian", "roadCasing",
+    [[12, 0.3], [13, 0.6], [14, 2.4], [16, 7], [20, 24]], 1.2, 12]
+];
+
+/** Prípony troch priechodov ciest (tunel → povrch → most) – pre kontrolu. */
+export const ROAD_PASSES = ["-tunnel", "", "-bridge"];
+
+/**
  * Vygeneruje kompletný MapLibre GL štýl.
  *
  * @param {object} opts
@@ -2870,28 +2911,6 @@ export function buildStyle({
   );
 
   // ================= doprava =================
-  // Šírky sú definované až po z20, aby overzoomované dlaždice vyzerali správne.
-  // [id, popis, triedy, farba výplne, farba obrysu, stopy šírky, prídavok obrysu, minzoom]
-  const roadDefs = [
-    ["motorway", "Diaľnice", ["motorway"], "motorway", "motorwayCasing",
-      [[4, 0.5], [6, 0.9], [10, 3], [14, 8], [16, 18], [20, 60]], 3, 4],
-    ["trunk", "Rýchlostné cesty", ["trunk"], "trunk", "roadCasing",
-      [[5, 0.45], [7, 0.8], [10, 2.6], [14, 7], [16, 16], [20, 52]], 2.6, 5],
-    ["primary", "Cesty I. triedy", ["primary"], "primary", "roadCasing",
-      [[6, 0.4], [8, 0.75], [10, 2.2], [14, 6.5], [16, 15], [20, 48]], 2.4, 6],
-    ["secondary", "Cesty II. triedy", ["secondary"], "secondary", "roadCasing",
-      [[8, 0.4], [10, 0.7], [12, 2], [14, 5], [16, 12], [20, 40]], 2, 8],
-    ["tertiary", "Cesty III. triedy", ["tertiary"], "secondary", "roadCasing",
-      [[9, 0.35], [11, 0.6], [12, 1.6], [14, 4.2], [16, 10], [20, 34]], 1.8, 9],
-    // `living_street` schéma nevydáva – `highway=living_street` mapuje na
-    // `minor` rovnako ako `residential` a `unclassified`.
-    ["minor", "Miestne cesty", ["minor", "raceway", "busway", "bus_guideway"], "minor", "roadCasing",
-      [[11, 0.3], [12, 0.6], [14, 3.5], [16, 9], [20, 32]], 1.6, 11],
-    ["service", "Účelové cesty", ["service"], "service", "roadCasing",
-      [[12, 0.3], [13, 0.5], [14, 2], [16, 6], [20, 22]], 1.2, 12],
-    ["pedestrian", "Pešie zóny", ["pedestrian"], "pedestrian", "roadCasing",
-      [[12, 0.3], [13, 0.6], [14, 2.4], [16, 7], [20, 24]], 1.2, 12]
-  ];
 
   /**
    * Od tohto zoomu sa kreslia obrysy ciest. Nižšie by k vlasovej čiare
@@ -2900,7 +2919,17 @@ export function buildStyle({
    */
   const CASING_MIN_Z = 10;
 
-  /** Cesty sa kreslia v troch priechodoch: tunely → povrch → mosty. */
+  /**
+   * Cesty sa kreslia v troch priechodoch: tunely → povrch → mosty.
+   *
+   * V každom priechode sa ide OD NAJMENEJ DÔLEŽITEJ CESTY, teda odzadu
+   * `ROAD_DEFS`: MapLibre kreslí vrstvy v poradí, v akom sú v štýle, takže
+   * navrchu skončí tá pridaná posledná. Kým sa pridávali od diaľnice,
+   * kreslila sa účelová cesta CEZ diaľnicu – na každej križovatke prúžok
+   * v jej farbe naprieč diaľničným pásom, čo vyzerá ako prerušená diaľnica.
+   * To isté platí zvlášť pre obrysy: motorway casing musí byť nad service
+   * casingom z toho istého dôvodu.
+   */
   const roadPass = (suffix, passLabel, extraFilter, opts = {}) => {
     const layout = { "line-cap": opts.cap || "round", "line-join": "round" };
     const filterFor = (classes) => [
@@ -2908,8 +2937,9 @@ export function buildStyle({
       ["in", str("class"), ["literal", classes]],
       extraFilter
     ];
+    const odNajmenejDolezitej = [...ROAD_DEFS].reverse();
     // obrysy (casing) idú celé pod výplne, inak by ich prekrývali križovatky
-    for (const [id, label, classes, , casingKey, stops, extra, mz] of roadDefs) {
+    for (const [id, label, classes, , casingKey, stops, extra, mz] of odNajmenejDolezitej) {
       add(
         {
           id: `road-${id}-casing${suffix}`,
@@ -2927,7 +2957,7 @@ export function buildStyle({
         ["cesty", `${label} – obrys${passLabel}`, "line", { "line-color": casingKey }]
       );
     }
-    for (const [id, label, classes, colorKey, , stops, , mz] of roadDefs) {
+    for (const [id, label, classes, colorKey, , stops, , mz] of odNajmenejDolezitej) {
       add(
         {
           id: `road-${id}${suffix}`,
