@@ -4088,8 +4088,11 @@ export function buildStyle({
                 "icon-image": shieldIcon,
                 "icon-text-fit": "both",
                 // Hore/dole menej, po stranách viac – číslo má mať okolo seba
-                // rovnako veľa miesta na oko, nie v pixeloch.
-                "icon-text-fit-padding": [1, 3, 1, 3],
+                // rovnako veľa miesta na oko, nie v pixeloch. Odkedy sa
+                // obrázok škáluje CELÝ (bez rozťahovacích pásem, viď
+                // `poc/web/shields.js`), je odsadenie jediné, čo drží číslo
+                // od hrany – tak je o pixel väčšie než predtým.
+                "icon-text-fit-padding": [2, 4, 2, 4],
                 "icon-rotation-alignment": "viewport",
                 "icon-pitch-alignment": "viewport"
               }

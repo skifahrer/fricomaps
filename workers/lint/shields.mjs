@@ -11,11 +11,13 @@
  *    NESPADNE – `hasIcon` ho ticho nechá bez podkladu a číslo sa nakreslí len
  *    s halom. Vyzerá to ako „tak to je navrhnuté", nie ako chyba.
  *
- * 2. **Stratené rozťahovacie pásma.** Sprite sa po dopečení štítkov ešte raz
- *    preskladá (`workers/styles/patterns.mjs` dopeká vzory) a preskladanie
- *    prepisuje index. Keby z neho `stretchX`/`stretchY`/`content` vypadli,
- *    MapLibre natiahne štítok CELÝ aj s rohmi a z obdĺžnika je pri dlhom
- *    čísle rozmazaná kapsula. Sprite aj štýl sú pritom ďalej platné.
+ * 2. **Vrátené rozťahovacie pásma.** Táto kontrola kedysi vyžadovala PRAVÝ
+ *    OPAK – trvala na `stretchX`/`stretchY`/`content` – a tým strážila
+ *    rozbitý stav: deväťdielne naťahovanie je robené na bežný raster, nie na
+ *    vzdialenostné pole, takže na SDF štítku rozladí pole a pretrhne obrys.
+ *    V mape z toho bol rozmazaný KRÍŽ namiesto štítka (namerané 89 × 85 px
+ *    proti správnym ~20 × 14 px) a nikto to nezhodil: sprite aj štýl boli
+ *    platné a lint zelený. Rozpis je v hlavičke `poc/web/shields.js`.
  *
  * 3. **Štítok pod menom ulice.** MapLibre umiestňuje popisky v poradí vrstiev
  *    a kto je skôr, berie si miesto prvý. Keby `road-shield-*` skončili ZA
@@ -77,10 +79,12 @@ try {
       continue;
     }
     for (const kluc of ["stretchX", "stretchY", "content"]) {
-      if (!e[kluc]) {
+      if (e[kluc]) {
         chyba("workers/assets/shields.mjs",
-          `štítok "${shape.id}" nemá v indexe \`${kluc}\` – MapLibre ho natiahne ` +
-          `celý aj s rohmi a pri dlhom čísle z neho bude rozmazaná kapsula.`);
+          `štítok "${shape.id}" má v indexe \`${kluc}\` – deväťdielne ` +
+          `naťahovanie na SDF nefunguje: rozladí vzdialenostné pole a pretrhne ` +
+          `obrys, takže v mape je z neho rozmazaný kríž. Štítok sa má škálovať ` +
+          `CELÝ (viď hlavičku poc/web/shields.js).`);
       }
     }
     if (!e.sdf) {
