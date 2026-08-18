@@ -47,10 +47,15 @@ fi
 # JAVA_TOOL_OPTIONS: …") a kontrola viazaná na prvý riadok by na Jave 21
 # ohlásila „verzia sa nedá prečítať". Falošný pád tejto kontroly by bol horší
 # než to, čo chytá – zastavil by beh, ktorý by inak prešiel.
-JAVA_VER=$(java -version 2>&1 \
-  | sed -n 's/.*version "\([0-9][0-9]*\).*/\1/p' | head -1)
+# ŽIADNA RÚRA Z `java`. Čokoľvek, čo končí po prvom riadku (`head -1`, aj
+# `sed …q`), zavrie rúru pod stále píšucim producentom; ten dostane EPIPE
+# a `pipefail` z toho spraví pád, hoci sa hodnota prečítala. Výstup sa preto
+# najprv uloží do premennej a hľadá sa až v nej.
+JAVA_RAW=$(java -version 2>&1)
+JAVA_VER=$(awk 'match($0, /version "[0-9]+/) \
+  { print substr($0, RSTART + 9, RLENGTH - 9); exit }' <<<"$JAVA_RAW")
 if [ -z "$JAVA_VER" ]; then
-  echo "::error::Verzia Javy sa nedá prečítať z \`java -version\`: $(java -version 2>&1 | head -1). Planetiler chce aspoň $JAVA_MIN – over, že job má krok \`actions/setup-java\`."
+  echo "::error::Verzia Javy sa nedá prečítať z \`java -version\`: $(head -1 <<<"$JAVA_RAW"). Planetiler chce aspoň $JAVA_MIN – over, že job má krok \`actions/setup-java\`."
   exit 1
 fi
 if [ "$JAVA_VER" -lt "$JAVA_MIN" ]; then
