@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-18T03:45:45Z",
+  "_updated_at": "2026-08-18T04:13:36Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -458,108 +458,43 @@
               22.585,
               49.48
             ],
+            "contour_interval": 5,
+            "contours_maxzoom": 16,
+            "dem_source": "dmr5",
             "drive": "slovensko/presovsky/vysoke_tatry",
-            "features_maxzoom": 15,
             "layers": [
-              "bez_vrstevnic",
-              "bez_skal",
+              "vrstevnice_dmr5_5m",
+              "skaly_dmr5",
               "tienovanie_dmr5",
               "trasy",
               "prvky"
             ],
             "maps": {
               "mapa": {
-                "download": "https://drive.google.com/uc?export=download&id=1xQkMsE2FLQGqY7mRrXuHxhQRW7KuLjXb",
+                "download": "https://drive.google.com/uc?export=download&id=1Fu4dqq47gf0mmFXVzJfTv_I3zUN8tuwP",
                 "file": "presovsky-vysoke_tatry.zip",
-                "formats": {
-                  "aar": {
-                    "download": "https://drive.google.com/uc?export=download&id=1V7EdGfn9A0gVEfjDFWIPDjal4NFIPLyC",
-                    "file": "presovsky-vysoke_tatry.aar",
-                    "link": "https://drive.google.com/file/d/1V7EdGfn9A0gVEfjDFWIPDjal4NFIPLyC/view",
-                    "run": "139",
-                    "size": 268810189,
-                    "updated_at": "2026-08-18T03:45:45Z"
-                  },
-                  "zip": {
-                    "download": "https://drive.google.com/uc?export=download&id=1xQkMsE2FLQGqY7mRrXuHxhQRW7KuLjXb",
-                    "file": "presovsky-vysoke_tatry.zip",
-                    "link": "https://drive.google.com/file/d/1xQkMsE2FLQGqY7mRrXuHxhQRW7KuLjXb/view",
-                    "run": "139",
-                    "size": 272854498,
-                    "updated_at": "2026-08-18T03:44:53Z"
-                  }
-                },
-                "link": "https://drive.google.com/file/d/1xQkMsE2FLQGqY7mRrXuHxhQRW7KuLjXb/view",
-                "run": "139",
-                "size": 272854498,
-                "updated_at": "2026-08-18T03:44:53Z"
-              },
-              "search": {
-                "download": "https://drive.google.com/uc?export=download&id=1XKqFUYV955ZYrkYSueVJvKFAJ4pP8A_E",
-                "file": "presovsky-vysoke_tatry-search.zip",
-                "formats": {
-                  "aar": {
-                    "download": "https://drive.google.com/uc?export=download&id=1Ucp3GhPIGp2N2PgW6cyKQLfBvVBYqJhq",
-                    "file": "presovsky-vysoke_tatry-search.aar",
-                    "link": "https://drive.google.com/file/d/1Ucp3GhPIGp2N2PgW6cyKQLfBvVBYqJhq/view",
-                    "run": "139",
-                    "size": 5702480,
-                    "updated_at": "2026-08-18T03:45:45Z"
-                  },
-                  "zip": {
-                    "download": "https://drive.google.com/uc?export=download&id=1XKqFUYV955ZYrkYSueVJvKFAJ4pP8A_E",
-                    "file": "presovsky-vysoke_tatry-search.zip",
-                    "link": "https://drive.google.com/file/d/1XKqFUYV955ZYrkYSueVJvKFAJ4pP8A_E/view",
-                    "run": "139",
-                    "size": 6774450,
-                    "updated_at": "2026-08-18T03:44:53Z"
-                  }
-                },
-                "link": "https://drive.google.com/file/d/1XKqFUYV955ZYrkYSueVJvKFAJ4pP8A_E/view",
-                "run": "139",
-                "size": 6774450,
-                "updated_at": "2026-08-18T03:44:53Z"
+                "link": "https://drive.google.com/file/d/1Fu4dqq47gf0mmFXVzJfTv_I3zUN8tuwP/view",
+                "size": 360398111
               },
               "tienovanie": {
-                "download": "https://drive.google.com/uc?export=download&id=1qo19I0F9R1P3zA2WFp-iV_a_x5T7WaOi",
+                "download": "https://drive.google.com/uc?export=download&id=1o3_AgquSOi3HDoAC95kcIf4tLajrL9Vl",
                 "file": "presovsky-vysoke_tatry-tienovanie.zip",
-                "formats": {
-                  "aar": {
-                    "download": "https://drive.google.com/uc?export=download&id=1Xryd0_bvLVMSrXTH76FVMf6nJfOQOu0t",
-                    "file": "presovsky-vysoke_tatry-tienovanie.aar",
-                    "link": "https://drive.google.com/file/d/1Xryd0_bvLVMSrXTH76FVMf6nJfOQOu0t/view",
-                    "run": "139",
-                    "size": 49718520,
-                    "updated_at": "2026-08-18T03:45:45Z"
-                  },
-                  "zip": {
-                    "download": "https://drive.google.com/uc?export=download&id=1qo19I0F9R1P3zA2WFp-iV_a_x5T7WaOi",
-                    "file": "presovsky-vysoke_tatry-tienovanie.zip",
-                    "link": "https://drive.google.com/file/d/1qo19I0F9R1P3zA2WFp-iV_a_x5T7WaOi/view",
-                    "run": "139",
-                    "size": 49628392,
-                    "updated_at": "2026-08-18T03:44:53Z"
-                  }
-                },
-                "link": "https://drive.google.com/file/d/1qo19I0F9R1P3zA2WFp-iV_a_x5T7WaOi/view",
-                "run": "139",
-                "size": 49628392,
-                "updated_at": "2026-08-18T03:44:53Z"
+                "link": "https://drive.google.com/file/d/1o3_AgquSOi3HDoAC95kcIf4tLajrL9Vl/view",
+                "size": 55926495
+              },
+              "vrstevnice-skaly": {
+                "download": "https://drive.google.com/uc?export=download&id=1jjWfwUyRB2iuF2GfjPLyFTYjTLNAzyCH",
+                "file": "presovsky-vysoke_tatry-vrstevnice-skaly.zip",
+                "link": "https://drive.google.com/file/d/1jjWfwUyRB2iuF2GfjPLyFTYjTLNAzyCH/view",
+                "size": 88503396
               }
             },
             "maxzoom": 16,
             "name": "Vysoké Tatry",
-            "run": "139",
-            "terrain_maxzoom": 13,
-            "terrain_source": "dmr5",
-            "tiles": {
-              "features": "tiles/presovsky-features.pmtiles",
-              "pmtiles": "tiles/presovsky.pmtiles",
-              "terrain": "tiles/presovsky-terrain.pmtiles",
-              "trails": "tiles/presovsky-trails.pmtiles"
-            },
-            "trails_maxzoom": 14,
-            "updated_at": "2026-08-18T03:45:45Z"
+            "rock_slope": 50,
+            "rocks_maxzoom": 16,
+            "run": "110",
+            "updated_at": "2026-08-13T14:09:04Z"
           },
           "vysoke_tatry_test4km2": {
             "area_bbox": [
@@ -699,6 +634,118 @@
         },
         "trails_maxzoom": 14,
         "updated_at": "2026-08-16T21:40:46Z"
+      },
+      "trnavsky": {
+        "bbox": [
+          16.915,
+          47.74,
+          18.005,
+          48.9
+        ],
+        "contour_interval": 5,
+        "contours_maxzoom": 16,
+        "dem_source": "dmr5",
+        "drive": "slovensko/trnavsky",
+        "features_maxzoom": 15,
+        "layers": [
+          "vrstevnice_dmr5_5m",
+          "skaly_dmr5",
+          "tienovanie_dmr5",
+          "trasy",
+          "prvky"
+        ],
+        "maps": {
+          "mapa": {
+            "download": "https://drive.google.com/uc?export=download&id=1fOPXKgOl-yeTR75382gEE4QopdicJXug",
+            "file": "trnavsky.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1fOPXKgOl-yeTR75382gEE4QopdicJXug",
+                "file": "trnavsky.zip",
+                "link": "https://drive.google.com/file/d/1fOPXKgOl-yeTR75382gEE4QopdicJXug/view",
+                "run": "141",
+                "size": 286385795,
+                "updated_at": "2026-08-18T04:13:36Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/1fOPXKgOl-yeTR75382gEE4QopdicJXug/view",
+            "run": "141",
+            "size": 286385795,
+            "updated_at": "2026-08-18T04:13:36Z"
+          },
+          "search": {
+            "download": "https://drive.google.com/uc?export=download&id=129v0xb7V4Po4v-8gESdDVyqIOtsuNfdJ",
+            "file": "trnavsky-search.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=129v0xb7V4Po4v-8gESdDVyqIOtsuNfdJ",
+                "file": "trnavsky-search.zip",
+                "link": "https://drive.google.com/file/d/129v0xb7V4Po4v-8gESdDVyqIOtsuNfdJ/view",
+                "run": "141",
+                "size": 4190587,
+                "updated_at": "2026-08-18T04:13:36Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/129v0xb7V4Po4v-8gESdDVyqIOtsuNfdJ/view",
+            "run": "141",
+            "size": 4190587,
+            "updated_at": "2026-08-18T04:13:36Z"
+          },
+          "tienovanie": {
+            "download": "https://drive.google.com/uc?export=download&id=1Ng_pIwpgXB9ozgMPbzARB9oddJe3YeRS",
+            "file": "trnavsky-tienovanie.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1Ng_pIwpgXB9ozgMPbzARB9oddJe3YeRS",
+                "file": "trnavsky-tienovanie.zip",
+                "link": "https://drive.google.com/file/d/1Ng_pIwpgXB9ozgMPbzARB9oddJe3YeRS/view",
+                "run": "141",
+                "size": 53751247,
+                "updated_at": "2026-08-18T04:13:36Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/1Ng_pIwpgXB9ozgMPbzARB9oddJe3YeRS/view",
+            "run": "141",
+            "size": 53751247,
+            "updated_at": "2026-08-18T04:13:36Z"
+          },
+          "vrstevnice-skaly": {
+            "download": "https://drive.google.com/uc?export=download&id=1oHQGFx89aL0KTX3_sCrFhCQc6o41VzUX",
+            "file": "trnavsky-vrstevnice-skaly.zip",
+            "formats": {
+              "zip": {
+                "download": "https://drive.google.com/uc?export=download&id=1oHQGFx89aL0KTX3_sCrFhCQc6o41VzUX",
+                "file": "trnavsky-vrstevnice-skaly.zip",
+                "link": "https://drive.google.com/file/d/1oHQGFx89aL0KTX3_sCrFhCQc6o41VzUX/view",
+                "run": "141",
+                "size": 85175992,
+                "updated_at": "2026-08-18T04:13:36Z"
+              }
+            },
+            "link": "https://drive.google.com/file/d/1oHQGFx89aL0KTX3_sCrFhCQc6o41VzUX/view",
+            "run": "141",
+            "size": 85175992,
+            "updated_at": "2026-08-18T04:13:36Z"
+          }
+        },
+        "maxzoom": 16,
+        "name": "Trnavský kraj",
+        "rock_slope": 50,
+        "rock_source": "dmr5",
+        "rocks_maxzoom": 16,
+        "run": "141",
+        "terrain_maxzoom": 13,
+        "terrain_source": "dmr5",
+        "tiles": {
+          "contours": "tiles/trnavsky-contours.pmtiles",
+          "features": "tiles/trnavsky-features.pmtiles",
+          "pmtiles": "tiles/trnavsky.pmtiles",
+          "rocks": "tiles/trnavsky-rocks.pmtiles",
+          "terrain": "tiles/trnavsky-terrain.pmtiles",
+          "trails": "tiles/trnavsky-trails.pmtiles"
+        },
+        "trails_maxzoom": 14,
+        "updated_at": "2026-08-18T04:13:36Z"
       }
     }
   }
