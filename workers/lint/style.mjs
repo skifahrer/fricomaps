@@ -9,7 +9,11 @@
  *   3. vzor plochy, ktorý má byť ROZSYP, nesmie mať prázdny šev dlaždice –
  *      z opakovania by bola mriežka prázdnych uličiek (v mape „raster"),
  *   4. dôležitejšia cesta musí byť NAD menej dôležitou – inak sa na každej
- *      križovatke kreslí účelová cesta cez diaľnicu.
+ *      križovatke kreslí účelová cesta cez diaľnicu. K tomu dve veci, ktoré
+ *      z toho istého poradia žijú: obrysy jedného priechodu patria CELÉ pod
+ *      jeho výplne (nie po dvojiciach – striedavo preložené prejdú a casing
+ *      diaľnice pritom prereže účelovú cestu), a priechody idú tunel →
+ *      povrch → most, čo je úroveň, nie trieda.
  *
  * ČO STRÁŽI A PREČO. MapLibre `fill` vrstve NEPRESKOČÍ čiary. Prvok pustí do
  * výplne bez ohľadu na typ geometrie a otvorenú lomenú čiaru pošle earcutu,
@@ -280,22 +284,67 @@ for (const { kde, style } of styles()) {
       }
     }
   }
-  // Obrysy celého priechodu patria POD jeho výplne: inak by casing susednej
-  // cesty prekryl výplň tej, cez ktorú vedie križovatka.
+  // Obrysy celého priechodu patria POD jeho výplne – CELÉ, nie po dvojiciach.
+  // Porovnávať `road-X-casing` len s `road-X` nestačí: obrysy a výplne sa dajú
+  // preložiť striedavo (obrys+výplň na každú cestu, teda jedna slučka namiesto
+  // dvoch v `roadPass`) a každá jedna dvojica pritom sedí. Casing diaľnice by
+  // tak sadol NAD výplň účelovej cesty a na križovatke by ju prerezal tmavým
+  // pásom – presne ten artefakt, pred ktorým je `roadPass` napísaný v dvoch
+  // slučkách. Preto sa porovnáva NAJNIŽŠIA výplň proti NAJVYŠŠIEMU obrysu.
   for (const suffix of ROAD_PASSES) {
-    for (const [id] of ROAD_DEFS) {
-      const casing = poradie.get(`road-${id}-casing${suffix}`);
-      const vypln = poradie.get(`road-${id}${suffix}`);
-      if (casing === undefined || vypln === undefined) continue;
-      cestnychDvojic += 1;
-      if (casing < vypln) continue;
-      console.log(
-        `::error file=poc/web/themes.js::v štýle (${kde}) je obrys ` +
-        `\`road-${id}-casing${suffix}\` nad svojou výplňou – obrysy majú ísť ` +
-        `celé pod výplne, inak ich prekryjú križovatky.`
-      );
-      bad += 1;
-    }
+    const idx = (pre) => ROAD_DEFS
+      .map(([id]) => poradie.get(`road-${id}${pre}${suffix}`))
+      .filter((i) => i !== undefined);
+    const obrysy = idx("-casing");
+    const vyplne = idx("");
+    if (!obrysy.length || !vyplne.length) continue;
+    cestnychDvojic += 1;
+    const najvyssiObrys = Math.max(...obrysy);
+    const najnizsiaVypln = Math.min(...vyplne);
+    if (najvyssiObrys < najnizsiaVypln) continue;
+    const vinnik = ROAD_DEFS
+      .map(([id]) => id)
+      .find((id) => poradie.get(`road-${id}-casing${suffix}`) === najvyssiObrys);
+    console.log(
+      `::error file=poc/web/themes.js::v štýle (${kde}) sa obrysy a výplne ` +
+      `ciest priechodu \`${suffix || "(povrch)"}\` prekladajú – obrys ` +
+      `\`road-${vinnik}-casing${suffix}\` je nad niektorou výplňou toho istého ` +
+      `priechodu. Obrysy patria CELÉ pod výplne (v \`roadPass\` sú preto dve ` +
+      `slučky, nie jedna), inak ich prekryjú križovatky.`
+    );
+    bad += 1;
+  }
+
+  // Priechody idú TUNEL → POVRCH → MOST, a to je iná otázka než dôležitosť
+  // triedy. Vnútri priechodu rozhoduje trieda (diaľnica nad účelovou), MEDZI
+  // priechodmi rozhoduje úroveň: účelová cesta na moste patrí nad diaľnicu na
+  // povrchu, lebo most naozaj je nad ňou, a tunelová diaľnica pod všetko.
+  // Kontrola vyššie beží v každom priechode zvlášť, takže by prehodené
+  // `roadPass(...)` volania prešli bez slova – mosty by sa kreslili pod tunelmi
+  // a v mape by to vyzeralo, akoby cesta pod mostom viedla po ňom.
+  const urovne = ROAD_PASSES
+    .map((suffix) => {
+      const idx = ROAD_DEFS
+        .flatMap(([id]) => [`road-${id}-casing${suffix}`, `road-${id}${suffix}`])
+        .map((l) => poradie.get(l))
+        .filter((i) => i !== undefined);
+      return idx.length ? { suffix, od: Math.min(...idx), po: Math.max(...idx) } : null;
+    })
+    .filter(Boolean);
+  for (let i = 0; i + 1 < urovne.length; i += 1) {
+    const nizsi = urovne[i];
+    const vyssi = urovne[i + 1];
+    cestnychDvojic += 1;
+    if (nizsi.po < vyssi.od) continue;
+    const meno = (s) => s === "-tunnel" ? "tunely" : s === "-bridge" ? "mosty" : "povrch";
+    console.log(
+      `::error file=poc/web/themes.js::v štýle (${kde}) nie sú priechody ciest ` +
+      `v poradí tunel → povrch → most: \`${meno(nizsi.suffix)}\` ` +
+      `(${nizsi.od}–${nizsi.po}) zasahuje nad \`${meno(vyssi.suffix)}\` ` +
+      `(od ${vyssi.od}). Poradie hovorí ROAD_PASSES a je to úroveň, nie trieda ` +
+      `– cesta na moste patrí nad každú cestu na povrchu.`
+    );
+    bad += 1;
   }
 }
 
