@@ -1,37 +1,86 @@
 #!/usr/bin/env python3
 """
-Zaoblí obrys plôch AJ priebeh čiar (Chaikinovo orezávanie rohov) – aby
-skaly ani vrstevnice neboli pri najvyššom zoome zubaté.
+Zaoblí obrys plôch AJ priebeh čiar – aby skaly ani vrstevnice neboli zubaté.
 
 JEDEN SÚBOR NA OBE, lebo je to jedna otázka: „ako sa zaobľuje izolínia nad
 rastrom". Skala je izolínia sklonu, vrstevnica izolínia výšky; obe chodia
-po hranách buniek a obe sa pred kreslením zjednodušujú. Dve kópie Chaikina
-by sa raz rozišli a jedna vrstva by bola hladká inak než druhá. Čo je
-plocha a čo čiara, sa zistí zo samotnej geometrie – volajúci to nemusí
-hovoriť (`rock-areas.py`, `shading-vector.py`, `contours-build.sh`).
+po hranách buniek a obe sa pred kreslením zjednodušujú. Dve kópie by sa raz
+rozišli a jedna vrstva by bola hladká inak než druhá. Čo je plocha a čo čiara,
+sa zistí zo samotnej geometrie – volajúci to nemusí hovoriť (`rock-areas.py`,
+`rocks-shading/vector.py`, `contours-rocks/build.sh`).
 
-PREČO TO TREBA: obrys skaly je izolínia sklonu nad rastrom, čiže chodí po
-hranách buniek – veľmi veľa krátkych segmentov, ktoré sa občas zlomia
-o 90°. Keď sa to zmenší Douglas–Peuckerom, počet bodov klesne 8×, lenže
-tie lomy sa nasčítajú do ostrých rohov: priemerný lom vyskočí zo 4,6° na
-28,5°. Práve to je tá zubatosť, ktorú vidno pri max zoome – a spôsobuje ju
-zjednodušenie, nie raster. Vrstevnica je na tom rovnako, len sa u nej
-schodíky vidia aj bez zjednodušenia: pri 1 m DEM je jeden schodík meter
-a to je pri z16 (1,57 m na pixel) presne ten „zúbok" na čiare.
+PREČO TO TREBA: obrys je izolínia nad rastrom, čiže chodí po hranách buniek –
+veľmi veľa krátkych segmentov, ktoré sa občas zlomia o 90°. Keď sa to zmenší
+Douglas–Peuckerom, počet bodov klesne 8×, lenže tie lomy sa nasčítajú do
+ostrých rohov: priemerný lom vyskočí zo 4,6° na 28,5°. Práve to je tá
+zubatosť, ktorú vidno pri max zoome – a spôsobuje ju zjednodušenie, nie raster.
 
-RIEŠENIE: zjednodušiť a rohy potom zaobliť. Chaikin každý roh nahradí dvomi
-bodmi v 1/4 a 3/4 hrany, takže sa jeden lom rozdelí na dva polovičné; dva
-prechody dajú štvrtinové. Namerané na tom istom území (326 plôch, mriežka
-4 m, prah 50°):
+RIEŠENIE: zjednodušiť a rohy potom zaobliť. Zaobľuje sa KVADRATICKÝM
+B-SPLINOM nad zjednodušenou čiarou – teda presne tou krivkou, ku ktorej
+Chaikinovo orezávanie rohov konverguje – a vzorkuje sa rovno tak husto, ako to
+dlaždica unesie.
 
-    bez úprav                     640 021 bodov, priemerný lom  4,6°, >60° 0,1 %
-    simplify 0,5 m                 91 256 bodov, priemerný lom 28,5°, >60° 0,9 %  ← zubaté
-    simplify 0,5 m + chaikin 1    181 975 bodov, priemerný lom 14,3°, >60° 0,4 %
-    simplify 0,5 m + chaikin 2    363 341 bodov, priemerný lom  7,7°, >60° 0,1 %  ← toto
+PREČO NIE DVA PRECHODY CHAIKINA, AKO TO BOLO. Chaikin sa k tej krivke len
+BLÍŽI a robí to LOKÁLNE: jeden prechod nahradí roh dvomi bodmi v štvrtine
+a troch štvrtinách hrany, takže sa lom rozpolí, ale nezmizne. Po dvoch
+prechodoch ostane zo 120° rohu ešte vyše 30° – a to je zub. Rozostup tých
+zubov je rozostup vrcholov po Douglas–Peuckerovi, čiže PRAVIDELNÝ; na
+vrstevniciach z hotovej mapy (Bratislavský kraj, beh 143, 3 220 km čiar
+z `bratislavsky-contours.pmtiles`) vychádza 14,7 lomu nad 30° na kilometer,
+teda jeden zhruba každých 68 m, a pri z16 je to zlom každých ~40 px. Že za ne
+môže zaoblenie a nie terén, ukázal test na vzorec Chaikina: po dvoch
+prechodoch má zvyškový roh v každej čiare pevnú pozíciu (každý štvrtý bod),
+a ostré lomy na nej naozaj sedia častejšie, než by vyšlo náhodou (0,50 proti
+0,39 pri náhodnom výbere z tej istej čiary).
 
-Dva prechody teda dajú hladší obrys než pôvodný raster (0,1 % ostrých lomov
-namiesto 0,1 % pri 6× menej ostrých rohoch) a stále o 43 % menej bodov než
-nezjednodušený originál.
+Tretí prechod tie rohy dorovná, ale zdvojnásobí počet bodov – a to je horšie
+než zuby: dlaždica má súradnice na celočíselnej mriežke `extent` (4096,
+Planetiler ju meniť nevie), takže body hustejšie než jej krok sa zlepia
+a z hladkej čiary sa stanú schodíky. Namerané po mriežke z14: 2× Chaikin
+11,5 % lomov nad 30°, 3× Chaikin 34,6 %. Preto sa nedá „pridať prechod".
+
+AKO HUSTO SA VZORKUJE: podľa PRIEHYBU TETIVY, nie podľa dĺžky. Oblúk medzi
+vrcholmi a–b–c má od svojej tetivy priehyb |2b − a − c| / 8 a rozdelenie na
+`n` dielov ho zmenší n²-krát, takže `n = ⌈√(priehyb / tolerancia)⌉`. Tolerancia
+je zlomok kroku mriežky dlaždice (`--sag`, v štvrtinách): jemnejší detail
+mriežka aj tak zahodí a schodíky z neho len pribudnú. Rovná časť čiary tak
+dostane jeden bod, zákruta toľko, koľko treba – a počet bodov ide dole.
+
+Namerané na tom istom modeli terénu ako doteraz (okno 3×3, simplify ¼ bunky,
+`measure-smoothing.py --maxzoom=16`, čo je maxzoom, ktorý vrstevnice na
+hotových mapách naozaj majú). „Zub/km" sú ostré lomy TVARU – čiara sa pred
+meraním prevzorkuje rovnomerne, inak by sa porovnávala hustota bodov, nie
+zubatosť. Posledné stĺpce sú tá istá čiara po zaokrúhlení na mriežku
+dlaždice, teda to, čo naozaj skončí v `.pmtiles`:
+
+    zaoblenie                  bodov  zub/km  tvar 12 m │ po mriežke z16
+    1× Chaikin                   430    31,9      65 %  │ 32,9
+    2× Chaikin (doteraz)         860    10,0      63 %  │ 11,0
+    3× Chaikin                  1720     4,0      63 %  │  5,0
+    limitná, priehyb ¼ mriežky   767     5,0      62 %  │  6,0
+    limitná, priehyb ½ mriežky   586     5,0      62 %  │  8,1   ← teraz
+
+A to isté celou cestou cez skutočný `gdal_contour` (5 m model, 700×700 buniek,
+mikroreliéf σ 0,25 m, interval 5 m, 89 čiar; `--simplify` ¼ bunky ako v behu):
+
+    zaoblenie                     bodov │ zub/km po mriežke z16   z14
+    2× Chaikin (doteraz)         56 792 │        0,7             3,0
+    3× Chaikin                  113 580 │        0,1            16,2
+    limitná, priehyb ¼ mriežky   76 933 │        0,1             4,2
+    limitná, priehyb ½ mriežky   56 421 │        0,1             1,6   ← teraz
+
+POL KROKU MRIEŽKY, nie štvrtina, a rozhoduje o tom druhá tabuľka: pri hrubšom
+modeli (5 m bunka, teda `-simplify` 1,25 m) je štvrtina o 35 % viac bodov za
+rovnaký počet zubov. Väčšia vrstva pritom nie je len väčšia – rozpočet stránky
+by jej mohol zobrať celý jeden zoom, a to je proti zubatosti oveľa horšie než
+polovičný priehyb. Pol kroku je aj presne toľko, koľko spraví samo
+zaokrúhlenie do mriežky (±pol kroku), takže sa vzorkovaním neplatí za detail,
+ktorý dlaždica aj tak zahodí.
+
+Chaikin oproti tomu násobí počet bodov ŠTYRMI bez ohľadu na to, aká hrubá je
+vstupná čiara – dva prechody sú vždy 4×, tri vždy 8×. Práve preto sa tretí
+prechod nedá „len pridať": pri 5 m modeli je to 113 580 bodov a po mriežke z14
+16,2 zuba/km, teda päťnásobok toho, čo má limitná krivka za polovicu bodov.
 
 ČO SA NESKÚŠALO NASLEPO: vyhladzovanie samotného rastra sklonu (priemer 3×3
 pred vektorizáciou) obrys síce zjemní, ale zníži špičky sklonu a okolo prahu
@@ -42,71 +91,111 @@ Diery ostávajú dierami: zaobľuje sa každý prstenec zvlášť, vnútorné aj
 vonkajší, a poradie prstencov sa nemení.
 
 ČIARA SA ZAOBĽUJE INAK NEŽ PRSTENEC – a je to podstatné. Prstenec je
-uzavretý, takže sa oreže každý roh vrátane toho medzi posledným a prvým
+uzavretý, takže sa zaoblí každý roh vrátane toho medzi posledným a prvým
 bodom. Otvorená čiara má dva konce, ktoré rohmi nie sú: keby sa orezali,
-vrstevnica by sa pri každom prechode skrátila o štvrtinu krajnej hrany a na
-hranici dlaždice by medzi dvomi kusmi tej istej čiary vznikla medzera.
-Konce preto ostávajú, kde sú. Uzavretá vrstevnica (a tých je väčšina –
-vrchol, kotlina) sa pozná podľa toho, že prvý bod je posledný, a ide cez
-prstencovú vetvu.
+vrstevnica by sa skrátila a na hranici dlaždice by medzi dvomi kusmi tej istej
+čiary vznikla medzera. Konce preto ostávajú PRESNE tam, kde boli (krajný
+riadiaci bod je zdvojený, čo B-spline v koncovom bode „pribije"). Uzavretá
+vrstevnica (a tých je väčšina – vrchol, kotlina) sa pozná podľa toho, že prvý
+bod je posledný, a ide cez prstencovú vetvu.
 
 Ide to prúdom cez GeoJSONSeq (jeden útvar na riadok), aby sa nikdy nedržala
 v pamäti celá vrstva – kraj má státisíce plôch. GDAL python bindings netreba,
 stačí `ogr2ogr` z gdal-bin.
 
 Použitie:
-    python3 workers/contours-rocks/smooth-shapes.py --in=rock.gpkg --out=rock-smooth.gpkg \\
-        --layer=rock --passes=2
-    python3 workers/contours-rocks/smooth-shapes.py --in=raw.gpkg --out=contours.gpkg \\
-        --layer=contours --passes=1
+    python3 workers/contours-rocks/smooth-shapes.py --in=rock.gpkg \\
+        --out=rock-smooth.gpkg --layer=rock --maxzoom=16 --sag=1
+    python3 workers/contours-rocks/smooth-shapes.py --in=raw.gpkg \\
+        --out=contours.gpkg --layer=contours --maxzoom=14 --sag=1
 """
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
 
+# Krok mriežky dlaždice pozná `lib/cell.py` – to isté miesto, ktoré hovorí,
+# koľko je pixel dlaždice v metroch (pravidlo 1 v CLAUDE.md).
+sys.path.insert(0, os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib"))
+import cell  # noqa: E402
 
-def chaikin_ring(ring, passes):
-    """Chaikinovo orezávanie rohov na uzavretom prstenci."""
+# Strop počtu vzoriek na jeden oblúk. Pri rozumnom vstupe sa nedosiahne
+# (priehyb je zlomok metra), je to poistka proti riadiacemu polygónu
+# s kilometrovými hranami a pravým uhlom – z toho by inak vypadli desaťtisíce
+# bodov na jeden oblúk.
+MAX_SAMPLES = 64
+
+
+def _arc(a, b, c, tol, out):
+    """Jeden oblúk kvadratického B-splinu (a–b–c) – body pre t ∈ (0, 1].
+
+    Oblúk ide od stredu hrany a–b do stredu hrany b–c; `b` je roh, ktorý sa
+    zaobľuje. Priehyb od tetivy klesá s n², tak sa `n` z tolerancie priamo
+    dopočíta. Rovná časť (priehyb 0) dostane jeden bod, čiže žiadne body
+    navyše.
+    """
+    (x0, y0), (x1, y1), (x2, y2) = a[:2], b[:2], c[:2]
+    # Priehyb sa meria KOLMO na tetivu, nie ako dĺžka rozdielu stredov. Pri
+    # zdvojenom krajnom bode (koniec čiary) je oblúk rovný, ale stredy sa aj
+    # tak nekryjú – posun je POZDĹŽ tetivy, teda parametrizácia, nie tvar.
+    # Nekolmá miera by tam natlačila desiatky bodov do priamky.
+    sx, sy = (x0 + x1) / 2, (y0 + y1) / 2          # začiatok oblúka
+    ex, ey = (x1 + x2) / 2, (y1 + y2) / 2          # koniec oblúka
+    mx, my = (x0 + 6 * x1 + x2) / 8, (y0 + 6 * y1 + y2) / 8   # stred oblúka
+    dx, dy = ex - sx, ey - sy
+    d = math.hypot(dx, dy)
+    if d > 0:
+        sag = abs((mx - sx) * dy - (my - sy) * dx) / d
+    else:
+        sag = math.hypot(mx - sx, my - sy)
+    # Rozdelenie oblúka na `n` dielov zmenší priehyb n²-krát.
+    n = 1 if sag <= tol else min(MAX_SAMPLES,
+                                 int(math.ceil(math.sqrt(sag / tol))))
+    for k in range(1, n + 1):
+        t = k / n
+        w0, w1, w2 = 0.5 * (1 - t) ** 2, 0.5 + t - t * t, 0.5 * t * t
+        out.append((w0 * x0 + w1 * x1 + w2 * x2,
+                    w0 * y0 + w1 * y1 + w2 * y2))
+
+
+def curve_ring(ring, tol):
+    """Limitná krivka nad uzavretým prstencom – zaoblí sa každý roh."""
     pts = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else list(ring)
-    # Trojuholník sa orezávať nemá zmysel a kratší prstenec je odpad.
+    # Trojuholník zaobľovať nemá zmysel a kratší prstenec je odpad.
     if len(pts) < 4:
         return list(ring)
-    for _ in range(passes):
-        out = []
-        n = len(pts)
-        for i in range(n):
-            (x0, y0), (x1, y1) = pts[i][:2], pts[(i + 1) % n][:2]
-            out.append((0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1))
-            out.append((0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1))
-        pts = out
-    return pts + [pts[0]]
+    n = len(pts)
+    first = ((pts[0][0] + pts[1][0]) / 2, (pts[0][1] + pts[1][1]) / 2)
+    out = [first]
+    for i in range(n):
+        _arc(pts[i], pts[(i + 1) % n], pts[(i + 2) % n], tol, out)
+    # Posledný oblúk končí presne v prvom bode – prstenec je tým uzavretý.
+    out[-1] = first
+    return out
 
 
-def chaikin_line(line, passes):
+def curve_line(line, tol):
     """To isté na otvorenej čiare – ale s konzervovanými koncami.
 
-    Krajné body sa neorezávajú: sú to konce čiary, nie rohy. Bez toho by sa
-    vrstevnica pri každom prechode skrátila o štvrtinu krajnej hrany a dva
-    kusy tej istej čiary by na hranici dlaždice prestali na seba sadnúť.
-    Uzavretá čiara (prvý bod = posledný) ide cez prstencovú vetvu, kde je
-    naopak orezanie každého rohu správne.
+    Krajné body sa nehýbu: sú to konce čiary, nie rohy. Bez toho by sa
+    vrstevnica skrátila a dva kusy tej istej čiary by na hranici dlaždice
+    prestali na seba sadnúť. Robí to zdvojenie krajného riadiaceho bodu –
+    kvadratický B-spline vtedy koncom prechádza presne.
     """
     pts = list(line)
     if len(pts) > 2 and pts[0] == pts[-1]:
-        return chaikin_ring(pts, passes)
+        return curve_ring(pts, tol)
     if len(pts) < 3:
         return pts
-    for _ in range(passes):
-        out = [pts[0]]
-        for i in range(len(pts) - 1):
-            (x0, y0), (x1, y1) = pts[i][:2], pts[i + 1][:2]
-            out.append((0.75 * x0 + 0.25 * x1, 0.75 * y0 + 0.25 * y1))
-            out.append((0.25 * x0 + 0.75 * x1, 0.25 * y0 + 0.75 * y1))
-        out.append(pts[-1])
-        pts = out
-    return pts
+    ctrl = [pts[0], pts[0]] + pts[1:-1] + [pts[-1], pts[-1]]
+    out = [tuple(pts[0][:2])]
+    for a, b, c in zip(ctrl, ctrl[1:], ctrl[2:]):
+        _arc(a, b, c, tol, out)
+    out[-1] = tuple(pts[-1][:2])
+    return out
 
 
 # Ktoré typy geometrie sa hladia – a čím. Zoznam je tu raz, nech sa
@@ -116,17 +205,17 @@ POLYGONS = ("Polygon", "MultiPolygon")
 LINES = ("LineString", "MultiLineString")
 
 
-def smooth_geometry(geom, passes):
+def smooth_geometry(geom, tol):
     if not geom:
         return geom
     t = geom.get("type")
     if t in POLYGONS:
         parts = [geom["coordinates"]] if t == "Polygon" else geom["coordinates"]
-        new = [[chaikin_ring(ring, passes) for ring in poly] for poly in parts]
+        new = [[curve_ring(ring, tol) for ring in poly] for poly in parts]
         geom["coordinates"] = new if t == "MultiPolygon" else new[0]
     elif t in LINES:
         parts = [geom["coordinates"]] if t == "LineString" else geom["coordinates"]
-        new = [chaikin_line(line, passes) for line in parts]
+        new = [curve_line(line, tol) for line in parts]
         geom["coordinates"] = new if t == "MultiLineString" else new[0]
     return geom
 
@@ -169,22 +258,46 @@ def layer_srs(path, layer):
     return "", False
 
 
+def tolerance(srs, projected, maxzoom, sag):
+    """Dovolený priehyb tetivy V JEDNOTKÁCH VRSTVY (stupne alebo metre).
+
+    Zadáva sa v štvrtinách kroku mriežky dlaždice – to je jednotka, v ktorej
+    o tom rozhoduje dlaždica, nie vrstva. Prevod je tu preto, že každá vrstva
+    chodí do tohto skriptu v inom CRS: vrstevnice v EPSG:4326 (stupne), skaly
+    zo sklonu v EPSG:3035 (metre v teréne) a skaly z tieňovania v EPSG:3857
+    (metre Mercatora, ktoré sú u nás ~1,5× dlhšie než na zemi).
+    """
+    m = cell.tile_grid_m(maxzoom) * sag / 4.0
+    if not projected:
+        # Delí sa DLHŠÍM stupňom (po šírke), takže na zemi tolerancia nikdy
+        # nevyjde väčšia, než sa žiadalo – po dĺžke je u nás stupeň kratší.
+        return m / cell.M_PER_DEG_LAT, f"{m:.3f} m"
+    if srs == "EPSG:3857":
+        return m / math.cos(math.radians(cell.DEFAULT_LAT)), f"{m:.3f} m"
+    return m, f"{m:.3f} m"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--in", dest="src", required=True)
     ap.add_argument("--out", dest="dst", required=True)
     ap.add_argument("--layer", default="rock")
-    ap.add_argument("--passes", type=int, default=2,
-                    help="koľkokrát orezať rohy (0 = vypnuté)")
+    ap.add_argument("--maxzoom", type=int, default=16,
+                    help="maxzoom dlaždíc tejto vrstvy – podľa neho sa určí "
+                         "krok mriežky, a teda hustota vzoriek")
+    ap.add_argument("--sag", type=float, default=1.0,
+                    help="dovolený priehyb tetivy v ŠTVRTINÁCH kroku mriežky "
+                         "dlaždice (0 = zaoblenie vypnuté)")
     args = ap.parse_args()
 
-    if args.passes <= 0:
+    if args.sag <= 0:
         subprocess.run(["ogr2ogr", "-f", "GPKG", args.dst, args.src,
                         "-nln", args.layer, "-overwrite"], check=True)
-        print("  zaoblenie: vypnuté (passes=0)", flush=True)
+        print("  zaoblenie: vypnuté (sag=0)", flush=True)
         return 0
 
     srs, projected = layer_srs(args.src, args.layer)
+    tol, tol_m = tolerance(srs, projected, args.maxzoom, args.sag)
     seq = args.dst + ".seq.json"
     tmp = seq + ".sm"
     for f in (seq, tmp):
@@ -193,7 +306,7 @@ def main():
     # GeoJSONSeq = jeden útvar na riadok, takže sa dá čítať aj písať prúdom.
     # `-a_srs EPSG:4326` NEprepočítava, len prekryje značku CRS – bez toho by
     # ovládač metrickú vrstvu prehnal do stupňov. Milimeter stačí: mriežka
-    # sklonu má metre a Chaikin robí štvrtiny hrán, nie mikróny.
+    # sklonu má metre a priehyb tetivy je zlomok kroku dlaždice, nie mikrón.
     export = ["ogr2ogr", "-f", "GeoJSONSeq", seq, args.src, args.layer]
     if projected:
         export += ["-a_srs", "EPSG:4326", "-lco", "COORDINATE_PRECISION=3"]
@@ -214,18 +327,31 @@ def main():
             if g and g.get("type") in POLYGONS + LINES:
                 kind = "plocha" if g["type"] in POLYGONS else "čiara"
                 pts_in += count_points(g)
-                feat["geometry"] = smooth_geometry(g, args.passes)
+                feat["geometry"] = smooth_geometry(g, tol)
                 pts_out += count_points(feat["geometry"])
             fo.write(json.dumps(feat, separators=(",", ":")) + "\n")
     os.remove(seq)
 
+    # PRÁZDNA VRSTVA SA NEPREPISUJE CEZ GeoJSONSeq. Nula útvarov = nula
+    # riadkov = súbor s nulovou dĺžkou, a ten ovládač neotvorí („Unable to
+    # open datasource") – krok by spadol na vrstve, v ktorej nie je čo
+    # zaobľovať. Vypnutá vrstva pritom nie je chyba: `build.sh` ju vyrába
+    # naschvál (`make_empty_gpkg`), lebo schéma na ňu odkazuje vždy.
+    if n == 0:
+        os.remove(tmp)
+        subprocess.run(["ogr2ogr", "-f", "GPKG", args.dst, args.src,
+                        "-nln", args.layer, "-overwrite"], check=True)
+        print("  zaoblenie: vrstva je prázdna, niet čo zaobľovať", flush=True)
+        return 0
+
     if os.path.exists(args.dst):
         os.remove(args.dst)
-    # `-makevalid`: Chaikin je konvexná kombinácia susedných bodov, takže sa
-    # obrys sám do seba nezareže – okrem veľmi tenkých ostňov, kde sa dva
-    # zaoblené okraje môžu dotknúť. Tie sa tu opravia, nech do dlaždíc nejde
-    # neplatný polygón. Na čiare nemá čo opravovať (čiara sa smie krížiť),
-    # takže sa tam ani nevolá – ušetrí to priechod nad státisícmi vrstevníc.
+    # `-makevalid`: každý bod krivky je konvexnou kombináciou susedných
+    # riadiacich bodov, takže sa obrys sám do seba nezareže – okrem veľmi
+    # tenkých ostňov, kde sa dva zaoblené okraje môžu dotknúť. Tie sa tu
+    # opravia, nech do dlaždíc nejde neplatný polygón. Na čiare nemá čo
+    # opravovať (čiara sa smie krížiť), takže sa tam ani nevolá – ušetrí to
+    # priechod nad státisícmi vrstevníc.
     lines = kind == "čiara"
     cmd = ["ogr2ogr", "-f", "GPKG", args.dst, tmp, "-nln", args.layer]
     # Prázdna vrstva nepovedala, čo v nej malo byť – vtedy sa typ NEVNUCUJE.
@@ -248,7 +374,8 @@ def main():
     os.remove(tmp)
 
     grew = pts_out / pts_in if pts_in else 1.0
-    print(f"  zaoblenie: {args.passes}× orezanie rohov, {n} "
+    print(f"  zaoblenie: limitná krivka, priehyb do {args.sag / 4:.2f}× kroku "
+          f"mriežky z{args.maxzoom} ({tol_m}), {n} "
           f"{'čiar' if lines else 'plôch'}, "
           f"bodov {pts_in} → {pts_out} ({grew:.2f}×)", flush=True)
     return 0

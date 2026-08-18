@@ -141,7 +141,7 @@ elif [ -s steps-out/rock-stats.txt ]; then
       echo "| vykrojené dierami | ${holes_km2:-0} km² |"
     fi
     echo "| zjednodušenie obrysu | ${simplify_m:-?} m |"
-    echo "| zaoblenie rohov (Chaikin) | ${smooth_passes:-0}× |"
+    echo "| zaoblenie rohov | priehyb ${smooth_sag:-0}/4 kroku mriežky dlaždice |"
     echo
     echo "Obrys je izolínia sklonu – plocha má tvar, aký terén naozaj má."
     if [ "${zapln_diery:-0}" = '1' ]; then
@@ -170,9 +170,10 @@ elif [ -s steps-out/rock-stats.txt ]; then
     echo
     echo "> Zubatosť rieši zaoblenie rohov, nie hrubšia mriežka. Samotná"
     echo "> izolínia zubatá nie je (priemerný lom 4,6°), zubatou ju robí až"
-    echo "> zjednodušenie obrysu (28,5°). Chaikin každý roh nahradí dvomi"
-    echo "> polovičnými, takže dva prechody dajú 7,7° – hladší obrys, než má"
-    echo "> nezjednodušený originál, a stále o 43 % menej bodov."
+    echo "> zjednodušenie obrysu (28,5°). Roh preto nahradí limitná krivka"
+    echo "> (kvadratický B-spline) vzorkovaná tak, aby sa od svojho presného"
+    echo "> priebehu neodchýlila viac než o zlomok kroku mriežky dlaždice –"
+    echo "> jemnejší detail sa do dlaždice aj tak nezmestí."
   } >> "$S"
 fi
 

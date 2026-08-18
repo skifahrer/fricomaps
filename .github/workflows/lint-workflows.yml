@@ -581,6 +581,18 @@ jobs:
       - name: Tieňovanie nestráca presnosť, ktorou stojí a padá
         run: python3 workers/lint/terrain.py
 
+      # Vrstevnice boli „vyhladené, ale v pravidelných intervaloch zubaté":
+      # dva prechody Chaikina z rohu spravia menší roh, nie oblúk, a keďže
+      # rohy ostanú tam, kde ich nechal Douglas–Peucker, sú tie zvyšky
+      # pravidelne rozostupené. Build bol pritom zelený a dlaždice správne
+      # veľké – zase pravidlo 8. Odvtedy sa zaobľuje limitnou krivkou
+      # vzorkovanou podľa mriežky dlaždice a strážia sa miesta, na ktorých sa
+      # to dá nebadane rozbiť (cesta k skriptu z iného priečinka, chýbajúci
+      # `--maxzoom`, priehyb nad krok mriežky, posunuté konce čiary).
+      # Rozpis: `workers/lint/smoothing.py`.
+      - name: "Zaoblenie obrysu: každé volanie vie svoju mriežku"
+        run: python3 workers/lint/smoothing.py
+
       # To isté o krok ďalej pri mape sveta: okrem dna zoomu sa tam dá pomýliť
       # aj v MENE vrstvy (`source-layer: downloads` proti vrstve `download`)
       # a MapLibre na to nepovie nič – regióny sťahovania v mape jednoducho
