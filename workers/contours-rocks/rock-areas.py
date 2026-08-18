@@ -231,8 +231,11 @@ def main():
                     help="tolerancia zjednodušenia obrysu v metroch; "
                          "-1 = štvrtina mriežky (odstráni schodíky), 0 = vypnuté")
     ap.add_argument("--smooth", type=int, default=2,
-                    help="koľkokrát zaobliť rohy obrysu (Chaikin); "
-                         "0 = vypnuté, 2 = odporúčané")
+                    help="dovolený priehyb zaobleného obrysu v ŠTVRTINÁCH "
+                         "kroku mriežky dlaždice; 0 = zaoblenie vypnuté")
+    ap.add_argument("--maxzoom", type=int, default=16,
+                    help="maxzoom dlaždíc so skalami – podľa neho vyjde krok "
+                         "mriežky, a teda hustota bodov obrysu")
     ap.add_argument("--chunk-cells", type=float, default=150e6,
                     help="strop buniek na jednu časť pri počítaní sklonu")
     # 0 = bez rozpočtu, a to je predvolené: „koľko som ochotný čakať" je
@@ -523,9 +526,11 @@ def main():
         # ---------- 6. zaoblenie obrysu ----------
         # Zjednodušenie vyššie zmaže schodíky, ale to, čo po ňom ostane, sú
         # ostré rohy – priemerný lom medzi segmentmi vyskočí zo 4,6° na 28,5°
-        # a práve tak vyzerá skala pri max zoome „zubatá". Chaikin ich zaobli
-        # (2 prechody → 7,7°). Robí sa to ešte v metroch, aby tolerancie
-        # sedeli, a pred prepočtom do EPSG:4326.
+        # a práve tak vyzerá skala pri max zoome „zubatá". Zaobli ich limitná
+        # krivka (kvadratický B-spline), vzorkovaná podľa kroku mriežky
+        # dlaždice na `--maxzoom` – rozpis v hlavičke `smooth-shapes.py`.
+        # Robí sa to ešte v metroch, aby tolerancie sedeli, a pred prepočtom
+        # do EPSG:4326.
         if args.smooth > 0:
             smoothed = os.path.join(tmp, "rock-smooth.gpkg")
             script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -533,7 +538,8 @@ def main():
             try:
                 out = run([sys.executable, script, f"--in={final_metric}",
                            f"--out={smoothed}", "--layer=rock",
-                           f"--passes={args.smooth}"])
+                           f"--maxzoom={args.maxzoom}",
+                           f"--sag={args.smooth}"])
                 print(out.stdout.rstrip(), flush=True)
                 final_metric = smoothed
             except subprocess.CalledProcessError as exc:
@@ -630,7 +636,7 @@ def main():
                 f.write(f"zapln_diery={int(bool(args.zapln_diery))}\n")
                 f.write(f"slope_step_deg={1.0/SCALE:g}\n")
                 f.write(f"simplify_m={args.simplify:g}\n")
-                f.write(f"smooth_passes={args.smooth}\n")
+                f.write(f"smooth_sag={args.smooth}\n")
                 f.write(f"cells_g={cells/1e9:.2f}\n")
                 f.write(f"took={hms(took)}\n")
                 if dem_dx:

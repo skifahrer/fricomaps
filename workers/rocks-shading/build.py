@@ -70,9 +70,9 @@ Namerané na výreze z tej vrstvy (1260×1933 px, Vysoké Tatry):
     skalnatého terénu.
   * Z toho vyšli aj predvolené hodnoty filtrov. Merané na tom istom výreze:
 
-        min_area 200 m², min_hole 50 m², simplify ½ px, Chaikin 2× →
+        min_area 200 m², min_hole 50 m², simplify ½ px, jemné zaoblenie →
             16 plôch,  89 dier,  3,95 MB/km²
-        min_area  50 m², min_hole 10 m², simplify 1 px,  Chaikin 1× →
+        min_area  50 m², min_hole 10 m², simplify 1 px,  hrubšie zaoblenie →
             78 plôch, 392 dier,  1,97 MB/km²   ← toto
 
     Jemnejšie filtre a hrubšie zjednodušenie dali SÚČASNE viac štruktúry aj
@@ -454,8 +454,14 @@ def main():
                     help="najmenšia diera, ktorá sa zachová, v m²")
     ap.add_argument("--simplify", type=float, default=-1,
                     help="zjednodušenie obrysu v metroch (-1 = jeden pixel)")
-    ap.add_argument("--smooth", type=int, default=1,
-                    help="koľkokrát zaobliť rohy (Chaikin, 0 = vypnuté)")
+    ap.add_argument("--smooth", type=int, default=2,
+                    help="dovolený priehyb zaobleného obrysu v ŠTVRTINÁCH "
+                         "kroku mriežky dlaždice (0 = zaoblenie vypnuté)")
+    # Maxzoom .pmtiles so skalami – z neho vyjde krok mriežky, podľa ktorého
+    # sa zaoblený obrys vzorkuje. `rocks.yml` ide predvolene na 16 (strop
+    # Planetilera, `ROCK_MAXZOOM` v build-map.yml) a nie je kam ho dvíhať.
+    ap.add_argument("--maxzoom", type=int, default=16,
+                    help="maxzoom dlaždíc so skalami (mriežka `extent`)")
     ap.add_argument("--jobs", type=int, default=12, help="paralelné sťahovanie")
     ap.add_argument("--ua", default="rotate",
                     help="`rotate` = každý request ako iný prehliadač, "
@@ -513,8 +519,8 @@ def main():
     if args.simplify < 0:
         # Jeden pixel, nie štvrtina ako pri skalách z DEM: zdroj je 8-bitový
         # JPEG, takže pod pixel je už len zrno kompresie. Namerané na
-        # skutočnej dlaždici (viď hlavičku súboru) – pol pixela a 2× Chaikin
-        # stáli dvojnásobok dát za obrys, ktorý vyzerá rovnako.
+        # skutočnej dlaždici (viď hlavičku súboru) – pol pixela a jemnejšie
+        # zaoblenie stáli dvojnásobok dát za obrys, ktorý vyzerá rovnako.
         args.simplify = tile_res(z)
 
     # Pracovný priečinok leží v cache dlaždíc, nie vedľa výstupu. To je celý

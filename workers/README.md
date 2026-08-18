@@ -254,7 +254,7 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
                a `-simplify` zmaže schodíky po hranách buniek DEM
                (tolerancia: štvrtina bunky)
   → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
-                      (Chaikin, 2 prechody)
+                      (limitná krivka, vzorkovaná podľa mriežky dlaždice)
   → planetiler generate-custom --schema=workers/contours-rocks/contours.yml
   → {región}-contours.pmtiles
 ```
@@ -279,12 +279,15 @@ okrem šumu (σ = 0,15 m na 1 m mriežke) aj **reálne tvary** s vlnovou dĺžko
 | bez vyhladenia, 1/4 bunky, 1× Chaikin (do augusta) | 1908 | 31,3° | 43,4 % | 0,86 m | 100 % | 93 % |
 | okno 5×5, 1/2 bunky, 2× Chaikin (august) | 436 | 10,6° | 4,1 % | 1,52 m | 75 % | **27 %** |
 | okno 3×3, 1/2 bunky, 2× Chaikin | 604 | 10,7° | 4,2 % | 0,95 m | 90 % | 52 % |
-| **okno 3×3, 1/4 bunky, 2× Chaikin (teraz)** | **860** | **8,2°** | **1,6 %** | **0,70 m** | **93 %** | **63 %** |
+| **okno 3×3, 1/4 bunky (dnešné okno a tolerancia)** | **860** | **8,2°** | **1,6 %** | **0,70 m** | **93 %** | **63 %** |
 | okno 7×7, 1/2 bunky, 2× Chaikin | 336 | 10,8° | 3,0 % | 2,23 m | 58 % | **5 %** |
 
 Meria to [`workers/contours-rocks/measure-smoothing.py`](contours-rocks/measure-smoothing.py) – nie
 je to časť pipeline, nevolá to žiadny workflow a stačí naň numpy, takže sa
 tabuľka dá kedykoľvek zopakovať (`python3 workers/contours-rocks/measure-smoothing.py`).
+
+(Zaoblenie bolo v čase toho merania ešte Chaikinovo – o tom je tabuľka
+o kus nižšie; okna a tolerancie sa tá zmena netýka.)
 
 Kľúčové je porovnanie tretieho a piateho riadku: **menšie okno nie je ústupok
 zubatosti**. Priemerný lom je menší (8,2° oproti 10,6°), ostrých lomov je
@@ -303,27 +306,48 @@ zväčšenie späť s `-r cubicspline`), takže sa gigabajtový raster nemusí �
 cez pamäť.
 
 **Až potom sa upratuje čiara.** `-simplify` zmaže schodíky po hranách buniek,
-po ňom ostanú **ostré rohy** – a tie zaobli Chaikinovo orezávanie rohov.
-Zjednodušenie je na **štvrtine** bunky, nie na polovici, a je to tá istá otázka
-ako veľkosť okna: samo čiaru oblou nerobí, ale predlžuje segmenty, a Chaikin
-potom reže rohy dlhé štvrtinu segmentu – čím dlhší segment, tým väčší kus
-tvaru sa odreže (pri 1/2 bunky prežije z 12 m tvaru 52 %, pri 1/4 bunky 63 %).
+po ňom ostanú **ostré rohy** – a tie sa zaoblia. Zjednodušenie je na
+**štvrtine** bunky, nie na polovici, a je to tá istá otázka ako veľkosť okna:
+samo čiaru oblou nerobí, ale predlžuje segmenty, a zaoblenie potom reže rohy
+dlhé štvrtinu segmentu – čím dlhší segment, tým väčší kus tvaru sa odreže (pri
+1/2 bunky prežije z 12 m tvaru 52 %, pri 1/4 bunky 63 %).
 
-Koľko prechodov stačí, merané na tom istom teréne (okno 3×3, 1/4 bunky):
+**Zaobľuje sa LIMITNOU KRIVKOU, nie dvoma prechodmi Chaikina** – a to je tá
+oprava, kvôli ktorej boli vrstevnice „vyhladené, ale v pravidelných intervaloch
+zubaté". Chaikinovo orezávanie rohov ku kvadratickému B-splinu len konverguje
+a robí to **lokálne**: jeden prechod roh rozpolí, dva ho zmenšia na štvrtinu,
+takže zo 120° rohu ostane vyše 30°. Tie zvyšky sedia presne tam, kde nechal
+vrcholy Douglas–Peucker, čiže sú **pravidelne rozostupené** – na hotovej mape
+(Bratislavský kraj, `bratislavsky-contours.pmtiles`, 3 220 km čiar) ich bolo
+**14,7 na kilometer**, jeden každých ~68 m. Tretí prechod ich dorovná, ale
+zdvojnásobí počet bodov, a to je horšie než zuby (viď mriežku dlaždice nižšie).
 
-| nastavenie | bodov | priemerný lom | lomov > 30° | odchýlka | tvar 12 m |
-|---|--:|--:|--:|--:|--:|
-| bez zaoblenia | 215 | 33,1° | 44,1 % | 0,61 m | 71 % |
-| 1× Chaikin | 430 | 16,5° | 16,8 % | 0,68 m | 65 % |
-| **2× Chaikin (default)** | **860** | **8,2°** | **1,6 %** | **0,70 m** | **63 %** |
-| 3× Chaikin | 1720 | 4,1° | 0,1 % | 0,70 m | 63 % |
+Limitná krivka sa preto vyhodnotí rovno a vzorkuje sa podľa **priehybu
+tetivy**: oblúk medzi vrcholmi a–b–c má od tetivy priehyb |2b − a − c| / 8
+a rozdelenie na `n` dielov ho zmenší n²-krát, takže `n = ⌈√(priehyb /
+tolerancia)⌉`. Tolerancia je **pol kroku mriežky dlaždice** na maxzoome tej
+vrstvy – presne toľko, koľko spraví aj samotné zaokrúhlenie do dlaždice, takže
+sa neplatí bodmi za detail, ktorý sa tam aj tak nezmestí. Rovná časť čiary
+dostane jeden bod, zákruta toľko, koľko treba.
 
-**Zaoblenie rohov nie je to, čo vrstevnice zaobľovalo priveľmi** – to bolo okno
-na DEM a tolerancia zjednodušenia. Chaikin nad krátkymi segmentmi ubral z tvaru
-terénu 2 percentuálne body (65 → 63 %), kým vyhladenie DEM ich brávalo desiatky
-(63 → 27 %). Dva prechody preto ostávajú: jeden nechá každý šiesty lom nad 30°,
-čo je presne tá zubatosť, ktorú na čiare pri max zoome vidno, a tretí je
-dvojnásobok bodov za rohy, ktoré už ostré nie sú.
+Merané na tom istom teréne (okno 3×3, 1/4 bunky, maxzoom z16); „zub/km" sú
+ostré lomy **tvaru** – čiara sa pred meraním prevzorkuje rovnomerne, inak by
+sa porovnávala hustota bodov a nie zubatosť:
+
+| nastavenie | bodov | zub/km | tvar 12 m | zub/km po mriežke z16 |
+|---|--:|--:|--:|--:|
+| bez zaoblenia | 215 | 72,7 | 71 % | 68,8 |
+| 1× Chaikin | 430 | 31,9 | 65 % | 32,9 |
+| 2× Chaikin (do teraz) | 860 | 10,0 | 63 % | 11,0 |
+| 3× Chaikin | 1720 | 4,0 | 63 % | 5,0 |
+| **limitná krivka, priehyb 1/2 mriežky (default)** | **586** | **5,0** | **62 %** | **8,1** |
+
+A to isté celou cestou cez skutočný `gdal_contour` (5 m model, 89 čiar,
+`-simplify` ¼ bunky): 2× Chaikin dá 56 792 bodov a 0,7 zuba/km po mriežke z16,
+limitná krivka 56 421 bodov a 0,1 – **sedemkrát menej zubov za rovnaký počet
+bodov**. Štvrtinový priehyb je pri takom hrubom modeli o 35 % viac bodov za
+rovnaký počet zubov, a väčšia vrstva nie je len väčšia: rozpočet stránky by jej
+mohol zobrať celý zoom, čo je proti zubatosti oveľa horšie.
 
 Ovláda to `CONTOUR_DEM_LOWPASS`, `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:`
 build-map.yml: okno v metroch (`0` = nehladiť DEM), záporné číslo = koľko
@@ -337,8 +361,9 @@ nevie, takže krok mriežky určuje maxzoom vrstevníc – pri z14 je to 0,391 m
 pri z16 0,098 m. Nad svojím maxzoomom sa dlaždice už len naťahujú, a práve to
 zaokrúhlenie vidno pri najväčšom priblížení ako schodíky: čiara, ktorá má sama
 1,6 % ostrých lomov, ich má po mriežke z14 rovných **11,5 %**, po z15 4,3 %
-a po z16 2,1 %. Dočistiť čiaru po Chaikinovi nepomáha (zhoršuje to), takže
-jediná páka je maxzoom.
+a po z16 2,1 %. Dočistiť hotovú čiaru nepomáha (zhoršuje to) – jediné dve páky
+sú maxzoom a to, aby sa čiara nevzorkovala jemnejšie, než mriežka unesie
+(preto je tolerancia zaoblenia zlomkom jej kroku).
 
 Preto si vrstevnice zoom **hľadajú oboma smermi**: keď sa `.pmtiles` nezmestí
 do svojho podielu rozpočtu stránky, ide o úroveň nižšie (ako doteraz), a keď
@@ -461,8 +486,9 @@ DEM
   → filter najmenšej plochy
   → -simplify                     preč so schodíkmi po hranách buniek
   → smooth-shapes.py              zaoblenie rohov, ktoré po zjednodušení
-                                  ostali ostré (Chaikin, 2 prechody); ten istý
-                                  skript zaobľuje aj vrstevnice
+                                  ostali ostré (limitná krivka podľa mriežky
+                                  dlaždice); ten istý skript zaobľuje
+                                  aj vrstevnice
   → vrstva `rock` v {región}-rocks.pmtiles  – VLASTNÉ dlaždice, vlastný maxzoom
 ```
 
@@ -473,10 +499,10 @@ preč).
 
 **Obrys je zaoblený, nie zubatý.** Samotná izolínia zubatá nie je (priemerný
 lom medzi segmentmi 4,6°) – zubatou ju robilo až zjednodušenie, ktoré tie
-státisíce bodov zredukuje (28,5°). Preto sa po zjednodušení rohy ešte zaoblia
-Chaikinovým orezávaním: dva prechody dajú 7,7°, čo je hladšie než pôvodný
-raster, a stále o 43 % menej bodov než nezjednodušený originál. Čísla a
-neúspešné pokusy (vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
+státisíce bodov zredukuje (28,5°). Preto sa po zjednodušení rohy ešte zaoblia –
+tým istým skriptom a tou istou limitnou krivkou ako vrstevnice, vzorkovanou
+podľa mriežky dlaždice na `rock_maxzoom`. Čísla a neúspešné pokusy
+(vyhladzovanie rastra sklonu plochy rozbíja: 326 → 1668) sú
 v `workers/contours-rocks/smooth-shapes.py`.
 
 **Jedna trieda, jedna sivá.** Skala je v mape jedna plocha v jednej sivej bez
@@ -537,7 +563,7 @@ je jedna na celý región, z10 ich je tisíc). S približovaním pribúdajú det
 | mriežka, na ktorej sa obrys počíta | **auto** (`rock_res`) – najjemnejšia, ktorá sa zmestí do času a má pri danom DEM zmysel |
 | krok sklonu v mozaike | **0,01°** (Int16) – hrubší krok robil obrys zubatý |
 | zjednodušenie obrysu | štvrtina mriežky (`ROCK_SIMPLIFY: -1`) – zmaže schodíky |
-| zaoblenie rohov | **2× Chaikin** (`ROCK_SMOOTH: 2`) – priemerný lom 28,5° → 7,7° |
+| zaoblenie rohov | **limitná krivka** (`ROCK_SMOOTH: 2` = priehyb pol kroku mriežky dlaždice) – priemerný lom 28,5° → 7,7° |
 | bunka zdrojového DEM (Sonny 20 m) | ~20 m → **strop skutočného detailu** |
 | najmenšia ponechaná plocha | jedna bunka mriežky: **4 m²** pri 2 m, **1 m²** pri 1 m |
 | filter drobných prvkov v dlaždiciach | vypnutý na najvyššom zoome |
@@ -648,11 +674,11 @@ Predvolené hodnoty nie sú odhad – sú namerané na výreze z tej vrstvy
 
   | nastavenie | plôch | dier | dáta |
   |---|--:|--:|--:|
-  | `min_area 200`, `min_hole 50`, simplify ½ px, Chaikin 2× | 16 | 89 | 3,95 MB/km² |
-  | **`min_area 50`, `min_hole 10`, simplify 1 px, Chaikin 1×** | **78** | **392** | **1,97 MB/km²** |
+  | `min_area 200`, `min_hole 50`, simplify ½ px, jemné zaoblenie | 16 | 89 | 3,95 MB/km² |
+  | **`min_area 50`, `min_hole 10`, simplify 1 px, hrubšie zaoblenie** | **78** | **392** | **1,97 MB/km²** |
 
   Jemnejšie filtre a hrubšie zjednodušenie dali **súčasne viac štruktúry aj
-  polovičné dáta**: pol pixela a druhý prechod Chaikinom leštili obrys, ktorý
+  polovičné dáta**: pol pixela a jemnejšie zaoblenie leštili obrys, ktorý
   aj tak nikto nerozozná, zatiaľ čo `min_area 200` zmazal práve tie drobné
   útvary, o ktoré ide. Predvolené `min_area` je preto dnes **7 m²** – ~11
   pixelov na z17, teda blízko hranice, pod ktorou je už len zrno JPEGu.
@@ -1435,7 +1461,8 @@ Ovládanie vo workflowe: `rock_source` (z ktorého modelu – alebo `ziadne`,
 `auto`, default `auto`).
 Ostatné ladenie je v `env:` na začiatku
 [build-map.yml](../.github/workflows/build-map.yml): `ROCK_SIMPLIFY` (0 = presný
-obrys), `ROCK_SMOOTH` (koľkokrát zaobliť rohy, 0 = vypnúť),
+obrys), `ROCK_SMOOTH` (priehyb zaoblenia v štvrtinách kroku mriežky
+dlaždice, 0 = vypnúť),
 `ROCK_CLIFF_PLUS` (o koľko ° nad prahom začína trieda `cliff`),
 `ROCK_CHUNK_CELLS` (koľko buniek naraz pri počítaní sklonu), `ROCK_ALGO`
 (verzia algoritmu v mene uloženého assetu).

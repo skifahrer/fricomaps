@@ -339,9 +339,9 @@ PY
   # má pri z16 1,57 m – takže tie schodíky sú v mape vidieť ako zúbky.
   #
   # PORADIE JE PODSTATNÉ: najprv sa zmažú schodíky (`-simplify`), až potom
-  # sa zaoblia rohy, ktoré po nich ostali. Opačne by Chaikin zaoblil každý
-  # schodík zvlášť, počet bodov by narástol a čiara by bola stále schodíková,
-  # len s oblými schodmi.
+  # sa zaoblia rohy, ktoré po nich ostali. Opačne by sa zaoblil každý schodík
+  # zvlášť, počet bodov by narástol a čiara by bola stále schodíková, len
+  # s oblými schodmi.
   #
   # Tolerancia je vo VRSTVE, teda v stupňoch (vrstevnice sú EPSG:4326).
   # ZÁPORNÉ ČÍSLO = KOĽKO ŠTVRTÍN BUNKY DEM, teda `-1` je štvrtina bunky
@@ -420,20 +420,20 @@ PY
          ELSE 'minor' END AS level
        FROM contours WHERE ele IS NOT NULL"
 
-  # Zaoblenie – dva prechody, rovnako ako pri skalách, a OSTÁVAJÚ DVA aj po
-  # tom, čo sa vrstevnice zaobľujú menej. Chaikin totiž nie je to, čo ich
-  # zaobľovalo priveľmi: nad krátkymi segmentmi (štvrtina bunky) reže rohy
-  # dlhé štvrtinu segmentu, takže z tvaru terénu ubral 2 percentuálne body,
-  # kým vyhladenie DEM ich brávalo desiatky. Jeden prechod nechá každý šiesty
-  # lom nad 30° (to je tá zubatosť, ktorú pri max zoome vidno), tretí je
-  # dvojnásobok bodov za 1,6 % → 0,1 %. Tabuľka je v docs/pipeline.md, zmerať
-  # sa dá `workers/contours-rocks/measure-smoothing.py`. `CONTOUR_SMOOTH=0` to vypne.
+  # Zaoblenie – rohy po zjednodušení nahradí LIMITNÁ KRIVKA (kvadratický
+  # B-spline). Dva prechody Chaikina, čo tu boli doteraz, sa k nej len blížia
+  # a robia to LOKÁLNE: zo 120° rohu ostane vyše 30°, a keďže rohy sedia
+  # v rozostupe vrcholov po Douglas–Peuckerovi, je z toho PRAVIDELNÝ zub (na
+  # hotovej mape 14,7/km). Číslo je dovolený PRIEHYB TETIVY v štvrtinách kroku
+  # mriežky dlaždice na maxzoome vrstevníc – preto sa sem maxzoom podáva.
+  # Rozpis a merania: `contours-rocks/smooth-shapes.py`; `0` to vypne.
   C_SMOOTH="${CONTOUR_SMOOTH:-2}"
-  case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=1 ;; esac
+  case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=2 ;; esac
   if [ "$C_SMOOTH" -gt 0 ]; then
-    echo "Zaoblenie vrstevníc: ${C_SMOOTH}× orezanie rohov (Chaikin)"
+    echo "Zaoblenie vrstevníc: limitná krivka, priehyb ${C_SMOOTH}/4 kroku mriežky z${OPT_CONTOUR_MAXZOOM}"
     if ! python3 workers/contours-rocks/smooth-shapes.py --in=work/level.gpkg \
-           --out=data/contours.gpkg --layer=contours --passes="$C_SMOOTH"; then
+           --out=data/contours.gpkg --layer=contours \
+           --maxzoom="$OPT_CONTOUR_MAXZOOM" --sag="$C_SMOOTH"; then
       # Zaoblenie je kozmetika nad hotovými vrstevnicami – keby zlyhalo,
       # nemá to zhodiť beh, ktorý ich už má spočítané. Ale MUSÍ to byť
       # počuť, inak by sa „prečo sú zase zubaté" hľadalo v štýle.
@@ -615,7 +615,7 @@ if [ "$OPT_ROCKS" = 'true' ]; then
       --min-area=-1 --simplify="$ROCK_SIMPLIFY" \
       --plne="${OPT_ROCK_PLNE:-1}" \
       --zapln-diery="${OPT_ROCK_ZAPLN_DIERY:-0}" \
-      --smooth="$ROCK_SMOOTH" \
+      --smooth="$ROCK_SMOOTH" --maxzoom="$OPT_ROCK_MAXZOOM" \
       --stats=contours-out/rock-stats.txt \
       --budget-min="$ROCK_BUDGET_MIN" \
       --block-px="${ROCK_BLOCK_PX:-4096}" \

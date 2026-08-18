@@ -25,6 +25,9 @@ import sys
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# `workers/` – hĺbka je vždy jedna úroveň (CLAUDE.md), takže to platí všade
+# rovnako. Cez toto sa siaha na skripty INÉHO jobu; vlastné idú cez `_HERE`.
+_WORKERS = os.path.dirname(_HERE)
 
 
 def load(name, path):
@@ -392,11 +395,17 @@ def spoj(args, tmp, out, cliff_level, merc, uzemie_km2=0.0):
     smooth = os.path.join(tmp, "rock-smooth.gpkg")
     src = metric
     if args.smooth > 0:
+        # `smooth-shapes.py` je v `contours-rocks/` – zaobľuje obrysy skál AJ
+        # vrstevnice a dve kópie by sa raz rozišli (viď jeho hlavičku). Cesta
+        # sem preto nesmie ísť cez `dirname(__file__)`: tam ten súbor nie je
+        # a krok by spadol na `FileNotFoundError` až po hodinách sťahovania.
+        # Stráži to `workers/lint/layout.py`.
         subprocess.run([sys.executable,
-                        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        os.path.join(_WORKERS, "contours-rocks",
                                      "smooth-shapes.py"),
                         f"--in={metric}", f"--out={smooth}", "--layer=rock",
-                        f"--passes={args.smooth}"], check=True)
+                        f"--maxzoom={args.maxzoom}",
+                        f"--sag={args.smooth}"], check=True)
         src = smooth
 
     if os.path.exists(out):

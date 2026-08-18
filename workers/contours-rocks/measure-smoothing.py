@@ -17,8 +17,14 @@ koľko z nich na čiare ostane.
 
 ČO SA MERIA (`--help` vypíše aj nastavenia):
   bodov     … koľko bodov má výsledná čiara (≈ veľkosť dlaždíc)
-  lom       … priemerný uhol zlomu medzi susednými segmentmi (zubatosť)
-  >30°      … podiel ostrých lomov – to je to, čo pri max zoome vidno
+  lom       … priemerný uhol zlomu medzi susednými segmentmi
+  >30°      … PODIEL ostrých lomov zo všetkých vrcholov
+  zub/km    … ostré lomy TVARU na kilometer: čiara sa najprv prevzorkuje
+              rovnomerne (0,5 m) a až potom sa merajú lomy. Bez toho sa
+              porovnávajú neporovnateľné veci – uhol medzi susednými bodmi
+              závisí od toho, ako husto tie body ležia, takže riedko
+              vzorkovaná HLADKÁ krivka vyjde „zubatejšia" než hustá krivka
+              so skutočnými rohmi. Zub je lom, ktorý má krivka SAMA
   odchýlka  … vzdialenosť od izolínie toho istého terénu BEZ šumu (vernosť)
   tvar      … koľko % z amplitúdy reálneho tvaru na čiare ostalo
 
@@ -33,23 +39,48 @@ tak to raz dopadlo.
 
 MODEL PIPELINE. Vyhladenie DEM (priemer v okne a späť na mriežku),
 `gdal_contour` (marching squares s lineárnou interpoláciou na hrane bunky),
-`-simplify` (Douglas–Peucker) a Chaikin zo `smooth-shapes.py` – vrátane
-konzervovaných koncov otvorenej čiary. GDAL netreba, aby sa to dalo spustiť
-aj mimo runnera; rozdiel oproti `cubicspline` v gdalwarpe je pod úrovňou
-toho, o čom tieto čísla rozhodujú.
+`-simplify` (Douglas–Peucker) a zaoblenie. Zaobľovanie sa NEKOPÍRUJE: berie sa
+priamo zo `smooth-shapes.py` (`curve_line`), takže tu nemôže vyjsť iná krivka
+než v pipeline. Chaikin ostal len ako to, s čím sa porovnáva – to je pár
+riadkov a je to minulý stav, nie druhá pravda o dnešku. GDAL netreba, aby sa
+to dalo spustiť aj mimo runnera; rozdiel oproti `cubicspline` v gdalwarpe je
+pod úrovňou toho, o čom tieto čísla rozhodujú.
 
 Použitie:
     python3 workers/contours-rocks/measure-smoothing.py             # tabuľka pre default a okolie
     python3 workers/contours-rocks/measure-smoothing.py --seed=7    # iný šum (čísla sú stabilné)
 """
 import argparse
+import importlib.util
 import math
+import os
+import sys
 
 import numpy as np
 
+# Zaobľovanie sa sem NEPÍŠE druhýkrát – je to tá istá krivka, akú do dlaždíc
+# posiela pipeline (pravidlo 1 v CLAUDE.md). Pomlčka v mene súboru sa cez
+# `import` načítať nedá, tak cez `importlib`.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _load(name, fname):
+    spec = importlib.util.spec_from_file_location(
+        name, os.path.join(_HERE, fname))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+shapes = _load("smooth_shapes", "smooth-shapes.py")
+# Krok mriežky dlaždice hovorí `lib/cell.py` – tá istá odpoveď, akou sa riadi
+# vzorkovanie v pipeline.
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "lib"))
+import cell  # noqa: E402
+
 NX, NY = 640, 320          # 1 m mriežka
 LAT = 49.1                 # zemepisná šírka (Tatry) – kvôli mriežke dlaždice
-EXTENT = 4096              # súradnicová mriežka vektorovej dlaždice
+EXTENT = cell.TILE_EXTENT  # súradnicová mriežka vektorovej dlaždice
 SLOPE = 0.10               # 10 % svah – izolínia je potom graf y(x)
 # Reálne tvary terénu: (vlnová dĺžka v metroch, amplitúda výšky v metroch).
 # Na 10 % svahu robí amplitúda 1,2 m výkyv čiary 12 m do strany.
@@ -175,7 +206,12 @@ def simplify(pts, tol):
 
 
 def chaikin(pts, passes):
-    """Otvorená čiara s konzervovanými koncami – ako v smooth-shapes.py."""
+    """Orezávanie rohov – TO, ČO TU BOLO DO AUGUSTA 2026, na porovnanie.
+
+    V pipeline sa už nepoužíva (nechávalo pravidelné zuby, viď hlavičku
+    `smooth-shapes.py`), ale bez neho sa nedá ukázať, o koľko je limitná
+    krivka lepšia – a to je celý zmysel tejto tabuľky.
+    """
     pts = list(pts)
     for _ in range(passes):
         out = [pts[0]]
@@ -187,10 +223,24 @@ def chaikin(pts, passes):
     return pts
 
 
+def limit(pts, sag, maxzoom):
+    """Limitná krivka zo `smooth-shapes.py` – to, čo robí pipeline dnes.
+
+    `sag` je v štvrtinách kroku mriežky dlaždice, presne ako `CONTOUR_SMOOTH`;
+    model počíta v metroch, takže sa tolerancia berie rovno v metroch.
+    """
+    tol = tile_step(maxzoom) * sag / 4.0
+    return shapes.curve_line([tuple(p) for p in pts], tol)
+
+
 # ---------- metriky ----------
 def tile_step(z, lat=LAT):
-    """Krok mriežky dlaždice v metroch pri danom zoome."""
-    return 40075017 * math.cos(math.radians(lat)) / (2 ** z) / EXTENT
+    """Krok mriežky dlaždice v metroch pri danom zoome.
+
+    Počíta to `lib/cell.py` – to isté miesto, ktoré sa pýta pipeline, keď
+    vyberá hustotu vzoriek. Tabuľka a beh tak nemôžu merať inú mriežku.
+    """
+    return cell.tile_grid_m(z, lat)
 
 
 def quantize(pts, step):
@@ -233,17 +283,44 @@ def metrics(pts):
     return dev, tvary
 
 
-def run(Z, win, quarters, passes, label, maxzoom):
-    pts = chaikin(simplify(contour(lowpass(Z, win), LEVEL), quarters / 4.0),
-                  passes)
+# Krok, na ktorý sa čiara prevzorkuje pred meraním zubov. Je to TÁ ISTÁ
+# hodnota pre všetky riadky tabuľky – o to práve ide: merať tvar, nie hustotu
+# bodov. Pol metra je pod všetkým, čo v pipeline rozhoduje (bunka DEM má meter
+# a viac), a nad krokom mriežky dlaždice na max zoome.
+SHAPE_STEP = 0.5
+
+
+def na_km(pts, thr=30.0):
+    """Ostré lomy TVARU na kilometer – po rovnomernom prevzorkovaní.
+
+    Uhol medzi susednými bodmi sám o sebe nič nehovorí, kým sa nevie, ako
+    husto tie body ležia: limitná krivka je zámerne vzorkovaná redšie (jemnejší
+    detail mriežka dlaždice aj tak zahodí), takže jej tetivy zvierajú väčšie
+    uhly než body hustej Chaikinovej čiary – hoci sa od hladkého priebehu
+    odchyľujú menej. Prevzorkovanie ten rozdiel odstráni.
+    """
+    R = resample(pts, SHAPE_STEP)
+    ang = bends([tuple(p) for p in R])
+    km = SHAPE_STEP * len(R) / 1000.0
+    return float(np.sum(ang > thr)) / km if km else 0.0
+
+
+def run(Z, win, quarters, how, label, maxzoom):
+    """`how` = ("chaikin", počet prechodov) alebo ("limit", priehyb v 1/4)."""
+    simp = simplify(contour(lowpass(Z, win), LEVEL), quarters / 4.0)
+    pts = (chaikin(simp, how[1]) if how[0] == "chaikin"
+           else limit(simp, how[1], maxzoom))
     ang = bends(pts)
     dev, tvary = metrics(pts)
     # A to isté po mriežke dlaždice – tak, ako to skončí v .pmtiles.
-    qang = bends(quantize(pts, tile_step(maxzoom)))
+    qpts = quantize(pts, tile_step(maxzoom))
+    qang = bends(qpts)
     print(f"{label:50s} {len(pts):5d} {ang.mean():6.1f}° "
-          f"{100 * float(np.mean(ang > 30)):5.1f}% {dev:6.2f} m "
+          f"{100 * float(np.mean(ang > 30)):5.1f}% {na_km(pts):6.1f} "
+          f"{dev:6.2f} m "
           + " ".join(f"{t:4.0f}%" for t in tvary)
-          + f"  │ {qang.mean():6.1f}° {100 * float(np.mean(qang > 30)):5.1f}%")
+          + f"  │ {qang.mean():6.1f}° {100 * float(np.mean(qang > 30)):5.1f}%"
+          f" {na_km(qpts):6.1f}")
 
 
 def main():
@@ -262,21 +339,26 @@ def main():
     print(f"dlaždice: maxzoom z{args.maxzoom} → mriežka {krok:.3f} m "
           f"(extent {EXTENT}, šírka {LAT}°)")
     print(f"{'nastavenie':50s} {'bodov':>5s} {'lom':>7s} {'>30°':>6s} "
-          f"{'odchýlka':>8s}  tvary (λ 60 / 25 / 12 m)"
-          f"  │ po mriežke z{args.maxzoom}")
-    run(terrain(), 1, 0, 0, "referencia (terén bez šumu, bez úprav)", args.maxzoom)
+          f"{'zub/km':>6s} {'odchýlka':>8s}  tvary (λ 60 / 25 / 12 m)"
+          f"  │ po mriežke z{args.maxzoom}: lom, >30°, zub/km")
+    run(terrain(), 1, 0, ("chaikin", 0),
+        "referencia (terén bez šumu, bez úprav)", args.maxzoom)
     print()
-    for win, q, p, note in [
-        (1, 1, 1, "  ← predtým"),
-        (5, 2, 2, "  ← august (oblé)"),
-        (3, 2, 2, ""),
-        (3, 1, 1, ""),
-        (3, 1, 2, "  ← teraz"),
-        (3, 1, 3, ""),
-        (7, 2, 2, ""),
+    for win, q, how, note in [
+        (1, 1, ("chaikin", 1), "  ← 2025"),
+        (5, 2, ("chaikin", 2), "  ← august (oblé)"),
+        (3, 1, ("chaikin", 1), ""),
+        (3, 1, ("chaikin", 2), "  ← doteraz"),
+        (3, 1, ("chaikin", 3), "  (zuby preč, ale mriežka horšia)"),
+        (3, 1, ("limit", 1), ""),
+        (3, 1, ("limit", 2), "  ← teraz"),
+        (3, 1, ("limit", 4), ""),
+        (7, 2, ("limit", 2), ""),
     ]:
         okno = f"okno {win}×{win}" if win > 1 else "bez vyhladenia"
-        run(Z, win, q, p, f"{okno}, {q}/4 bunky, {p}× Chaikin{note}", args.maxzoom)
+        zaob = (f"{how[1]}× Chaikin" if how[0] == "chaikin"
+                else f"limitná, priehyb {how[1]}/4 mriežky")
+        run(Z, win, q, how, f"{okno}, {q}/4 bunky, {zaob}{note}", args.maxzoom)
 
 
 if __name__ == "__main__":

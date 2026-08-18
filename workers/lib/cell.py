@@ -15,6 +15,8 @@ v CLAUDE.md). Pýtajú sa ich:
   `contours-rocks/rock-plan.py` aká je NAOZAJ mriežka toho rastra
   `terrain/tiles.py`            zväčšuje sa DEM alebo zmenšuje, a koľko
                                 zlomkových bitov výšky treba
+  `contours-rocks/smooth-shapes.py`  aký jemný detail dlaždica ešte unesie
+                                (krok mriežky `extent`)
 
 BEZ NUMPY, a je to zámer. Tieto funkcie sú čistá aritmetika a `lint/terrain.py`
 ich musí vedieť spustiť – lintovací job má len `checkout` a holý `python3`,
@@ -40,6 +42,13 @@ DEFAULT_LAT = 49.0
 # Zoom 0 má na rovníku 156 543,03 m na pixel (256 px na 40 075 km).
 EQUATOR_M_PER_PX = 156543.03
 
+# Koľko metrov je stupeň. Zemepisná šírka je takmer konštantná (110 540 m),
+# dĺžka sa krátí s kosínusom šírky – u nás je z 111 320 m len ~73 000. Kto
+# prepočítava toleranciu z metrov na stupne, má deliť TOU DLHŠOU: vyjde
+# menšie číslo, takže na zemi nikdy nebude väčšia, než sa žiadalo.
+M_PER_DEG_LAT = 110540
+M_PER_DEG_LON_EQ = 111320
+
 
 def tile_m_per_px(z, lat=DEFAULT_LAT):
     """Koľko metrov v teréne je jeden pixel dlaždice na danom zoome.
@@ -48,6 +57,26 @@ def tile_m_per_px(z, lat=DEFAULT_LAT):
     hovorí log, nemôžu rozísť.
     """
     return EQUATOR_M_PER_PX * math.cos(math.radians(lat)) / (2 ** z)
+
+
+# Súradnicová mriežka vektorovej dlaždice. `extent` je v Planetileri
+# konštanta 4096 a dlaždica má 256 „štýlových" pixelov, takže na jeden pixel
+# pripadá 16 krokov mriežky. Do tejto mriežky sa pri zápise zaokrúhli KAŽDÝ
+# bod geometrie – jemnejší detail sa do dlaždice nezmestí, nech ho vrstva
+# nesie akokoľvek presne. Preto sa podľa nej riadi aj to, ako husto sa vzorkuje
+# vyhladená vrstevnica (`contours-rocks/smooth-shapes.py`): hustejšie body už
+# mriežka aj tak zlepí a schodíky z nich len pribudnú.
+TILE_EXTENT = 4096
+TILE_PX = 256
+
+
+def tile_grid_m(z, lat=DEFAULT_LAT):
+    """Krok súradnicovej mriežky dlaždice v metroch na danom zoome.
+
+    Je to `tile_m_per_px` delené 16 – jedno miesto na obe otázky, nech sa
+    „koľko je pixel" a „koľko je krok mriežky" nemôžu rozísť.
+    """
+    return tile_m_per_px(z, lat) * TILE_PX / TILE_EXTENT
 
 
 def terrain_zoom_for(cell_m, lo=8, hi=16):
@@ -192,7 +221,8 @@ def dem_cell_metres(dem, lat=DEFAULT_LAT):
         wkt = info.get("coordinateSystem", {}).get("wkt", "")
         dx, dy = abs(gt[1]), abs(gt[5])
         if wkt.startswith("GEOGCRS") or wkt.startswith("GEOGCS"):
-            return dx * 111320 * math.cos(math.radians(lat)), dy * 110540
+            return (dx * M_PER_DEG_LON_EQ * math.cos(math.radians(lat)),
+                    dy * M_PER_DEG_LAT)
         return dx, dy
     except Exception:
         return None, None

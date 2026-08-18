@@ -277,16 +277,19 @@ env:
   # takže sa spolu s nimi zaoblí aj tvar terénu (12 m tvar prežil na 52 %
   # namiesto 63 %, odchýlka 0,95 namiesto 0,70 m).
   CONTOUR_SIMPLIFY: "-1"
-  # Koľkokrát zaobliť (Chaikin). ZOSTÁVA NA DVOCH – zaoblenie rohov NIE JE to,
-  # čo vrstevnice zaobľovalo priveľmi. Chaikin nad krátkymi segmentmi (1/4
-  # bunky) reže rohy dlhé štvrtinu segmentu, takže z tvaru terénu ubral 2
-  # percentuálne body, kým vyhladenie DEM ich brávalo desiatky:
+  # Zaoblenie rohov, ktoré po zjednodušení ostali: dovolený PRIEHYB TETIVY
+  # v štvrtinách kroku mriežky dlaždice (`extent` 4096) na maxzoome vrstevníc.
+  # 0 = vypnuté. Zaobľuje sa limitnou krivkou (kvadratický B-spline), nie
+  # dvoma prechodmi Chaikina – tie sa k nej len blížia a nechávajú zo 120°
+  # rohu vyše 30°, čiže PRAVIDELNÝ zub v rozostupe vrcholov po
+  # Douglas–Peuckerovi (na hotovej mape 14,7 na kilometer).
   #
-  #   okno 3×3, 1/4 bunky, 1× Chaikin  430 b., lom 16,5°, >30° 16,8 %, tvar 65 %
-  #   okno 3×3, 1/4 bunky, 2× Chaikin  860 b., lom  8,2°, >30°  1,6 %, tvar 63 %
-  #
-  # Jeden prechod nechá každý šiesty lom nad 30° – to je presne tá zubatosť,
-  # ktorú na čiare pri max zoome vidno. 0 = vypnuté.
+  # DVA = POLOVICA KROKU MRIEŽKY, a je to presne toľko, koľko zaokrúhlenie do
+  # dlaždice spraví aj tak (±pol kroku): jemnejšie vzorkovanie teda platí body
+  # za detail, ktorý mriežka zahodí. Namerané na 5 m modeli celou cestou cez
+  # gdal_contour: proti doterajším dvom prechodom Chaikina 7× menej zubov pri
+  # ROVNAKOM počte bodov (0,1 proti 0,7 zuba/km po mriežke z16, 56 421 proti
+  # 56 792 bodom). Rozpis v hlavičke workers/contours-rocks/smooth-shapes.py.
   CONTOUR_SMOOTH: "2"
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
@@ -320,15 +323,16 @@ env:
   # Zjednodušenie obrysu (m). -1 = štvrtina mriežky: zmaže schodíky po hranách
   # buniek, ale obrys neposunie o viac než štvrtinu bunky. 0 = vypnuté.
   ROCK_SIMPLIFY: "-1"
-  # Koľkokrát zaobliť rohy obrysu (Chaikin). Zjednodušenie vyššie zmaže
-  # schodíky, ale to, čo po ňom ostane, sú ostré rohy – priemerný lom medzi
-  # segmentmi vyskočí zo 4,6° na 28,5° a presne tak vyzerá skala pri max
-  # zoome zubatá. Dva prechody dajú 7,7° pri 43 % menej bodov, než má
-  # nezjednodušený originál. Podrobnosti a čísla vo workers/contours-rocks/smooth-shapes.py.
+  # Zaoblenie obrysu – to isté ako CONTOUR_SMOOTH a tým istým skriptom, len
+  # podľa mriežky na ROCK_MAXZOOM. Zjednodušenie vyššie zmaže schodíky, ale to,
+  # čo po ňom ostane, sú ostré rohy: priemerný lom vyskočí zo 4,6° na 28,5°
+  # a presne tak vyzerá skala pri max zoome zubatá. 0 = vypnuté.
   ROCK_SMOOTH: "2"
   # Verzia algoritmu v mene uloženého assetu. Zmena algoritmu = iné skaly,
-  # takže sa nesmú použiť tie staré uložené. v3 = zaoblený obrys + auto mriežka.
-  ROCK_ALGO: v3
+  # takže sa nesmú použiť tie staré uložené. v3 = zaoblený obrys + auto
+  # mriežka, v4 = obrys je limitná krivka (bez zmeny čísla by sklad vrátil
+  # staré zubaté skaly a oprava by sa na už spočítanom regióne neprejavila).
+  ROCK_ALGO: v4
   ROCK_CLIFF_PLUS: "15" # o koľko ° nad prahom začína trieda `cliff` (tmavšia)
   # Koľko buniek naraz. Sklon sa počíta po častiach, lebo bbox kraja má pri
   # 2 m vyše 3 miliardy buniek (~13 GB na jeden raster) – naraz sa to do
