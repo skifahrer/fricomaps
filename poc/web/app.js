@@ -620,6 +620,11 @@ async function main() {
     new URLSearchParams(location.search).get("dev") === "1" ||
     localStorage.getItem?.("fricomaps.dev") === "1";
   if (wantDev) setDevMode(true, manifest);
+
+  // Viewer nabehol – strážca štartu v `index.html` už nemá čo hlásiť. Je to
+  // až tu, na konci `main()`: skôr by príznak povedal „nabehol" o niečom, čo
+  // sa ešte môže zlomiť.
+  window.__viewerBooted = true;
 }
 
 main();

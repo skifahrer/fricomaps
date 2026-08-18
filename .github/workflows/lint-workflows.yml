@@ -491,6 +491,15 @@ jobs:
       - name: Publikuje sa len na Drive, nie do releasov a artefaktov
         run: python3 workers/lint/publishing.py
 
+      # Viewer sa musí na Pages nasadiť CELÝ. `layer-style.js` pribudol do
+      # `poc/web/`, ale `site.sh` mal vymenovaný zoznam súborov a ten sa
+      # s priečinkom rozišiel: `devmode.js` si ho importuje, prehliadač na 404
+      # zahodí celý modulový graf, nespustí sa ani `app.js` a na stránke ostane
+      # biela plocha. Build je pritom zelený a smoke test tiež – kontroluje
+      # manifest, sprite a `.pmtiles`, ktoré nasadené naozaj sú.
+      - name: "Viewer: na Pages ide všetko, čo si importuje"
+        run: python3 workers/lint/viewer.py
+
       # Dve tiché veci v hotovom štýle naraz (rozpis vo `workers/lint/style.mjs`):
       #
       # 1. `fill` vrstva nad vrstvou so ZMIEŠANOU geometriou musí vedieť, že
