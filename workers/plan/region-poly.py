@@ -24,8 +24,18 @@ kraja by sa raz rozišla s tou prvou (pravidlo 1).
 Formát `.poly` je textový: meno, potom bloky prstencov (`!` na začiatku mena
 znamená dieru), každý blok končí `END` a celý súbor tiež.
 
+SUROVÝ `.poly` SA ODKLADÁ TIEŽ (`--poly-out`), a nie je to duplicita: číta ho
+Planetiler (`--polygon=…`, „emit any tile that intersects the shape"), takže
+sa dlaždice mapy prestanú vyrábať na celom obdĺžniku bboxu. Prekladať ho späť
+z GeoJSONu by znamenalo písať `.poly` druhýkrát a stačí, aby sa raz rozišiel
+s tým, čím je orezaný PBF – preto sa ukladá presne to, čo prišlo zo servera.
+Keď sa polygón stiahnuť nepodarí, `.poly` NEVZNIKNE (a `--polygon` sa
+Planetileru nedá) – náhradný obdĺžnik z bboxu je presne to, čo Planetiler robí
+aj bez neho, takže by len predstieral orez.
+
 Použitie:
     python3 workers/plan/region-poly.py --region=presovsky --out=data/region.geojson
+    python3 workers/plan/region-poly.py --region=presovsky --out=… --poly-out=data/region.poly
     python3 workers/plan/region-poly.py --region=presovsky --out=… --summary=$GITHUB_STEP_SUMMARY
 """
 import argparse
@@ -146,6 +156,8 @@ def main():
     ap.add_argument("--region", required=True, help="kľúč z data/regions.json")
     ap.add_argument("--regions", default="", help="cesta k regions.json")
     ap.add_argument("--out", default="data/region.geojson")
+    ap.add_argument("--poly-out", default="",
+                    help="kam uložiť surový .poly (pre Planetiler --polygon)")
     ap.add_argument("--summary", default="", help="kam dopísať súhrn")
     args = ap.parse_args()
 
@@ -158,11 +170,12 @@ def main():
     bbox = tuple(reg["bbox"])
     url = poly_url(reg)
 
-    rings, zdroj = None, ""
+    rings, zdroj, raw = None, "", ""
     if url:
         try:
             with urllib.request.urlopen(url, timeout=60) as r:
-                rings = parse_poly(r.read().decode("utf-8", "replace"))
+                raw = r.read().decode("utf-8", "replace")
+            rings = parse_poly(raw)
             zdroj = url
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             # NIE JE TO CHYBA BEHU: bez polygónu sa dá počítať na bboxe ako
@@ -172,7 +185,7 @@ def main():
                   f"({url}: {exc}) – vrstvy z DEM sa spočítajú na CELOM BBOXE "
                   f"regiónu, teda aj mimo kraj. Skús beh zopakovať.")
     if not rings:
-        rings, zdroj = bbox_rect(bbox), "bbox regiónu (polygón nie je)"
+        rings, zdroj, raw = bbox_rect(bbox), "bbox regiónu (polygón nie je)", ""
 
     data = geojson(rings)
     if not data:
@@ -182,6 +195,11 @@ def main():
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     with open(args.out, "w") as f:
         json.dump(data, f)
+    # Surový `.poly` pre Planetiler – len keď je naozaj zo servera (viď hlavička).
+    if args.poly_out and raw:
+        os.makedirs(os.path.dirname(args.poly_out) or ".", exist_ok=True)
+        with open(args.poly_out, "w") as f:
+            f.write(raw)
 
     pw, ps, pe, pn = ring_bbox(rings)
     plocha = sum(ring_area_km2(r) for r, hole in rings if not hole) \
@@ -194,6 +212,9 @@ def main():
 
     print(f"Polygón kraja: {args.out}")
     print(f"  zdroj                {zdroj}")
+    if args.poly_out:
+        print(f"  .poly pre Planetiler  "
+              f"{args.poly_out if raw else 'NIE JE (dlaždice pôjdu na celom bboxe)'}")
     print(f"  prstencov            {prstencov} (+{dier} dier), "
           f"{sum(len(r) for r, _ in rings)} bodov")
     print(f"  bbox polygónu        {pw:.3f},{ps:.3f},{pe:.3f},{pn:.3f}")

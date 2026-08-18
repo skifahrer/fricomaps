@@ -83,6 +83,12 @@ if [ -z "${DL_OK:-}" ]; then
 fi
 du -sh data/sources 2>/dev/null || true
 
+# OREZ NA REGIÓN. Bez neho Planetiler vyrába dlaždice na celom obdĺžniku bboxu
+# a kreslí do nich vodstvo aj Natural Earth – teda mapu ďaleko za regiónom, kde
+# už z nášho PBF nie je nič. Argumenty skladá `workers/lib/region-clip.sh`,
+# lebo to isté potrebujú joby `trails` a `features` (pravidlo 1).
+mapfile -t CLIP < <(workers/lib/region-clip.sh "$REGION_BBOX")
+
 Z=$MAXZOOM
 while : ; do
   echo "::group::Planetiler – maxzoom $Z"
@@ -90,6 +96,7 @@ while : ; do
     --osm-path=data/region.osm.pbf \
     --output="$OUT" \
     --download --download-dir=data/sources \
+    "${CLIP[@]}" \
     --minzoom=0 \
     --maxzoom="$Z" \
     --render_maxzoom="$Z" \

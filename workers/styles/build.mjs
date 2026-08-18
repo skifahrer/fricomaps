@@ -22,6 +22,10 @@
  *                  a 3D terén). Vo formulári je to vlastný výber, takže to
  *                  nemusí byť ten istý; prázdne = ten istý ako --dem-source
  *   --sprites-dir… adresár s nasadenými spritmi; sada sa vyberie podľa úprav
+ *   --region-outline hranica stiahnutého regiónu (`_site/region.geojson`
+ *                  z `workers/deploy/region-mask.py`) – za ňou štýl nekreslí
+ *                  nič. Vkladá sa PRIAMO DO ŠTÝLU, nie ako URL (prečo, hovorí
+ *                  komentár pri načítaní).
  *
  * Použitie:
  *   node workers/styles/build.mjs --base-url=https://user.github.io/fricomaps \
@@ -120,6 +124,35 @@ const demBounds = args["dem-bounds"]
 if (demBounds && (demBounds.length !== 4 || demBounds.some((n) => !Number.isFinite(n)))) {
   console.error("--dem-bounds musí byť W,S,E,N (štyri čísla)");
   process.exit(1);
+}
+
+// HRANICA STIAHNUTÉHO REGIÓNU – A PREČO SA VKLADÁ DO ŠTÝLU, NIE AKO URL.
+// Tento štýl číta aj aplikácia, ktorá si mapu STIAHNE a otvorí ju offline;
+// všetko ostatné (dlaždice, sprite, glyfy) si pri tom musí prepísať z adresy
+// Pages na svoje súbory. Odkaz na `region.geojson`, na ktorý by sa v tom
+// prepise zabudlo, by sa neprejavil pádom – len by sa maska nenačítala a mapa
+// by zase siahala za región, čiže presne tá tichá chyba, ktorú to má riešiť.
+// Dáta majú jednotky kB (Prešovský kraj 8,9 kB), takže sa zaplatí radšej
+// kópia v každom štýle.
+//
+// Do štýla ide najprv ZÁSTUPNÝ REŤAZEC a hotový JSON sa za neho vymení až
+// nakoniec. `JSON.stringify(…, null, 2)` totiž rozsype každú súradnicu na
+// vlastný riadok: z 8,9 kB dát je 54 kB a v 25 súboroch štýlov 1,3 MB navyše –
+// všetko len odsadenie, ktoré v mape nikto nevidí. Vymieňa sa presný reťazec
+// aj s úvodzovkami, takže sa netrafí nič iné.
+const OUTLINE_TOKEN = "__frico:region-outline__";
+const regionOutlinePath = args["region-outline"] || "";
+let regionOutline = null;
+if (regionOutlinePath) {
+  if (existsSync(regionOutlinePath)) {
+    regionOutline = JSON.parse(readFileSync(regionOutlinePath, "utf8"));
+    const kb = (statSync(regionOutlinePath).size / 1024).toFixed(1);
+    console.log(`Hranica regiónu: ${regionOutlinePath} (${kb} kB, priamo v štýle)`);
+  } else {
+    console.warn(
+      `⚠ Hranica regiónu (${regionOutlinePath}) nenájdená – mapa pôjde bez nej a bude siahať aj za región.`
+    );
+  }
 }
 
 if (!baseUrl) {
@@ -299,11 +332,15 @@ for (const type of MAP_TYPES) {
       demTilesSource,
       demMaxzoom,
       demBounds,
+      regionOutline: regionOutline ? OUTLINE_TOKEN : null,
       terrain3d,
       terrainExaggeration,
       name: `FricoMaps ${regionName} – ${type.label} (${THEMES[themeKey].label})`
     });
-    const json = JSON.stringify(style, null, 2);
+    const json = JSON.stringify(style, null, 2).replace(
+      JSON.stringify(OUTLINE_TOKEN),
+      () => JSON.stringify(regionOutline)
+    );
     const drawn = style.layers.filter(
       (l) => (l.layout || {}).visibility !== "none"
     ).length;

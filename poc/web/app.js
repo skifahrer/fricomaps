@@ -166,6 +166,17 @@ let currentStyle = null;
  */
 let iconSets = [];
 
+/**
+ * Hranice stiahnutých regiónov (`region.geojson`) podľa kľúča regiónu.
+ *
+ * Za hranicou mapa KONČÍ – dlaždice sú orezané len po celých dlaždiciach
+ * a vodstvo s Natural Earth kreslí Planetiler na celom obdĺžniku bboxu, takže
+ * bez tejto vrstvy mapa pokračuje ďaleko za región. Štýl sa skladá nanovo pri
+ * každom prepnutí témy či vrstvy, preto sa súbory držia tu a neťahajú sa
+ * zakaždým znova. Kľúčom je región, lebo manifest ich môže niesť viac.
+ */
+const regionOutlines = {};
+
 /** Sada, ktorú má štýl použiť (z úprav, inak prvá dostupná). */
 function currentIconSet() {
   const id = selectedIconSource(overrides);
@@ -224,6 +235,7 @@ function styleFor(manifest) {
     // Pri rýchlom teste je tieňovanie len na testovacom štvorci, kým mapa je
     // celý región – bez tejto hranice by MapLibre pýtal dlaždice po celom kraji.
     demBounds: region.test_bbox || null,
+    regionOutline: regionOutlines[regionSelect.value] || null,
     overrides,
     name: `FricoMaps – ${region.name}`
   });
@@ -473,6 +485,15 @@ async function main() {
   } catch (err) {
     showError(String(err));
     return;
+  }
+
+  // Hranica stiahnutého regiónu. `optional` naschvál: keď súbor nie je (starší
+  // build), mapa sa má načítať aj bez nej – len bude siahať za región, a to
+  // `loadJson` napíše do konzoly.
+  for (const [key, r] of Object.entries(manifest.regions)) {
+    if (!r.outline) continue;
+    const data = await loadJson(`${baseUrl}/${r.outline}`, { optional: true });
+    if (data) regionOutlines[key] = data;
   }
 
   // Sady ikoniek. Z indexu každej sa berie zoznam mien (aby štýl neodkazoval

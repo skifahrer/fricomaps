@@ -56,9 +56,14 @@ TZ_="$OPT_TRAILS_MAXZOOM"
 case "$TZ_" in ''|*[!0-9]*) TZ_=14 ;; esac
 if [ "$TZ_" -gt 16 ]; then TZ_=16; fi
 
+# Ten istý orez na región ako pri mape (workers/lib/region-clip.sh) – trasy
+# nesmú siahať ďalej než mapa pod nimi.
+mapfile -t CLIP < <(workers/lib/region-clip.sh "$REGION_BBOX")
+
 T_PM=$(date +%s)
 java -Xmx4g -jar planetiler.jar generate-custom \
   --schema=workers/trails/trails.yml \
+  "${CLIP[@]}" \
   --output="_site/tiles/${REGION_KEY}-trails.pmtiles" \
   --maxzoom="$TZ_" --render_maxzoom="$TZ_" \
   --simplify_tolerance_at_max_zoom=0 \
