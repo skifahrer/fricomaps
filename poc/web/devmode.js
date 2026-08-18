@@ -45,8 +45,11 @@ import {
   LAYER_GROUPS,
   LAYER_KINDS,
   MAX_DISPLAY_Z,
+  MAX_PAINT_STOPS,
   NO_FILL,
   sortStops,
+  sortBands,
+  isBandList,
   emptyOverrides,
   normalizeOverrides,
   hasOverrides,
@@ -1451,66 +1454,109 @@ export function initDevMode({
    * pôvodná interpolácia.
    */
   /**
-   * Editor ZOOMOVÝCH ZLOMOV jednej vlastnosti – „na z11 takto, na z16 inak".
+   * Editor HODNOTY PODĽA ZOOMU – „na z11 takto, na z16 inak".
    *
-   * PREČO PODĽA AKTUÁLNEHO ZOOMU. Zlom sa pridáva tam, kde práve stojí mapa
-   * (`Pridať pri z14`), lebo tak sa mapa aj ladí: nastavíš zoom, pozrieš sa,
-   * opravíš farbu. Písať zoom do políčka a až potom sa naň presunúť by bolo
-   * to isté dvakrát – a druhý raz naslepo.
+   * DVA TVARY, DVE OTÁZKY, JEDEN PREPÍNAČ:
    *
-   * Hodnota v úprave je pole `[[zoom, hodnota], …]`; `themes.js` z neho spraví
-   * `interpolate`. Jeden zlom je platný a znamená pevnú hodnotu (`interpolate`
-   * s jediným stopom by MapLibre odmietol, preto ho `paintValue` rozbalí).
+   *   krivka  `[[zoom, hodnota], …]`      … ako hodnota RASTIE (plynulý prechod)
+   *   pásma   `[[od, do, hodnota], …]`    … čo PLATÍ v tomto rozsahu (skok na hranici)
+   *
+   * PREČO PRIBUDLI PÁSMA. Kým bola k dispozícii len krivka, „od z9 do z11
+   * takáto čiara, na z12 takáto, od z13 do z17 takáto" sa muselo napísať
+   * šiestimi zlomami – tú istú hodnotu dvakrát, na oboch hranicách každého
+   * pásma –, inak sa medzi nimi plynule menila. Pri strope
+   * {@link MAX_PAINT_STOPS} zlomov sa do toho zmestili štyri pásma a piate
+   * už nie. V pásmach je to jeden riadok na pásmo.
+   *
+   * PREČO SA `do` NEDÁ PÍSAŤ VOĽNE. Pásma musia ísť za sebou bez medzier
+   * a bez prekryvov (inak ich `normalizeOverrides` odmietne a s nimi celú
+   * vlastnosť), takže rozhoduje HRANICA: `do` jedného pásma je vždy `od`
+   * nasledujúceho mínus jedna. Editovateľné je preto `od` každého pásma
+   * (posúva hranicu) a `do` toho POSLEDNÉHO; ostatné `do` sa dopočítajú.
+   * Z tohto panela sa tak medzera nedá vyrobiť ani omylom.
+   *
+   * PREČO PODĽA AKTUÁLNEHO ZOOMU. Zlom aj hranica pásma sa pridáva tam, kde
+   * práve stojí mapa (`+ zlom pri z14`, `+ pásmo od z14`), lebo tak sa mapa
+   * aj ladí: nastavíš zoom, pozrieš sa, opravíš farbu. Písať zoom do políčka
+   * a až potom sa naň presunúť by bolo to isté dvakrát – a druhý raz naslepo.
+   *
+   * Jeden zlom aj jedno pásmo sú platné a znamenajú pevnú hodnotu
+   * (`interpolate` ani `step` s jediným výstupom by nemal čo robiť, preto ich
+   * `paintValue` rozbalí).
    */
   function zoomStopsEditor({ layer, prop, kind, min, max, step }) {
     const o = layerOverride(layer.id) || {};
     const cur = o.paint && o.paint[prop];
-    const stops = Array.isArray(cur) ? cur : null;
+    const list = Array.isArray(cur) ? cur : null;
+    const pasma = list ? isBandList(list) : false;
+    const stops = list && !pasma ? list : null;
+    const bands = pasma ? sortBands(list) : null;
     const zNow = zoomCell();
 
-    const setStops = (next) => {
-      // ZORADIŤ HNEĎ PRI ZÁPISE, nie až pri skladaní štýlu. Zlomy vznikajú
-      // v poradí, v akom ich naklikáš (najprv z18, potom z12), a `interpolate`
-      // chce striktne rastúce – MapLibre by pri porušení odmietol CELÝ štýl
-      // a mapa by sa nenačítala. Uložené má byť to isté, čo je platné.
-      // Prázdny zoznam neukladáme – to je „nechaj, čo je v štýle".
-      setLayerPaint(
-        layer.id, prop, next && next.length ? sortStops(next) : undefined
-      );
+    const zapis = (next) => {
+      // ZORADIŤ HNEĎ PRI ZÁPISE, nie až pri skladaní štýlu. Zlomy aj pásma
+      // vznikajú v poradí, v akom ich naklikáš (najprv z18, potom z12),
+      // a `interpolate` chce striktne rastúce – MapLibre by pri porušení
+      // odmietol CELÝ štýl a mapa by sa nenačítala. Uložené má byť to isté,
+      // čo je platné. Prázdny zoznam neukladáme – to je „nechaj, čo je v štýle".
+      setLayerPaint(layer.id, prop, next && next.length ? next : undefined);
       apply({ immediate: true });
     };
+    const setStops = (next) => zapis(next && next.length ? sortStops(next) : null);
+    // Pásma sa pred zápisom EŠTE ZOSÚVISLIA: `do` každého okrem posledného je
+    // `od` nasledujúceho mínus jedna. Vstup z políčka `od` sa tým môže dotknúť
+    // dvoch riadkov naraz a nikdy z toho nevyjde medzera ani prekryv.
+    const setBands = (next) => {
+      if (!next || !next.length) return zapis(null);
+      const zoradene = sortBands(next).filter(
+        ([od], i, a) => i === 0 || od > a[i - 1][0]
+      );
+      zapis(
+        zoradene.map(([od, doZ, v], i) => [
+          od,
+          i + 1 < zoradene.length ? zoradene[i + 1][0] - 1 : Math.max(od, doZ),
+          v
+        ])
+      );
+    };
 
-    // Hodnota, s ktorou nový zlom začína: čo tá vlastnosť práve v mape má.
+    // Hodnota, s ktorou nový zlom (pásmo) začína: čo tá vlastnosť práve
+    // v mape má.
     const nowValue = () => {
       const v = (layer.paint || {})[prop];
+      const naZoome = valueAtZoom(list || v, zNow);
+      if (naZoome != null) return naZoome;
       if (typeof v === "number" || (typeof v === "string" && v.startsWith("#"))) return v;
-      if (stops?.length) return stops[stops.length - 1][1];
       return kind === "color" ? primaryColor(layer) : min ?? 1;
     };
 
-    const rows = (stops || []).map(([z, v], i) => {
-      const zoomInput = el("input", {
+    const hodnotaCtrl = (v, setVal) =>
+      kind === "color"
+        ? colorControl({ value: v, onInput: setVal, onReset: null, changed: false })
+        : numberField({
+            label: "", value: v, min, max, step, stepFrom: v,
+            // Vyprázdnené políčko zlomu je spodná medza, NIE nula: nulová
+            // hrúbka je neviditeľná čiara (viď `paintNumber`).
+            onChange: (nv) => setVal(nv ?? min ?? 0)
+          });
+
+    const zoomInput = (z, onChange, title) => {
+      const input = el("input", {
         type: "number", class: "dev-num dev-num-z",
-        min: "0", max: String(MAX_DISPLAY_Z), step: "1", value: String(z)
+        min: "0", max: String(MAX_DISPLAY_Z), step: "1", value: String(z),
+        title: title || ""
       });
-      zoomInput.addEventListener("change", () => {
-        const next = stops.map((s, j) => (j === i ? [Number(zoomInput.value), s[1]] : s));
-        setStops(next);
-      });
+      input.addEventListener("change", () => onChange(Number(input.value)));
+      return input;
+    };
+
+    // ---- riadky: krivka ----
+    const stopRows = (stops || []).map(([z, v], i) => {
       const setVal = (nv) => setStops(stops.map((s, j) => (j === i ? [s[0], nv] : s)));
-      const control =
-        kind === "color"
-          ? colorControl({ value: v, onInput: setVal, onReset: null, changed: false })
-          : numberField({
-              label: "", value: v, min, max, step, stepFrom: v,
-              // Vyprázdnené políčko zlomu je spodná medza, NIE nula: nulová
-              // hrúbka je neviditeľná čiara (viď `paintNumber`).
-              onChange: (nv) => setVal(nv ?? min ?? 0)
-            });
       return el("div", { class: "dev-stop" }, [
         el("span", { class: "dev-stopz", text: "z" }),
-        zoomInput,
-        control,
+        zoomInput(z, (nz) => setStops(stops.map((s, j) => (j === i ? [nz, s[1]] : s)))),
+        hodnotaCtrl(v, setVal),
         el("button", {
           type: "button", class: "dev-mini", title: "Zmazať tento zlom", text: "×",
           onclick: () => setStops(stops.filter((_, j) => j !== i))
@@ -1518,27 +1564,132 @@ export function initDevMode({
       ]);
     });
 
-    const uzTam = (stops || []).some(([z]) => z === zNow);
+    // ---- riadky: pásma ----
+    const bandRows = (bands || []).map(([od, doZ, v], i) => {
+      const posledne = i + 1 === bands.length;
+      const setVal = (nv) => setBands(bands.map((b, j) => (j === i ? [b[0], b[1], nv] : b)));
+      // Hranica sa smie posunúť len tam, kde ostane pásmo aj susedovi –
+      // inak by z posunu vypadol prázdny rozsah.
+      const dolna = i === 0 ? 0 : bands[i - 1][0] + 1;
+      const horna = posledne ? doZ : bands[i + 1][0] - 1;
+      return el("div", { class: "dev-stop" }, [
+        el("span", { class: "dev-stopz", text: "z" }),
+        zoomInput(
+          od,
+          (nz) =>
+            setBands(
+              bands.map((b, j) =>
+                j === i ? [Math.min(Math.max(nz, dolna), horna), b[1], b[2]] : b
+              )
+            ),
+          `Od tohto zoomu platí táto hodnota (${dolna}–${horna})`
+        ),
+        posledne
+          ? el("span", { class: "dev-stopz", text: "–" })
+          : el("span", { class: "dev-stopz dev-bandto", text: `– ${doZ}` }),
+        posledne
+          ? zoomInput(
+              doZ,
+              (nz) => setBands(bands.map((b, j) => (j === i ? [b[0], Math.max(nz, b[0]), b[2]] : b))),
+              "Po tento zoom vrátane; vyššie platí tá istá hodnota"
+            )
+          : null,
+        hodnotaCtrl(v, setVal),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          title: bands.length === 1
+            ? "Zrušiť pásma"
+            : "Zmazať toto pásmo – pohltí ho susedné, aby nevznikla medzera",
+          text: "×",
+          onclick: () => {
+            if (bands.length === 1) return setBands(null);
+            // Vypustené pásmo POHLTÍ sused: predošlé si predĺži `do`
+            // (o to sa postará zosúvislenie v `setBands`), a keď je vypustené
+            // prvé, druhé si posunie `od` na jeho začiatok.
+            const zvysok = bands.filter((_, j) => j !== i);
+            if (i === 0) zvysok[0] = [od, zvysok[0][1], zvysok[0][2]];
+            setBands(zvysok);
+          }
+        })
+      ]);
+    });
+
+    // ---- prepínač tvaru ----
+    // Prepnutie NEZAHODÍ, čo je nastavené: krivka sa preloží na pásma (zlom
+    // = začiatok pásma) a pásma na krivku (začiatok pásma = zlom). Presné to
+    // byť nemôže – plynulý prechod a skok sú dve rôzne veci –, ale zahodiť
+    // odladené hodnoty a nechať prázdno by bolo horšie.
+    const prepni = (naPasma) => {
+      if (naPasma) {
+        const z = stops
+          ? sortStops(stops).map(([sz, v], i, a) => [
+              sz, i + 1 < a.length ? a[i + 1][0] - 1 : Math.max(sz, MAX_DISPLAY_Z), v
+            ])
+          : [[zNow, MAX_DISPLAY_Z, nowValue()]];
+        setBands(z);
+      } else {
+        setStops(bands ? bands.map(([od, , v]) => [od, v]) : [[zNow, nowValue()]]);
+      }
+    };
+    const prepinac = el("div", { class: "dev-shape" }, [
+      el("button", {
+        type: "button",
+        class: `dev-mini dev-shapebtn${pasma ? "" : " on"}`,
+        title: "Plynulý prechod medzi zlomami (interpolate)",
+        text: "krivka",
+        onclick: () => (pasma ? prepni(false) : null)
+      }),
+      el("button", {
+        type: "button",
+        class: `dev-mini dev-shapebtn${pasma ? " on" : ""}`,
+        title: "V pásme konštantná hodnota, na hranici skok (step)",
+        text: "pásma",
+        onclick: () => (pasma ? null : prepni(true))
+      })
+    ]);
+
+    const uzTam = pasma
+      ? (bands || []).some(([od]) => od === zNow)
+      : (stops || []).some(([z]) => z === zNow);
+    const plno = (list || []).length >= MAX_PAINT_STOPS;
     return el("div", { class: "dev-stops" }, [
-      ...rows,
+      list ? prepinac : null,
+      ...(pasma ? bandRows : stopRows),
       el("button", {
         type: "button",
         class: "dev-mini dev-addstop",
-        title: uzTam
-          ? `Na zoome ${zNow} už zlom je – zmeň ho v riadku vyššie`
-          : `Pridá zlom na zoome, kde práve stojí mapa`,
-        text: `+ zlom pri z${zNow}`,
-        disabled: uzTam || null,
-        onclick: () => setStops([...(stops || []), [zNow, nowValue()]])
+        title: plno
+          ? `Viac než ${MAX_PAINT_STOPS} ${pasma ? "pásiem" : "zlomov"} sa do úprav nezmestí`
+          : uzTam
+            ? `Na zoome ${zNow} už ${pasma ? "pásmo začína" : "zlom je"} – zmeň ho v riadku vyššie`
+            : pasma
+              ? `Rozdelí pásmo na zoome, kde práve stojí mapa`
+              : `Pridá zlom na zoome, kde práve stojí mapa`,
+        text: pasma ? `+ pásmo od z${zNow}` : `+ zlom pri z${zNow}`,
+        disabled: uzTam || plno || null,
+        onclick: () =>
+          pasma
+            // Nové pásmo vznikne ROZDELENÍM toho, v ktorom mapa práve stojí –
+            // preto sa z tohto tlačidla nedá vyrobiť medzera.
+            ? setBands([...bands, [zNow, MAX_DISPLAY_Z, nowValue()]])
+            : setStops([...(stops || []), [zNow, nowValue()]])
       }),
-      stops
+      // Bez zoznamu je prepínač na konci: prvé ťuknutie zároveň hovorí, ktorý
+      // tvar chceš, a hneď v ňom vyrobí prvý riadok.
+      list
         ? el("button", {
             type: "button", class: "dev-mini",
-            title: "Zrušiť zoomové zlomy a nechať, čo je v štýle",
+            title: `Zrušiť ${pasma ? "pásma" : "zoomové zlomy"} a nechať, čo je v štýle`,
             text: "⟲",
-            onclick: () => setStops(null)
+            onclick: () => zapis(null)
           })
-        : null
+        : el("button", {
+            type: "button", class: "dev-mini dev-addstop",
+            title: "V pásme je hodnota konštantná a na hranici skočí (step)",
+            text: `+ pásmo od z${zNow}`,
+            onclick: () => setBands([[zNow, MAX_DISPLAY_Z, nowValue()]])
+          })
     ]);
   }
 
@@ -1576,8 +1727,8 @@ export function initDevMode({
                                   placeholder: "—", onChange: () => {} });
       const input = field.querySelector("input");
       input.disabled = true;
-      input.title = `${prop} je nastavené zoomovými zlomami nižšie – `
-        + `zruš ich (⟲), ak chceš jednu pevnú hodnotu`;
+      input.title = `${prop} je nastavené podľa zoomu nižšie (krivka alebo pásma) – `
+        + `zruš to (⟲), ak chceš jednu pevnú hodnotu`;
       field.classList.add("changed");
       return field;
     }
@@ -1885,6 +2036,34 @@ export function initDevMode({
                 }
               })
             : null
+        ])
+      );
+    }
+
+    // ---- sila tieňovania reliéfu ----
+    // Jediné číslo mimo trojice farba/krytie/hrúbka, ktoré úpravy poznajú.
+    // Je tu preto, že „silnejšie tieňovanie" sa ladí okom a po jednom zoome:
+    // na prehľade stačí naznačiť tvar pohoria, v detaile má reliéf niesť to
+    // hlavné – a to sú dve rôzne hodnoty, nie jedna.
+    if (layer.type === "hillshade") {
+      parts.push(
+        sectionTitle("Sila tieňovania", "0 = plocho, 1 = najsilnejšie"),
+        el("div", { class: "dev-sub" }, [
+          paintNumber({
+            layer,
+            prop: "hillshade-exaggeration",
+            label: "sila",
+            min: 0,
+            max: 1,
+            step: 0.05
+          })
+        ]),
+        el("div", { class: "dev-prop" }, [
+          el("span", { class: "dev-propname", text: "sila podľa zoomu" }),
+          zoomStopsEditor({
+            layer, prop: "hillshade-exaggeration", kind: "number",
+            min: 0, max: 1, step: 0.05
+          })
         ])
       );
     }

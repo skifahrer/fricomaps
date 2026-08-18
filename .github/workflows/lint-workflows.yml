@@ -558,6 +558,15 @@ jobs:
       - name: "Úpravy štýlu prejdú normalizáciou celé"
         run: node workers/lint/overrides.mjs
 
+      # Štítok s číslom cesty („D1") stojí na obrázku zo spritu, ktorý sa
+      # ROZŤAHUJE podľa dĺžky čísla. Všetky tri veci, ktoré sa na ňom dajú
+      # pokaziť, sú tiché (rozpis vo `workers/lint/shields.mjs`): premenovaný
+      # obrázok nechá číslo bez podkladu, stratené `stretchX`/`content` pri
+      # preskladaní spritu ho natiahnu aj s rohmi, a keby sa vrstva dostala až
+      # za `road-name`, číslo by na hustej sieti prehrávalo s menom ulice.
+      - name: "Štítky ciest: obrázok, rozťahovanie a poradie"
+        run: node workers/lint/shields.mjs
+
       # „V tomto stupni terén nie je" je doživotná odpoveď – kým prázdna
       # dlaždica leží v sklade, ten stupeň už nikto neprečíta. Keď ju vysloví
       # vzorkovaná štatistika, je beh zelený a v mape chýba pol kraja: presne

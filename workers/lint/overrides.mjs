@@ -27,7 +27,14 @@
  * Použitie:
  *   node workers/lint/overrides.mjs
  */
-import { THEMES, buildStyle, emptyOverrides, normalizeOverrides } from "../../poc/web/themes.js";
+import {
+  THEMES,
+  buildStyle,
+  emptyOverrides,
+  normalizeOverrides,
+  paintValue,
+  MAX_DISPLAY_Z
+} from "../../poc/web/themes.js";
 import { MAP_TYPE_IDS } from "../../poc/web/map-types.js";
 import { snapshotStyle, pasteStyle, valueAtZoom } from "../../poc/web/layer-style.js";
 
@@ -87,7 +94,11 @@ for (const theme of Object.keys(THEMES)) {
         contoursUrl: "pmtiles://x/c.pmtiles",
         rocksUrl: "pmtiles://x/r.pmtiles",
         trailsUrl: "pmtiles://x/tr.pmtiles",
-        featuresUrl: "pmtiles://x/f.pmtiles"
+        featuresUrl: "pmtiles://x/f.pmtiles",
+        // Tieňovanie zapnuté NASCHVÁL: vrstva `hillshade` je jediná s
+        // vlastnosťou `hillshade-exaggeration` a bez nej by sa kopírovanie
+        // štýlu na túto vlastnosť vôbec neskúsilo.
+        hillshade: true
       })
     });
   }
@@ -169,8 +180,81 @@ if (valueAtZoom(["match", ["get", "x"], "a", 1, 2], 14) !== null) {
   );
 }
 
+// ---------- 4. zoomové pásma ----------
+// „Od z9 do z11 takáto čiara, na z12 takáto" je vlastný tvar úpravy
+// (`[[od, do, hodnota], …]`) a stojí a padá s tým, že rad pásiem je SÚVISLÝ.
+// Medzera aj prekryv musia byť tvrdá chyba: keby sa medzera doplnila držaním
+// predošlej hodnoty, „do 11" by neplatilo a nikto by to nemal ako spozorovať.
+const pasma = (value) =>
+  normalizeOverrides({ layers: { x: { paint: { "line-width": value } } } });
+
+for (const [popis, value, musiPrejst] of [
+  ["súvislé pásma", [[9, 11, 2], [12, 12, 4], [13, 17, 6]], true],
+  ["jedno pásmo", [[9, 17, 2]], true],
+  ["medzera medzi pásmami", [[9, 11, 2], [14, 17, 6]], false],
+  ["prekryv pásiem", [[9, 11, 2], [11, 17, 6]], false],
+  ["zmiešaná krivka a pásmo", [[9, 2], [12, 13, 4]], false],
+  ["desatinný zoom v pásme", [[9, 11.5, 2], [12, 17, 6]], false],
+  ["pásmo naopak", [[13, 11, 2]], false]
+]) {
+  const { overrides, problems } = pasma(value);
+  const prijate = overrides.layers.x?.paint?.["line-width"] !== undefined;
+  if (musiPrejst && (!prijate || problems.length)) {
+    chyba("poc/web/themes.js",
+      `zoomové pásma (${popis}) neprešli cez normalizeOverrides: ${problems[0] || "zahodené bez dôvodu"}`);
+  }
+  if (!musiPrejst && (prijate || !problems.length)) {
+    chyba("poc/web/themes.js",
+      `zoomové pásma (${popis}) prešli cez normalizeOverrides. Rad pásiem musí ` +
+      `byť súvislý a v jednom tvare – inak platí niečo iné, než čo je napísané.`);
+  }
+}
+
+// Hranica pásma je tam, kde hovorí – vrátane desatinných zoomov pod ňou.
+// (`do 11` znamená „ešte na z11,9", nie „po z11,0".)
+const schodisko = paintValue([[9, 11, 2], [12, 12, 4], [13, 17, 6]]);
+for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6], [20, 6]]) {
+  const dostal = valueAtZoom(schodisko, z);
+  if (dostal !== cakane) {
+    chyba("poc/web/layer-style.js",
+      `pásma pri z${z} vrátili ${dostal}, čakalo sa ${cakane} – hranica pásma ` +
+      `nie je tam, kde ju úprava sľubuje.`);
+  }
+}
+
+// A to isté, čo pri kopírovaní štýlu: čo sa zo `step` vrstvy odfotí, musí
+// `normalizeOverrides` prijať CELÉ. Inak by úprava v prehliadači platila
+// a pipeline by ju pri zápise do repozitára potichu zahodila.
+{
+  const vrstva = {
+    id: "schody",
+    type: "line",
+    paint: { "line-width": schodisko, "line-color": paintValue([[0, 9, "#112233"], [10, MAX_DISPLAY_Z, "#445566"]]) }
+  };
+  const snap = snapshotStyle(vrstva, {});
+  if (snap.dropped.length) {
+    chyba("poc/web/layer-style.js",
+      `odfotenie \`step\` vrstvy zahodilo ${snap.dropped.join(", ")} – schodisko ` +
+      `podľa zoomu sa má odfotiť ako zoomové pásma.`);
+  }
+  const raw = emptyOverrides();
+  raw.layers.schody = { paint: snap.paint };
+  const { overrides, problems } = normalizeOverrides(raw);
+  if (problems.length) {
+    chyba("poc/web/layer-style.js",
+      `odfotené \`step\` vrstvy normalizeOverrides odmieta: ${problems[0]}`);
+  }
+  for (const prop of Object.keys(snap.paint)) {
+    if ((overrides.layers.schody?.paint || {})[prop] === undefined) {
+      chyba("poc/web/layer-style.js",
+        `odfotená vlastnosť \`${prop}\` zo \`step\` vrstvy sa cez normalizeOverrides nedostala.`);
+    }
+  }
+}
+
 console.log(
   `úpravy: ${bad} chýb (${odfotenych} odfotených vrstiev, ${skusok} vložení, ` +
+  `7 tvarov zoomových pásiem, ` +
   `${Object.keys(THEMES).length} tém × ${MAP_TYPE_IDS.length} typov mapy)`
 );
 process.exit(bad ? 1 : 0);

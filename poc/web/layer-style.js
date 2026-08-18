@@ -23,11 +23,18 @@
  * (`fill-outline-color` na čiare), sa NEVLOŽÍ a povie sa to – tichý polovičný
  * vklad by vyzeral ako pokazené kopírovanie.
  */
-import { MAX_PAINT_STOPS, NO_FILL, sortStops } from "./themes.js";
+import {
+  MAX_PAINT_STOPS,
+  MAX_DISPLAY_Z,
+  NO_FILL,
+  sortStops,
+  sortBands,
+  isBandList
+} from "./themes.js";
 import { DASH_PRESETS } from "./patterns.js";
 
 /** Vlastnosti, ktoré formát úprav vôbec pozná (`cleanPaintScalar`). */
-const SUFFIXES = ["-color", "-opacity", "-width"];
+const SUFFIXES = ["-color", "-opacity", "-width", "-exaggeration"];
 
 /**
  * Čo smie mať ktorý druh vrstvy. Zámerne je to VÝPOČET, nie „skús a uvidíš":
@@ -45,7 +52,16 @@ const ALLOWED = {
     "circle-color", "circle-opacity", "circle-stroke-color",
     "circle-stroke-width", "circle-stroke-opacity"
   ],
-  background: ["background-color", "background-opacity"]
+  background: ["background-color", "background-opacity"],
+  // Tieňovanie reliéfu. `hillshade-exaggeration` je jeho sila – jediné
+  // číslo, ktoré nie je krytie ani hrúbka a úpravy ho aj tak poznajú
+  // (viď `cleanPaintScalar`).
+  hillshade: [
+    "hillshade-exaggeration",
+    "hillshade-shadow-color",
+    "hillshade-highlight-color",
+    "hillshade-accent-color"
+  ]
 };
 
 /** Predpona, pod ktorou má daný druh vrstvy svoju hlavnú vlastnosť. */
@@ -55,7 +71,8 @@ const PREFIX = {
   "fill-extrusion": "fill-extrusion",
   symbol: "text",
   circle: "circle",
-  background: "background"
+  background: "background",
+  hillshade: "hillshade"
 };
 
 /** Podporuje vrstva vzor a okraj? (plochy a čiary áno, popisky nie) */
@@ -70,9 +87,10 @@ const isScalar = (v) =>
  * Hodnota vlastnosti na danom zoome.
  *
  * Pozná to, čo štýl naozaj vyrába: číslo, `interpolate` podľa zoomu (lineárny
- * aj exponenciálny) a zoomové zlomy z úprav (`[[zoom, hodnota], …]`). Na
- * čokoľvek iné (výraz podľa atribútu prvku) vráti `null` – „to sa jedným
- * číslom povedať nedá" je poctivejšia odpoveď než vymyslený priemer.
+ * aj exponenciálny), `step` podľa zoomu a oba tvary zo súboru úprav – krivku
+ * `[[zoom, hodnota], …]` aj pásma `[[od, do, hodnota], …]`. Na čokoľvek iné
+ * (výraz podľa atribútu prvku) vráti `null` – „to sa jedným číslom povedať
+ * nedá" je poctivejšia odpoveď než vymyslený priemer.
  *
  * Farbu neinterpoluje: medzi dvoma zlomami vráti tú spodnú. Miešať hex
  * v sRGB by dalo inú farbu, než akú kreslí MapLibre (ten mieša inak), a tu
@@ -82,11 +100,21 @@ export function valueAtZoom(value, zoom) {
   if (isScalar(value)) return value;
   if (!Array.isArray(value)) return null;
 
+  // Zoomové PÁSMA z úprav: `[[od, do, hodnota], …]` – hodnota pásma, v ktorom
+  // ten zoom leží; pod prvým a nad posledným krajné pásmo.
+  if (isBandList(value)) return bandAt(sortBands(value), zoom);
+
   // Zoomové zlomy z úprav: `[[zoom, hodnota], …]`.
   if (Array.isArray(value[0])) {
     const stops = sortStops(value.filter((s) => Array.isArray(s) && s.length === 2));
     if (!stops.length) return null;
     return stopsAt(stops, zoom);
+  }
+
+  // `step` podľa zoomu – to, čo zo zoomových pásiem vyrobí `paintValue`.
+  if (value[0] === "step") {
+    const bands = stepToBands(value);
+    return bands ? bandAt(bands, zoom) : null;
   }
 
   if (value[0] !== "interpolate") return null;
@@ -102,6 +130,42 @@ export function valueAtZoom(value, zoom) {
   if (!stops.length) return null;
   const base = Array.isArray(curve) && curve[0] === "exponential" ? Number(curve[1]) || 1 : 1;
   return stopsAt(stops, zoom, base);
+}
+
+/** Hodnota pásma, v ktorom daný zoom leží (krajné pásma platia aj za okraj). */
+function bandAt(bands, zoom) {
+  if (!bands.length) return null;
+  for (const [od, doZ, v] of bands) if (zoom >= od && zoom < doZ + 1) return v;
+  return zoom < bands[0][0] ? bands[0][2] : bands[bands.length - 1][2];
+}
+
+/**
+ * `["step", ["zoom"], v0, z1, v1, …]` → pásma `[[od, do, hodnota], …]`.
+ *
+ * Prvý výstup `step` platí od z0 (pod prvým zlomom nie je nič nižšie) a
+ * posledný až po strop zobrazenia – pásma preto pokrývajú celý rozsah, tak
+ * ako to `cleanPaintBands` vyžaduje. `null` = nie je to schodisko podľa zoomu.
+ */
+function stepToBands(value) {
+  const [, input, base, ...rest] = value;
+  if (!Array.isArray(input) || input[0] !== "zoom") return null;
+  if (!isScalar(base)) return null;
+  const hranice = [];
+  for (let i = 0; i + 1 < rest.length; i += 2) {
+    if (typeof rest[i] !== "number" || !isScalar(rest[i + 1])) return null;
+    hranice.push([rest[i], rest[i + 1]]);
+  }
+  const bands = [];
+  let od = 0;
+  let v = base;
+  for (const [z, next] of hranice) {
+    if (z <= od) return null;
+    bands.push([od, z - 1, v]);
+    od = z;
+    v = next;
+  }
+  bands.push([od, Math.max(od, MAX_DISPLAY_Z), v]);
+  return bands;
 }
 
 /** Hodnota medzi zlomami; farby sa nemiešajú (vráti sa spodný zlom). */
@@ -127,16 +191,25 @@ function stopsAt(stops, zoom, base = 1) {
 
 /**
  * Hodnota z hotového štýlu → hodnota, akú unesie súbor úprav.
- * Krivka podľa zoomu sa zapíše ako zoomové zlomy; keď ich je viac než strop
+ * Krivka podľa zoomu sa zapíše ako zoomové zlomy a `step` ako zoomové pásma –
+ * teda každá vec tým tvarom, ktorý ju vyrába. Keď ich je viac než strop
  * (`MAX_PAINT_STOPS`), nechajú sa krajné a rovnomerne rozložené vnútorné –
  * bez toho by `normalizeOverrides` celú vlastnosť zahodil.
  */
 function snapValue(value) {
   if (isScalar(value)) return value;
   if (!Array.isArray(value)) return null;
+  if (isBandList(value)) return thinBands(sortBands(value));
   if (Array.isArray(value[0])) {
     const stops = sortStops(value.filter((s) => Array.isArray(s) && s.length === 2));
     return stops.length ? thin(stops) : null;
+  }
+  // Schodisko podľa zoomu sa odfotí ako PÁSMA – teda ako to, čo ho vyrobilo.
+  // Preložiť ho na krivku by z konštantných pásiem spravilo plynulý prechod
+  // a vložená vrstva by vyzerala inak než tá, z ktorej sa kopírovalo.
+  if (value[0] === "step") {
+    const bands = stepToBands(value);
+    return bands ? thinBands(bands) : null;
   }
   if (value[0] !== "interpolate") return null;
   const [, , input, ...rest] = value;
@@ -147,6 +220,31 @@ function snapValue(value) {
     stops.push([rest[i], rest[i + 1]]);
   }
   return stops.length ? thin(stops) : null;
+}
+
+/**
+ * Preriedi PÁSMA na strop. Vypustené pásmo pohltí to pred ním (predĺži sa
+ * jeho `do`), takže rad ostane SÚVISLÝ – medzeru by `cleanPaintBands`
+ * odmietol a s ňou celú vlastnosť.
+ */
+function thinBands(bands) {
+  if (!bands.length) return null;
+  const vybrane =
+    bands.length <= MAX_PAINT_STOPS
+      ? bands
+      : (() => {
+          const out = [bands[0]];
+          const krok = (bands.length - 1) / (MAX_PAINT_STOPS - 1);
+          for (let i = 1; i < MAX_PAINT_STOPS - 1; i += 1) out.push(bands[Math.round(i * krok)]);
+          out.push(bands[bands.length - 1]);
+          const seen = new Set();
+          return out.filter(([od]) => (seen.has(od) ? false : seen.add(od)));
+        })();
+  return vybrane.map(([od, doZ, v], i) => [
+    od,
+    i + 1 < vybrane.length ? vybrane[i + 1][0] - 1 : doZ,
+    v
+  ]);
 }
 
 /** Preriedi zlomy na strop – krajné ostávajú, vnútorné sa vyberú rovnomerne. */

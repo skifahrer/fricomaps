@@ -158,6 +158,9 @@ export const MAP_TYPES = [
       { match: { id: /^(cliff-line|ridge-line|feature-embankment|feature-cutting|feature-gully|feature-tree-row)/ }, visible: false },
       { match: { id: "feature-parking" }, minzoom: 12 },
       { match: { id: "road-construction" }, minzoom: 9 },
+      // Číslo cesty je na cestnej mape to hlavné – štítky idú skôr než inde.
+      { match: { id: "road-shield-primary" }, minzoom: 8 },
+      { match: { id: "road-shield-secondary" }, minzoom: 10 },
       // Chodníky a cestičky nie sú to, kadiaľ sa dá ísť autom.
       { match: { id: ["road-path", "road-steps", "road-footway"] }, visible: false },
       { match: { id: "road-cycleway" }, minzoomFloor: 15 },

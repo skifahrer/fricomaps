@@ -59,6 +59,12 @@ while read -r id url; do
     continue
   fi
   if node workers/assets/sprite.mjs --in="/tmp/icons/$id" --out="_site/sprites/$id"; then
+    # Štítky s číslom cesty („D1") si kreslíme sami – v cudzej sade ikoniek
+    # nie sú a byť nemôžu, lebo sa naťahujú podľa dĺžky čísla. Keď sa
+    # nedopečú, mapa nespadne: štýl číslo nakreslí len s hrubým halom
+    # (viď `hasIcon` v `poc/web/themes.js`), takže je to varovanie, nie chyba.
+    node workers/assets/shields.mjs --sprite="_site/sprites/$id" \
+      || echo "::warning::Štítky ciest sa do sady $id nepodarilo dopiecť – čísla ciest budú bez podkladu."
     ok="$ok $id"
   else
     echo "::warning::Sadu ikoniek $id sa nepodarilo prerobiť na SDF – preskakujem."

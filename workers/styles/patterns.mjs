@@ -105,7 +105,15 @@ function addTo(suffix, pixelRatio) {
       width: box.width,
       height: box.height,
       pixelRatio: box.entry.pixelRatio || 1,
-      ...(box.entry.sdf ? { sdf: true } : {})
+      ...(box.entry.sdf ? { sdf: true } : {}),
+      // ROZŤAHOVACIE PÁSMA SA MUSIA PRENIESŤ. Preskladanie atlasu mení len to,
+      // KDE obrázok leží – čo o sebe hovorí, ostáva jeho. Štítok cesty
+      // (`workers/assets/shields.mjs`) sa bez `stretchX`/`stretchY`/`content`
+      // natiahne celý aj s rohmi a z obdĺžnika je pri dlhom čísle rozmazaná
+      // kapsula; nič pri tom nespadne, lebo štýl aj sprite sú ďalej platné.
+      ...(box.entry.stretchX ? { stretchX: box.entry.stretchX } : {}),
+      ...(box.entry.stretchY ? { stretchY: box.entry.stretchY } : {}),
+      ...(box.entry.content ? { content: box.entry.content } : {})
     };
   }
 
