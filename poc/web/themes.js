@@ -1402,6 +1402,18 @@ function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
       problems.push(`${kde} musí byť nezáporné číslo.`);
       return undefined;
     }
+    // NULOVÁ HRÚBKA ČIARY JE TICHO ZMIZNUTÁ VRSTVA. Číselné políčko v developer
+    // móde má šípky a prázdne políčko („auto") sa nimi skočí rovno na spodnú
+    // medzu – jedno ťuknutie dole teda vrstvu zhaslo a v paneli po ňom ostala
+    // len nula, na ktorej sa už nedalo poznať, čo sa stalo. Vypnúť vrstvu sa má
+    // cez `visible`, kde je to vidieť aj v zozname. (Halo a obrys sa nerátajú –
+    // tam nula znamená „žiadny lem", čo je normálna hodnota zo štýlu.)
+    if (n === 0 && prop.endsWith("-width")
+        && !prop.includes("halo") && !prop.includes("stroke")) {
+      problems.push(`${kde} nesmie byť 0 – čiara s nulovou hrúbkou sa nekreslí `
+        + `a v mape to vyzerá ako chýbajúce dáta. Vrstvu vypni cez "visible".`);
+      return undefined;
+    }
     return n;
   }
   problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);

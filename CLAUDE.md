@@ -43,7 +43,7 @@ a v každej patria kusy k sebe. Toto je celý obrázok:
             └───────────────────────────────────────────────────────┘
 
             ┌── Kontrola ─── beží sama pri pushi ──────────────────┐
-            │ lint workflowov  actionlint + 27 vlastných kontrol   │
+            │ lint workflowov  actionlint + 31 vlastných kontrol   │
             └──────────────────────────────────────────────────────┘
 
             ┌── Údržba ─── o infraštruktúru, nie o mapu ───────────┐
@@ -656,7 +656,11 @@ všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
 trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
-zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **každý job, ktorý
+zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **úprava z developer
+módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
+čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
+nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
+zahodí), že **každý job, ktorý
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do
 `workers/lib/planetiler.sh` presunúť nedá, takže je to jedna veta na šiestich

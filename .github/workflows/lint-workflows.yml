@@ -528,6 +528,16 @@ jobs:
       - name: "Trasy: strana, odstup a atribúty držia spolu"
         run: node workers/lint/trails.mjs
 
+      # Developer mode zapisuje úpravy, ktoré potom pipeline zapečie do mapy –
+      # a keď ich `normalizeOverrides` pri zápise do repozitára odmietne, je to
+      # tiché: v prehliadači to platí, na Pages nie. Dve veci naraz (rozpis vo
+      # `workers/lint/overrides.mjs`): nulová hrúbka čiary je zmiznutá vrstva,
+      # nie vypnutá (šípka na prázdnom políčku ju vyrobila jedným ťuknutím),
+      # a kopírovanie štýlu z vrstvy do vrstvy musí vyrobiť úpravu, ktorú
+      # normalizácia prijme celú – nie polovicu.
+      - name: "Úpravy štýlu prejdú normalizáciou celé"
+        run: node workers/lint/overrides.mjs
+
       # „V tomto stupni terén nie je" je doživotná odpoveď – kým prázdna
       # dlaždica leží v sklade, ten stupeň už nikto neprečíta. Keď ju vysloví
       # vzorkovaná štatistika, je beh zelený a v mape chýba pol kraja: presne
