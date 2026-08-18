@@ -59,8 +59,17 @@ const SDF_CUTOFF = 0.25;
  * Tvary štítka. `radius` je polomer zaoblenia rohov v pixeloch pri
  * `pixelRatio` 1; `SHIELD_BOX / 2` je už úplný ovál.
  */
+// Polomer je ODMERANÝ Z NAOZAJSTNEJ ZNAČKY, nie odhadnutý: na úradnom
+// slovenskom štítku D1/R1 (Wikimedia Commons `D1-SVK-2020.svg`) má zaoblenie
+// 8 % výšky červeného poľa. Dovtedy tu boli 4 px na 18 px poli, teda 22 % –
+// takmer trojnásobok, a štítok preto pôsobil ako pilulka, nie ako dopravná
+// značka. Pri dlhom čísle to bolo ešte vypuklejšie: `icon-text-fit` škáluje
+// obrázok v oboch osiach zvlášť, takže sa vodorovný polomer natiahol s ním
+// a z „III/3059" bola kapsula. S malým polomerom to ostane obdĺžnik.
+//
+// 8 % z 18 px = 1,44 px; 1,5 je najbližšie, čo má na mriežke zmysel.
 export const SHIELD_SHAPES = [
-  { id: "shield", label: "Štítok – zaoblený obdĺžnik", radius: 4 },
+  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 1.5 },
   { id: "shield-round", label: "Štítok – oválny", radius: 8 }
 ];
 

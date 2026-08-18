@@ -260,7 +260,7 @@ export const THEMES = {
     scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
     roadProposed: "#b0a48c",
-    shieldMotorway: "#c8102e",
+    shieldMotorway: "#ba1e10",
     shieldPrimary: "#1f5aa6",
     shieldSecondary: "#ffffff",
     shieldText: "#ffffff",
@@ -388,7 +388,7 @@ export const THEMES = {
     scrub: "#272a1e",
     roadConstruction: "#6a5628",
     roadProposed: "#585044",
-    shieldMotorway: "#e04256",
+    shieldMotorway: "#d63a2a",
     shieldPrimary: "#3a6fb5",
     shieldSecondary: "#e9e9f2",
     shieldText: "#f2f2f8",
@@ -515,7 +515,7 @@ export const THEMES = {
     scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
     roadProposed: "#a89878",
-    shieldMotorway: "#c01f38",
+    shieldMotorway: "#b31d10",
     shieldPrimary: "#1a56a0",
     shieldSecondary: "#fffaf0",
     shieldText: "#fffaf0",
@@ -641,7 +641,7 @@ export const THEMES = {
     scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
     roadProposed: "#b4a488",
-    shieldMotorway: "#b03a48",
+    shieldMotorway: "#a83428",
     shieldPrimary: "#4a6fa0",
     shieldSecondary: "#fffdf8",
     shieldText: "#fffdf8",
@@ -4092,7 +4092,7 @@ export function buildStyle({
                 // obrázok škáluje CELÝ (bez rozťahovacích pásem, viď
                 // `poc/web/shields.js`), je odsadenie jediné, čo drží číslo
                 // od hrany – tak je o pixel väčšie než predtým.
-                "icon-text-fit-padding": [2, 4, 2, 4],
+                "icon-text-fit-padding": [3, 7, 3, 7],
                 "icon-rotation-alignment": "viewport",
                 "icon-pitch-alignment": "viewport"
               }
