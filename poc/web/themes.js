@@ -260,11 +260,13 @@ export const THEMES = {
     scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
     roadProposed: "#b0a48c",
-    shieldMotorway: "#1e6b3a",
+    shieldMotorway: "#c8102e",
     shieldPrimary: "#1f5aa6",
-    shieldSecondary: "#6b6154",
+    shieldSecondary: "#ffffff",
     shieldText: "#ffffff",
+    shieldTextDark: "#1a1a1a",
     shieldBorder: "#ffffff",
+    shieldBorderDark: "#3a3a3a",
     parking: "#e8e4f0",
     farmyard: "#eee4d2",
     dam: "#b0a898",
@@ -386,11 +388,13 @@ export const THEMES = {
     scrub: "#272a1e",
     roadConstruction: "#6a5628",
     roadProposed: "#585044",
-    shieldMotorway: "#2f7d4a",
+    shieldMotorway: "#e04256",
     shieldPrimary: "#3a6fb5",
-    shieldSecondary: "#5a5468",
+    shieldSecondary: "#e9e9f2",
     shieldText: "#f2f2f8",
+    shieldTextDark: "#14141e",
     shieldBorder: "#14141e",
+    shieldBorderDark: "#14141e",
     parking: "#23202e",
     farmyard: "#2a2419",
     dam: "#3a3630",
@@ -511,11 +515,13 @@ export const THEMES = {
     scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
     roadProposed: "#a89878",
-    shieldMotorway: "#1b6b40",
+    shieldMotorway: "#c01f38",
     shieldPrimary: "#1a56a0",
-    shieldSecondary: "#6a5c46",
+    shieldSecondary: "#fffaf0",
     shieldText: "#fffaf0",
+    shieldTextDark: "#2a2418",
     shieldBorder: "#fffaf0",
+    shieldBorderDark: "#4a4238",
     parking: "#e6e2ee",
     farmyard: "#e8dcc2",
     dam: "#a89e8a",
@@ -635,11 +641,13 @@ export const THEMES = {
     scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
     roadProposed: "#b4a488",
-    shieldMotorway: "#3f7a55",
+    shieldMotorway: "#b03a48",
     shieldPrimary: "#4a6fa0",
-    shieldSecondary: "#8a7a64",
+    shieldSecondary: "#fffdf8",
     shieldText: "#fffdf8",
+    shieldTextDark: "#3a3226",
     shieldBorder: "#fffdf8",
+    shieldBorderDark: "#6a5c46",
     parking: "#efe8f0",
     farmyard: "#f2e6d2",
     dam: "#c4b8a8",
@@ -767,16 +775,21 @@ export const PALETTE_GROUPS = [
       ["roadText", "Popisok cesty"],
       ["roadConstruction", "Cesta vo výstavbe"],
       ["roadProposed", "Plánovaná cesta"],
-      // Štítky s číslom cesty. Farby idú podľa SLOVENSKÉHO ZNAČENIA, nie
-      // podľa farby čiary v mape: diaľnice a rýchlostné cesty majú zelené
-      // tabule, ostatné cesty modré. Farba čiary sa na to nedá použiť –
+      // Štítky s číslom cesty podľa ČESKOSLOVENSKÉHO ZNAČENIA – červená D/R,
+      // modrá I. trieda, biela II./III. Farba čiary sa na to nedá použiť:
       // výplne ciest sú vo všetkých témach svetlé (žltkasté, béžové)
       // a biele číslo na nich nie je čitateľné.
+      //
+      // Kedysi tu bola zelená a bolo to zámenou tabule za štítok: na diaľnici
+      // je zelená SMEROVÁ TABUĽA, ale ČÍSLO cesty sa píše do červeného štítka.
+      // Na mape je vidieť štítok.
       ["shieldMotorway", "Štítok D a R"],
       ["shieldPrimary", "Štítok cesty I. triedy"],
       ["shieldSecondary", "Štítok cesty II./III. triedy"],
-      ["shieldText", "Číslo na štítku"],
-      ["shieldBorder", "Orámovanie štítka"]
+      ["shieldText", "Číslo na farebnom štítku"],
+      ["shieldTextDark", "Číslo na bielom štítku (II./III.)"],
+      ["shieldBorder", "Orámovanie farebného štítka"],
+      ["shieldBorderDark", "Orámovanie bieleho štítka (II./III.)"]
     ]
   },
   {
@@ -2214,12 +2227,28 @@ export const ROAD_PASSES = ["-tunnel", "", "-bridge"];
  * niekoľko sto a mapa by bola z nich. Od z7 je ich toľko, koľko sa dá
  * prečítať.
  */
+// `[id, popis, triedy, farba podkladu, minzoom, tvar, farba čísla, orámovanie]`
+//
+// FARBY SÚ PODĽA ŠTÍTKA S ČÍSLOM CESTY, nie podľa smerovej tabule. Je to
+// rozdiel, na ktorom to predtým stálo zle: na diaľnici je ZELENÁ TABUĽA
+// (a podľa nej boli štítky zelené), ale ČÍSLO cesty sa v československom
+// značení píše do červeného štítka. Tabuľa a štítok sú dve rôzne veci a na
+// mape je vidieť ten druhý.
+//
+//   D, R   červená, biele číslo      (motorway + trunk – R je v OSM `trunk`)
+//   I.     modrá, biele číslo
+//   II/III biela, TMAVÉ číslo a tmavý rámik
+//
+// Práve kvôli tomu poslednému má každý riadok vlastnú farbu čísla aj rámika:
+// jedno spoločné biele číslo by na bielom štítku zmizlo a biely rámik okolo
+// bieleho štítka by ho na svetlej mape nechal splynúť s podkladom.
 export const SHIELD_DEFS = [
   ["motorway", "Štítky diaľnic a rýchlostných ciest", ["motorway", "trunk"],
-    "shieldMotorway", 7, "shield"],
-  ["primary", "Štítky ciest I. triedy", ["primary"], "shieldPrimary", 9, "shield"],
+    "shieldMotorway", 7, "shield", "shieldText", "shieldBorder"],
+  ["primary", "Štítky ciest I. triedy", ["primary"],
+    "shieldPrimary", 8, "shield", "shieldText", "shieldBorder"],
   ["secondary", "Štítky ciest II. a III. triedy", ["secondary", "tertiary"],
-    "shieldSecondary", 11, "shield"]
+    "shieldSecondary", 10, "shield", "shieldTextDark", "shieldBorderDark"]
 ];
 
 /**
@@ -4026,7 +4055,8 @@ export function buildStyle({
   // POPISKY STOJA NAROVNO (`text-rotation-alignment: viewport`). Značka
   // natočená podľa cesty už nie je značka, ale text – a na serpentíne by
   // stála na hlave.
-  for (const [id, label, classes, colorKey, mz, shapeId] of SHIELD_DEFS) {
+  for (const [id, label, classes, colorKey, mz, shapeId, textKey, borderKey]
+       of SHIELD_DEFS) {
     const shieldIcon = hasIcon(shapeId) ? shapeId : null;
     add(
       {
@@ -4041,9 +4071,12 @@ export function buildStyle({
         ],
         layout: {
           "symbol-placement": "line",
-          // Ako často sa značka po ceste opakuje. Hustejšie pri priblížení,
-          // inak by na z16 bola na obrazovke jedna jediná.
-          "symbol-spacing": zl([[7, 220], [12, 260], [16, 340]]),
+          // Ako často sa značka po ceste opakuje, v pixeloch obrazovky.
+          // Číslo cesty je ZNAČKA – má sa dať prečítať kdekoľvek na nej, nie
+          // len tam, kam padne jedna jediná. Preto hustejšie než predtým
+          // (220/260/340): na dlhom úseku bez zjazdu bola medzi štítkami
+          // obrazovka a pol.
+          "symbol-spacing": zl([[7, 170], [12, 190], [16, 230]]),
           "text-field": ["get", "ref"],
           "text-font": BOLD,
           "text-size": zl([[7, 9], [12, 10], [16, 12]]),
@@ -4064,15 +4097,15 @@ export function buildStyle({
         },
         paint: shieldIcon
           ? {
-              "text-color": c.shieldText,
+              "text-color": c[textKey],
               "icon-color": c[colorKey],
-              "icon-halo-color": c.shieldBorder,
+              "icon-halo-color": c[borderKey],
               "icon-halo-width": 1
             }
           : {
               // Bez obrázka aspoň hrubé halo vo farbe štítka – je to kapsula
               // okolo písmen, nie značka, ale číslo ostane čitateľné.
-              "text-color": c.shieldText,
+              "text-color": c[textKey],
               "text-halo-color": c[colorKey],
               "text-halo-width": 2.5
             }
@@ -4083,11 +4116,11 @@ export function buildStyle({
         "text",
         shieldIcon
           ? {
-              "text-color": "shieldText",
+              "text-color": textKey,
               "icon-color": colorKey,
-              "icon-halo-color": "shieldBorder"
+              "icon-halo-color": borderKey
             }
-          : { "text-color": "shieldText", "text-halo-color": colorKey }
+          : { "text-color": textKey, "text-halo-color": colorKey }
       ]
     );
   }
