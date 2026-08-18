@@ -270,11 +270,17 @@
     .dev-prophead .dev-propname { width: auto; font-style: italic; }
     .dev-colorrow { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; }
     .dev-colorrow.changed .dev-hex { border-color: #d09030; background: #fffaf0; }
-    /* Zoomové zlomy: „na z11 takto, na z16 inak". Zlomy sú pod sebou, každý
-       so svojím zoomom, aby sa dali čítať ako krivka zhora dolu. */
+    /* Hodnota podľa zoomu: „na z11 takto, na z16 inak". Riadky sú pod sebou,
+       každý so svojím zoomom, aby sa dali čítať ako krivka zhora dolu –
+       a v režime pásiem ako rozsahy („od z9 do z11 takto"). */
     .dev-stops { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
     .dev-stop { display: flex; align-items: center; gap: 4px; }
     .dev-stopz { font-size: 10px; color: #888; }
+    /* Prepínač tvaru: krivka (plynulo) ⇄ pásma (skok na hranici) */
+    .dev-shape { display: flex; gap: 3px; }
+    .dev-shapebtn { font-size: 10px; opacity: 0.55; }
+    .dev-shapebtn.on { opacity: 1; border-color: #d09030; background: #fffaf0; font-weight: 600; }
+    .dev-bandto { min-width: 26px; }
     .dev-num-z { width: 40px; }
     .dev-stop .dev-field { margin: 0; }
     .dev-addstop { align-self: flex-start; font-size: 10px; }

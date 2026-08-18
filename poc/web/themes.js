@@ -260,6 +260,11 @@ export const THEMES = {
     scrub: "#d3d8b8",
     roadConstruction: "#e0c078",
     roadProposed: "#b0a48c",
+    shieldMotorway: "#1e6b3a",
+    shieldPrimary: "#1f5aa6",
+    shieldSecondary: "#6b6154",
+    shieldText: "#ffffff",
+    shieldBorder: "#ffffff",
     parking: "#e8e4f0",
     farmyard: "#eee4d2",
     dam: "#b0a898",
@@ -381,6 +386,11 @@ export const THEMES = {
     scrub: "#272a1e",
     roadConstruction: "#6a5628",
     roadProposed: "#585044",
+    shieldMotorway: "#2f7d4a",
+    shieldPrimary: "#3a6fb5",
+    shieldSecondary: "#5a5468",
+    shieldText: "#f2f2f8",
+    shieldBorder: "#14141e",
     parking: "#23202e",
     farmyard: "#2a2419",
     dam: "#3a3630",
@@ -501,6 +511,11 @@ export const THEMES = {
     scrub: "#c9cfa6",
     roadConstruction: "#d8a848",
     roadProposed: "#a89878",
+    shieldMotorway: "#1b6b40",
+    shieldPrimary: "#1a56a0",
+    shieldSecondary: "#6a5c46",
+    shieldText: "#fffaf0",
+    shieldBorder: "#fffaf0",
     parking: "#e6e2ee",
     farmyard: "#e8dcc2",
     dam: "#a89e8a",
@@ -620,6 +635,11 @@ export const THEMES = {
     scrub: "#dedcc0",
     roadConstruction: "#dcb87c",
     roadProposed: "#b4a488",
+    shieldMotorway: "#3f7a55",
+    shieldPrimary: "#4a6fa0",
+    shieldSecondary: "#8a7a64",
+    shieldText: "#fffdf8",
+    shieldBorder: "#fffdf8",
     parking: "#efe8f0",
     farmyard: "#f2e6d2",
     dam: "#c4b8a8",
@@ -746,7 +766,17 @@ export const PALETTE_GROUPS = [
       ["roadCasing", "Obrys ciest"],
       ["roadText", "Popisok cesty"],
       ["roadConstruction", "Cesta vo výstavbe"],
-      ["roadProposed", "Plánovaná cesta"]
+      ["roadProposed", "Plánovaná cesta"],
+      // Štítky s číslom cesty. Farby idú podľa SLOVENSKÉHO ZNAČENIA, nie
+      // podľa farby čiary v mape: diaľnice a rýchlostné cesty majú zelené
+      // tabule, ostatné cesty modré. Farba čiary sa na to nedá použiť –
+      // výplne ciest sú vo všetkých témach svetlé (žltkasté, béžové)
+      // a biele číslo na nich nie je čitateľné.
+      ["shieldMotorway", "Štítok D a R"],
+      ["shieldPrimary", "Štítok cesty I. triedy"],
+      ["shieldSecondary", "Štítok cesty II./III. triedy"],
+      ["shieldText", "Číslo na štítku"],
+      ["shieldBorder", "Orámovanie štítka"]
     ]
   },
   {
@@ -972,6 +1002,45 @@ const zw = (stops) => [
 
 /** Lineárna interpolácia podľa zoomu. */
 const zl = (stops) => ["interpolate", ["linear"], ["zoom"], ...stops.flat()];
+
+/**
+ * ZOOMOVÉ PÁSMA: `zs([[9, 11, 2], [12, 12, 4], [13, 17, 6]])` – „od z9 do z11
+ * takto, na z12 takto, od z13 vyššie takto".
+ *
+ * PREČO POPRI KRIVKE EŠTE PÁSMA. Krivka (`zw`/`zl`) odpovedá na otázku „ako
+ * hodnota RASTIE", pásmo na otázku „čo platí v tomto rozsahu". Kým bola
+ * k dispozícii len krivka, druhá otázka sa musela písať cez prvú: „od z9 do
+ * z11 hrúbka 2" znamenalo napísať zlom `[9, 2]` A EŠTE `[11, 2]`, inak sa
+ * hodnota medzi nimi plynulo menila – teda tú istú hodnotu dvakrát, na každej
+ * hranici pásma, a pri troch pásmach šesť zlomov namiesto troch riadkov. Pri
+ * strope {@link MAX_PAINT_STOPS} sa do toho zmestili štyri pásma.
+ *
+ * SÉMANTIKA (jedna veta, aby sa nedala pochopiť dvoma spôsobmi):
+ * pásmo `[od, do, hodnota]` platí pre zoomy `od ≤ z < do + 1`, teda `do` je
+ * VRÁTANE aj s desatinami (na z11,7 ešte platí pásmo `do 11`). Pásma musia
+ * ísť za sebou BEZ MEDZIER a BEZ PREKRYVOV (`ďalšie od = predošlé do + 1`)
+ * a zadávajú sa v CELÝCH zoomoch – desatiny sú otázka pre krivku, nie pre
+ * pásmo. Pod prvým `od` a nad posledným `do` platí krajné pásmo (rovnako
+ * ako `interpolate` drží krajné hodnoty za svojimi krajnými zlomami).
+ *
+ * PREČO `step` A NIE `interpolate` S DVOMA ZLOMAMI NA PÁSMO. Vnútri pásma je
+ * hodnota KONŠTANTNÁ a na hranici SKOČÍ – to je celý zmysel pásma. Cez
+ * `interpolate` sa to zapísať nedá: susedné pásma `[9,11]` a `[12,12]` by
+ * potrebovali zlomy 9, 11, 12, 12 a dva zlomy na tom istom zoome MapLibre
+ * odmietne aj s celým štýlom. A `["zoom"]` smie byť podľa style-spec iba
+ * priamym vstupom najvrchnejšieho výrazu, takže sa krivka DO pásma vnoriť
+ * nedá ani obchádzkou – kto chce plynulý prechod, píše krivku.
+ */
+const zs = (bands) => {
+  const s = sortBands(bands);
+  if (s.length === 1) return s[0][2];
+  return [
+    "step",
+    ["zoom"],
+    s[0][2],
+    ...s.slice(1).flatMap(([od, , v]) => [od, v])
+  ];
+};
 
 /** Rozšíri každý stop o konštantu – použité na obrysy ciest. */
 const widen = (stops, extra) => stops.map(([z, w]) => [z, w + extra]);
@@ -1351,12 +1420,36 @@ export const MAX_PAINT_STOPS = 8;
 export const sortStops = (list) => [...list].sort((a, b) => a[0] - b[0]);
 
 /**
+ * To isté pre ZOOMOVÉ PÁSMA `[[od, do, hodnota], …]` – zoraďuje sa podľa `od`.
+ *
+ * Vlastná funkcia, hoci by `sortStops` zoradila to isté pole rovnako: pásmo
+ * a zlom sú dva rôzne tvary a keby ich obsluhovala jedna funkcia, prvý, kto
+ * do nej pridá čokoľvek o hodnote (napr. „jeden zlom nie je krivka"), to
+ * spraví aj druhému.
+ */
+export const sortBands = (list) => [...list].sort((a, b) => a[0] - b[0]);
+
+/**
+ * Je to zoznam PÁSIEM (trojice), alebo zoznam ZLOMOV (dvojice)?
+ *
+ * Rozlišuje sa POČTOM PRVKOV V RIADKU, nie obalom navyše: `[9, 11, 2]` sa
+ * číta ako „od 9 do 11 hodnota 2" a `[9, 2]` ako „na z9 hodnota 2" – v JSON
+ * súbore úprav je to vidieť bez legendy. Miešať sa nesmú a `cleanPaintZoom`
+ * to povie nahlas.
+ */
+export const isBandList = (list) =>
+  Array.isArray(list) && list.length > 0 &&
+  list.every((row) => Array.isArray(row) && row.length === 3);
+
+/**
  * Hodnota z úprav → to, čo ide do štýlu.
  *
- * Skalár ostane skalárom, `none` sa zmení na priehľadnú farbu a POLE ZLOMOV
- * `[[zoom, hodnota], …]` na `interpolate` podľa zoomu. Jeden zlom nie je
- * krivka, takže z neho vyjde obyčajná hodnota – jedna hodnota je čitateľnejšia
- * než `interpolate` s jediným stopom (ten by MapLibre prijal, ale nič nerobí).
+ * Skalár ostane skalárom, `none` sa zmení na priehľadnú farbu, POLE ZLOMOV
+ * `[[zoom, hodnota], …]` na `interpolate` podľa zoomu a POLE PÁSIEM
+ * `[[od, do, hodnota], …]` na `step` (v pásme konštanta, na hranici skok).
+ * Jeden zlom nie je krivka a jedno pásmo nie je schodisko, takže z nich vyjde
+ * obyčajná hodnota – jedna hodnota je čitateľnejšia než `interpolate`
+ * s jediným stopom (ten by MapLibre prijal, ale nič nerobí).
  *
  * Zoradenie je tu ZÁMERNE, hoci ho robí aj kontrola pri importe a developer
  * mode pri zápise: toto je posledné miesto pred štýlom a jediný nevzostupný
@@ -1365,6 +1458,19 @@ export const sortStops = (list) => [...list].sort((a, b) => a[0] - b[0]);
 export function paintValue(value) {
   if (value === NO_FILL) return "rgba(0,0,0,0)";
   if (!Array.isArray(value)) return value;
+  // ZOOMOVÉ PÁSMA `[[od, do, hodnota], …]` → `step`: v pásme konštanta,
+  // na hranici skok. Jediné pásmo nie je schodisko, takže z neho vyjde
+  // obyčajná hodnota (`step` s jediným výstupom by nemal na čom skočiť).
+  if (isBandList(value)) {
+    const bands = sortBands(value);
+    if (bands.length === 1) return paintValue(bands[0][2]);
+    return [
+      "step",
+      ["zoom"],
+      paintValue(bands[0][2]),
+      ...bands.slice(1).flatMap(([od, , v]) => [od, paintValue(v)])
+    ];
+  }
   if (value.length === 1) return paintValue(value[0][1]);
   return [
     "interpolate",
@@ -1396,6 +1502,20 @@ function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
     }
     return String(value).toLowerCase();
   }
+  // Sila tieňovania reliéfu. Je to jediná vlastnosť mimo trojice
+  // farba/krytie/hrúbka, ktorú úpravy poznajú – a je tu preto, že „silnejšie
+  // tieňovanie" je nastavenie, ktoré človek ladí okom a po jednom zoome, nie
+  // zmenou zdrojáku. Menuje sa CELÁ, nie príponou `-exaggeration`: `hillshade`
+  // je jediný druh vrstvy, ktorý ju má, a `line-exaggeration` z preklepu by
+  // MapLibre odmietol aj s celým štýlom.
+  if (prop === "hillshade-exaggeration") {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      problems.push(`${kde} musí byť medzi 0 a 1 (0 = bez tieňovania, 1 = najsilnejšie).`);
+      return undefined;
+    }
+    return Math.round(n * 100) / 100;
+  }
   if (prop.endsWith("-opacity") || prop.endsWith("-width")) {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) {
@@ -1418,6 +1538,88 @@ function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
   }
   problems.push(`${where}Vrstva "${id}": vlastnosť ${prop} sa nedá prepísať – preskakujem.`);
   return undefined;
+}
+
+/**
+ * Zoznam podľa zoomu – KRIVKA alebo PÁSMA. Jedna brána pre oba tvary, aby
+ * bolo na jednom mieste povedané, ktorý je ktorý a čo sa nesmie.
+ *
+ * MIEŠANIE JE TVRDÁ CHYBA, nie „nejako to vyriešime". `[[9, 2], [12, 13, 4]]`
+ * sa dá prečítať dvoma spôsobmi (je to zlom pri z12 s hodnotou 13? alebo
+ * pásmo?) a ktorúkoľvek stranu by sme uhádli, tá druhá by ticho zmizla –
+ * presne ten druh chyby, po ktorej mapa vyzerá skoro dobre.
+ */
+function cleanPaintZoom(prop, list, id, problems, where) {
+  const kde = `${where}Vrstva "${id}": ${prop}`;
+  if (!Array.isArray(list) || !list.length) {
+    problems.push(`${kde} má prázdny zoznam – vymaž ho, alebo doplň zlom či pásmo.`);
+    return undefined;
+  }
+  const trojice = list.filter((r) => Array.isArray(r) && r.length === 3).length;
+  const dvojice = list.filter((r) => Array.isArray(r) && r.length === 2).length;
+  if (trojice && dvojice) {
+    problems.push(`${kde} mieša dva tvary: dvojica \`[zoom, hodnota]\` je bod `
+      + `plynulej krivky, trojica \`[od, do, hodnota]\` je zoomové pásmo `
+      + `s konštantnou hodnotou. Zvoľ jeden a prepíš doň aj zvyšok.`);
+    return undefined;
+  }
+  return trojice
+    ? cleanPaintBands(prop, list, id, problems, where)
+    : cleanPaintStops(prop, list, id, problems, where);
+}
+
+/**
+ * Skontroluje pole ZOOMOVÝCH PÁSIEM `[[od, do, hodnota], …]`.
+ *
+ * Pásma musia pokrývať svoj rozsah SÚVISLE: `ďalšie od = predošlé do + 1`.
+ * Medzera aj prekryv sú tvrdá chyba, a to z toho istého dôvodu ako pravidlo
+ * „meno assetu je sľub o rozsahu" – „od 9 do 11" je sľub, že pásmo tam
+ * naozaj končí. Keby sa medzera dopĺňala držaním predošlej hodnoty, `do 11`
+ * by neplatilo a nikto by to nemal ako spozorovať; keby sa prekryv riešil
+ * poradím, o tom istom zoome by rozhodovali dve pásma naraz.
+ *
+ * Zoomy sú CELÉ ČÍSLA. Pásmo je „na tomto zoome to vyzerá takto" a zoomy sa
+ * v mape prepínajú po celých; desatina je otázka pre krivku, kde má zmysel.
+ */
+function cleanPaintBands(prop, list, id, problems, where) {
+  const kde = `${where}Vrstva "${id}": ${prop}`;
+  if (list.length > MAX_PAINT_STOPS) {
+    problems.push(`${kde} má ${list.length} zoomových pásiem, strop je ${MAX_PAINT_STOPS}.`);
+    return undefined;
+  }
+  const out = [];
+  for (const band of list) {
+    const [od, doZ, hodnota] = band;
+    for (const [meno, z] of [["od", od], ["do", doZ]]) {
+      if (!Number.isInteger(Number(z)) || z < 0 || z > MAX_DISPLAY_Z) {
+        problems.push(`${kde}: "${z}" nie je celý zoom (0–${MAX_DISPLAY_Z}) – `
+          + `pásmo sa zadáva celými zoomami ("${meno}"), desatiny patria krivke.`);
+        return undefined;
+      }
+    }
+    if (doZ < od) {
+      problems.push(`${kde}: pásmo od z${od} do z${doZ} je naopak – "do" nesmie byť menšie než "od".`);
+      return undefined;
+    }
+    const v = cleanPaintScalar(prop, hodnota, id, problems, where, ` v pásme z${od}–z${doZ}`);
+    if (v === undefined) return undefined;
+    out.push([Number(od), Number(doZ), v]);
+  }
+  const zoradene = sortBands(out);
+  for (let i = 1; i < zoradene.length; i += 1) {
+    const [, predoslyDo] = zoradene[i - 1];
+    const [od] = zoradene[i];
+    if (od === predoslyDo + 1) continue;
+    problems.push(
+      od <= predoslyDo
+        ? `${kde}: pásma z${zoradene[i - 1][0]}–z${predoslyDo} a z${od}–z${zoradene[i][1]} `
+          + `sa prekrývajú – o zoome z${od} by rozhodovali dve naraz.`
+        : `${kde}: medzi pásmami z…–z${predoslyDo} a z${od}–z… chýbajú zoomy `
+          + `z${predoslyDo + 1}–z${od - 1}. Predĺž jedno z nich, alebo tú medzeru vyplň pásmom.`
+    );
+    return undefined;
+  }
+  return zoradene;
 }
 
 /**
@@ -1613,14 +1815,15 @@ function cleanLayers(rawLayers, target, problems, where) {
       problems.push(`${where}Vrstva "${id}": maxzoom (${mx}) musí byť väčší ako minzoom (${mn}).`);
       delete clean.maxzoom;
     }
-    // Hodnota smie byť SKALÁR alebo POLE ZOOMOVÝCH ZLOMOV `[[zoom, hodnota], …]`.
-    // Skalár nahradí to, čo štýl počíta podľa zoomu, pevnou hodnotou; pole ju
-    // nahradí vlastnou krivkou. Farba plochy môže byť navyše `none` – bez
-    // výplne (viď `NO_FILL`).
+    // Hodnota smie byť SKALÁR alebo ZOZNAM PODĽA ZOOMU, a ten má dva tvary:
+    // KRIVKA `[[zoom, hodnota], …]` (plynulý prechod medzi zlomami) alebo
+    // PÁSMA `[[od, do, hodnota], …]` (v pásme konštanta, na hranici skok).
+    // Skalár nahradí to, čo štýl počíta podľa zoomu, pevnou hodnotou. Farba
+    // plochy môže byť navyše `none` – bez výplne (viď `NO_FILL`).
     const paint = {};
     for (const [prop, value] of Object.entries(def.paint || {})) {
       const clean = Array.isArray(value)
-        ? cleanPaintStops(prop, value, id, problems, where)
+        ? cleanPaintZoom(prop, value, id, problems, where)
         : cleanPaintScalar(prop, value, id, problems, where);
       if (clean !== undefined) paint[prop] = clean;
     }
@@ -1984,6 +2187,40 @@ export const ROAD_DEFS = [
 
 /** Prípony troch priechodov ciest (tunel → povrch → most) – pre kontrolu. */
 export const ROAD_PASSES = ["-tunnel", "", "-bridge"];
+
+/**
+ * ŠTÍTKY S ČÍSLOM CESTY – „D1", „R1", „I/18", „II/537".
+ *
+ * `[id, popis, triedy OSM, kľúč palety podkladu, minzoom, tvar štítka]`
+ *
+ * Číslo cesty je iná vec než jej meno a preto je to iná vrstva: meno beží
+ * pozdĺž cesty a je unikátne, číslo je ZNAČKA – opakuje sa po celej dĺžke,
+ * je krátke a človek ho na mape HĽADÁ („kde je D1?"). Vrstva `road-name`
+ * ho doteraz nekreslila vôbec: v jej `text-field` je meno a `ref` sa
+ * v hlavných dlaždiciach nikde neobjavil.
+ *
+ * TRIEDY SÚ Z DLAŽDÍC, NIE Z ČÍSLA. Lákalo by rozlíšiť štítok podľa toho,
+ * čím sa `ref` začína („D" = diaľnica, „R" = rýchlostná), ale to je pravidlo
+ * o slovenskom číslovaní zapísané v štýle, ktorý sa dá postaviť nad
+ * hocijakým regiónom – v Rakúsku je „A1" diaľnica a „B1" hlavná cesta, takže
+ * by z toho vyšlo, že A1 je cesta I. triedy. `class` z dlaždíc hovorí to
+ * isté a hovorí to všade rovnako.
+ *
+ * `D` a `R` majú JEDEN štítok. Sú to dve triedy OSM (`motorway`, `trunk`),
+ * ale jedna sieť aj jedno značenie – rozlišuje ich samotné číslo.
+ *
+ * MINZOOM JE VYŠŠÍ NEŽ PRI ČIARE. Diaľnica sa kreslí od z4, ale štítok má
+ * veľkosť v pixeloch, nie v metroch: na z4 by ich cez celé Slovensko bolo
+ * niekoľko sto a mapa by bola z nich. Od z7 je ich toľko, koľko sa dá
+ * prečítať.
+ */
+export const SHIELD_DEFS = [
+  ["motorway", "Štítky diaľnic a rýchlostných ciest", ["motorway", "trunk"],
+    "shieldMotorway", 7, "shield"],
+  ["primary", "Štítky ciest I. triedy", ["primary"], "shieldPrimary", 9, "shield"],
+  ["secondary", "Štítky ciest II. a III. triedy", ["secondary", "tertiary"],
+    "shieldSecondary", 11, "shield"]
+];
 
 /**
  * Vygeneruje kompletný MapLibre GL štýl.
@@ -2534,7 +2771,27 @@ export function buildStyle({
         type: "hillshade",
         source: "dem",
         paint: {
-          "hillshade-exaggeration": zl([[6, 0.5], [12, 0.4], [16, 0.25]]),
+          // SILA TIEŇOVANIA RASTIE SO ZOOMOM, nie naopak.
+          //
+          // Krivka tu roky klesala (`[[6, 0.5], [12, 0.4], [16, 0.25]]`),
+          // takže presne tam, kde má výškový model NAJVIAC detailu – DMR 5.0
+          // má mriežku 5 m a dlaždice idú do z15 –, bolo tieňovanie
+          // NAJSLABŠIE. Terénne nerovnosti, kvôli ktorým sa človek na mape
+          // približuje (žľaby, terasy, rebrá, cestné zárezy), tým pri
+          // priblížení miznú: na prehľade je vidieť hrubý tvar pohoria
+          // a v detaile skoro plochá mapa. Odteraz je to obrátene – na
+          // prehľadovom zoome stačí naznačiť tvar, v detaile má reliéf niesť
+          // to hlavné.
+          //
+          // Nie je to celá jednotka: `hillshade-shadow-color` je v témach
+          // NEPRIEHĽADNÁ farba, takže pri 1,0 je zatienený svah takmer čierna
+          // plocha a popisky ani cesty v ňom nie sú čitateľné. 0,95 v detaile
+          // je najsilnejšie, čo ešte nechá mapu prečítať.
+          //
+          // Dá sa to doladiť: `hillshade-exaggeration` je bežná vlastnosť
+          // úprav (developer mode → vrstva „Tieňovanie reliéfu"), takže na
+          // zmenu sily netreba meniť tento súbor.
+          "hillshade-exaggeration": zl([[6, 0.55], [10, 0.7], [12, 0.85], [16, 0.95]]),
           "hillshade-shadow-color": c.hillShadow,
           "hillshade-highlight-color": c.hillHighlight,
           "hillshade-accent-color": c.hillAccent
@@ -3748,6 +4005,92 @@ export function buildStyle({
       { "text-color": "poiText", "text-halo-color": "textHalo" }
     ]
   );
+
+  // ================= štítky s číslom cesty =================
+  // „D1", „R1", „I/18" – to, čo človek na mape hľadá, keď hľadá cestu.
+  //
+  // IDÚ PRED `road-name` A JE TO ROZHODNUTIE, NIE PORADIE V SÚBORE. MapLibre
+  // umiestňuje popisky v poradí vrstiev a ten, kto je skôr, si miesto berie
+  // prvý; keď sa na úsek nezmestí meno aj číslo, má ostať ČÍSLO. Meno ulice
+  // sa dá zistiť ťuknutím, „ktorá je toto cesta" sa z mapy bez čísla nedozvie
+  // nikto.
+  //
+  // PODKLAD JE ROZŤAHOVATEĽNÝ SDF OBRÁZOK zo spritu (`poc/web/shields.js`,
+  // dopeká ho `workers/assets/shields.mjs`): `icon-text-fit` ho natiahne
+  // podľa dĺžky čísla, `icon-color` mu dá farbu podľa triedy cesty
+  // a `icon-halo-*` orámovanie. Keď ten obrázok v sprite NIE JE – stará
+  // sada z cache, nepodarené dopečenie –, vrstva sa nevynechá: číslo sa
+  // nakreslí s hrubým halom vo farbe štítka. Je to horšie, ale je to vidieť,
+  // kým „štítky zmizli" by nikto nespozoroval.
+  //
+  // POPISKY STOJA NAROVNO (`text-rotation-alignment: viewport`). Značka
+  // natočená podľa cesty už nie je značka, ale text – a na serpentíne by
+  // stála na hlave.
+  for (const [id, label, classes, colorKey, mz, shapeId] of SHIELD_DEFS) {
+    const shieldIcon = hasIcon(shapeId) ? shapeId : null;
+    add(
+      {
+        id: `road-shield-${id}`,
+        type: "symbol",
+        "source-layer": "transportation_name",
+        minzoom: mz,
+        filter: [
+          "all",
+          ["has", "ref"],
+          ["in", str("class"), ["literal", classes]]
+        ],
+        layout: {
+          "symbol-placement": "line",
+          // Ako často sa značka po ceste opakuje. Hustejšie pri priblížení,
+          // inak by na z16 bola na obrazovke jedna jediná.
+          "symbol-spacing": zl([[7, 220], [12, 260], [16, 340]]),
+          "text-field": ["get", "ref"],
+          "text-font": BOLD,
+          "text-size": zl([[7, 9], [12, 10], [16, 12]]),
+          "text-rotation-alignment": "viewport",
+          "text-pitch-alignment": "viewport",
+          "text-padding": 2,
+          ...(shieldIcon
+            ? {
+                "icon-image": shieldIcon,
+                "icon-text-fit": "both",
+                // Hore/dole menej, po stranách viac – číslo má mať okolo seba
+                // rovnako veľa miesta na oko, nie v pixeloch.
+                "icon-text-fit-padding": [1, 3, 1, 3],
+                "icon-rotation-alignment": "viewport",
+                "icon-pitch-alignment": "viewport"
+              }
+            : {})
+        },
+        paint: shieldIcon
+          ? {
+              "text-color": c.shieldText,
+              "icon-color": c[colorKey],
+              "icon-halo-color": c.shieldBorder,
+              "icon-halo-width": 1
+            }
+          : {
+              // Bez obrázka aspoň hrubé halo vo farbe štítka – je to kapsula
+              // okolo písmen, nie značka, ale číslo ostane čitateľné.
+              "text-color": c.shieldText,
+              "text-halo-color": c[colorKey],
+              "text-halo-width": 2.5
+            }
+      },
+      [
+        "popisky",
+        label,
+        "text",
+        shieldIcon
+          ? {
+              "text-color": "shieldText",
+              "icon-color": colorKey,
+              "icon-halo-color": "shieldBorder"
+            }
+          : { "text-color": "shieldText", "text-halo-color": colorKey }
+      ]
+    );
+  }
 
   add(
     {

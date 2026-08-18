@@ -43,7 +43,7 @@ a v každej patria kusy k sebe. Toto je celý obrázok:
             └───────────────────────────────────────────────────────┘
 
             ┌── Kontrola ─── beží sama pri pushi ──────────────────┐
-            │ lint workflowov  actionlint + 31 vlastných kontrol   │
+            │ lint workflowov  actionlint + 34 vlastných kontrol   │
             └──────────────────────────────────────────────────────┘
 
             ┌── Údržba ─── o infraštruktúru, nie o mapu ───────────┐
@@ -543,6 +543,99 @@ Dáta majú jednotky kB (Prešovský kraj 8,9 kB), takže sa kópia v štýle za
 Viewer na webe si ich načíta z `region.geojson` za behu; že tam ten súbor je,
 overuje `deploy/check.sh` aj smoke test.
 
+## Štýl: hodnota podľa zoomu má dva tvary
+
+Skoro všetko v štýle (hrúbka čiary, farba, krytie, sila tieňovania) závisí od
+zoomu – a sú na to **dve otázky, nie jedna**:
+
+| tvar | otázka | v úprave | v štýle |
+|---|---|---|---|
+| **krivka** | ako hodnota RASTIE | `[[9, 2], [16, 6]]` | `interpolate` |
+| **pásma** | čo PLATÍ v tomto rozsahu | `[[9, 11, 2], [12, 12, 4], [13, 17, 6]]` | `step` |
+
+Dvojica je bod krivky, trojica je pásmo; **miešať sa nesmú** a rozlišuje sa
+POČTOM PRVKOV V RIADKU, nie obalom navyše – v JSON súbore úprav je tak vidieť
+bez legendy, čo je čo. Pásmo `[od, do, hodnota]` platí pre zoomy
+`od ≤ z < do + 1` (teda `do` VRÁTANE aj s desatinami), zadáva sa v celých
+zoomoch a pásma musia ísť **za sebou bez medzier a bez prekryvov**. Pod prvým
+`od` a nad posledným `do` platí krajné pásmo – rovnako, ako `interpolate` drží
+svoje krajné hodnoty.
+
+**Prečo pásma pribudli.** Kým bola len krivka, „od z9 do z11 takáto čiara, na
+z12 takáto, od z13 do z17 takáto" sa muselo napísať šiestimi zlomami – tú istú
+hodnotu dvakrát, na oboch hranicách každého pásma –, inak sa medzi nimi
+plynule menila. Pri strope `MAX_PAINT_STOPS` (8) sa do toho zmestili štyri
+pásma a piate už nie.
+
+**Medzera a prekryv sú TVRDÁ chyba** (`cleanPaintBands`), a to z toho istého
+dôvodu ako pravidlo 2: „do 11" je sľub, kde pásmo končí. Keby sa medzera
+dopĺňala držaním predošlej hodnoty, `do 11` by neplatilo a nikto by to nemal
+ako spozorovať. Z developer módu sa medzera vyrobiť nedá ani omylom: pásmo tam
+vzniká ROZDELENÍM toho, v ktorom mapa práve stojí, a `do` sa dopočítava
+z `od` nasledujúceho (editovateľné je len `od`, a `do` toho posledného).
+
+**Pásma sú `step`, nie `interpolate` s dvoma zlomami na pásmo.** Susedné pásma
+`[9,11]` a `[12,12]` by potrebovali zlomy 9, 11, 12, 12 a dva zlomy na tom
+istom zoome MapLibre odmietne aj s celým štýlom. A `["zoom"]` smie byť podľa
+style-spec iba priamym vstupom najvrchnejšieho výrazu, takže sa krivka DO
+pásma vnoriť nedá ani obchádzkou – kto chce plynulý prechod, píše krivku.
+
+| kde | čo |
+|---|---|
+| `poc/web/themes.js` | `zs()`, `paintValue`, `cleanPaintZoom` / `cleanPaintBands` |
+| `poc/web/layer-style.js` | `valueAtZoom` a odfotenie `step` vrstvy späť na pásma |
+| `poc/web/devmode.js` | prepínač krivka ⇄ pásma (prepnutie nezahodí, čo je nastavené) |
+| `workers/lint/overrides.mjs` | medzera, prekryv, zmiešaný tvar, hranica pásma |
+
+### Tieňovanie reliéfu: sila RASTIE so zoomom
+
+Krivka `hillshade-exaggeration` roky klesala (`0,5 → 0,25`), takže presne tam,
+kde má výškový model najviac detailu (DMR 5.0 má mriežku 5 m a dlaždice idú do
+z15), bolo tieňovanie najslabšie – terénne nerovnosti, kvôli ktorým sa človek
+približuje, pri priblížení mizli. Teraz je to obrátene
+(`0,55 → 0,95`). Nie je to celá jednotka: `hillshade-shadow-color` je v témach
+nepriehľadná farba, takže pri 1,0 je zatienený svah takmer čierny a mapa sa
+v ňom nedá prečítať.
+
+`hillshade-exaggeration` je odteraz **bežná vlastnosť úprav** – jediná mimo
+trojice farba/krytie/hrúbka. Menuje sa celá, nie príponou: `hillshade` je
+jediný druh vrstvy, ktorý ju má, a `line-exaggeration` z preklepu by MapLibre
+odmietol aj s celým štýlom.
+
+### Štítky s číslom cesty (`D1`, `R1`, `I/18`)
+
+Číslo cesty je iná vec než jej meno, a preto je to iná vrstva: meno beží
+pozdĺž cesty a je unikátne, číslo je **značka** – opakuje sa po celej dĺžke, je
+krátke a človek ho na mape hľadá. `road-name` ho nekreslila vôbec.
+
+```
+poc/web/shields.js          tvar, veľkosť a rozťahovacie pásma obrázka
+workers/assets/shields.mjs  dopečie ho do každého spritu (aj @2x)
+poc/web/themes.js           SHIELD_DEFS: ktorá trieda, aká farba, od akého zoomu
+workers/lint/shields.mjs    tri tiché veci nižšie
+```
+
+**Podklad je JEDEN rozťahovateľný SDF obrázok**, nie šestnásť hotových:
+`icon-text-fit` ho natiahne podľa dĺžky čísla, `icon-color` mu dá farbu podľa
+triedy cesty a `icon-halo-*` orámovanie – takže na štyri témy × tri triedy
+stačí jeden obrázok a farba sa dá doladiť v developer móde. Naťahuje sa len
+rovná časť hrán (`stretchX`/`stretchY`); rohy nie, inak by z obdĺžnika bola pri
+dlhom čísle rozmazaná kapsula. Rozťahovanie SDF nekazí: v naťahovanom pásme sa
+vzdialenostné pole mení len naprieč hranou.
+
+**Triedy sú z dlaždíc, nie z čísla.** Lákalo by rozlíšiť štítok podľa toho, čím
+sa `ref` začína („D" = diaľnica), ale to je pravidlo o slovenskom číslovaní
+zapísané v štýle, ktorý sa stavia nad hocijakým regiónom – v Rakúsku je „A1"
+diaľnica a „B1" hlavná cesta.
+
+Tri tiché veci, na ktoré je kontrola: premenovaný obrázok nechá číslo **bez
+podkladu** (`hasIcon` ho ticho nahradí hrubým halom), stratené
+`stretchX`/`content` pri **preskladaní spritu** (`workers/styles/patterns.mjs`
+dopeká vzory nad tým istým atlasom) ho natiahnu aj s rohmi, a keby sa vrstva
+dostala **za `road-name`**, číslo by na hustej sieti prehrávalo s menom ulice –
+MapLibre umiestňuje popisky v poradí vrstiev a kto je skôr, berie si miesto
+prvý.
+
 ## Build svet: vlastná pipeline, `svet.zip` a `svet.aar`
 
 `world-map.yml` robí **základnú mapu celého sveta** – vodstvo, hranice štátov
@@ -622,6 +715,7 @@ python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
+node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
@@ -659,7 +753,11 @@ všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
 trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
-zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **úprava z developer
+zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **štítok s číslom cesty
+(`D1`) prežije preskladanie spritu a ostane nad menom ulice**
+(`workers/lint/shields.mjs` – rozťahovateľný obrázok bez `stretchX` sa natiahne
+aj s rohmi a premenovaný obrázok nechá číslo bez podkladu; ani jedno nespadne),
+že **úprava z developer
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
 nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
