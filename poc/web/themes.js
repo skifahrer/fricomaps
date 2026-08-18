@@ -219,6 +219,14 @@ export const THEMES = {
     pier: "#e8e4dc",
     boundary: "#9e7bb5",
     boundaryLocal: "#b8a0c8",
+    // Za hranicou stiahnutého regiónu mapa KONČÍ. `regionOutside` je farba
+    // toho, čo je za ňou – zámerne tá istá ako `background`, takže tam nie je
+    // „iné územie", ale prázdno; mapa sa nemá tváriť, že pokračuje. Odtieň je
+    // napísaný a nie prevzatý z `background` preto, aby sa dal v developer
+    // móde stlmiť zvlášť (napr. na jemne tmavší tón), keď má byť vidieť,
+    // pokiaľ mapa siaha.
+    regionOutside: "#f0efeb",
+    regionBorder: "#9e7bb5",
     placeText: "#333333",
     roadText: "#5a4a3a",
     waterText: "#4a7bab",
@@ -340,6 +348,8 @@ export const THEMES = {
     pier: "#2a2833",
     boundary: "#7a5f95",
     boundaryLocal: "#5f4a75",
+    regionOutside: "#1b1b19",
+    regionBorder: "#7a5f95",
     placeText: "#c8c8d8",
     roadText: "#9a8f80",
     waterText: "#5a7bab",
@@ -458,6 +468,8 @@ export const THEMES = {
     pier: "#e0dac8",
     boundary: "#8a6aa0",
     boundaryLocal: "#a880b8",
+    regionOutside: "#edece8",
+    regionBorder: "#8a6aa0",
     placeText: "#2a2a1a",
     roadText: "#4a3a2a",
     waterText: "#33688a",
@@ -575,6 +587,8 @@ export const THEMES = {
     pier: "#f0e6da",
     boundary: "#c090a8",
     boundaryLocal: "#c8a0b8",
+    regionOutside: "#f2f0ea",
+    regionBorder: "#c090a8",
     placeText: "#5a4a45",
     roadText: "#7a5a4a",
     waterText: "#4a8a7a",
@@ -801,7 +815,9 @@ export const PALETTE_GROUPS = [
     label: "Hranice",
     keys: [
       ["boundary", "Štátna / krajská hranica"],
-      ["boundaryLocal", "Okresná / obecná hranica"]
+      ["boundaryLocal", "Okresná / obecná hranica"],
+      ["regionOutside", "Mimo stiahnutého regiónu"],
+      ["regionBorder", "Okraj stiahnutého regiónu"]
     ]
   },
   {
@@ -1948,6 +1964,9 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
  * @param {number[]|null} [opts.demBounds] kde vlastné výškové dlaždice vôbec
  *                                        sú (`[w,s,e,n]`) – pri rýchlom teste
  *                                        je to štvorec s pár km², nie celý kraj
+ * @param {object|string|null} [opts.regionOutline] hranica stiahnutého regiónu
+ *                                  (`_site/region.geojson`) – buď rovno dáta,
+ *                                  alebo URL na ne. Za ňou štýl nekreslí nič.
  * @param {boolean} [opts.hillshade] zapnúť tieňovanie reliéfu (default nie)
  * @param {boolean} [opts.terrain3d] vyzdvihnúť mapu do 3D z tých istých
  *                                   výškových dlaždíc (default nie)
@@ -1980,6 +1999,7 @@ export function buildStyle({
   demTilesSource = null,
   demMaxzoom = DEFAULT_DEM_MAXZOOM,
   demBounds = null,
+  regionOutline = null,
   sdfIcons = false,
   iconSet = null,
   hillshade = null,
@@ -2159,6 +2179,23 @@ export function buildStyle({
         exaggeration: Number(terrainExaggeration) || DEFAULT_TERRAIN_EXAGGERATION
       };
     }
+  }
+
+  // HRANICA STIAHNUTÉHO REGIÓNU. Mapa sa stavia z PBF kraja, ale dlaždice
+  // vznikajú po celých dlaždiciach a Planetiler do nich kreslí vodstvo aj
+  // Natural Earth, ktoré sú celosvetové – bez tejto vrstvy teda mapa
+  // pokračuje aj tam, kde z nášho regiónu nie je nič, len podfarbené prázdno
+  // bez ciest a sídel. V aplikácii, kde si používateľ región STIAHNE, to
+  // vyzerá ako mapa, ktorá sa nedonačítala.
+  //
+  // Súbor vyrába `workers/deploy/region-mask.py` z toho istého `.poly`, ktorým
+  // je orezaný PBF (a ktorý dostáva `-cutline` vrstevníc aj maska tieňovania),
+  // takže hranica je jedna – nekreslí sa tu druhá (pravidlo 1).
+  if (regionOutline) {
+    style.sources.region = {
+      type: "geojson",
+      data: regionOutline
+    };
   }
 
   const L = style.layers;
@@ -4103,6 +4140,40 @@ export function buildStyle({
         }
       },
       ["sidla", label, "text", { "text-color": "placeText", "text-halo-color": "textHalo" }]
+    );
+  }
+
+  // ---- hranica stiahnutého regiónu ----
+  // ÚPLNE NAVRCHU, a je to podstatné: prekrýva sa VŠETKO vrátane popiskov,
+  // tieňovania a vrstiev z vlastných .pmtiles. Vrstva pridaná za ňu by mimo
+  // regiónu opäť kreslila – stráži to `workers/lint/style.mjs`.
+  if (regionOutline) {
+    add(
+      {
+        id: "region-outside",
+        type: "fill",
+        source: "region",
+        filter: ["==", ["get", "kind"], "mimo"],
+        paint: { "fill-color": c.regionOutside }
+      },
+      ["hranice", "Mimo stiahnutého regiónu", "area",
+       { "fill-color": "regionOutside" }]
+    );
+    add(
+      {
+        id: "region-border",
+        type: "line",
+        source: "region",
+        filter: ["==", ["get", "kind"], "hranica"],
+        layout: { "line-join": "round" },
+        paint: {
+          "line-color": c.regionBorder,
+          "line-width": zw([[4, 0.6], [8, 1], [12, 1.6], [16, 2.4]]),
+          "line-opacity": 0.75
+        }
+      },
+      ["hranice", "Okraj stiahnutého regiónu", "line",
+       { "line-color": "regionBorder" }]
     );
   }
 

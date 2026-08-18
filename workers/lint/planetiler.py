@@ -26,7 +26,16 @@ nemu nedá brániť inak než kontrolou: jedna odpoveď, ale zapísať sa musí 
   2. jeho `java-version` sa rovná `JAVA_MIN` vo `workers/lib/planetiler.sh` –
      tam je to číslo raz a odtiaľ ho číta aj kontrola v samotnom skripte,
   3. žiadny `setup-java` v repozitári si nedrží inú verziu (inak by sa joby
-     rozišli ticho: jeden stavia na 21, druhý na 17).
+     rozišli ticho: jeden stavia na 21, druhý na 17),
+  4. spustenie s orezom na región nemá `--bounds` a `--polygon` naraz.
+
+ŠTVRTÁ JE ĎALŠIA TICHÁ. `Bounds` v Planetileri si `tileExtents` (to, čo
+o dlaždici rozhoduje) spočíta už v konštruktore – teda z `--bounds` a s
+prázdnym tvarom – a `setShape()` prepočet nespustí. Polygón je preto v logu
+vidieť („argument: polygon=…"), Planetiler nepovie ani slovo a NEOREŽE NIČ.
+Namerané na Monaku (maxzoom 15): bez orezu 27 dlaždíc, `--polygon` na polovicu
+územia 17, `--polygon` **aj** `--bounds` zase 27. Mapa by potom v aplikácii
+zase siahala za stiahnutý región – a jediné, čo by na to upozornilo, je toto.
 
 Job, ktorý má `setup-java` a Planetiler nepúšťa, sa nehlási – Java môže raz
 byť aj pod niečím iným. Chýbajúci krok je tvrdá chyba, prebytočný nie.
@@ -37,7 +46,9 @@ Spustiť sa dá aj lokálne:
 import glob
 import os
 import re
+import subprocess
 import sys
+import tempfile
 
 import yaml
 
@@ -112,6 +123,54 @@ for path in sorted(glob.glob(".github/workflows/*.yml")):
                 f"a to až po tom, čo job odpracoval všetko pred ním. Pridaj "
                 f"`- uses: actions/setup-java@v5` s `distribution: temurin` a "
                 f"`java-version: \"{CHCE}\"` (tak, ako to majú joby v build-map.yml).")
+
+# ---- 4. `--bounds` a `--polygon` naraz (rozpis v hlavičke) ----
+# Hľadá sa v texte skriptov, nie v YAMLe: samotné volanie Planetileru je
+# vo `workers/<job>/build.sh` a orez doňho chodí cez `workers/lib/region-clip.sh`.
+for cesta in sorted(glob.glob("workers/*/*.sh")):
+    with open(cesta, encoding="utf-8") as f:
+        text = bez_komentarov(f.read())
+    if not JE_TO_PLANETILER.search(text):
+        continue
+    # Buď priamo v príkaze, alebo tak, že ich obe vypíše `region-clip.sh`.
+    spolu = s_volanymi(text)
+    ma_polygon = "--polygon" in bez_komentarov(spolu)
+    ma_bounds = "--bounds" in bez_komentarov(spolu)
+    # `region-clip.sh` obe MENUJE (jedno v každej vetve) – tam sa kontroluje,
+    # že ich nevypíše naraz, a to je vidieť z toho, že sú v rôznych vetvách.
+    if cesta.endswith("region-clip.sh"):
+        continue
+    if ma_polygon and ma_bounds and "region-clip.sh" not in text:
+        bad.append(
+            f"{cesta}: púšťa Planetiler s `--polygon` AJ `--bounds`. Tvar sa "
+            f"tým ticho vypne (rozpis v hlavičke tejto kontroly aj vo "
+            f"workers/lib/region-clip.sh) a mapa bude siahať za región. Nechaj "
+            f"len jedno – orez skladá `workers/lib/region-clip.sh`.")
+
+# Samotný `region-clip.sh` sa neprečíta, ale SPUSTÍ – raz s polygónom, raz bez
+# neho. Staticky by sa „obe naraz" hľadalo v podmienkach a to je presne to
+# miesto, kde by sa kontrola dala obísť nedopatrením.
+CLIP = "workers/lib/region-clip.sh"
+with tempfile.TemporaryDirectory() as tmp:
+    poly = os.path.join(tmp, "region.poly")
+    with open(poly, "w", encoding="utf-8") as f:
+        f.write("test\n1\n  19.0 49.0\n  20.0 49.0\n  20.0 50.0\nEND\nEND\n")
+    for popis, args, musi, nesmie in (
+        ("s polygónom", [CLIP, "19,48,20,49", poly], "--polygon", "--bounds"),
+        ("bez polygónu", [CLIP, "19,48,20,49", os.path.join(tmp, "niet.poly")],
+         "--bounds", "--polygon"),
+    ):
+        r = subprocess.run(args, capture_output=True, text=True)
+        if r.returncode != 0:
+            bad.append(f"{CLIP} ({popis}) spadol: {r.stderr.strip()[:200]}")
+            continue
+        if musi not in r.stdout:
+            bad.append(f"{CLIP} ({popis}) nevypísal `{musi}`: {r.stdout!r}")
+        if nesmie in r.stdout:
+            bad.append(
+                f"{CLIP} ({popis}) vypísal `{nesmie}` – s `--polygon` sa "
+                f"`--bounds` dávať NESMIE (tvar sa tým ticho vypne, rozpis "
+                f"v hlavičke tejto kontroly), a bez polygónu niet čím orezať.")
 
 for b in bad:
     print(f"::error::{b}")

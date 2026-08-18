@@ -53,6 +53,20 @@ const MIXED = {
 /** Výplňové typy vrstiev – tie, ktoré earcut naozaj triangulujú. */
 const FILL = new Set(["fill", "fill-extrusion"]);
 
+/**
+ * Náhrada za `_site/region.geojson` – tvar je jedno, ide o to, že vrstvy
+ * masky v štýle vzniknú. Vyrába ho `workers/deploy/region-mask.py`.
+ */
+const OUTLINE = {
+  type: "FeatureCollection",
+  features: [
+    { type: "Feature", properties: { kind: "mimo" },
+      geometry: { type: "MultiPolygon", coordinates: [] } },
+    { type: "Feature", properties: { kind: "hranica" },
+      geometry: { type: "MultiPolygon", coordinates: [] } }
+  ]
+};
+
 function styles() {
   const out = [];
   for (const theme of Object.keys(THEMES)) {
@@ -70,7 +84,10 @@ function styles() {
           contoursUrl: "https://x/contours.pmtiles",
           rocksUrl: "https://x/rocks.pmtiles",
           trailsUrl: "https://x/trails.pmtiles",
-          featuresUrl: "https://x/features.pmtiles"
+          featuresUrl: "https://x/features.pmtiles",
+          // Hranica stiahnutého regiónu – bez nej by sa kontrola 4 nemala
+          // na čom chytiť (vrstvy masky by v štýle vôbec neboli).
+          regionOutline: OUTLINE
         })
       });
     }
@@ -224,9 +241,42 @@ for (const pat of PATTERNS) {
   }
 }
 
+// ---------- 4. maska regiónu ostáva úplne navrchu ----------
+// ŠTVRTÁ TICHÁ VEC. Mapa sa stavia z PBF kraja, ale dlaždice vznikajú po
+// celých dlaždiciach a vodstvo s Natural Earth kreslí Planetiler na celom
+// obdĺžniku bboxu – teda ďaleko za regiónom, ktorý si používateľ stiahol.
+// Prekrýva to vrstva `region-outside`, a jej jediná podmienka je, že je
+// POSLEDNÁ: čokoľvek pridané za ňu sa mimo regiónu opäť nakreslí. Nikto to
+// nepovie – štýl je platný, mapa sa načíta a len zase presahuje. A platí to
+// pre KAŽDÝ typ mapy, lebo profil typu mapy vrstvy pridáva aj vypína.
+let masiek = 0;
+for (const { kde, style } of styles()) {
+  const ids = style.layers.map((l) => l.id);
+  masiek += 1;
+  if (!ids.includes("region-outside")) {
+    console.log(
+      `::error file=poc/web/themes.js::v štýle (${kde}) nie je vrstva ` +
+      `\`region-outside\`, hoci hranica regiónu prišla. Mapa by v aplikácii ` +
+      `siahala za stiahnutý región.`
+    );
+    bad += 1;
+    continue;
+  }
+  const posledne = ids.slice(-2);
+  if (!posledne.includes("region-outside") || !posledne.includes("region-border")) {
+    console.log(
+      `::error file=poc/web/themes.js::maska regiónu nie je navrchu (${kde}): ` +
+      `posledné vrstvy sú [${ids.slice(-3)}]. Vrstva za \`region-outside\` ` +
+      `sa kreslí aj mimo stiahnutého regiónu – pridávaj ju PRED masku.`
+    );
+    bad += 1;
+  }
+}
+
 console.log(
   `štýl: ${bad} chýb (${checked} výplní nad zmiešanou geometriou, ` +
   `${derived} skúšok odvodených vrstiev, ${vzorov} vzorov plôch na šev, ` +
+  `${masiek} štýlov s maskou regiónu, ` +
   `${Object.keys(THEMES).length} tém × ${MAP_TYPE_IDS.length} typov mapy)`
 );
 process.exit(bad ? 1 : 0);

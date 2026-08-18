@@ -17,6 +17,16 @@ cp poc/web/index.html poc/web/app.js poc/web/themes.js \
    poc/web/devmode.js poc/web/patterns.js poc/web/icon-sources.js \
    poc/web/map-types.js poc/web/style-overrides.json _site/
 
+# Hranica regiónu (`_site/region.geojson`) je voliteľná: keď sa v `plan`
+# nestiahol polygón, mapa ide bez nej – a v manifeste vtedy nesmie byť.
+# (`set -e`: `[ … ] && …` na konci by pri prázdnej hodnote zhodilo skript,
+# preto `if` a nie reťazec testov.)
+OUTLINE="${REGION_OUTLINE:-}"
+if [ -n "$OUTLINE" ] && [ ! -s "_site/$OUTLINE" ]; then
+  echo "::warning::Hranica regiónu (_site/$OUTLINE) nevznikla – mapa pôjde bez nej a bude siahať aj za región."
+  OUTLINE=""
+fi
+
 BASE="${BASE_URL%/}"
 if [ -d _site/fonts ] && [ -n "$(ls -A _site/fonts)" ]; then
   GLYPHS="$BASE/fonts/{fontstack}/{range}.pbf"
@@ -40,6 +50,7 @@ ICON_SOURCES=$(node -e "
 
 jq -n \
   --arg region "$REGION_KEY" \
+  --arg outline "$OUTLINE" \
   --arg name "$REGION_NAME" \
   --arg bbox "$REGION_BBOX" \
   --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -123,7 +134,12 @@ jq -n \
       + (if $features then {
         features: ("tiles/" + $region + "-features.pmtiles"),
         features_maxzoom: $fmaxzoom
-      } else {} end))
+      } else {} end)
+      # Hranica stiahnutého regiónu. Viewer podľa nej prekryje všetko za
+      # regiónom – dlaždice sú orezané len po celých dlaždiciach, takže bez
+      # nej mapa presahuje. Keď súbor nevznikol, položka NIE JE (a nie je
+      # prázdna): „hranica je, len prázdna" je iné tvrdenie než „nie je".
+      + (if $outline != "" then { outline: $outline } else {} end))
     }
   }' > _site/tiles/manifest.json
 cat _site/tiles/manifest.json

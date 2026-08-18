@@ -53,10 +53,15 @@ if [ "${TOPZ:-0}" -gt "$FZ" ]; then
   echo "::warning::workers/features/features.yml má triedy s min_zoom až ${TOPZ}, ale dlaždice idú po z${FZ} – tie sa do nich vôbec nedostanú. Zdvihni features_maxzoom na ${TOPZ}, alebo tým triedam zníž min_zoom."
 fi
 
+# Ten istý orez na región ako pri mape (workers/lib/region-clip.sh) – prvky
+# nesmú siahať ďalej než mapa pod nimi.
+mapfile -t CLIP < <(workers/lib/region-clip.sh "$REGION_BBOX")
+
 T_PM=$(date +%s)
 OUT="_site/tiles/${REGION_KEY}-features.pmtiles"
 java -Xmx4g -jar planetiler.jar generate-custom \
   --schema=workers/features/features.yml \
+  "${CLIP[@]}" \
   --output="$OUT" \
   --maxzoom="$FZ" --render_maxzoom="$FZ" \
   --simplify_tolerance_at_max_zoom=0 \

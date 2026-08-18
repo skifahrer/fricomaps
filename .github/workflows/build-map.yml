@@ -962,13 +962,20 @@ jobs:
         run: |
           set -euo pipefail
           python3 workers/plan/region-poly.py --region='${{ inputs.region }}' \
-            --out=data/region.geojson
+            --out=data/region.geojson --poly-out=data/region.poly
 
+      # Oboje: `.geojson` čítajú vrstvy z DEM (cutline, maska tieňovania)
+      # a `deploy` (hranica pre viewer), surový `.poly` Planetiler
+      # (`--polygon`, workers/lib/region-clip.sh) v jobe `tiles`, `trails`
+      # a `features`. Preložiť si jedno z druhého by znamenalo mať hranicu
+      # napísanú dvakrát.
       - name: Odlož polygón kraja
         uses: actions/upload-artifact@v7
         with:
           name: region-poly
-          path: data/region.geojson
+          path: |
+            data/region.geojson
+            data/region.poly
           retention-days: 1
 
       # PBF potrebuje už len job s dlaždicami. Ide artefaktom, nie cache:
@@ -1667,6 +1674,17 @@ jobs:
           name: pbf
           path: data
 
+      # Polygón regiónu z prípravy – z neho je `--polygon` pre Planetiler
+      # (workers/lib/region-clip.sh). Bez neho by sa dlaždice vyrábali na
+      # celom obdĺžniku bboxu, teda aj ďaleko za regiónom. `continue-on-error`
+      # preto, že aj bez neho sa beh dokončiť dá – skript to povie nahlas.
+      - name: Stiahni polygón regiónu
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
       - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
@@ -1695,6 +1713,7 @@ jobs:
         id: trails
         env:
           OPT_TRAILS_MAXZOOM: ${{ needs.plan.outputs.opt_trails_maxzoom }}
+          REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/trails/build.sh
@@ -1756,6 +1775,17 @@ jobs:
           name: pbf
           path: data
 
+      # Polygón regiónu z prípravy – z neho je `--polygon` pre Planetiler
+      # (workers/lib/region-clip.sh). Bez neho by sa dlaždice vyrábali na
+      # celom obdĺžniku bboxu, teda aj ďaleko za regiónom. `continue-on-error`
+      # preto, že aj bez neho sa beh dokončiť dá – skript to povie nahlas.
+      - name: Stiahni polygón regiónu
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
       - name: Setup Java 21
         uses: actions/setup-java@v5
         with:
@@ -1784,6 +1814,7 @@ jobs:
         id: features
         env:
           OPT_FEATURES_MAXZOOM: ${{ needs.plan.outputs.opt_features_maxzoom }}
+          REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/features/build.sh
@@ -1890,6 +1921,17 @@ jobs:
           name: pbf
           path: data
 
+      # Polygón regiónu z prípravy – z neho je `--polygon` pre Planetiler
+      # (workers/lib/region-clip.sh). Bez neho by sa dlaždice vyrábali na
+      # celom obdĺžniku bboxu, teda aj ďaleko za regiónom. `continue-on-error`
+      # preto, že aj bez neho sa beh dokončiť dá – skript to povie nahlas.
+      - name: Stiahni polygón regiónu
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
 
       - name: Setup Java 21
         uses: actions/setup-java@v5
@@ -1931,6 +1973,7 @@ jobs:
         env:
           OPT_AUTO_SHRINK: ${{ needs.plan.outputs.opt_auto_shrink }}
           OPT_MAXZOOM: ${{ needs.plan.outputs.opt_maxzoom }}
+          REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
         run: workers/tiles/build.sh
@@ -2084,6 +2127,26 @@ jobs:
           du -sm _site | cut -f1 | xargs -I{} echo "_site spolu: {} MB"
 
 
+      # HRANICA STIAHNUTÉHO REGIÓNU. Dlaždice sú orezané po celých dlaždiciach
+      # (`--polygon` v jobe `tiles`), takže na z14 môžu presahovať ešte
+      # zhruba kilometer a pol. Presnú hranicu dokreslí štýl z tohto súboru –
+      # za ňou nie je nič, ani vodstvo a Natural Earth, ktoré Planetiler dáva
+      # do dlaždíc na celom obdĺžniku. Ide to do `_site`, čiže aj do ZIPu na
+      # Drive, teda do mapy, ktorú si aplikácia stiahne do telefónu.
+      - name: Stiahni polygón regiónu
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: region-poly
+          path: data
+
+      - name: Hranica regiónu pre viewer
+        run: |
+          python3 workers/deploy/region-mask.py \
+            --poly=data/region.geojson \
+            --bbox='${{ needs.plan.outputs.bbox }}' \
+            --out=_site/region.geojson
+
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v6
@@ -2109,6 +2172,7 @@ jobs:
             --terrain-3d='${{ needs.plan.outputs.opt_terrain_3d }}' \
             ${{ needs.terrain.outputs.enabled == 'true' && format('--dem-tiles=pmtiles://{0}/tiles/{1}-terrain.pmtiles --dem-maxzoom={2}', steps.pages.outputs.base_url, needs.plan.outputs.key, needs.terrain.outputs.maxzoom) || '' }} \
             --sprites-dir=_site/sprites \
+            --region-outline=_site/region.geojson \
             --overrides=poc/web/style-overrides.json \
             --fonts-dir=_site/fonts \
             --out=_site/styles
@@ -2142,6 +2206,7 @@ jobs:
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           REGION_NAME: ${{ needs.plan.outputs.name }}
+          REGION_OUTLINE: region.geojson
           ROCKS_ENABLED: ${{ needs.rocks.outputs.rocks_enabled || 'false' }}
           ROCKS_MAXZOOM: ${{ needs.rocks.outputs.rocks_maxzoom || '16' }}
           ROCK_SLOPE: ${{ needs.rocks.outputs.rock_slope || 'off' }}

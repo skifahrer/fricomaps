@@ -101,7 +101,8 @@ už neopakuje to, čo hovorí priečinok (`contours-rocks/build.sh` →
 
 ```
 workers/data/            číselníky: areas, regions, dem-sources
-workers/lib/             čo patrí viacerým jobom (watch, planetiler, png, rozpočet, bunky)
+workers/lib/             čo patrí viacerým jobom (watch, planetiler, png, rozpočet,
+                         bunky, orez dlaždíc na región)
 workers/plan/            joby `settings`, `plan` a `keys`: čo si vypýtal,
                          voľby, výrez, PBF, kľúče cache
 workers/dem/             job `check-dem` a doplnenie modelu (`update-dem.yml`)
@@ -500,6 +501,48 @@ zoznam, ktorý ukazuje na neexistujúce súbory, je horší než žiadny. Čo sa
 katalógu píše, skladá `workers/deploy/catalog.py` (`publish-map.py` prerástol
 strop 800 riadkov); stráži to `workers/lint/catalog.py`.
 
+## Mapa končí na hranici regiónu, nie na obdĺžniku jeho bboxu
+
+Používateľ si v aplikácii stiahne REGIÓN a potom ho prezerá offline. Dovtedy
+mapa siahala ďaleko za jeho hranicu: dlaždice sa robia na OBDĹŽNIKU bboxu
+(Prešovský kraj má bbox 199 × 82 km, takmer dvojnásobok svojej plochy)
+a Planetiler do nich okrem OSM dát kreslí aj vodstvo, pobrežia a Natural Earth,
+ktoré sú celosvetové. Za hranicou teda ostalo podfarbené prázdno bez ciest
+a sídel – čo vyzerá ako mapa, ktorá sa nedonačítala, nie ako koniec mapy.
+
+Sú na to **dve polovice a obe treba**:
+
+| polovica | čo robí | kde |
+|---|---|---|
+| dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
+| presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
+
+`--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
+nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
+preto je aj tá druhá polovica; a preto je maska v štýle **posledná vrstva**
+(prekrýva aj popisky a tieňovanie). Vrstva pridaná za ňu by mimo regiónu opäť
+kreslila a nikto by to nepovedal – stráži to `workers/lint/style.mjs`.
+
+**`--bounds` a `--polygon` sa Planetileru NEDÁVAJÚ naraz** – druhý sa tým ticho
+vypne. `Bounds` si to, čo o dlaždici rozhoduje, spočíta už v konštruktore
+(teda z `--bounds` a s prázdnym tvarom) a `setShape()` prepočet nespustí; tvar
+je v logu vidieť a neoreže nič. Namerané na Monaku (maxzoom 15): bez orezu 27
+dlaždíc, `--polygon` na polovicu územia 17, `--polygon` **aj** `--bounds` zase
+27. Preto sa `--bounds` dáva len vtedy, keď polygón nie je.
+
+**Hranica je jedna a je to tá istá, ktorou je orezaný PBF**: `.poly` z osm.fr,
+ktorý sťahuje `workers/plan/region-poly.py` (a z ktorého žije `-cutline`
+vrstevníc aj maska tieňovania). Druhá definícia hranice by sa raz rozišla
+s prvou a mapa by vyzerala celá – len by jej kúsok chýbal alebo prebýval.
+
+**Do statických štýlov sa vkladá PRIAMO, nie ako URL.** Tie štýly číta
+aplikácia, ktorá si mapu stiahne a otvorí offline – a všetko ostatné si pri tom
+prepisuje z adresy Pages na svoje súbory. Odkaz, na ktorý by sa v tom prepise
+zabudlo, by nespadol: maska by sa len nenačítala a mapa by zase presahovala.
+Dáta majú jednotky kB (Prešovský kraj 8,9 kB), takže sa kópia v štýle zaplatí.
+Viewer na webe si ich načíta z `region.geojson` za behu; že tam ten súbor je,
+overuje `deploy/check.sh` aj smoke test.
+
 ## Build svet: vlastná pipeline, `svet.zip` a `svet.aar`
 
 `world-map.yml` robí **základnú mapu celého sveta** – vodstvo, hranice štátov
@@ -586,6 +629,8 @@ python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
 python3 workers/lib/region-mask.py --poly=… --bbox=… --zoom=14  # čo padne mimo kraj
+python3 workers/deploy/region-mask.py --poly=… --bbox=… --out=_site/region.geojson  # hranica pre viewer
+workers/lib/region-clip.sh 19.8,48.7,22.5,49.4      # argumenty orezu pre Planetiler
 python3 workers/drive/store.py --check # čo je v sklade (chce token)
 BBOX=… AREA_KEY=… AREA_BBOX=… SRC_CONTOURS=dmr5 workers/dem/check.sh
 REGION_KEY=… BASE_URL=… ICONS_NAME=… … workers/deploy/site.sh   # a tak ďalej

@@ -72,6 +72,15 @@ for pair in "contours:vrstevnice" "rocks:skaly" "trails:značené trasy" \
   [ -s "$f" ] || { echo "::error::štýl používa $popis, ale chýba $f"; fail=1; }
 done
 
+# Hranica stiahnutého regiónu. Statické štýly ju majú v sebe (aby ju offline
+# aplikácia nemusela dohľadávať), viewer na webe si ju načíta za behu z tohto
+# súboru – takže keď ju štýl pozná, musí tu byť aj on. Bez nej mapa siaha za
+# región a nikto to nepovie.
+if jq -e '.sources.region' "$STYLE" >/dev/null; then
+  [ -s "$SITE/region.geojson" ] \
+    || { echo "::error::štýl má hranicu regiónu, ale chýba $SITE/region.geojson (vyrába ho workers/deploy/region-mask.py)"; fail=1; }
+fi
+
 # Poistka na koniec: rozpočet drží krok pri dlaždiciach, tu sa už len
 # overí, že súčet naozaj sedí (Pages zvládne ~1 GB na celú stránku).
 case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=900 ;; esac

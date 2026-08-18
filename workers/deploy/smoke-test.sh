@@ -83,6 +83,15 @@ check "$BASE/styles/$REGION-svetla.json" 200 "style.json"
 # než predvolený, nech sa nestane, že sa nasadí len ten starý názov.
 check "$BASE/styles/$REGION-cestna-svetla.json" 200 "style.json (cestná mapa)"
 check "$BASE/style-overrides.json" 200 "úpravy štýlu z developer módu"
+# Hranica stiahnutého regiónu. Statické štýly ju majú v sebe, viewer na webe
+# si ju ťahá odtiaľto – a keď tu nie je, mapa sa načíta a len bude siahať za
+# región. Či ju tento beh vôbec vyrobil, hovorí manifest (a nie ďalšia
+# premenná v kroku): je to tá istá odpoveď, z ktorej ju hľadá aj viewer.
+OUTLINE=$(jq -r '.regions[.default_region].outline // empty' \
+  "$SITE_DIR/tiles/manifest.json" 2>/dev/null || true)
+if [ -n "$OUTLINE" ]; then
+  check "$BASE/$OUTLINE" 200 "hranica stiahnutého regiónu"
+fi
 
 GLYPHS=$(curl -s "$BASE/tiles/manifest.json" | jq -r '.glyphs')
 case "$GLYPHS" in
