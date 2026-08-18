@@ -297,6 +297,23 @@
     .dev-mini:hover { color: #222; }
     .dev-note { font-size: 10px; color: #999; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dev-num { width: 52px; padding: 2px 4px; font-size: 11px; border: 1px solid #ccc; border-radius: 4px; }
+    /*
+      BEZ NATÍVNYCH ŠÍPOK. Prázdne políčko `type=number` skočí šípkou dole na
+      spodnú medzu – pri hrúbke čiary teda na nulu, čo je neviditeľná vrstva.
+      Kliknutie do natívnej šípky sa zachytiť nedá (prehliadač hlási to isté,
+      čo písanie), klávesová šípka áno – tú `numberField` v devmode.js chytá
+      a prázdne políčko najprv naplní hodnotou, ktorú vlastnosť práve má.
+      Do 46 px širokého políčka sa navyše šípky aj tak nezmestili.
+    */
+    .dev-num { appearance: textfield; -moz-appearance: textfield; }
+    .dev-num::-webkit-outer-spin-button,
+    .dev-num::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    /* Panel nad detailom vrstvy: schránka na štýl a reset celej vrstvy. */
+    .dev-tools {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+      margin: 2px 0 6px; padding-bottom: 5px; border-bottom: 1px dashed #e6e6ec;
+    }
+    .dev-tools .dev-btn[disabled] { opacity: .45; cursor: default; }
     .dev-iconset {
       display: block; border: 1px solid #e0e0e6; border-radius: 8px;
       padding: 8px 10px; margin-bottom: 8px; cursor: pointer;
@@ -359,6 +376,7 @@
     body.dark .dev-chip.on { background: #3a6ea5; border-color: #3a6ea5; color: #fff; }
     body.dark .dev-groupname { color: #ddd; }
     body.dark .dev-group { border-color: #33334a; }
+    body.dark .dev-tools { border-bottom-color: #33334a; }
     body.dark .dev-item { border-color: #2a2a3c; }
     body.dark .dev-hint code { background: #2b2b40; }
     body.dark .dev-row.changed > .dev-name > span:first-child,

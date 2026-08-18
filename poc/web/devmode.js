@@ -25,6 +25,13 @@
  *   - dať ploche alebo čiare opakujúci sa **vzor** a ľubovoľný **okraj**,
  *     čiare aj prerušovanie,
  *   - skryť konkrétne triedy POI a prepnúť celú sadu ikoniek,
+ *   - **vrátiť vrstvu do pôvodného stavu celú** – nie len farbu po farbe:
+ *     jedno tlačidlo v detaile vrstvy zahodí viditeľnosť, zoomy, farby,
+ *     hrúbky, ikonu, vzor aj okraj (v tom rozsahu, ktorý je práve zvolený),
+ *   - **skopírovať vzhľad jednej vrstvy do druhej** („nech sú múry ako
+ *     ploty"): odfotí sa to, čo je v štýle NAOZAJ, nie len úprava nad ním,
+ *     takže kopírovať sa dá aj z vrstvy, ktorú nikto neladil. Čo sa na cieľ
+ *     nezmestí (obrys výplne na čiaru), sa nevloží a povie sa to,
  *   - všetko priebežne ukladá do prehliadača (localStorage), vie to
  *     exportovať do `style-overrides.json` a znovu načítať.
  *
@@ -57,6 +64,7 @@ import {
   normalizeMapType
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
+import { snapshotStyle, pasteStyle, valueAtZoom } from "./layer-style.js";
 
 const STORAGE_KEY = "fricomaps.overrides";
 const SCOPE_KEY = "fricomaps.devscope";
@@ -270,6 +278,14 @@ export function initDevMode({
   /** Polomer výberu v pixeloch – čiara má šírku 2 px, trafiť ju treba vedieť. */
   let pickRadius = 6;
   const pickOpen = new Set();
+  /**
+   * Odfotený vzhľad vrstvy, ktorý čaká na vloženie do inej („kopírovať štýl
+   * z jedného prvku do druhého"). Žije len v tejto relácii panelu – do
+   * `style-overrides.json` nepatrí, je to schránka, nie nastavenie.
+   */
+  let styleClip = null;
+  /** Čo sa pri poslednom vložení nedalo preniesť – vypíše to stavový riadok. */
+  let clipNote = "";
 
   // ---------- základná kostra ----------
   const body = el("div", { class: "dev-body" });
@@ -550,13 +566,17 @@ export function initDevMode({
     const perMap = Object.entries(overrides.maps)
       .map(([id, m]) => `${mapTypeDef(id).label} ${Object.keys(m.layers).length}`)
       .join(", ");
-    status.textContent = hasOverrides(overrides)
-      ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
-        `${nPoi} skrytých POI · ${nTrails} úprav trás · ` +
-        `ikony ${selectedIconSource(overrides)}` +
-        (perMap ? ` · po mapách: ${perMap}` : "") +
-        " · uložené v prehliadači"
-      : "Žiadne zmeny – mapa beží na pôvodnom štýle.";
+    status.textContent =
+      (hasOverrides(overrides)
+        ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
+          `${nPoi} skrytých POI · ${nTrails} úprav trás · ` +
+          `ikony ${selectedIconSource(overrides)}` +
+          (perMap ? ` · po mapách: ${perMap}` : "") +
+          " · uložené v prehliadači"
+        : "Žiadne zmeny – mapa beží na pôvodnom štýle.") +
+      // Čo sa pri kopírovaní štýlu neprenieslo, musí byť vidieť: polovičný
+      // vklad bez slova vyzerá ako pokazené kopírovanie.
+      (clipNote ? ` — ${clipNote}` : "");
   }
 
   // ---------- pomocníci nad overrides ----------
@@ -637,6 +657,90 @@ export function initDevMode({
     setLayerOverride(id, { [key]: { ...cur, ...patch } });
   }
 
+  /**
+   * Zahodí VŠETKY úpravy jednej vrstvy – nie len farbu.
+   *
+   * Rozsah je ten istý, aký hovorí prepínač hore: „len táto mapa" vyčistí
+   * priečinok tejto mapy, „všetky mapy" vyčistí spoločný AJ výnimky vo
+   * všetkých typoch máp. To druhé je rovnaké pravidlo ako pri `setVisible`:
+   * keď povieš „všetky", nesmie ostať mapa, v ktorej to platí inak.
+   *
+   * Farby z palety sa NEMAŽÚ – tie sú vlastnosťou témy, nie vrstvy (jednu
+   * farbu zdieľa aj desať vrstiev) a majú vlastné `⟲` priamo pri sebe.
+   */
+  function resetLayer(id) {
+    if (editScope === "all") {
+      delete overrides.layers[id];
+      for (const m of Object.values(overrides.maps)) delete m.layers?.[id];
+    } else {
+      delete mapBucket()?.layers?.[id];
+    }
+    pruneMaps();
+  }
+
+  /** Čo po resete v rozsahu „len táto mapa" na vrstve ešte ostane. */
+  function resetLeftovers(id) {
+    if (editScope === "all") return "";
+    const base = baseLayerOverride(id);
+    return base ? " Spoločná úprava (všetky mapy) ostane." : "";
+  }
+
+  /** Ľudské mená toho, čo sa vkladá – „paint" v stavovom riadku nikomu nepomôže. */
+  const PATCH_LABELS = {
+    dash: "prerušovanie čiary",
+    pattern: "vzor",
+    outline: "okraj",
+    icon: "ikona"
+  };
+
+  /** Čo presne z odfoteného štýlu do vrstvy sadne, po ľudsky. */
+  const patchText = (patch) =>
+    Object.entries(patch)
+      .flatMap(([key, value]) => (key === "paint" ? Object.keys(value) : [PATCH_LABELS[key] || key]))
+      .join(", ");
+
+  /** „do 1 vrstvy" / „do 3 vrstiev" – kmeň sa mení, lepiť príponu nestačí. */
+  const vrstiev = (n) => (n === 1 ? "1 vrstvy" : `${n} vrstiev`);
+
+  /** Odfotí vzhľad vrstvy do schránky panelu. */
+  function copyStyle(layer) {
+    styleClip = snapshotStyle(layer, layerOverride(layer.id) || {});
+    clipNote = styleClip.dropped.length
+      ? `Skopírované z „${styleClip.label}"; ` +
+        `${styleClip.dropped.join(", ")} sa do úprav zapísať nedá ` +
+        `(hodnota podľa atribútu prvku alebo vlastné prerušovanie) – ` +
+        `to sa nekopíruje.`
+      : `Skopírované z „${styleClip.label}".`;
+  }
+
+  /** Vloží schránku do vrstiev a povie, čo sa na ne nezmestilo. */
+  function pasteStyleInto(ids) {
+    if (!styleClip) return;
+    const style = getStyle();
+    const skipped = new Set();
+    let done = 0;
+    for (const id of ids) {
+      const target = style.layers.find((l) => l.id === id);
+      // Vrstva, z ktorej sa kopírovalo, sa preskočí: vznikla by z toho úprava
+      // presne s tým, čo v štýle aj tak je – teda „zmena", ktorá nič nemení.
+      if (!target || target.id === styleClip.from) continue;
+      const { patch, skipped: miss } = pasteStyle(styleClip, target);
+      for (const m of miss) skipped.add(m);
+      if (!Object.keys(patch).length) continue;
+      // `paint` sa dopĺňa po vlastnostiach, aby vloženie nezmazalo farbu,
+      // ktorú si tam niekto nastavil zvlášť; ostatné kľúče sa prepíšu.
+      const cur = { ...((scopedOverride(id) || {}).paint || {}) };
+      setLayerOverride(id, {
+        ...patch,
+        ...(patch.paint ? { paint: { ...cur, ...patch.paint } } : {})
+      });
+      done += 1;
+    }
+    clipNote =
+      `Vložený štýl z „${styleClip.label}" do ${vrstiev(done)}` +
+      (skipped.size ? ` · neprenieslo sa: ${[...skipped].join(", ")}` : "");
+  }
+
   /** Koľko úprav drží daný priečinok (do popisku prepínača rozsahu). */
   const countScope = (scope) =>
     scope === "all"
@@ -712,7 +816,18 @@ export function initDevMode({
     ]);
   }
 
-  function numberField({ label, value, min, max, step, onChange, placeholder }) {
+  /**
+   * Číselné políčko.
+   *
+   * `stepFrom` je tá istá vec ako „auto" v placeholderi, len pre ŠÍPKY:
+   * prázdne políčko typu `number` skočí šípkou dole na spodnú medzu, čiže
+   * `line-width` na nulu – a vrstva ticho zmizne z mapy. Prvé stlačenie šípky
+   * preto políčko naplní tým, čo tá vlastnosť práve v mape má, a ďalej sa už
+   * kroky rátajú odtiaľ. (Natívne šípky myšou sa zachytiť nedajú, preto ich
+   * `.dev-num` v `index.html` nemá vôbec – ostávajú klávesové, tie prejdú
+   * cez tento handler.)
+   */
+  function numberField({ label, value, min, max, step, onChange, placeholder, stepFrom, title }) {
     const input = el("input", {
       type: "number",
       class: "dev-num",
@@ -720,7 +835,15 @@ export function initDevMode({
       max,
       step,
       value: value ?? "",
-      placeholder: placeholder || ""
+      placeholder: placeholder || "",
+      title: title || null
+    });
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowUp" && ev.key !== "ArrowDown") return;
+      if (input.value !== "" || stepFrom == null) return;
+      ev.preventDefault();
+      input.value = String(stepFrom);
+      input.dispatchEvent(new Event("change"));
     });
     input.addEventListener("change", () =>
       onChange(input.value === "" ? undefined : Number(input.value))
@@ -1117,15 +1240,28 @@ export function initDevMode({
           copyText(JSON.stringify(out, null, 2), ev.currentTarget);
         }
       }),
+      // Schránka na štýl je z detailu vrstvy, ale vložiť sa dá aj hromadne –
+      // „nech všetky múry vyzerajú ako plot" je jedno zadanie, nie desať.
+      styleClip
+        ? el("button", {
+            type: "button",
+            class: "dev-btn",
+            text: `⤵ Vložiť štýl z „${styleClip.label}"`,
+            title: "Vloží skopírovaný štýl do všetkých vybraných vrstiev; "
+              + "čo sa na ne nezmestí, povie stavový riadok",
+            onclick: () => {
+              pasteStyleInto([...selectedLayers]);
+              apply();
+            }
+          })
+        : null,
       el("button", {
         type: "button",
         class: "dev-btn danger",
         text: editScope === "all" ? "Reset (všetky mapy)" : "Reset (táto mapa)",
         title: "Zahodí úpravy vybraných vrstiev v tom priečinku, do ktorého sa práve zapisuje",
         onclick: () => {
-          const bucket = editScope === "all" ? overrides.layers : mapBucket()?.layers;
-          if (bucket) for (const id of selectedLayers) delete bucket[id];
-          pruneMaps();
+          for (const id of selectedLayers) resetLayer(id);
           apply();
         }
       })
@@ -1366,8 +1502,10 @@ export function initDevMode({
         kind === "color"
           ? colorControl({ value: v, onInput: setVal, onReset: null, changed: false })
           : numberField({
-              label: "", value: v, min, max, step,
-              onChange: (nv) => setVal(nv ?? 0)
+              label: "", value: v, min, max, step, stepFrom: v,
+              // Vyprázdnené políčko zlomu je spodná medza, NIE nula: nulová
+              // hrúbka je neviditeľná čiara (viď `paintNumber`).
+              onChange: (nv) => setVal(nv ?? min ?? 0)
             });
       return el("div", { class: "dev-stop" }, [
         el("span", { class: "dev-stopz", text: "z" }),
@@ -1404,10 +1542,29 @@ export function initDevMode({
     ]);
   }
 
+  /**
+   * Číselná vlastnosť z `paint` – a hlavne CESTA SPÄŤ NA „AUTO".
+   *
+   * Bez nej sa dala vlastnosť len nastaviť: hrúbka čiary je v štýle krivka
+   * podľa zoomu, políčko preto ukazuje „auto" a jediný spôsob, ako sa k nemu
+   * vrátiť, bolo vymazať políčko naslepo. Šípkou dole sa pritom prázdne
+   * políčko skočí na spodnú medzu (nulová hrúbka = neviditeľná čiara), takže
+   * z jedného ťuknutia bola zmiznutá vrstva bez cesty naspäť. Odteraz je pri
+   * zmenenej hodnote `⟲` ako všade inde v paneli a v bublinke je aj to, čo
+   * „auto" na tomto zoome znamená – aby bolo z čoho vyjsť.
+   */
   function paintNumber({ layer, prop, label, min, max, step }) {
     const o = layerOverride(layer.id) || {};
     const cur = (layer.paint || {})[prop];
     const isNum = typeof cur === "number";
+    const overridden = !!(o.paint && o.paint[prop] !== undefined);
+    const back = () => {
+      setLayerPaint(layer.id, prop, undefined);
+      apply({ immediate: true });
+    };
+    const resetBtn = (title) =>
+      el("button", { type: "button", class: "dev-mini", title, text: "⟲", onclick: back });
+
     // Keď tú istú vlastnosť riadia zoomové zlomy, pevná hodnota by ich prepísala
     // – políčko sa preto zamkne a povie, kde sa to teraz nastavuje. Dve páky na
     // jednu vlastnosť by sa inak tichým prepisom navzájom rušili.
@@ -1424,6 +1581,11 @@ export function initDevMode({
       field.classList.add("changed");
       return field;
     }
+
+    // Čo tá vlastnosť na TOMTO zoome naozaj robí. Bez toho je „auto" prázdne
+    // miesto a prvá vlastná hodnota je hádanie.
+    const auto = overridden ? null : valueAtZoom(cur, zoomView);
+    const autoText = typeof auto === "number" ? String(auto) : null;
     const field = numberField({
       label,
       value: isNum ? Math.round(cur * 100) / 100 : undefined,
@@ -1432,23 +1594,106 @@ export function initDevMode({
       step,
       // Do políčka sa „podľa zoomu" nezmestí, patrí teda do bublinky.
       placeholder: isNum ? "" : "auto",
+      // Šípka na prázdnom políčku nesmie skočiť na spodnú medzu (0 = zmiznutá
+      // čiara) – začne sa od toho, čo je v mape teraz.
+      stepFrom: autoText,
+      title: isNum
+        ? `${prop} je pevná hodnota – ⟲ vedľa ju vráti na to, čo počíta štýl`
+        : `${prop} sa v štýle mení podľa zoomu` +
+          (autoText ? ` (na z${zoomCell()} je to ${autoText})` : "") +
+          " – vyplnením sa nahradí pevnou hodnotou",
       onChange: (v) => {
         setLayerPaint(layer.id, prop, v);
         apply({ immediate: true });
       }
     });
-    if (!isNum) {
-      field.querySelector("input").title =
-        `${prop} sa v štýle mení podľa zoomu – vyplnením sa nahradí pevnou hodnotou`;
-    }
-    if (o.paint && o.paint[prop] !== undefined) field.classList.add("changed");
+    if (!overridden) return field;
+    field.classList.add("changed");
+    field.appendChild(resetBtn(`Späť na to, čo počíta štýl (${prop} podľa zoomu)`));
     return field;
+  }
+
+  /**
+   * Panel nad detailom vrstvy: schránka na štýl a reset.
+   *
+   * Sú tu spolu naschvál – oboje je o CELEJ vrstve, nie o jednej vlastnosti,
+   * a oboje dovtedy chýbalo: vrátiť sa dala len farba (každá zvlášť), takže
+   * „daj to naspäť, ako to bolo" znamenalo prejsť všetky sekcie po jednej,
+   * a „nech to vyzerá ako tamto" sa nedalo povedať vôbec.
+   */
+  function layerTools(layer) {
+    const o = layerOverride(layer.id);
+    const scoped = scopedOverride(layer.id);
+    const kam = editScope === "all" ? "všetkých mapách" : `mape „${mapTypeDef(mapTypeId()).label}"`;
+    const row = [
+      el("button", {
+        type: "button",
+        class: "dev-btn",
+        text: "⧉ Skopírovať štýl",
+        title: "Odfotí, ako táto vrstva vyzerá (farby, hrúbky, prerušovanie, "
+          + "vzor, okraj), a ponúkne to na vloženie do inej vrstvy",
+        onclick: () => {
+          copyStyle(layer);
+          renderBody();
+          renderStatus();
+        }
+      })
+    ];
+
+    if (styleClip && styleClip.from !== layer.id) {
+      const { patch, skipped } = pasteStyle(styleClip, layer);
+      const moze = Object.keys(patch).length > 0;
+      row.push(
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: `⤵ Vložiť štýl z „${styleClip.label}"`,
+          disabled: moze ? null : true,
+          title: moze
+            ? `Vloží ${patchText(patch)} do tejto vrstvy (v ${kam})`
+              + (skipped.length ? ` · neprenesie sa: ${skipped.join(", ")}` : "")
+            : `Z „${styleClip.label}" (${styleClip.type}) sa na vrstvu typu `
+              + `${layer.type} nedá preniesť nič`,
+          onclick: () => {
+            pasteStyleInto([layer.id]);
+            apply({ immediate: true });
+          }
+        })
+      );
+    }
+
+    if (o) {
+      // Rozsah rozhoduje aj o tom, či je čo zahodiť: v „len táto mapa" sa
+      // spoločná úprava zrušiť NEDÁ a tlačidlo, ktoré po stlačení nič
+      // neurobí, je horšie než zhasnuté – povie prečo.
+      const mozeReset = editScope === "all" || !!scoped;
+      row.push(
+        el("button", {
+          type: "button",
+          class: "dev-btn danger",
+          text: editScope === "all" ? "⟲ Reset (všetky mapy)" : "⟲ Reset (táto mapa)",
+          disabled: mozeReset ? null : true,
+          title: mozeReset
+            ? `Zahodí VŠETKY úpravy tejto vrstvy v ${kam} – viditeľnosť, `
+              + `zoomy, farby, hrúbky, ikonu, vzor aj okraj.${resetLeftovers(layer.id)} `
+              + `Farby z palety ostávajú, tie patria téme.`
+            : "Úprava tejto vrstvy je spoločná pre všetky mapy – zrušiť sa dá "
+              + `len v rozsahu „všetky mapy" (prepínač hore).`,
+          onclick: () => {
+            resetLayer(layer.id);
+            apply({ immediate: true });
+          }
+        })
+      );
+    }
+
+    return el("div", { class: "dev-tools" }, row);
   }
 
   function layerDetails(layer) {
     const o = layerOverride(layer.id) || {};
     const paletteMap = (layer.metadata || {})["frico:palette"] || {};
-    const parts = [];
+    const parts = [layerTools(layer)];
 
     // ---- rozsah zoomu ----
     // Zoom je prvý, lebo „čo je vidieť kedy" je najčastejšia otázka: pásik
@@ -1461,6 +1706,9 @@ export function initDevMode({
         max: 24,
         step: 0.5,
         placeholder: prop === "minzoom" ? "0" : "24",
+        // Šípka na prázdnom políčku by inak skočila na spodnú medzu, čiže
+        // „do z0" – teda rozsah, v ktorom vrstva nie je nikde.
+        stepFrom: prop === "minzoom" ? 0 : MAX_DISPLAY_Z,
         onChange: (v) => {
           setLayerOverride(layer.id, { [prop]: v });
           apply({ immediate: true });
@@ -1669,7 +1917,9 @@ export function initDevMode({
             layer,
             prop: "line-width",
             label: "hrúbka",
-            min: 0,
+            // NIE 0: nulová hrúbka čiaru nekreslí a v mape to vyzerá ako
+            // chýbajúce dáta, nie ako vypnutá vrstva. Na vypnutie je 👁.
+            min: 0.1,
             max: 40,
             step: 0.5
           }),
@@ -1686,7 +1936,7 @@ export function initDevMode({
       // Hrúbka a krytie sa dajú nastaviť aj PODĽA ZOOMU – práve tie dve sa
       // ladia najčastejšie (tenko na prehľade, hrubo v detaile).
       for (const [prop, label, min, max, step] of [
-        ["line-width", "hrúbka podľa zoomu", 0, 40, 0.5],
+        ["line-width", "hrúbka podľa zoomu", 0.1, 40, 0.5],
         ["line-opacity", "krytie podľa zoomu", 0, 1, 0.1]
       ]) {
         parts.push(
