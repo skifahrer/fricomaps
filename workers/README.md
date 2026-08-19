@@ -1666,7 +1666,7 @@ Priečinok hovorí, čoho sa mapa týka, a čo chýba, sa vyrobí:
 <koreň>/slovensko/presovsky/vysoke_tatry/
          krajina  kraj      výsek   (úrovne, čo nedávajú zmysel, sa vynechajú)
 
-    presovsky-vysoke_tatry.zip                    celá mapa – web, ako sa nasadil
+    presovsky-vysoke_tatry.zip                    základná mapa, BEZ vrstevníc, skál a tieňovania
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy (.pmtiles)
     presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice (.pmtiles)
     presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
@@ -1678,6 +1678,13 @@ deflate. Robí to vlastný job na `macos-latest`, lebo nástroj `aa` je súčas�
 macOS; vypína sa voľbou `apple_archive=false`. V `maps.json` má každý balík
 `formats.zip` aj `formats.aar`. + index.json
 ```
+
+**Základná mapa vrstevnice, skaly ani tieňovanie NEOBSAHUJE.** Sú to ťažké
+vrstvy z výškového modelu a majú vlastné balíky presne preto, aby si ich
+človek nemusel sťahovať, keď ich nechce – kým boli aj v základnej mape, ten
+dôvod neplatil a „iba mapa" vážila rovnako ako mapa so všetkým. Kto ich chce,
+rozbalí príslušný ZIP navrch: cesty vnútri sú tie isté ako v `_site`, takže sa
+dá rozbaliť jeden cez druhý.
 
 **Vrstevnice a skaly sú v jednom balíku** zámerne: sú z toho istého výpočtu nad
 tým istým DEM a jedna bez druhej sa nepoužíva. Tieňovanie je zvlášť, lebo je to

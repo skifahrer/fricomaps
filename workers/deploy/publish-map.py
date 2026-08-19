@@ -7,10 +7,17 @@ tieňovanie, fonty a sprity) a z priečinka s článkami (`--wiki`) sa zabalia
 balíky a nahrajú na Drive do priečinka podľa toho, čoho sa mapa týka:
 
     <koreň>/slovensko/presovsky/vysoke_tatry/
-        presovsky-vysoke_tatry.zip                    celá mapa
+        presovsky-vysoke_tatry.zip                    základná mapa, BEZ nižšie
         presovsky-vysoke_tatry-vrstevnice-skaly.zip   len tie dve vrstvy
         presovsky-vysoke_tatry-tienovanie.zip         len výškové dlaždice
         presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
+
+ZÁKLADNÁ MAPA NEMÁ VRSTEVNICE, SKALY ANI TIEŇOVANIE. Sú to ťažké vrstvy
+z výškového modelu a majú vlastné balíky presne preto, aby si ich človek
+nemusel sťahovať, keď ich nechce – kým boli aj v základnej mape, ten dôvod
+neplatil a „iba mapa" vážila rovnako ako mapa so všetkým. Kto ich chce, rozbalí
+príslušný ZIP navrch (cesty vnútri sú tie isté ako v `_site`, takže sa dá
+rozbaliť jeden cez druhý).
 
 Úrovne cesty, ktoré nedávajú zmysel, sa vynechajú: build celej krajiny nemá
 kraj a build celého kraja nemá výsek. Chýbajúce priečinky sa vyrobia.
@@ -257,10 +264,12 @@ def meno(kind="", fmt="zip"):
 
 
 # ---------- čo je v ktorom balíku ----------
-# Tri balíky, lebo sa aj inak používajú: celú mapu si človek rozbalí a otvorí,
-# vrstevnice so skalami sú to, čo sa nosí do inej mapy, a tieňovanie je jedna
-# pyramída PNG. Vrstevnice a skaly sú SPOLU zámerne – sú z toho istého výpočtu
-# nad tým istým DEM a jedna bez druhej sa nepoužíva.
+# Základná mapa NEOBSAHUJE vrstevnice, skaly ani tieňovanie – to sú ťažké
+# vrstvy z výškového modelu a majú vlastné balíky práve preto, aby si ich
+# človek nemusel sťahovať, keď ich nechce. Vrstevnice so skalami sú aj to,
+# čo sa nosí do inej mapy, a tieňovanie je jedna pyramída PNG. Vrstevnice
+# a skaly sú SPOLU zámerne – sú z toho istého výpočtu nad tým istým DEM
+# a jedna bez druhej sa nepoužíva.
 
 def manifest_data(site):
     """`_site/tiles/manifest.json` – jediné miesto, ktoré vie, čo v mape je.
@@ -368,6 +377,16 @@ def vsetky_subory(site):
     return subory
 
 
+def zaklad_subory(site, vylucit):
+    """Súbory balíka `mapa` – všetko z `_site` OKREM toho, čo má vlastný balík.
+
+    `vylucit` sú súbory balíkov `vrstevnice-skaly` a `tienovanie`: keby aj tie
+    ostali v základnej mape, mali by ich cesty vnútri dvakrát – raz tu, raz
+    v tom druhom ZIPe – a „iba mapa" by vážila rovnako ako mapa so všetkým,
+    čo je presne to, kvôli čomu majú vlastné balíky (viď hlavička súboru).
+    """
+    von = {os.path.abspath(p) for p in vylucit}
+    return [p for p in vsetky_subory(site) if os.path.abspath(p) not in von]
 
 
 # ---------- beh ----------
@@ -421,21 +440,28 @@ def main():
 
     parts = cesta(regions)
     man = manifest_data(args.site)
-    # Tri balíky v jednom zozname: druh, čo do neho patrí, a popis do logu.
+    # Balíky v jednom zozname: druh, čo do neho patrí, a popis do logu.
     # Zoznam preto, že sa s nimi robí to isté – zabaliť, nahrať, prepísať
-    # starý – a tri kópie toho istého by sa raz rozišli.
-    # Štvrtý balík má VLASTNÝ KORENNÝ PRIEČINOK, a preto je v každom riadku aj
-    # báza: články z Wikipédie nie sú súčasťou webu (na Pages by len zjedli
-    # rozpočet stránky), takže ich job `wiki` odloží ako samostatný artefakt
-    # a `deploy` ich podá sem cez `--wiki`. Cesty v ZIPe sa počítajú od tej
-    # bázy, takže vnútri je `articles.ndjson`, nie `_wiki/articles.ndjson`.
+    # starý – a kópie toho istého by sa raz rozišli.
+    # Piaty balík (wikipedia, nižšie) má VLASTNÝ KORENNÝ PRIEČINOK, a preto je
+    # v každom riadku aj báza: články z Wikipédie nie sú súčasťou webu (na
+    # Pages by len zjedli rozpočet stránky), takže ich job `wiki` odloží ako
+    # samostatný artefakt a `deploy` ich podá sem cez `--wiki`. Cesty v ZIPe sa
+    # počítajú od tej bázy, takže vnútri je `articles.ndjson`, nie
+    # `_wiki/articles.ndjson`.
+    #
+    # Vrstevnice, skaly a tieňovanie sa počítajú PRED základnou mapou, lebo tá
+    # ich musí VYNECHAŤ – majú vlastné balíky práve preto, aby si ich človek
+    # nemusel sťahovať, keď ich nechce (viď hlavička súboru).
+    vrstvy_pack = vrstvy_subory(args.site, man)
+    tien_pack = tienovanie_subory(args.site, man)
     baliky = [
-        ("", "celá mapa – web tak, ako sa nasadil",
-         args.site, vsetky_subory(args.site)),
+        ("", "základná mapa – bez vrstevníc, skál a tieňovania",
+         args.site, zaklad_subory(args.site, vrstvy_pack + tien_pack)),
         ("vrstevnice-skaly", "vrstevnice a skalné plochy (.pmtiles)",
-         args.site, vrstvy_subory(args.site, man)),
+         args.site, vrstvy_pack),
         ("tienovanie", "výškové dlaždice pre tieňovanie a 3D terén (raster .pmtiles)",
-         args.site, tienovanie_subory(args.site, man)),
+         args.site, tien_pack),
         ("search", "vyhľadávací index pre offline hľadanie (SQLite FTS5)",
          args.site, hladanie_subory(args.site, man)),
     ]

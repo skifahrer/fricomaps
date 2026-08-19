@@ -404,11 +404,18 @@ Okrem Pages sa každý build publikuje aj do priečinka na Drive
 <koreň>/slovensko/presovsky/vysoke_tatry/
          krajina  kraj      výsek        (úrovne, čo nedávajú zmysel, sa vynechajú)
 
-    presovsky-vysoke_tatry.zip                    celý `_site`
+    presovsky-vysoke_tatry.zip                    základná mapa, BEZ riadkov nižšie
     presovsky-vysoke_tatry-vrstevnice-skaly.zip   tie dve vrstvy (jeden balík)
     presovsky-vysoke_tatry-tienovanie.zip         výškové dlaždice PNG
     presovsky-vysoke_tatry-wikipedia.zip          články z Wikipédie
 ```
+
+**Základná mapa neobsahuje vrstevnice, skaly ani tieňovanie.** Sú to ťažké
+vrstvy z výškového modelu a majú vlastné balíky presne PRETO, aby si ich
+človek nemusel sťahovať, keď ich nechce – keby boli aj v základnej mape, ten
+dôvod by neplatil a „iba mapa" by vážila rovnako ako mapa so všetkým. Kto ich
+chce, rozbalí príslušný ZIP navrch: cesty vnútri sú tie isté ako v `_site`
+(`workers/deploy/pack.py`), takže sa dá rozbaliť jeden cez druhý.
 
 **Články z Wikipédie sú štvrtý balík a na Pages NEIDÚ.** Job `wiki` vyberie
 z regionálneho PBF všetko, čo má tag `wikipedia` alebo `wikidata` (body, čiary
