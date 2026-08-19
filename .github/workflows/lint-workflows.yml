@@ -611,6 +611,15 @@ jobs:
       - name: "Mapa sveta: štýl kreslí to, čo schéma vyrába"
         run: python3 workers/lint/world.py
 
+      # Kraj sa reže z rodičovského extraktu (`osmfr.parent`), lebo hotový
+      # `presovsky-latest.osm.pbf` z osm.fr je orezaný na tvrdo: cesta ani
+      # viacpolygónová plocha cez hranicu v ňom nie je celá a Planetiler ju
+      # zahodí CELÚ – v stiahnutom kraji tak chýbala. Vypnúť sa to dá poradím
+      # krokov (bez `data/region.poly` sa rezať nemá čím) a beh je pri tom
+      # zelený. Rozpis a namerané čísla: `workers/lint/pbf-parent.py`.
+      - name: Kraj sa reže z rodiča, nie z dieravého extraktu
+        run: python3 workers/lint/pbf-parent.py
+
       # `actions/setup-java` je AKCIA, takže sa – na rozdiel od sťahovania
       # jaru – do `workers/lib/planetiler.sh` presunúť nedá a musí stáť pri
       # každom jobe zvlášť. Je to jedna veta zapísaná na šiestich miestach

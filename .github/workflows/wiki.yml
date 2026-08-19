@@ -148,6 +148,11 @@ jobs:
           OPT_CUSTOM_PBF_URL: ${{ inputs.custom_pbf_url }}
           OPT_TEST_AT: ""
           OPT_TEST_KM2: "0"
+          # LEN TAGY, ŽIADNA GEOMETRIA: `collect.py` z tohto PBF vyberá
+          # `wikipedia` a `wikidata`, nekreslí z neho nič. Kraj sa preto
+          # nereže z rodiča – úplnosť ciest a plôch na hranici by tu nič
+          # nezmenila a 373 MB Slovenska by sa stiahlo pre nič (pravidlo 7).
+          PBF_NEEDS_GEOMETRY: 'false'
           REGION: ${{ inputs.region }}
         run: workers/plan/pbf.sh
 

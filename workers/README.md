@@ -77,13 +77,20 @@ Mapa · úpravy štýlu          style-overrides.json z developer módu
                              ─► poc/web/style-overrides.json v repozitári
 ```
 
-- **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov – PBF sa
-  sťahuje **iba pre daný región** z regionálnych exportov
+- **Výber regiónu:** celé Slovensko alebo ktorýkoľvek z 8 krajov. Zdroj je
   [osm.fr](https://download.openstreetmap.fr/extracts/europe/slovakia/)
-  (rezané po skutočných administratívnych hraniciach, denne aktualizované):
-  `europe/slovakia/{kraj}-latest.osm.pbf` (36–63 MB na kraj), celé Slovensko
-  `europe/slovakia-latest.osm.pbf` (~380 MB). Mapovanie a presné bboxy z
-  osm.fr rezacích polygónov sú vo [workers/data/regions.json](data/regions.json).
+  (rezané po skutočných administratívnych hraniciach, denne aktualizované);
+  mapovanie a presné bboxy z osm.fr rezacích polygónov sú vo
+  [workers/data/regions.json](data/regions.json). **Kraj sa ale nesťahuje
+  hotový, reže sa z rodičovského extraktu** (`osmfr.parent`, teda
+  `europe/slovakia-latest.osm.pbf`, ~373 MB) cez `osmium extract -s smart`
+  na `.poly` kraja: v hotovom `{kraj}-latest.osm.pbf` (36–63 MB) chýbajú
+  objektu, ktorý pokračuje do vedľajšieho kraja, uzly za hranicou a
+  viacpolygónovej ploche celé členské cesty – Planetiler taký objekt **zahodí
+  celý** a v stiahnutej mape nie je vôbec (rozpis
+  [workers/plan/pbf.sh](plan/pbf.sh)). Trvá to ~1 minútu a raz za deň (kľúč
+  cache nesie dátum). `Build wiki` z PBF číta len tagy, tak mu hotový extrakt
+  stačí (`PBF_NEEDS_GEOMETRY: false`).
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
