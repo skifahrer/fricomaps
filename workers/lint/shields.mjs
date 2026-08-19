@@ -34,7 +34,7 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { THEMES, buildStyle, SHIELD_DEFS } from "../../poc/web/themes.js";
 import { MAP_TYPE_IDS } from "../../poc/web/map-types.js";
-import { SHIELD_SHAPE_IDS, SHIELD_SHAPES } from "../../poc/web/shields.js";
+import { SHIELD_SHAPE_IDS, SHIELD_SHAPES, SHIELD_RING } from "../../poc/web/shields.js";
 import { encodePng } from "../lib/png.mjs";
 
 let bad = 0;
@@ -51,6 +51,26 @@ for (const [id, , , , , shapeId] of SHIELD_DEFS) {
       `\`road-shield-${id}\` si pýta obrázok "${shapeId}", ktorý ` +
         `poc/web/shields.js nekreslí (kreslí: ${SHIELD_SHAPE_IDS.join(", ")}). ` +
         `Štýl kvôli tomu nespadne – číslo cesty ostane bez podkladu.`
+    );
+  }
+}
+
+// ---------- 1b. zaoblené je aj VNÚTORNÉ pole ----------
+// Pásma štítka vznikajú ODSADENÍM vonkajšieho tvaru dovnútra a pri odsadení
+// sa polomer zaoblenia zmenšuje o to isté. Vnútorné pole má teda polomer
+// `radius - 2 * SHIELD_RING`, a keď to vyjde nula alebo menej, má OSTRÉ rohy,
+// hoci vonkajší tvar je zaoblený. Je to tichá vec: obrázok sa upečie, sprite
+// aj štýl sú platné a v mape má štítok vnútro ako vystrihnuté nožnicami.
+for (const shape of SHIELD_SHAPES) {
+  const vnutro = shape.radius - 2 * SHIELD_RING;
+  if (vnutro <= 0) {
+    chyba(
+      "poc/web/shields.js",
+      `tvar "${shape.id}" má polomer ${shape.radius} px a prstenec ` +
+        `${SHIELD_RING} px, takže vnútornému poľu ostane ${vnutro.toFixed(1)} px ` +
+        `– bude mať OSTRÉ rohy, hoci vonkajší tvar je zaoblený. Zaoblené majú ` +
+        `byť všetky tri tvary: polomer musí byť väčší než 2 × prstenec ` +
+        `(teda nad ${(2 * SHIELD_RING).toFixed(1)} px).`
     );
   }
 }
