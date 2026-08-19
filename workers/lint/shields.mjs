@@ -11,13 +11,14 @@
  *    NESPADNE – `hasIcon` ho ticho nechá bez podkladu a číslo sa nakreslí len
  *    s halom. Vyzerá to ako „tak to je navrhnuté", nie ako chyba.
  *
- * 2. **Vrátené rozťahovacie pásma.** Táto kontrola kedysi vyžadovala PRAVÝ
- *    OPAK – trvala na `stretchX`/`stretchY`/`content` – a tým strážila
- *    rozbitý stav: deväťdielne naťahovanie je robené na bežný raster, nie na
- *    vzdialenostné pole, takže na SDF štítku rozladí pole a pretrhne obrys.
- *    V mape z toho bol rozmazaný KRÍŽ namiesto štítka (namerané 89 × 85 px
- *    proti správnym ~20 × 14 px) a nikto to nezhodil: sprite aj štýl boli
- *    platné a lint zelený. Rozpis je v hlavičke `poc/web/shields.js`.
+ * 2. **Stratené rozťahovacie pásma – a SDF, ktoré sa vrátilo.** Štítok je
+ *    HOTOVÝ FAREBNÝ obrázok (dva rovnako hrubé prstence sa jedným
+ *    `icon-halo` spraviť nedajú), takže deväťdielne naťahovanie na ňom
+ *    funguje správne a musí tam byť – bez neho je z dlhého čísla kapsula.
+ *    Naopak `sdf: true` sa vrátiť NESMIE: na vzdialenostnom poli to isté
+ *    naťahovanie pole rozladí a obrys pretrhne, a v mape z toho bol
+ *    rozmazaný KRÍŽ (namerané 89 × 85 px proti správnym ~20 × 14 px).
+ *    Ani jedno nič nezhodí. Rozpis je v hlavičke `poc/web/shields.js`.
  *
  * 3. **Štítok pod menom ulice.** MapLibre umiestňuje popisky v poradí vrstiev
  *    a kto je skôr, berie si miesto prvý. Keby `road-shield-*` skončili ZA
@@ -72,25 +73,30 @@ try {
 
   execFileSync("node", ["workers/assets/shields.mjs", `--sprite=${base}`], { stdio: "pipe" });
   const poStitkoch = JSON.parse(readFileSync(`${base}.json`, "utf8"));
+  const mena = [];
   for (const shape of SHIELD_SHAPES) {
-    const e = poStitkoch[shape.id];
+    for (const [id] of SHIELD_DEFS) {
+      for (const tema of Object.keys(THEMES)) mena.push(`${shape.id}-${id}-${tema}`);
+    }
+  }
+  for (const meno of mena) {
+    const e = poStitkoch[meno];
     if (!e) {
-      chyba("workers/assets/shields.mjs", `štítok "${shape.id}" sa do spritu nedopiekol.`);
+      chyba("workers/assets/shields.mjs", `štítok "${meno}" sa do spritu nedopiekol.`);
       continue;
     }
     for (const kluc of ["stretchX", "stretchY", "content"]) {
-      if (e[kluc]) {
+      if (!e[kluc]) {
         chyba("workers/assets/shields.mjs",
-          `štítok "${shape.id}" má v indexe \`${kluc}\` – deväťdielne ` +
-          `naťahovanie na SDF nefunguje: rozladí vzdialenostné pole a pretrhne ` +
-          `obrys, takže v mape je z neho rozmazaný kríž. Štítok sa má škálovať ` +
-          `CELÝ (viď hlavičku poc/web/shields.js).`);
+          `štítok "${meno}" nemá v indexe \`${kluc}\` – bez rozťahovacích ` +
+          `pásem sa obrázok škáluje celý aj s rohmi a z dlhého čísla je kapsula.`);
       }
     }
-    if (!e.sdf) {
+    if (e.sdf) {
       chyba("workers/assets/shields.mjs",
-        `štítok "${shape.id}" nie je označený ako \`sdf\` – nedá sa mu nastaviť ` +
-        `farba ani orámovanie a v každej téme bude biely.`);
+        `štítok "${meno}" je označený ako \`sdf\` – naťahovanie vtedy rozladí ` +
+        `vzdialenostné pole a v mape je zo štítka rozmazaný kríž. Obrázok je ` +
+        `farebný, SDF tam nepatrí.`);
     }
   }
 
@@ -106,13 +112,13 @@ try {
   execFileSync("node", ["workers/styles/patterns.mjs", `--sprite=${base}`, `--styles=${styles}`],
     { stdio: "pipe" });
   const poVzoroch = JSON.parse(readFileSync(`${base}.json`, "utf8"));
-  for (const shape of SHIELD_SHAPES) {
-    const pred = poStitkoch[shape.id] || {};
-    const po = poVzoroch[shape.id] || {};
+  for (const meno of mena) {
+    const pred = poStitkoch[meno] || {};
+    const po = poVzoroch[meno] || {};
     for (const kluc of ["stretchX", "stretchY", "content", "sdf"]) {
       if (JSON.stringify(pred[kluc]) !== JSON.stringify(po[kluc])) {
         chyba("workers/styles/patterns.mjs",
-          `preskladanie spritu stratilo \`${kluc}\` štítka "${shape.id}" ` +
+          `preskladanie spritu stratilo \`${kluc}\` štítka "${meno}" ` +
           `(${JSON.stringify(pred[kluc])} → ${JSON.stringify(po[kluc])}). ` +
           `Sprite aj štýl ostanú platné, len bude štítok pokrivený.`);
       }
@@ -132,7 +138,9 @@ for (const theme of Object.keys(THEMES)) {
       tilesUrl: "pmtiles://x/t.pmtiles",
       spriteUrl: "https://x/sprite",
       glyphsUrl: "https://x/{fontstack}/{range}.pbf",
-      icons: SHIELD_SHAPE_IDS
+      // Mená sú tvar × trieda × téma – štítok je pečený obrázok, nie SDF.
+      icons: SHIELD_SHAPE_IDS.flatMap((tvar) =>
+        SHIELD_DEFS.flatMap(([id]) => Object.keys(THEMES).map((t) => `${tvar}-${id}-${t}`)))
     });
     const poradie = new Map(style.layers.map((l, i) => [l.id, i]));
     const meno = poradie.get("road-name");

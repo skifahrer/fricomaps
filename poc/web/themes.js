@@ -4057,7 +4057,9 @@ export function buildStyle({
   // stála na hlave.
   for (const [id, label, classes, colorKey, mz, shapeId, textKey, borderKey]
        of SHIELD_DEFS) {
-    const shieldIcon = hasIcon(shapeId) ? shapeId : null;
+    // Obrázok je upečený na TRIEDU aj TÉMU – farba je v ňom, nie v `paint`.
+    const shieldName = `${shapeId}-${id}-${theme}`;
+    const shieldIcon = hasIcon(shieldName) ? shieldName : null;
     add(
       {
         id: `road-shield-${id}`,
@@ -4100,10 +4102,9 @@ export function buildStyle({
         },
         paint: shieldIcon
           ? {
-              "text-color": c[textKey],
-              "icon-color": c[colorKey],
-              "icon-halo-color": c[borderKey],
-              "icon-halo-width": 1
+              // Žiadne `icon-color`/`icon-halo-*`: obrázok nie je SDF, farbu
+              // aj oba prstence má v sebe. Zafarbiť sa dá len číslo.
+              "text-color": c[textKey]
             }
           : {
               // Bez obrázka aspoň hrubé halo vo farbe štítka – je to kapsula
@@ -4118,11 +4119,7 @@ export function buildStyle({
         label,
         "text",
         shieldIcon
-          ? {
-              "text-color": textKey,
-              "icon-color": colorKey,
-              "icon-halo-color": borderKey
-            }
+          ? { "text-color": textKey }
           : { "text-color": textKey, "text-halo-color": colorKey }
       ]
     );
