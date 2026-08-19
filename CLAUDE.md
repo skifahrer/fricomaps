@@ -517,16 +517,46 @@ a Planetiler do nich okrem OSM dát kreslí aj vodstvo, pobrežia a Natural Eart
 ktoré sú celosvetové. Za hranicou teda ostalo podfarbené prázdno bez ciest
 a sídel – čo vyzerá ako mapa, ktorá sa nedonačítala, nie ako koniec mapy.
 
-Sú na to **dve polovice a obe treba**:
+Sú na to **tri kusy a všetky treba**:
 
-| polovica | čo robí | kde |
+| kus | čo robí | kde |
 |---|---|---|
+| do PBF sa dostanú CELÉ objekty | kraj sa vyreže z rodičovského extraktu (`osmium extract -s smart`) | `workers/plan/pbf.sh` |
 | dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
 | presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
 
+**Ten prvý je opačný problém než zvyšok kapitoly: nie „mapa presahuje", ale
+„v mape CHÝBA".** Hotový `presovsky-latest.osm.pbf` z osm.fr je orezaný NA
+TVRDO – ceste, rieke či lesu, ktorý pokračuje do vedľajšieho kraja, v ňom
+chýbajú uzly za hranicou a viacpolygónovej ploche (`type=multipolygon`) celé
+členské cesty. Planetiler z takého objektu geometriu nepostaví a **zahodí ho
+celý**, takže v stiahnutom kraji nebol vôbec – nie orezaný, ale žiadny.
+Namerané na Bratislavskom kraji (maxzoom 12, schéma na `highway`/`waterway`/
+`landuse`/`natural`):
+
+| | hotový extrakt kraja | z rodiča `-s smart` |
+|---|--:|--:|
+| zahodené čiary (way) | 97 | 5 |
+| zahodené plochy (way) | 66 | 6 |
+| zahodené plochy (multipolygon) | 19 | 1 |
+| prvkov v dlaždiciach | 260 486 | 262 377 |
+
+Preto má kraj vo `workers/data/regions.json` **`osmfr.parent`** a PBF sa reže
+z neho (Slovensko, 373 MB, `osmium extract -s smart --polygon`; ~1 minúta, raz
+za deň – kľúč cache nesie dátum). Objekt cez hranicu je tým celý, takže
+presahuje – a schová ho maska. **To, čo vyčnieva, sa má schovať, nie zahodiť.**
+Zvyšok (252 uzlov) je na ŠTÁTNEJ hranici, kde je rodičom orezané Slovensko;
+na to by bola treba Európa (28 GB) a mapa tam aj tak končí.
+
+Reže sa to len pre PBF, z ktorého sa **kreslí** (`PBF_NEEDS_GEOMETRY: true`);
+`Build wiki` z neho číta iba tagy, takže mu hotový extrakt kraja stačí a 373 MB
+rodiča by sťahoval pre nič (pravidlo 7). Vypnúť sa to dá poradím krokov – bez
+`data/region.poly` sa kraj nemá čím vyrezať a beh je pri tom zelený –, tak to
+stráži `workers/lint/pbf-parent.py`.
+
 `--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
 nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
-preto je aj tá druhá polovica; a preto je maska v štýle **posledná vrstva**
+preto je aj ten tretí kus; a preto je maska v štýle **posledná vrstva**
 (prekrýva aj popisky a tieňovanie). Vrstva pridaná za ňu by mimo regiónu opäť
 kreslila a nikto by to nepovedal – stráži to `workers/lint/style.mjs`.
 
@@ -759,6 +789,7 @@ python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov c
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
 python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
+python3 workers/lint/pbf-parent.py     # kraj sa reže z rodiča, nie z dieravého extraktu
 python3 workers/world/variant.py --list        # podoby mapy sveta
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
@@ -801,7 +832,12 @@ aj s rohmi a premenovaný obrázok nechá číslo bez podkladu; ani jedno nespad
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
 nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
-zahodí), že **každý job, ktorý
+zahodí), že **PBF kraja vzniká rezom
+z rodičovského extraktu, a nie z toho hotového, dieravého**
+(`workers/lint/pbf-parent.py` – v hotovom extrakte z osm.fr chýbajú objektu cez
+hranicu uzly aj členské cesty, Planetiler ho zahodí celý a v stiahnutom kraji
+nie je vôbec; vypnúť sa to dá poradím krokov a beh je pri tom zelený), že
+**každý job, ktorý
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do
 `workers/lib/planetiler.sh` presunúť nedá, takže je to jedna veta na šiestich

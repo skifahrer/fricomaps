@@ -856,6 +856,21 @@ jobs:
           mkdir -p steps-out
           : > steps-out/plan.tsv
 
+      # POLYGÓN KRAJA: hranica, ktorou je orezaný náš PBF. Vyrába ho `plan`
+      # a ostatné joby ho dostanú ARTEFAKTOM, nie tým, že si ho stiahnu samy –
+      # keby jednému z nich zlyhalo sťahovanie, rezal by na bboxe, kým ostatní
+      # na kraji, čiže dve pravdy o jednej hranici.
+      #
+      # A JE PRED PBF NASCHVÁL: `workers/plan/pbf.sh` si podľa neho vyreže kraj
+      # z rodičovského extraktu (rozpis v tom skripte). Za ním by PBF ticho
+      # vzniklo po starom – zelený beh s dierami na hranici. Stráži to
+      # `workers/lint/pbf-parent.py`.
+      - name: Polygón kraja (orez mapy aj vrstiev z DEM)
+        run: |
+          set -euo pipefail
+          python3 workers/plan/region-poly.py --region='${{ inputs.region }}' \
+            --out=data/region.geojson --poly-out=data/region.poly
+
       # POZOR na restore/save: `actions/cache` ukladalo až v post-kroku a IBA
       # keď job dobehol úspešne. Keď build spadol o hodinu neskôr, hodiny
       # výpočtu sa zahodili. Preto restore hore a save hneď po tom, čo dáta
@@ -870,7 +885,10 @@ jobs:
           # kľúč BEZ orezu (`crop_bbox` bol pri teste prázdny) – ostrý beh
           # v ten istý deň potom postavil celú mapu z tých 2 km². Odteraz test
           # neorezáva nič, ale staré záznamy by ešte deň strašili.
-          key: pbf-v2-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
+          # `v3`: PBF kraja sa už neberie hotové z osm.fr, ale reže sa
+          # z rodičovského (`workers/plan/pbf.sh`), takže je na hranici úplné.
+          # Pod tým istým kľúčom by beh ešte deň ťahal starú, dieravú podobu.
+          key: pbf-v3-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
 
       # Stotridsať riadkov bashu je vo `workers/plan/pbf.sh` – tento súbor
       # má strop 128 kB a nad ním ho GitHub ticho neprijme (stráži Lint
@@ -886,6 +904,10 @@ jobs:
           OPT_CUSTOM_PBF_URL: ${{ steps.opts.outputs.opt_custom_pbf_url }}
           OPT_TEST_AT: ${{ steps.opts.outputs.opt_test_at }}
           OPT_TEST_KM2: ${{ steps.opts.outputs.opt_test_km2 }}
+          # Z TOHTO PBF SA KRESLÍ MAPA, takže musí byť na hranici úplné a kraj
+          # sa vyreže z rodiča podľa `data/region.poly` (krok vyššie). Prečo
+          # a s akými číslami: `workers/plan/pbf.sh`.
+          PBF_NEEDS_GEOMETRY: 'true'
           REGION: ${{ inputs.region }}
         run: workers/plan/pbf.sh
 
@@ -974,18 +996,6 @@ jobs:
         with:
           path: data/region.osm.pbf
           key: ${{ steps.pbf-cache.outputs.cache-primary-key }}
-
-      # POLYGÓN KRAJA pre vrstvy z výškového modelu. Sťahuje sa ten istý
-      # `.poly`, ktorým je orezaný náš PBF, takže mapa a jej výškové vrstvy
-      # majú rovnakú hranicu. Vyrába ho `plan` a ostatné joby ho dostanú
-      # ARTEFAKTOM, nie tým, že si ho stiahnu samy: keby si ho ťahal každý
-      # sám a jednému by sa to nepodarilo, rezal by na bboxe, kým ostatní na
-      # kraji – čiže dve pravdy o jednej hranici.
-      - name: Polygón kraja (orez vrstiev z DEM)
-        run: |
-          set -euo pipefail
-          python3 workers/plan/region-poly.py --region='${{ inputs.region }}' \
-            --out=data/region.geojson --poly-out=data/region.poly
 
       # Oboje: `.geojson` čítajú vrstvy z DEM (cutline, maska tieňovania)
       # a `deploy` (hranica pre viewer), surový `.poly` Planetiler
