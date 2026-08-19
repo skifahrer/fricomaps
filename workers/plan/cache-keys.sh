@@ -39,16 +39,18 @@ TS="$OPT_SHADING_SOURCE"
   # a `tienovanie` dávajú úplne iné plochy – jedny sa nesmú vrátiť
   # z cache namiesto druhých.
   # Ladenie hladkosti vrstevníc (okno na vyhladenie DEM, tolerancia
-  # zjednodušenia, priehyb pri zaoblení) je v kľúči TIEŽ, hoci ho
+  # zjednodušenia, priehyb pri zaoblení, σ vyhladenia po čiare) je v kľúči
+  # TIEŽ, hoci ho
   # `SCHEMA_HASH` nevidí: tie tri hodnoty sú v `env:` build-map.yml, nie
   # v žiadnom z hashovaných súborov. Bez nich by sa dala prestaviť hladkosť
   # a beh by vrátil z cache staré vrstevnice – zelený, tichý a s tvarom,
   # ktorý o nastavení nič nevie (pravidlo 8).
   #
-  # `v10`: zaoblenie je limitná krivka vzorkovaná podľa mriežky dlaždice, nie
-  # dva prechody Chaikina. Hodnota `CONTOUR_SMOOTH` pritom ostala `2`, takže
-  # sám kľúč by sa nezmenil – a z cache by sa vrátili staré zubaté vrstevnice.
-  echo "contours=contours-v10-c$CS$DC-r$RS$DR-$B-i${CONTOUR_INTERVAL}-z${OPT_CONTOUR_MAXZOOM}-rz${OPT_ROCK_MAXZOOM}p${OPT_ROCK_PLNE}d${OPT_ROCK_ZAPLN_DIERY}-s${OPT_CONTOUR_SMOOTHING}h${CONTOUR_DEM_LOWPASS}t${CONTOUR_SIMPLIFY}x${CONTOUR_SMOOTH}-${ROCK_SLOPE}g${OPT_ROCK_RES}a$RA-${OPT_ROCK_IMG_ASSET}-${SCHEMA_HASH}"
+  # `v11`: zaoblenie je limitná krivka vzorkovaná podľa mriežky dlaždice (nie
+  # dva prechody Chaikina) a k tomu pribudlo vyhladenie po dĺžke čiary.
+  # Hodnota `CONTOUR_SMOOTH` pritom ostala `2`, takže sám kľúč by sa nezmenil –
+  # a z cache by sa vrátili staré zubaté vrstevnice.
+  echo "contours=contours-v11-c$CS$DC-r$RS$DR-$B-i${CONTOUR_INTERVAL}-z${OPT_CONTOUR_MAXZOOM}-rz${OPT_ROCK_MAXZOOM}p${OPT_ROCK_PLNE}d${OPT_ROCK_ZAPLN_DIERY}-s${OPT_CONTOUR_SMOOTHING}h${CONTOUR_DEM_LOWPASS}t${CONTOUR_SIMPLIFY}x${CONTOUR_SMOOTH}l${CONTOUR_LINE_SMOOTH}-${ROCK_SLOPE}g${OPT_ROCK_RES}a$RA-${OPT_ROCK_IMG_ASSET}-${SCHEMA_HASH}"
   # Stiahnuté DEM dlaždice. Sú v podpriečinku podľa zdroja, takže
   # jeden job môže mať naraz dva modely (vrstevnice z jedného,
   # skaly z druhého) – kľúč preto nesie obe mená.

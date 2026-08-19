@@ -24,7 +24,12 @@ mriežky dlaždice; toto sú tie miesta, na ktorých sa to dá nebadane rozbiť:
      pôvodná – inak medzi dvomi kusmi tej istej vrstevnice na hranici dlaždice
      vznikne medzera. Prstenec musí ostať uzavretý, inak z plochy vypadne
      neplatný polygón.
-  5. STARÉ DÁTA. Zmena tvaru sa musí prejaviť v kľúči cache (`contours=`)
+  5. VYHLADENIE PO ČIARE MUSÍ BYŤ V BUNKÁCH. `CONTOUR_DEM_LOWPASS` je
+     v metroch a práve preto pri bunke ≥ 2 m nespraví nič – na kraji z DMR 5.0
+     sa teda roky nehladilo vôbec. σ po čiare sa preto zadáva v bunkách
+     modelu a `build.sh` ho musí `smooth-shapes.py` naozaj podať; bez
+     `--sigma-m` sa vlnenie vráti a nikto nič nepovie.
+  6. STARÉ DÁTA. Zmena tvaru sa musí prejaviť v kľúči cache (`contours=`)
      aj v mene assetu so skalami (`ROCK_ALGO`) – inak build zoberie hotové
      zubaté dlaždice a bude zelený.
 
@@ -75,7 +80,9 @@ def main():
                        f"dve kópie zaobľovania sa raz rozídu a jedna vrstva "
                        f"bude hladká inak než druhá.")
             continue
-        for prep in ("--maxzoom", "--sag"):
+        chce = ("--maxzoom", "--sag", "--sigma-m") if "build.sh" in rel \
+            else ("--maxzoom", "--sag")
+        for prep in chce:
             if prep not in src:
                 bad.append(f"`workers/{rel}` volá `smooth-shapes.py` bez "
                            f"`{prep}`. Bez `--maxzoom` sa mlčky vezme z16 "
@@ -108,7 +115,7 @@ def main():
 
     # ---------- 3. priehyb ostáva pod krokom mriežky ----------
     wf = open(WF).read()
-    for kluc in ("CONTOUR_SMOOTH", "ROCK_SMOOTH"):
+    for kluc in ("CONTOUR_SMOOTH", "ROCK_SMOOTH", "CONTOUR_LINE_SMOOTH"):
         m = re.search(rf'^\s*{kluc}:\s*"(\d+)"', wf, re.M)
         if not m:
             bad.append(f"V `build-map.yml` nie je `{kluc}` – bez neho sa "
@@ -116,6 +123,16 @@ def main():
                        f"formulár o nej klame.")
             continue
         sag = int(m.group(1))
+        if kluc == "CONTOUR_LINE_SMOOTH":
+            # σ sa zadáva v BUNKÁCH modelu. Nad tromi bunkami sa už neodrezáva
+            # šum, ale tvar terénu (namerané: pri dvoch bunkách ubudne pätina
+            # vlnenia nad tromi bunkami, čiže toho, čo je terén).
+            if sag > 3:
+                bad.append(f"`{kluc}` je {sag} buniek. Nad tromi bunkami "
+                           f"filter neodrezáva šum, ale tvar terénu – "
+                           f"vrstevnica bude oblá a nebude sa držať svahu, "
+                           f"presne ako po okne 5×5 v auguste 2026.")
+            continue
         if sag > 4:
             bad.append(f"`{kluc}` je {sag}, čiže priehyb {sag / 4:.2f} kroku "
                        f"mriežky dlaždice. Nad jedným krokom je vzorkovanie "
@@ -176,6 +193,64 @@ def main():
         bad.append(f"Desaťkrát jemnejšia tolerancia dala {jemne} bodov proti "
                    f"{hrubo} – vzorkovanie sa neriadi priehybom.")
 
+    # ---------- 4b. vyhladenie po čiare ----------
+    # Konce sa nesmú pohnúť ani tu, prstenec musí ostať uzavretý a filter musí
+    # naozaj filtrovať: pílka s vlnovou dĺžkou pod σ má zmiznúť, dlhá vlna má
+    # ostať. Bez tejto kontroly by sa dal filter „zjednodušiť" na niečo, čo
+    # posunie čiaru a nezahladí nič – a build by bol zelený.
+    N = 400
+    pila = [(i * 1.0, 3.0 * math.sin(2 * math.pi * i / 4.0)) for i in range(N)]
+    vlna = [(i * 1.0, 3.0 * math.sin(2 * math.pi * i / 200.0)) for i in range(N)]
+    for meno, ciara, ma_ostat in (("pílka λ = 4 m", pila, False),
+                                  ("vlna λ = 200 m", vlna, True)):
+        out = sm.smooth_along(ciara, 4.0, False)
+        # Meria sa v STREDE čiary: pri konci sa filter opiera o zrkadlený
+        # okraj a krajný bod ostáva zámerne nedotknutý, takže tam amplitúda
+        # nič nehovorí.
+        stred = out[len(out) // 4:-len(out) // 4]
+        amp = max(abs(y) for _, y in stred) if len(stred) > 2 else 0.0
+        if ma_ostat and amp < 2.0:
+            bad.append(f"Vyhladenie po čiare zožralo {meno}: amplitúda klesla "
+                       f"z 3,0 na {amp:.2f} m. σ = 4 m nemá čo robiť tvaru "
+                       f"dlhému 200 m – to už je terén, nie šum.")
+        if not ma_ostat and amp > 0.5:
+            bad.append(f"Vyhladenie po čiare nechalo {meno} (amplitúda "
+                       f"{amp:.2f} m). Práve toto vlnenie je tá jemná "
+                       f"zubatosť, kvôli ktorej filter existuje.")
+    okraj = sm.smooth_along(pila, 4.0, False)
+    if tuple(okraj[0]) != tuple(pila[0][:2]) or tuple(okraj[-1]) != tuple(pila[-1][:2]):
+        bad.append(f"Vyhladenie po čiare posunulo koniec ({okraj[-1]} namiesto "
+                   f"{pila[-1]}). Na hranici dlaždice z toho bude medzera.")
+    kruh = [(math.cos(t / 40 * 2 * math.pi) * 100,
+             math.sin(t / 40 * 2 * math.pi) * 100) for t in range(40)]
+    kruh.append(kruh[0])
+    r = sm.smooth_along(kruh, 8.0, True)
+    if tuple(r[0]) != tuple(r[-1]):
+        bad.append("Vyhladený prstenec nie je uzavretý – z plochy vypadne "
+                   "neplatný polygón.")
+
+    # Prstenec sa NESMIE preriediť na nič. Douglas–Peucker meria vzdialenosť
+    # od tetivy medzi prvým a posledným bodom – na prstenci je to ten istý
+    # bod, tetiva má nulovú dĺžku a bez ošetrenia vyjde vzdialenosť nula:
+    # z celej skaly ostanú dva body a plocha ticho zmizne (namerané).
+    stvorec = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0),
+               (0.0, 0.0)]
+    r2 = sm.curve_ring(stvorec, 0.05, 3.0)
+    if len(r2) < 8 or tuple(r2[0]) != tuple(r2[-1]):
+        bad.append(f"Vyhladený a preriedený prstenec má {len(r2)} bodov "
+                   f"(uzavretý: {tuple(r2[0]) == tuple(r2[-1])}). Douglas–"
+                   f"Peucker na prstenci meria od tetivy nulovej dĺžky – bez "
+                   f"rozrezania z plochy ostanú dva body a skala zmizne.")
+    # A vyhladenie musí ísť aj BEZ zaoblenia: sú to dve nezávislé voľby
+    # a `tol = 0` sa nesmie dostať do deliteľa.
+    try:
+        sm.curve_line([(0.0, 0.0), (10.0, 1.0), (20.0, 0.0), (30.0, 2.0)],
+                      0.0, 3.0)
+    except ZeroDivisionError:
+        bad.append("`--sigma-m` bez `--sag` spadne na delení nulou. Sú to dve "
+                   "voľby: jedna hladí vlnenie, druhá zaobľuje rohy, a jedna "
+                   "sa dá chcieť bez druhej.")
+
     # ---------- 5. krok mriežky je jedno číslo ----------
     for z in (11, 14, 16):
         krok = cell.tile_grid_m(z)
@@ -190,6 +265,11 @@ def main():
 
     # ---------- 6. staré dáta sa nesmú vrátiť ----------
     keys = open(KEYS).read()
+    if "CONTOUR_LINE_SMOOTH" not in keys:
+        bad.append("σ vyhladenia po čiare (`CONTOUR_LINE_SMOOTH`) nie je "
+                   "v kľúči cache vrstevníc. Dá sa ním prestaviť hladkosť "
+                   "a beh by vrátil z cache staré vrstevnice – zelený, tichý "
+                   "a s tvarom, ktorý o nastavení nič nevie.")
     if not re.search(r'echo "contours=contours-v(\d+)-', keys):
         bad.append("V `workers/plan/cache-keys.sh` nie je verzia v kľúči "
                    "`contours=`. Zmena tvaru vrstevníc sa bez nej neprejaví – "

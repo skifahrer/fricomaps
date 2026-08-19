@@ -223,6 +223,18 @@ def chaikin(pts, passes):
     return pts
 
 
+def po_ciare(pts, sigma_cells):
+    """Vyhladenie po dĺžke čiary zo `smooth-shapes.py` – σ v bunkách DEM.
+
+    Model počíta na 1 m mriežke, takže bunka = meter a σ v bunkách je rovno
+    σ v metroch. Filter sa sem NEKOPÍRUJE, je to ten istý kód, aký beží
+    v pipeline.
+    """
+    if sigma_cells <= 0:
+        return list(pts)
+    return shapes.smooth_along([tuple(p) for p in pts], sigma_cells, False)
+
+
 def limit(pts, sag, maxzoom):
     """Limitná krivka zo `smooth-shapes.py` – to, čo robí pipeline dnes.
 
@@ -305,9 +317,11 @@ def na_km(pts, thr=30.0):
     return float(np.sum(ang > thr)) / km if km else 0.0
 
 
-def run(Z, win, quarters, how, label, maxzoom):
+def run(Z, win, quarters, how, label, maxzoom, sigma=0.0):
     """`how` = ("chaikin", počet prechodov) alebo ("limit", priehyb v 1/4)."""
     simp = simplify(contour(lowpass(Z, win), LEVEL), quarters / 4.0)
+    if sigma:
+        simp = simplify(po_ciare(simp, sigma), quarters / 4.0)
     pts = (chaikin(simp, how[1]) if how[0] == "chaikin"
            else limit(simp, how[1], maxzoom))
     ang = bends(pts)
@@ -344,21 +358,25 @@ def main():
     run(terrain(), 1, 0, ("chaikin", 0),
         "referencia (terén bez šumu, bez úprav)", args.maxzoom)
     print()
-    for win, q, how, note in [
-        (1, 1, ("chaikin", 1), "  ← 2025"),
-        (5, 2, ("chaikin", 2), "  ← august (oblé)"),
-        (3, 1, ("chaikin", 1), ""),
-        (3, 1, ("chaikin", 2), "  ← doteraz"),
-        (3, 1, ("chaikin", 3), "  (zuby preč, ale mriežka horšia)"),
-        (3, 1, ("limit", 1), ""),
-        (3, 1, ("limit", 2), "  ← teraz"),
-        (3, 1, ("limit", 4), ""),
-        (7, 2, ("limit", 2), ""),
+    for win, q, how, note, sig in [
+        (1, 1, ("chaikin", 1), "  ← 2025", 0),
+        (5, 2, ("chaikin", 2), "  ← august (oblé)", 0),
+        (3, 1, ("chaikin", 1), "", 0),
+        (3, 1, ("chaikin", 2), "  ← doteraz", 0),
+        (3, 1, ("chaikin", 3), "  (zuby preč, ale mriežka horšia)", 0),
+        (3, 1, ("limit", 1), "", 0),
+        (3, 1, ("limit", 2), "", 0),
+        (1, 1, ("limit", 2), "  (bez vyhladenia DEM = kraj z DMR 5.0)", 0),
+        (1, 1, ("limit", 2), "  ← teraz (σ 1 bunka po čiare)", 1.0),
+        (1, 1, ("limit", 2), "  (σ 2 bunky – menej vlnenia, menej tvaru)", 2.0),
+        (3, 1, ("limit", 4), "", 0),
+        (7, 2, ("limit", 2), "", 0),
     ]:
         okno = f"okno {win}×{win}" if win > 1 else "bez vyhladenia"
         zaob = (f"{how[1]}× Chaikin" if how[0] == "chaikin"
                 else f"limitná, priehyb {how[1]}/4 mriežky")
-        run(Z, win, q, how, f"{okno}, {q}/4 bunky, {zaob}{note}", args.maxzoom)
+        run(Z, win, q, how, f"{okno}, {q}/4 bunky, {zaob}{note}",
+            args.maxzoom, sig)
 
 
 if __name__ == "__main__":

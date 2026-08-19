@@ -291,6 +291,22 @@ env:
   # ROVNAKOM počte bodov (0,1 proti 0,7 zuba/km po mriežke z16, 56 421 proti
   # 56 792 bodom). Rozpis v hlavičke workers/contours-rocks/smooth-shapes.py.
   CONTOUR_SMOOTH: "2"
+  # VYHLADENIE PO DĹŽKE ČIARY, σ v BUNKÁCH modelu (0 = vypnuté). Toto je to,
+  # čo rieši „jemnú zubatosť": izolínia berie z rastra všetko vrátane toho, čo
+  # model nemá z čoho vedieť – šumu merania, zvyškov vegetácie v DTM
+  # a interpolácie medzi bunkami. Zaoblenie rohov (`CONTOUR_SMOOTH`) to
+  # nerieši, lebo to nie sú rohy, ale vlnenie s amplitúdou desiatok
+  # centimetrov.
+  #
+  # V BUNKÁCH, nie v metroch, a práve tým sa to líši od `CONTOUR_DEM_LOWPASS`:
+  # ten je v metroch (2 m), takže pri bunke ≥ 2 m vyjde na jednu bunku a
+  # NEUROBÍ NIČ – teda pri každom kraji z DMR 5.0 (5 m) aj zo Sonnyho (20 m).
+  # Namerané celou cestou cez gdal_contour na 5 m modeli: vlnenie na vlnových
+  # dĺžkach 1–3 bunky zo 14,6 na 5,8 cm, tvar terénu −2,5 %, počet bodov
+  # rovnaký. Dve bunky zrazia vlnenie na 1,1 cm, ale vezmú aj pätinu tvaru –
+  # preto jedna. Strop 30 m (v `contours-rocks/line-params.py`) chráni hrubé
+  # modely, kde by tri bunky boli 60 m.
+  CONTOUR_LINE_SMOOTH: "1"
   # Skaly = najstrmšie úseky terénu, ako vektorové plochy. Ladenie je tu
   # v env, aby inputov workflowu nebolo priveľa. Predvolené hodnoty idú na
   # maximálnu presnosť – nič sa nezahladzuje ani nezahadzuje:
@@ -1078,9 +1094,10 @@ jobs:
           # Kým v ňom nebol, dala sa zmeniť tolerancia a beh vrátil z cache
           # staré, zubaté vrstevnice – zelený a tichý (pravidlo 8).
           # Otlačok ale vidí len súbory, a ladenie hladkosti (CONTOUR_DEM_LOWPASS,
-          # CONTOUR_SIMPLIFY, CONTOUR_SMOOTH) je v `env:` tohto workflowu –
-          # tie sú preto v kľúči zvlášť, viď `workers/plan/cache-keys.sh`.
-          SCHEMA_HASH: ${{ hashFiles('workers/contours-rocks/contours.yml', 'workers/contours-rocks/rocks.yml', 'workers/contours-rocks/rock-areas.py', 'workers/contours-rocks/smooth-shapes.py', 'workers/contours-rocks/build.sh') }}
+          # CONTOUR_SIMPLIFY, CONTOUR_SMOOTH, CONTOUR_LINE_SMOOTH) je v `env:`
+          # tohto workflowu – tie sú preto v kľúči zvlášť, viď
+          # `workers/plan/cache-keys.sh`.
+          SCHEMA_HASH: ${{ hashFiles('workers/contours-rocks/contours.yml', 'workers/contours-rocks/rocks.yml', 'workers/contours-rocks/rock-areas.py', 'workers/contours-rocks/smooth-shapes.py', 'workers/contours-rocks/line-params.py', 'workers/contours-rocks/build.sh') }}
         run: workers/plan/cache-keys.sh
 
       # Kým starý záznam existuje, nový sa pod ten istý kľúč neuloží (na Drive

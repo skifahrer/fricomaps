@@ -82,6 +82,47 @@ vstupná čiara – dva prechody sú vždy 4×, tri vždy 8×. Práve preto sa t
 prechod nedá „len pridať": pri 5 m modeli je to 113 580 bodov a po mriežke z14
 16,2 zuba/km, teda päťnásobok toho, čo má limitná krivka za polovicu bodov.
 
+DRUHÁ VEC, KTORÚ ZAOBLENIE NEVYRIEŠI: VLNENIE. Roh je zlom, vlnenie je to,
+že čiara sa trasie – izolínia berie z rastra všetko vrátane toho, čo model
+nemá z čoho vedieť (šum merania, zvyšky vegetácie v DTM, interpolácia medzi
+bunkami). Na hotovej mape kraja to bolo namerané takto (Bratislavský kraj,
+2 499 km čiar, priečna odchýlka od vlastného hladkého priebehu v pásmach
+vlnových dĺžok):
+
+    pod bunkou (< 5 m)     2,8 cm     ← trasovanie, zanedbateľné
+    okolo bunky (5–15 m)  20,3 cm     ← TOTO je tá jemná zubatosť
+    tvar terénu (> 15 m) 123,3 cm     ← to sa zachovať MÁ
+
+A hlavne: pri bunke 2 m a hrubšej sa to doteraz NEHLADILO VÔBEC. Okno
+`CONTOUR_DEM_LOWPASS` je totiž v METROCH (2 m), takže na 5 m DMR 5.0 aj na
+Sonnyho 20 m vyjde na jednu bunku a neurobí nič – a to je každý kraj.
+
+Preto je tu `--sigma-m`: Gauss PO DĹŽKE ČIARY, so σ zadaným v bunkách modelu
+(`CONTOUR_LINE_SMOOTH`). Po čiare, nie v rastri, a to je podstatné – filter
+v rastri hladí aj NAPRIEČ vrstevnicami (posúva ich k sebe) a stojí gigabajtový
+prechod cez gdalwarp. Namerané celou cestou cez `gdal_contour` (5 m bunka,
+700×700, mikroreliéf σ 0,25 m, `-simplify` ¼ bunky):
+
+    zaoblenie + vyhladenie     bodov │ vlnenie 1–3 bunky │ tvar (> 3 bunky)
+    dnes (2× Chaikin)         56 792 │      14,6 cm      │     126,0 cm
+    limitná krivka bez σ      56 421 │      13,5 cm      │     124,0 cm
+    limitná + σ 1 bunka       53 503 │       7,1 cm      │     124,8 cm  ← toto
+    limitná + σ 2 bunky       37 215 │       1,7 cm      │     102,0 cm
+    limitná + σ 3 bunky       29 040 │       1,0 cm      │      86,0 cm
+
+JEDNA BUNKA, a rozhoduje o tom posledný stĺpec: dve bunky zrazia vlnenie na
+šestinu, ale vezmú aj pätinu TVARU – a to je presne tá chyba, ktorú spravilo
+okno 5×5 v auguste 2026 (vrstevnice boli oblé a nedržali sa svahu). Jedna
+bunka odreže polovicu vlnenia za 1 % tvaru a bodov je pritom o 6 % menej než
+dnes. Kto chce mapu „učesanejšiu", má na to `CONTOUR_LINE_SMOOTH`.
+
+KROK VZORKOVANIA JE σ/3, A NIE JE TO DETAIL. Filter musí najprv položiť body
+rovnomerne po dĺžke (inak by váha išla za hustotou bodov, ktorá je pri izolínii
+nerovnomerná). Keby ten krok bol σ, vzorka padne na každý hrb vlnenia s vlnovou
+dĺžkou σ a z 3 m amplitúdy ostane 0,7 m – vlnenie sa nezmaže, len sa ALIASUJE
+na dlhšie. Tretina σ je pod Nyquistom všetkého, čo sa má odrezať; body navyše
+hneď zahodí Douglas–Peucker s toleranciou priehybu.
+
 ČO SA NESKÚŠALO NASLEPO: vyhladzovanie samotného rastra sklonu (priemer 3×3
 pred vektorizáciou) obrys síce zjemní, ale zníži špičky sklonu a okolo prahu
 z toho vznikne množstvo drobných úlomkov – z 326 plôch bolo naraz 1668.
@@ -161,8 +202,158 @@ def _arc(a, b, c, tol, out):
                     w0 * y0 + w1 * y1 + w2 * y2))
 
 
-def curve_ring(ring, tol):
+def _resample(pts, step, closed):
+    """Body rovnomerne po dĺžke – bez toho by váha filtra išla za hustotou.
+
+    Vrstevnica z `gdal_contour` má body na hranách buniek, čiže nerovnomerne;
+    filter po INDEXOCH by tam, kde sú husto, hladil menej než tam, kde sú
+    riedko, a z toho je vlnenie, ktoré sa mení podľa smeru čiary.
+    """
+    d = [0.0]
+    for a, b in zip(pts, pts[1:]):
+        d.append(d[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+    total = d[-1]
+    if total <= 0:
+        return list(pts)
+    n = max(2, int(math.ceil(total / step)))
+    out, j = [], 0
+    for i in range(n + (0 if closed else 1)):
+        t = min(total, i * total / n)
+        while j + 2 < len(d) and d[j + 1] < t:
+            j += 1
+        seg = d[j + 1] - d[j]
+        f = 0.0 if seg <= 0 else (t - d[j]) / seg
+        out.append((pts[j][0] + f * (pts[j + 1][0] - pts[j][0]),
+                    pts[j][1] + f * (pts[j + 1][1] - pts[j][1])))
+    return out
+
+
+def _dp(pts, tol):
+    """Douglas–Peucker – bez rekurzie, aby to znieslo aj tisíce bodov.
+
+    Beží AŽ PO vyhladení a s toleranciou priehybu: filter vzorkuje rovnomerne
+    po σ, takže rovný úsek dostane bod každých σ metrov, hoci ich tam netreba
+    ani dva. Bez tohto kroku by vyhladená čiara mala VIAC bodov než pred ním
+    (namerané: 66 679 proti 56 792) a dlaždica by rástla za nič.
+    """
+    if tol <= 0 or len(pts) < 3:
+        return list(pts)
+    keep = [False] * len(pts)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(pts) - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b <= a + 1:
+            continue
+        (x0, y0), (x1, y1) = pts[a][:2], pts[b][:2]
+        dx, dy = x1 - x0, y1 - y0
+        norm = math.hypot(dx, dy) or 1e-12
+        dmax, imax = 0.0, a
+        for i in range(a + 1, b):
+            x, y = pts[i][:2]
+            d = abs(dy * x - dx * y + x1 * y0 - y1 * x0) / norm
+            if d > dmax:
+                dmax, imax = d, i
+        if dmax > tol:
+            keep[imax] = True
+            stack += [(a, imax), (imax, b)]
+    return [p for p, k in zip(pts, keep) if k]
+
+
+def smooth_along(pts, sigma, closed):
+    """Gauss PO DĹŽKE čiary – odreže vlnenie, ktoré model nemá z čoho vedieť.
+
+    Toto je to, čo robí čiaru „jemne zubatou": izolínia nad rastrom vezme
+    všetko, čo v modeli je, aj mikroreliéf pod jeho vlastným rozlíšením (šum
+    merania, zvyšky vegetácie v DTM, interpolácia medzi bunkami). Zaoblenie
+    rohov to nerieši – roh je zlom, toto je vlnenie s amplitúdou desiatok
+    centimetrov, ktoré na svahu vyzerá ako trasúca sa ruka.
+
+    Hladí sa PO ČIARE, nie v rastri, a je to podstatné: filter v rastri hladí
+    aj NAPRIEČ vrstevnicami (posúva ich k sebe) a stojí pritom gigabajtový
+    prechod cez gdalwarp. Merané na tom istom teréne (`measure-smoothing.py`):
+    vyhladenie rastra 3×3 nechá z 12-bunkového tvaru 62 %, tento filter pri
+    σ = 3 bunky 70 % – a zubov je pritom menej (3,0 proti 5,0 na km).
+
+    Konce sa nehýbu (pri prstenci sa jadro obtáča dookola), takže dva kusy tej
+    istej vrstevnice na hranici dlaždice na seba sadnú ďalej.
+    """
+    if sigma <= 0 or len(pts) < 3:
+        return list(pts)
+    # KROK VZORKOVANIA MUSÍ BYŤ HLBOKO POD σ, inak sa vlnenie neodstráni, ale
+    # ALIASUJE: pri kroku σ padne vzorka na každý hrb pílky s vlnovou dĺžkou σ
+    # a z 3 m amplitúdy ostane 0,7 m, hoci filter má na tej vlnovej dĺžke
+    # útlm prakticky nulový. Tretina σ je pod Nyquistom všetkého, čo sa má
+    # odrezať. Body navyše sa nezaplatia – `_dp` ich hneď zahodí.
+    step = sigma / 3.0
+    P = _resample(pts, step, closed)
+    n = len(P)
+    if n < 3:
+        return list(pts)
+    rad = int(math.ceil(3 * sigma / step))    # 3σ – ďalej je váha pod 1 %
+    ker = [math.exp(-0.5 * (k * step / sigma) ** 2)
+           for k in range(-rad, rad + 1)]
+    ssum = sum(ker)
+    ker = [w / ssum for w in ker]
+    out = []
+    for i in range(n):
+        x = y = 0.0
+        for k, w in enumerate(ker, start=-rad):
+            if closed:
+                j = (i + k) % n
+            else:
+                # Otvorená čiara: okraj sa dopĺňa zrkadlením, takže sa filter
+                # pri konci neopiera o nič a koniec sa nezačne sťahovať
+                # dovnútra.
+                j = min(n - 1, max(0, i + k))
+                if i + k < 0:
+                    j = min(n - 1, -(i + k))
+                elif i + k > n - 1:
+                    j = max(0, 2 * (n - 1) - (i + k))
+            x += w * P[j][0]
+            y += w * P[j][1]
+        out.append((x, y))
+    if closed:
+        out.append(out[0])
+    else:
+        # Konce sú konce čiary, nie rohy – ostávajú PRESNE tam, kde boli.
+        # Berú sa z pôvodnej čiary, nie z prevzorkovanej: `_resample` trafí
+        # koniec len na zlomok milimetra a taký posun by na hranici dlaždice
+        # ostal ako medzera.
+        out[0], out[-1] = tuple(pts[0][:2]), tuple(pts[-1][:2])
+    return out
+
+
+def smooth_and_thin(pts, sigma, tol, closed):
+    """Vyhladiť po dĺžke a hneď zahodiť body, ktoré z toho ostali navyše."""
+    out = smooth_along(pts, sigma, closed)
+    if not closed:
+        return _dp(out, tol)
+    if len(out) < 5:
+        return out
+    # PRSTENEC SA NESMIE PREDIEDIŤ AKO JEDNA ČIARA. Douglas–Peucker meria
+    # vzdialenosť od tetivy medzi prvým a posledným bodom – a tie sú na
+    # prstenci ten istý bod, čiže tetiva má nulovú dĺžku a vzdialenosť od nej
+    # vyjde nula. Z celej skaly by ostali dva body (namerané) a plocha by
+    # zmizla. Prstenec sa preto reže na dve polovice v najvzdialenejšom bode.
+    ring = out[:-1]
+    p0 = ring[0]
+    k = max(range(1, len(ring)),
+            key=lambda i: (ring[i][0] - p0[0]) ** 2 + (ring[i][1] - p0[1]) ** 2)
+    prva = _dp(ring[:k + 1], tol)
+    druha = _dp(ring[k:] + [p0], tol)
+    return prva[:-1] + druha
+
+
+def curve_ring(ring, tol, sigma=0.0):
     """Limitná krivka nad uzavretým prstencom – zaoblí sa každý roh."""
+    if sigma > 0:
+        # Bez zaoblenia (`--sag=0`) sa riedi na priehyb, ktorý by mal pri
+        # jednej štvrtine mriežky – inak by tu ostali všetky vzorky filtra.
+        ring = smooth_and_thin([tuple(p[:2]) for p in ring], sigma,
+                               tol or sigma / 64.0, True)
+        if tol <= 0:
+            return list(ring)
     pts = ring[:-1] if len(ring) > 1 and ring[0] == ring[-1] else list(ring)
     # Trojuholník zaobľovať nemá zmysel a kratší prstenec je odpad.
     if len(pts) < 4:
@@ -177,7 +368,7 @@ def curve_ring(ring, tol):
     return out
 
 
-def curve_line(line, tol):
+def curve_line(line, tol, sigma=0.0):
     """To isté na otvorenej čiare – ale s konzervovanými koncami.
 
     Krajné body sa nehýbu: sú to konce čiary, nie rohy. Bez toho by sa
@@ -187,7 +378,12 @@ def curve_line(line, tol):
     """
     pts = list(line)
     if len(pts) > 2 and pts[0] == pts[-1]:
-        return curve_ring(pts, tol)
+        return curve_ring(pts, tol, sigma)
+    if sigma > 0:
+        pts = smooth_and_thin([tuple(p[:2]) for p in pts], sigma,
+                              tol or sigma / 64.0, False)
+        if tol <= 0:
+            return list(pts)
     if len(pts) < 3:
         return pts
     ctrl = [pts[0], pts[0]] + pts[1:-1] + [pts[-1], pts[-1]]
@@ -205,17 +401,18 @@ POLYGONS = ("Polygon", "MultiPolygon")
 LINES = ("LineString", "MultiLineString")
 
 
-def smooth_geometry(geom, tol):
+def smooth_geometry(geom, tol, sigma=0.0):
     if not geom:
         return geom
     t = geom.get("type")
     if t in POLYGONS:
         parts = [geom["coordinates"]] if t == "Polygon" else geom["coordinates"]
-        new = [[curve_ring(ring, tol) for ring in poly] for poly in parts]
+        new = [[curve_ring(ring, tol, sigma) for ring in poly]
+               for poly in parts]
         geom["coordinates"] = new if t == "MultiPolygon" else new[0]
     elif t in LINES:
         parts = [geom["coordinates"]] if t == "LineString" else geom["coordinates"]
-        new = [curve_line(line, tol) for line in parts]
+        new = [curve_line(line, tol, sigma) for line in parts]
         geom["coordinates"] = new if t == "MultiLineString" else new[0]
     return geom
 
@@ -258,6 +455,23 @@ def layer_srs(path, layer):
     return "", False
 
 
+def do_jednotiek(srs, projected, metre):
+    """Metre v teréne → jednotky vrstvy (stupne / metre / metre Mercatora).
+
+    Každá vrstva chodí do tohto skriptu v inom CRS: vrstevnice v EPSG:4326
+    (stupne), skaly zo sklonu v metrickom CRS a skaly z tieňovania
+    v EPSG:3857, kde je meter u nás ~1,5× kratší než na zemi. Prevod je preto
+    na jednom mieste a pýta sa ho aj priehyb, aj σ.
+    """
+    if not projected:
+        # Delí sa DLHŠÍM stupňom (po šírke), takže na zemi tolerancia nikdy
+        # nevyjde väčšia, než sa žiadalo – po dĺžke je u nás stupeň kratší.
+        return metre / cell.M_PER_DEG_LAT
+    if srs == "EPSG:3857":
+        return metre / math.cos(math.radians(cell.DEFAULT_LAT))
+    return metre
+
+
 def tolerance(srs, projected, maxzoom, sag):
     """Dovolený priehyb tetivy V JEDNOTKÁCH VRSTVY (stupne alebo metre).
 
@@ -268,13 +482,7 @@ def tolerance(srs, projected, maxzoom, sag):
     (metre Mercatora, ktoré sú u nás ~1,5× dlhšie než na zemi).
     """
     m = cell.tile_grid_m(maxzoom) * sag / 4.0
-    if not projected:
-        # Delí sa DLHŠÍM stupňom (po šírke), takže na zemi tolerancia nikdy
-        # nevyjde väčšia, než sa žiadalo – po dĺžke je u nás stupeň kratší.
-        return m / cell.M_PER_DEG_LAT, f"{m:.3f} m"
-    if srs == "EPSG:3857":
-        return m / math.cos(math.radians(cell.DEFAULT_LAT)), f"{m:.3f} m"
-    return m, f"{m:.3f} m"
+    return do_jednotiek(srs, projected, m), f"{m:.3f} m"
 
 
 def main():
@@ -288,16 +496,27 @@ def main():
     ap.add_argument("--sag", type=float, default=1.0,
                     help="dovolený priehyb tetivy v ŠTVRTINÁCH kroku mriežky "
                          "dlaždice (0 = zaoblenie vypnuté)")
+    ap.add_argument("--sigma-m", dest="sigma_m", type=float, default=0.0,
+                    help="σ vyhladenia PO DĹŽKE čiary v metroch v teréne "
+                         "(0 = vypnuté). Odreže vlnenie pod rozlíšením "
+                         "modelu – to, čo je na čiare vidieť ako jemná "
+                         "zubatosť.")
     args = ap.parse_args()
 
-    if args.sag <= 0:
+    # Vypnuté je len vtedy, keď je vypnuté OBOJE. Sú to dve rôzne veci:
+    # `--sag` zaobľuje rohy, `--sigma-m` odstraňuje vlnenie – a jedno sa dá
+    # chcieť bez druhého.
+    if args.sag <= 0 and args.sigma_m <= 0:
         subprocess.run(["ogr2ogr", "-f", "GPKG", args.dst, args.src,
                         "-nln", args.layer, "-overwrite"], check=True)
-        print("  zaoblenie: vypnuté (sag=0)", flush=True)
+        print("  zaoblenie: vypnuté (sag=0, sigma=0)", flush=True)
         return 0
 
     srs, projected = layer_srs(args.src, args.layer)
-    tol, tol_m = tolerance(srs, projected, args.maxzoom, args.sag)
+    tol, tol_m = tolerance(srs, projected, args.maxzoom, max(args.sag, 0.0))
+    # σ chodí v metroch v teréne a musí sa prepočítať do jednotiek vrstvy
+    # tou istou úvahou ako priehyb (viď `tolerance`).
+    sigma = do_jednotiek(srs, projected, args.sigma_m)
     seq = args.dst + ".seq.json"
     tmp = seq + ".sm"
     for f in (seq, tmp):
@@ -327,7 +546,7 @@ def main():
             if g and g.get("type") in POLYGONS + LINES:
                 kind = "plocha" if g["type"] in POLYGONS else "čiara"
                 pts_in += count_points(g)
-                feat["geometry"] = smooth_geometry(g, tol)
+                feat["geometry"] = smooth_geometry(g, tol, sigma)
                 pts_out += count_points(feat["geometry"])
             fo.write(json.dumps(feat, separators=(",", ":")) + "\n")
     os.remove(seq)
@@ -374,7 +593,9 @@ def main():
     os.remove(tmp)
 
     grew = pts_out / pts_in if pts_in else 1.0
-    print(f"  zaoblenie: limitná krivka, priehyb do {args.sag / 4:.2f}× kroku "
+    print("  zaoblenie: "
+          + (f"vyhladenie po čiare σ {args.sigma_m:.2f} m, " if sigma else "")
+          + f"limitná krivka, priehyb do {args.sag / 4:.2f}× kroku "
           f"mriežky z{args.maxzoom} ({tol_m}), {n} "
           f"{'čiar' if lines else 'plôch'}, "
           f"bodov {pts_in} → {pts_out} ({grew:.2f}×)", flush=True)

@@ -356,40 +356,15 @@ PY
   # potom reže rohy dlhé štvrtinu SEGMENTU: čím dlhší segment, tým väčší kus
   # tvaru sa odreže (pri 1/2 bunky prežije z 12 m tvaru 52 %, pri 1/4 už 63 %).
   C_SIMPLIFY="${CONTOUR_SIMPLIFY:--1}"
+  # σ vyhladenia po dĺžke čiary, v BUNKÁCH modelu (0 = vypnuté).
+  C_LINE="${CONTOUR_LINE_SMOOTH:-1}"
+  case "$C_LINE" in ''|*[!0-9]*) C_LINE=1 ;; esac
   # Vypíše dve čísla: toleranciu v stupňoch (tá ide do ogr2ogr) a tú istú
   # toleranciu v metroch (tá ide do logu, lebo v stupňoch si ju nikto
   # nepredstaví). Prepočet je na jednom mieste, nie dvakrát.
   set +e
-  SIMPL_OUT=$(python3 - "$C_SIMPLIFY" "$CONTOUR_RASTER" <<'PY'
-import json, subprocess, sys
-want, raster = float(sys.argv[1]), sys.argv[2]
-# DLHŠÍ z dvoch stupňov – ten po ŠÍRKE (110 540 m). Stupeň po dĺžke má u nás
-# len ~73 000 m, takže je to on, kto rozhoduje o najhoršom prípade, a ten sa
-# tu musí použiť dvakrát:
-#   metre → stupne  … väčší deliteľ dá menšiu toleranciu, čiže na zemi nikdy
-#                     nebude väčšia, než sa žiadalo, nech ide svah akokoľvek
-#   stupne → metre  … do logu ide najväčšia možná, nie najmenšia; opačne by
-#                     riadok tvrdil menšiu toleranciu, než sa naozaj použila
-m_per_deg = 110540
-if want == 0:
-    deg = 0.0
-elif want > 0:
-    deg = want / m_per_deg          # zadané v metroch
-else:
-    # Raster, z ktorého sa NAOZAJ trasovalo – pri zapnutom vyhladení je to
-    # `clip-smooth.tif` a `clip.tif` už neexistuje. Mriežka je tá istá, ale
-    # pýtať sa súboru, ktorý sme zmazali, by znamenalo pád.
-    info = json.loads(subprocess.run(
-        ["gdalinfo", "-json", raster],
-        capture_output=True, text=True, check=True).stdout)
-    gt = info["geoTransform"]
-    # -1 = štvrtina bunky, -2 = polovica, -4 = celá. Nad polovicou sa čiara
-    # začína odliepať od terénu (merané: pri 3/4 bunky vyskočí odchýlka od
-    # skutočnej izolínie zo 0,58 na 1,29 bunky), tak sa vyššie nechodí.
-    deg = min(abs(gt[1]), abs(gt[5])) * (-want) / 4
-print(f"{deg:.10f} {deg * m_per_deg:.2f}")
-PY
-)
+  SIMPL_OUT=$(python3 workers/contours-rocks/line-params.py \
+    "$C_SIMPLIFY" "$CONTOUR_RASTER" "$C_LINE")
   SIMPL_RC=$?
   set -e
   SIMPL_ARGS=()
@@ -399,7 +374,7 @@ PY
     # počuť, prečo ostali schodíkové.
     echo "::warning::Tolerancia zjednodušenia vrstevníc sa nedá spočítať – idú bez neho (schodíky po hranách buniek ostanú)."
   else
-    read -r SIMPL_DEG SIMPL_M <<< "$SIMPL_OUT"
+    read -r SIMPL_DEG SIMPL_M C_SIGMA_M C_CELL_M <<< "$SIMPL_OUT"
     # Nula sa píše `0.0000000000` (formát je pevný, `%.10f`) – porovnáva sa
     # teda reťazec, nie číslo, a je to zámerné: bash desatinné čísla nevie.
     if [ "$SIMPL_DEG" = "0.0000000000" ]; then
@@ -420,6 +395,17 @@ PY
          ELSE 'minor' END AS level
        FROM contours WHERE ele IS NOT NULL"
 
+  # Vyhladenie PO DĹŽKE ČIARY – to, čo robí čiaru „jemne zubatou", nie sú
+  # rohy, ale VLNENIE pod rozlíšením modelu (šum merania, vegetácia v DTM,
+  # interpolácia medzi bunkami). Pri bunke ≥ 2 m sa doteraz nehladilo NIČ:
+  # okno `CONTOUR_DEM_LOWPASS` je v metroch, takže na 5 m DMR 5.0 aj na
+  # Sonnyho 20 m vyjde jedna bunka. σ v BUNKÁCH to rieši pre každý model
+  # rovnako. Namerané celou cestou cez gdal_contour (5 m bunka): vlnenie na
+  # vlnových dĺžkach 1–3 bunky kleslo zo 14,6 na 5,8 cm pri rovnakom počte
+  # bodov, tvar terénu ostal (−2,5 %). `CONTOUR_LINE_SMOOTH=0` to vypne,
+  # vyššie číslo hladí viac (2 bunky = vlnenie 1,1 cm, ale aj o pätinu menej
+  # tvaru). Rozpis v hlavičke `smooth-shapes.py`.
+  #
   # Zaoblenie – rohy po zjednodušení nahradí LIMITNÁ KRIVKA (kvadratický
   # B-spline). Dva prechody Chaikina, čo tu boli doteraz, sa k nej len blížia
   # a robia to LOKÁLNE: zo 120° rohu ostane vyše 30°, a keďže rohy sedia
@@ -429,19 +415,21 @@ PY
   # Rozpis a merania: `contours-rocks/smooth-shapes.py`; `0` to vypne.
   C_SMOOTH="${CONTOUR_SMOOTH:-2}"
   case "$C_SMOOTH" in ''|*[!0-9]*) C_SMOOTH=2 ;; esac
-  if [ "$C_SMOOTH" -gt 0 ]; then
-    echo "Zaoblenie vrstevníc: limitná krivka, priehyb ${C_SMOOTH}/4 kroku mriežky z${OPT_CONTOUR_MAXZOOM}"
+  [ -n "${C_SIGMA_M:-}" ] || C_SIGMA_M=0
+  if [ "$C_SMOOTH" -gt 0 ] || [ "$C_LINE" -gt 0 ]; then
+    echo "Vyhladenie vrstevníc: po čiare σ ${C_SIGMA_M} m (${C_LINE} × bunka ${C_CELL_M:-?} m), zaoblenie priehyb ${C_SMOOTH}/4 kroku mriežky z${OPT_CONTOUR_MAXZOOM}"
     if ! python3 workers/contours-rocks/smooth-shapes.py --in=work/level.gpkg \
            --out=data/contours.gpkg --layer=contours \
-           --maxzoom="$OPT_CONTOUR_MAXZOOM" --sag="$C_SMOOTH"; then
-      # Zaoblenie je kozmetika nad hotovými vrstevnicami – keby zlyhalo,
-      # nemá to zhodiť beh, ktorý ich už má spočítané. Ale MUSÍ to byť
-      # počuť, inak by sa „prečo sú zase zubaté" hľadalo v štýle.
-      echo "::warning::Zaoblenie vrstevníc zlyhalo – idú zubaté, tak ako predtým."
+           --maxzoom="$OPT_CONTOUR_MAXZOOM" --sag="$C_SMOOTH" \
+           --sigma-m="$C_SIGMA_M"; then
+      # Je to kozmetika nad hotovými vrstevnicami – keby zlyhala, nemá to
+      # zhodiť beh, ktorý ich už má spočítané. Ale MUSÍ to byť počuť, inak by
+      # sa „prečo sú zase zubaté" hľadalo v štýle.
+      echo "::warning::Vyhladenie vrstevníc zlyhalo – idú zubaté, tak ako predtým."
       cp work/level.gpkg data/contours.gpkg
     fi
   else
-    echo "Zaoblenie vrstevníc: vypnuté (contour_smooth=0)."
+    echo "Vyhladenie vrstevníc: vypnuté (contour_smooth=0, contour_line_smooth=0)."
     cp work/level.gpkg data/contours.gpkg
   fi
   ls -lh data/contours.gpkg

@@ -253,8 +253,9 @@ DEM (1°×1° dlaždice pre bbox: dem-sonny, doplnené Copernicusom)
   → ogr2ogr    dopočíta `level`: major (100 m) / mid (50 m) / minor (10 m)
                a `-simplify` zmaže schodíky po hranách buniek DEM
                (tolerancia: štvrtina bunky)
-  → smooth-shapes.py  zaoblí rohy, čo po zjednodušení ostali ostré
-                      (limitná krivka, vzorkovaná podľa mriežky dlaždice)
+  → smooth-shapes.py  vyhladí vlnenie po dĺžke čiary (σ v bunkách modelu)
+                      a zaoblí rohy, čo po zjednodušení ostali ostré
+                      (limitná krivka podľa mriežky dlaždice)
   → planetiler generate-custom --schema=workers/contours-rocks/contours.yml
   → {región}-contours.pmtiles
 ```
@@ -349,11 +350,46 @@ bodov**. Štvrtinový priehyb je pri takom hrubom modeli o 35 % viac bodov za
 rovnaký počet zubov, a väčšia vrstva nie je len väčšia: rozpočet stránky by jej
 mohol zobrať celý zoom, čo je proti zubatosti oveľa horšie.
 
-Ovláda to `CONTOUR_DEM_LOWPASS`, `CONTOUR_SIMPLIFY` a `CONTOUR_SMOOTH` v `env:`
+Ovláda to `CONTOUR_DEM_LOWPASS`, `CONTOUR_SIMPLIFY`, `CONTOUR_SMOOTH`
+a `CONTOUR_LINE_SMOOTH` (σ v bunkách, 0 = nehladiť po čiare) v `env:`
 build-map.yml: okno v metroch (`0` = nehladiť DEM), záporné číslo = koľko
 **štvrtín** bunky DEM (`-1` = štvrtina), `0` = presná čiara, kladné číslo =
 tolerancia v metroch; `CONTOUR_SMOOTH: 0` zaoblenie vypne. Všetky tri sú aj
 v kľúči cache, takže po ich zmene sa vrstevnice naozaj prepočítajú.
+
+**A ešte jedna vec, ktorú zaoblenie nerieši: vlnenie.** Roh je zlom, vlnenie
+je to, že sa čiara trasie – izolínia berie z rastra všetko vrátane toho, čo
+model nemá z čoho vedieť (šum merania, zvyšky vegetácie v DTM, interpolácia
+medzi bunkami). Namerané na hotovej mape (Bratislavský kraj, 2 499 km čiar,
+priečna odchýlka od vlastného hladkého priebehu):
+
+| vlnová dĺžka | rms | čo to je |
+|---|--:|---|
+| pod bunkou (< 5 m) | 2,8 cm | trasovanie, zanedbateľné |
+| okolo bunky (5–15 m) | **20,3 cm** | **jemná zubatosť** |
+| nad bunkou (> 15 m) | 123,3 cm | tvar terénu – ten sa zachovať MÁ |
+
+**A pri bunke 2 m a hrubšej sa to doteraz nehladilo vôbec**: okno
+`CONTOUR_DEM_LOWPASS` je v metroch (2 m), takže na 5 m DMR 5.0 aj na Sonnyho
+20 m vyjde na jednu bunku a neurobí nič – teda pri každom kraji. Preto je
+v `smooth-shapes.py` Gauss **po dĺžke čiary** so σ v **bunkách modelu**
+(`CONTOUR_LINE_SMOOTH`, default 1). Po čiare, nie v rastri: filter v rastri
+hladí aj naprieč vrstevnicami (posúva ich k sebe) a stojí gigabajtový prechod
+cez `gdalwarp`. Namerané celou cestou cez `gdal_contour` (5 m bunka):
+
+| postup | bodov | vlnenie 1–3 bunky | tvar (> 3 bunky) |
+|---|--:|--:|--:|
+| dnes (2× Chaikin) | 56 792 | 14,6 cm | 126,0 cm |
+| limitná krivka bez σ | 56 421 | 13,5 cm | 124,0 cm |
+| **limitná + σ 1 bunka** | **53 503** | **7,1 cm** | **124,8 cm** |
+| limitná + σ 2 bunky | 37 215 | 1,7 cm | 102,0 cm |
+| limitná + σ 3 bunky | 29 040 | 1,0 cm | 86,0 cm |
+
+Jedna bunka odreže polovicu vlnenia za 1 % tvaru a bodov je pritom o 6 % menej
+než dnes; dve bunky zrazia vlnenie na šestinu, ale vezmú aj **pätinu tvaru** –
+a to je presne tá chyba, ktorú spravilo okno 5×5 v auguste. Krok vzorkovania
+filtra je σ/3: pri kroku σ by vzorka padla na každý hrb vlnenia a to by sa
+neodrezalo, len **aliasovalo** na dlhšie vlny (z 3 m amplitúdy 0,7 m).
 
 **Pri max zoome nerozhoduje čiara, ale mriežka dlaždice.** Vektorová dlaždica
 má súradnice v celých číslach na mriežke `extent` (4096) a Planetiler ju meniť
