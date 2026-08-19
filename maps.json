@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-19T06:33:42Z",
+  "_updated_at": "2026-08-19T06:34:22Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -28,6 +28,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1dl-Q7I-PG1W6W_6o8im8YMIpD-vF8e40",
             "file": "bratislavsky.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1MdfmqD4ETKjvBa9dzkfc4ik_RtfT8sw9",
+                "file": "bratislavsky.aar",
+                "link": "https://drive.google.com/file/d/1MdfmqD4ETKjvBa9dzkfc4ik_RtfT8sw9/view",
+                "run": "148",
+                "size": 256416452,
+                "updated_at": "2026-08-19T06:34:22Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1dl-Q7I-PG1W6W_6o8im8YMIpD-vF8e40",
                 "file": "bratislavsky.zip",
@@ -46,6 +54,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1cVk-08PqQHNzu_RYbG2ur85RKmNfCc8h",
             "file": "bratislavsky-search.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1vs-S4ulHFxxtb3mfr6wZylwBcmHq70Cb",
+                "file": "bratislavsky-search.aar",
+                "link": "https://drive.google.com/file/d/1vs-S4ulHFxxtb3mfr6wZylwBcmHq70Cb/view",
+                "run": "148",
+                "size": 5118714,
+                "updated_at": "2026-08-19T06:34:22Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1cVk-08PqQHNzu_RYbG2ur85RKmNfCc8h",
                 "file": "bratislavsky-search.zip",
@@ -64,6 +80,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1ieR14Ryb4rFqr1A4oy5EtCBgqY7q4So3",
             "file": "bratislavsky-tienovanie.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1q5yLluE2KZ26Hp082ipmbjnj9s1r6nkO",
+                "file": "bratislavsky-tienovanie.aar",
+                "link": "https://drive.google.com/file/d/1q5yLluE2KZ26Hp082ipmbjnj9s1r6nkO/view",
+                "run": "148",
+                "size": 89162677,
+                "updated_at": "2026-08-19T06:34:22Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1ieR14Ryb4rFqr1A4oy5EtCBgqY7q4So3",
                 "file": "bratislavsky-tienovanie.zip",
@@ -82,6 +106,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1CUwWf7fL0WUlO7PuGzJwMyIIU3-USpQ_",
             "file": "bratislavsky-vrstevnice-skaly.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1bj_1f_R6X6kn8Yx75qgwhaP1Poa1Z_fm",
+                "file": "bratislavsky-vrstevnice-skaly.aar",
+                "link": "https://drive.google.com/file/d/1bj_1f_R6X6kn8Yx75qgwhaP1Poa1Z_fm/view",
+                "run": "148",
+                "size": 41279464,
+                "updated_at": "2026-08-19T06:34:22Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1CUwWf7fL0WUlO7PuGzJwMyIIU3-USpQ_",
                 "file": "bratislavsky-vrstevnice-skaly.zip",
@@ -140,7 +172,7 @@
           "trails": "tiles/bratislavsky-trails.pmtiles"
         },
         "trails_maxzoom": 14,
-        "updated_at": "2026-08-19T06:33:42Z"
+        "updated_at": "2026-08-19T06:34:22Z"
       },
       "bratislavsky_test4km2": {
         "area_bbox": [
