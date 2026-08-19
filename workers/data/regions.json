@@ -7,6 +7,14 @@
     "bbox": [-180, -85.05, 180, 85.05],
     "note": "Základná mapa sveta z vlastnej pipeline (world-map.yml). `osmfr` tu zámerne NIE JE: nestavia sa z regionálneho PBF, ale z pobrežných čiar OSM, Natural Earth a indexu Geofabriku (workers/world/sources.py). `admin_level: 2` znamená, že balík leží na Drive rovno v `svet/`, bez úrovne kraja."
   },
+  "svet_basic": {
+    "name": "Svet – basic",
+    "country": "svet_basic",
+    "osm_name": "World",
+    "admin_level": 2,
+    "bbox": [-180, -85.05, 180, 85.05],
+    "note": "Mapa sveta v podobe `basic` – iba hranice štátov a regióny sťahovania, bez vodstva a jazier (input `variant` vo world-map.yml, číselník workers/data/world-variants.json). VLASTNÝ KĽÚČ, nie prípona k `svet`, a je to pravidlo 2 z CLAUDE.md: meno je sľub o rozsahu, takže `basic` nesmie sadnúť na `svet.zip` ani na jeho uzol v `maps.json` – kto si podľa katalógu stiahne „mapu sveta“, nesmie dostať mapu bez morí. `country` je preto tiež `svet_basic`: balík leží vo vlastnom priečinku na Drive a v katalógu je vlastným koreňovým uzlom, vedľa `svet`."
+  },
   "slovensko": {
     "name": "Slovensko",
     "country": "slovensko",

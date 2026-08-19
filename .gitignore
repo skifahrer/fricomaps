@@ -1,3 +1,12 @@
 __pycache__/
 *.pyc
 steps-out/
+# Čo vznikne pri LOKÁLNOM behu workerov (na runneri je priečinok aj tak čistý).
+# Bez toho by `git add -A` po jednom behu mapy sveta pribalil megabajty dlaždíc.
+#
+# LOMKA NA ZAČIATKU JE TU PODSTATNÁ: `data/` bez nej znamená „hocijaký
+# priečinok data kdekoľvek" a zmizli by aj číselníky vo `workers/data/` –
+# teda `git status` čistý a `areas.json` mimo repozitára.
+/_site/
+/data/
+/planetiler.jar

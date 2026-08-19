@@ -645,9 +645,38 @@ chodenie (nie sú v nej cesty, sídla ani terén), je to **podklad pod výber
 `level` a `pbf`, teda odkaz, ktorý sa dá naozaj stiahnuť.
 
 ```
-<koreň>/svet/svet.zip     dlaždice, štýly (4 témy), glyfy, manifest
-<koreň>/svet/svet.aar     to isté ako Apple Archive (job na macOS)
+<koreň>/svet/svet.zip                dlaždice, štýly (4 témy), glyfy, manifest
+<koreň>/svet/svet.aar                to isté ako Apple Archive (job na macOS)
+<koreň>/svet_basic/svet_basic.zip    podoba `basic` – bez vodstva, ~3 MB
+<koreň>/svet_basic/svet_basic.aar
 ```
+
+**DVE PODOBY, a rozhoduje input `variant`** (číselník
+`workers/data/world-variants.json`): `plna` je celá mapa, `basic` z nej má iba
+**hranice štátov a regióny sťahovania** – teda to, čo drží tvar výberu – bez
+vodstva a jazier. Vodstvo je v tej mape to drahé (rastie ~3× na zoom), takže
+basic vyjde na jednotky MB proti desiatkam a zmestí sa do 15 MB aj na z8.
+
+**Podoba nie je druhá schéma, len výber vrstiev z tej istej.** `world.yml`
+ostáva jediný popis toho, čo sa z podkladov vyrába; `workers/world/variant.py`
+z neho vyberie vrstvy podoby a zloží schému, ktorú Planetiler naozaj dostane –
+a zo `sources:` orezanej schémy zároveň vypadne, ktoré podklady sa vôbec
+sťahujú (basic tak nesťahuje 60 MB vodných polygónov ani nepotrebuje GDAL).
+Štýl si z toho istého číselníka berie, ktoré vrstvy kresliť, a
+`workers/lint/world.py` porovnáva schému so štýlom pre KAŽDÚ podobu.
+
+**A `basic` má vlastný kľúč regiónu (`svet_basic`), nie príponu.** Meno je sľub
+o rozsahu (pravidlo 2), takže nesmie sadnúť na `svet.zip` ani na jeho uzol
+v `maps.json` – kto si podľa katalógu stiahne „mapu sveta", nesmie dostať mapu
+bez morí. Je to tá istá úvaha, akou má rýchly test v mene `test4km2`.
+
+**V tom balíku nie sú to drahé dlaždice, ale PÍSMO.** Jeden fontstack Noto Sans
+má 33 MB (celý unicode) a v balíku sú dva – do 15 MB by sa `basic` nezmestil
+ani prázdny. `workers/world/glyphs.py` preto nechá len tie rozsahy znakov,
+ktoré sú v menách na mape, a MERIA ich z podkladov (516 mien z Natural Earth sa
+vojde do jediného rozsahu 0–255 → 69 MB na stovky kB). Keď sa podklad nedá
+prečítať, NEOREŽE SA NIČ: väčší balík je lepší než prázdne štvorčeky namiesto
+mien.
 
 **Vlastná pipeline z tých istých troch dôvodov ako `Build wiki`**: iné dáta (nie
 regionálne PBF), iná životnosť (hranice štátov sa nemenia pri každej zmene
@@ -678,7 +707,10 @@ vrstevniciach).
 vrstvy mapy kraja a do `obsah.json` aj do `maps.json` napísal „bez_vrstevnic,
 bez_skal, bez_tienovania" – to znie ako mapa kraja s vypnutým terénom, a to
 táto mapa nie je. Musí byť **rovnaké v oboch jobov**: `.aar` položku katalógu
-prepisuje navrch, takže inou hodnotou by prebil to, čo napísal ZIP.
+prepisuje navrch, takže inou hodnotou by prebil to, čo napísal ZIP. Odkedy sú
+podoby dve, sa nepíše v `env:` workflowu, ale **skladá sa z vrstiev podoby**
+(`_nazvy` v číselníku) a chodí VÝSTUPOM jobu do oboch – dva prepisy tej istej
+hodnoty by sa raz rozišli a katalóg by tvrdil vrstvy, ktoré v mape nie sú.
 
 ## Než niečo pushneš
 
@@ -720,6 +752,7 @@ python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov c
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
 python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
+python3 workers/world/variant.py --list        # podoby mapy sveta
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
 python3 workers/lib/region-mask.py --poly=… --bbox=… --zoom=14  # čo padne mimo kraj
