@@ -28,6 +28,8 @@ import {
   DEFAULT_ICON_SOURCE,
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
+  TRAIL_MARK_DEFAULTS,
+  TRAIL_MARK_ZOOM,
   mapTypeDef
 } from "../../poc/web/themes.js";
 
@@ -119,7 +121,18 @@ for (const [id, def] of Object.entries(overrides.trails?.types || {})) {
   const parts = [];
   if (def.dash) parts.push(`čiara ${def.dash}`);
   if (def.icon != null) parts.push(`ikona ${def.icon || "žiadna"}`);
+  if (def.mark != null) parts.push(`značka ${def.mark || "žiadna"}`);
   summary.push(`  trasa ${id}: ${parts.join(" · ")}`);
+}
+const marks = Object.entries(overrides.trails?.marks || {});
+if (marks.length) {
+  summary.push(
+    `  značky trás (pri z${TRAIL_MARK_ZOOM}): ` +
+      marks.map(([k, v]) => `${k} ${v} (pôvodne ${TRAIL_MARK_DEFAULTS[k]})`).join(", ")
+  );
+}
+for (const [id, def] of Object.entries(overrides.shields || {})) {
+  summary.push(`  štítok ${id}: tvar ${def.shape}`);
 }
 
 // Úpravy, ktoré platia len pre jeden typ mapy. Všetko vyššie je spoločné –
@@ -160,6 +173,14 @@ const payload = {
   palette: overrides.palette,
   layers: overrides.layers,
   poi: overrides.poi,
+  // ZNAČENÉ TRASY A ŠTÍTKY CIEST. Kým tu neboli, developer mode ich vedel
+  // nastaviť aj uložiť, ale do repozitára z nich nedošlo NIČ – `payload` ich
+  // proste nevypisoval a `normalizeOverrides` pri ďalšom načítaní nemal čo
+  // čítať. Nespadlo pri tom nič: súbor bol platný, len v ňom odstup pásikov,
+  // vzor čiary, ikona ani značka nikdy neboli. Stráži to
+  // `workers/lint/overrides.mjs`.
+  trails: overrides.trails,
+  shields: overrides.shields,
   // Úpravy pre jednotlivé typy máp (turistická, lyžiarska, cestná, …).
   maps: overrides.maps
 };

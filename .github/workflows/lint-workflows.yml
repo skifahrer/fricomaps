@@ -548,13 +548,24 @@ jobs:
       - name: "Trasy: strana, odstup a atribúty držia spolu"
         run: node workers/lint/trails.mjs
 
+      # Turistická značka (biely či žltý štvorec s farebným pásom) je jediná
+      # vec v mape, ktorej MENO OBRÁZKA sa skladá až z dát: tags.py napíše tvar,
+      # podklad a farbu, štýl z nich `concat`-om zloží meno a marks.mjs ho musí
+      # mať v sprite. Keď sa tie tri rozídu, MapLibre neznámy obrázok TICHO
+      # preskočí a po trase nie je nič. Rozpis: `workers/lint/marks.mjs`.
+      - name: "Značky trás: tvar, dvojica farieb a meno obrázka sedia"
+        run: node workers/lint/marks.mjs
+
       # Developer mode zapisuje úpravy, ktoré potom pipeline zapečie do mapy –
       # a keď ich `normalizeOverrides` pri zápise do repozitára odmietne, je to
       # tiché: v prehliadači to platí, na Pages nie. Dve veci naraz (rozpis vo
       # `workers/lint/overrides.mjs`): nulová hrúbka čiary je zmiznutá vrstva,
       # nie vypnutá (šípka na prázdnom políčku ju vyrobila jedným ťuknutím),
       # a kopírovanie štýlu z vrstvy do vrstvy musí vyrobiť úpravu, ktorú
-      # normalizácia prijme celú – nie polovicu.
+      # normalizácia prijme celú – nie polovicu. K tomu tretia: čo developer
+      # mode nastaví, to sa musí aj ULOŽIŤ – `overrides.mjs` skladá súbor pre
+      # repozitár po kľúčoch a na `trails` raz zabudol, takže z nastavení trás
+      # do neho neprišlo nič.
       - name: "Úpravy štýlu prejdú normalizáciou celé"
         run: node workers/lint/overrides.mjs
 

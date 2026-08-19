@@ -8,6 +8,13 @@ Značené trasy z OSM: turistické chodníky, cyklotrasy, bežky, jazdecké tras
 trás nemá: v dlaždiciach je len cesta (`class=path`), takže z nej nijako
 nezistíš, či po nej vedie červená turistická, dve cyklotrasy, alebo nič.
 
+**Do dlaždíc ide aj ZNAČKA, nie len farba.** `osmc:symbol` je predpis toho,
+čo je namaľované na strome (biely alebo žltý štvorec s farebným pásom,
+trojuholník na vrchol, bicykel na cyklotrase) – rozoberá ho `tags.py` na
+trojicu `mark`, `mark_bg`, `mark_fg` a štýl z nej skladá meno obrázka
+v sprite. Farba pásika (`colour`) je iná otázka: tá hovorí, čím trasu
+NAKRESLIŤ, značka je obrázok tabuľky, ktorú má človek v teréne hľadať.
+
 **Jedna línia na dvojicu (cesta, trasa).** Po jednej ceste vedie bežne
 viac trás naraz (napr. červená aj modrá turistická + cyklotrasa). Preto sa
 každá cesta zapíše toľkokrát, koľko trás po nej vedie, a každá kópia dostane
@@ -75,11 +82,20 @@ import argparse
 import json
 import math
 import os
-import re
 import sys
 from collections import Counter, defaultdict, deque
 
 import osmium
+
+# Čo o trase hovoria jej TAGY (farba pásika, sieť, značka), je vo vedľajšom
+# `tags.py`: iná otázka než „kade trasa vedie", ktorú rieši tento súbor.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tags import (  # noqa: E402  (až za `sys.path`, inak sa modul nenájde)
+    TIER_ORDER,
+    resolve_colour,
+    resolve_mark,
+    resolve_tier,
+)
 
 # ---------------------------------------------------------------- druhy trás
 # Kľúč je hodnota `route` v relácii, hodnota je náš druh – štýl podľa neho
@@ -241,56 +257,6 @@ def ease_corners(coords, above_deg=EASE_ABOVE_DEG, max_turn_deg=MAX_TURN_DEG,
                          round(lat0 + y / my, 7)], x, y))
     return [ll for ll, _, _ in res], eased
 
-# ------------------------------------------------------------------- siete
-# `network` hovorí, aká je trasa dôležitá: i = medzinárodná, n = národná,
-# r = regionálna, l = miestna (iwn/nwn/rwn/lwn pre pešie, icn/… pre cyklo,
-# ihn/… pre jazdecké). Z toho je `tier`, ktorý riadi, od akého zoomu je
-# trasa v dlaždiciach – diaľkové trasy majú byť vidieť aj z prehľadu.
-TIER_BY_PREFIX = {"i": "international", "n": "national", "r": "regional", "l": "local"}
-TIER_ORDER = {"international": 0, "national": 1, "regional": 2, "local": 3}
-
-# Farby značiek, ktoré vie štýl prefarbiť cez paletu. Čokoľvek mimo tohto
-# zoznamu ide do mapy ako surový hex z OSM (atribút `hex`).
-NAMED_COLOURS = {
-    "black": (0x00, 0x00, 0x00),
-    "blue": (0x00, 0x00, 0xFF),
-    "brown": (0x96, 0x4B, 0x00),
-    "gray": (0x80, 0x80, 0x80),
-    "green": (0x00, 0x80, 0x00),
-    "orange": (0xFF, 0xA5, 0x00),
-    "purple": (0x80, 0x00, 0x80),
-    "red": (0xFF, 0x00, 0x00),
-    "white": (0xFF, 0xFF, 0xFF),
-    "yellow": (0xFF, 0xFF, 0x00),
-}
-COLOUR_ALIASES = {
-    "grey": "gray",
-    "silver": "gray",
-    "lightgray": "gray",
-    "lightgrey": "gray",
-    "darkgray": "gray",
-    "darkgrey": "gray",
-    "violet": "purple",
-    "magenta": "purple",
-    "pink": "purple",
-    "lightblue": "blue",
-    "darkblue": "blue",
-    "navy": "blue",
-    "cyan": "blue",
-    "lightgreen": "green",
-    "darkgreen": "green",
-    "lime": "green",
-    "olive": "green",
-    "gold": "yellow",
-    "beige": "yellow",
-    "maroon": "brown",
-    "tan": "brown",
-}
-# Ako ďaleko smie byť hex od pomenovanej farby, aby sa na ňu ešte zaokrúhlil.
-# 441 je maximum (čierna ↔ biela), 110 je „tá istá farba, iný odtieň“.
-COLOUR_SNAP = 110
-
-HEX_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 # Role členov, ktoré nie sú samotnou trasou (rozcestníky, značky, zastávky).
 SKIP_ROLES = {
@@ -300,78 +266,6 @@ SKIP_ROLES = {
 
 # Trasy, ktoré ešte neexistujú, do mapy nepatria.
 SKIP_STATES = {"proposed", "planned", "abandoned", "removed", "disused"}
-
-
-def parse_hex(value):
-    """`#a3b` / `a3b2c1` → (r, g, b); inak None."""
-    m = HEX_RE.match(value.strip())
-    if not m:
-        return None
-    h = m.group(1)
-    if len(h) == 3:
-        h = "".join(ch * 2 for ch in h)
-    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
-
-
-def resolve_colour(tags):
-    """
-    Farba značky ako (názov, hex).
-
-    Poradie zdrojov je zámerné: `osmc:symbol` je *predpis značky* a jeho
-    prvé pole je farba pásika na strome – to je presne to, čo je v teréne.
-    `colour` býva to isté, ale niekedy chýba alebo nesie farbu podkladu.
-    """
-    raw = ""
-    osmc = tags.get("osmc:symbol", "")
-    if osmc:
-        raw = osmc.split(":")[0].strip().lower()
-    if not raw:
-        raw = (tags.get("colour") or tags.get("color") or "").strip().lower()
-    if not raw:
-        return "", ""
-
-    if raw in NAMED_COLOURS:
-        return raw, ""
-    if raw in COLOUR_ALIASES:
-        return COLOUR_ALIASES[raw], ""
-
-    rgb = parse_hex(raw)
-    if rgb is None:
-        return "", ""
-
-    # Hex sa zaokrúhli na najbližšiu pomenovanú farbu, ale len keď je naozaj
-    # blízko – #e01b24 je červená, #ff69b4 už nie. Čo sa nezaokrúhli, ide do
-    # mapy tak, ako to je: štýl použije priamo tento hex.
-    name, dist = min(
-        ((n, sum((a - b) ** 2 for a, b in zip(rgb, ref)) ** 0.5)
-         for n, ref in NAMED_COLOURS.items()),
-        key=lambda x: x[1],
-    )
-    if dist <= COLOUR_SNAP:
-        return name, ""
-    return "", "#%02x%02x%02x" % rgb
-
-
-def resolve_tier(tags):
-    """Ako ďaleko je trasa vidieť: medzinárodná … miestna."""
-    network = (tags.get("network") or "").strip().lower()
-    base = network.split(":")[0]
-    if len(base) == 3 and base[0] in TIER_BY_PREFIX and base[1:] in (
-        "wn", "cn", "hn", "sn", "mn", "pn"
-    ):
-        return TIER_BY_PREFIX[base[0]], network
-
-    # Bez siete rozhoduje dĺžka – diaľková trasa má byť vidieť aj z prehľadu,
-    # aj keď ju nikto nezaradil do siete.
-    try:
-        km = float(re.sub(r"[^0-9.]", "", tags.get("distance", "")) or 0)
-    except ValueError:
-        km = 0
-    if km >= 150:
-        return "national", network
-    if km >= 50:
-        return "regional", network
-    return "local", network
 
 
 # --------------------------------------------------- smer čiar (reťazenie)
@@ -488,10 +382,17 @@ class Routes(osmium.SimpleHandler):
 
         colour, hexcolour = resolve_colour(tags)
         tier, network = resolve_tier(tags)
+        # Značka, ako je na strome – iná otázka než farba pásika: pásik
+        # hovorí, čím trasu kresliť, značka je obrázok tabuľky, ktorú má
+        # človek v teréne hľadať.
+        mark, mark_bg, mark_fg = resolve_mark(tags, route, colour)
         info = {
             "route": route,
             "colour": colour,
             "hex": hexcolour,
+            "mark": mark or "",
+            "mark_bg": mark_bg or "",
+            "mark_fg": mark_fg or "",
             "network": network,
             "tier": tier,
             "name": (tags.get("name:sk") or tags.get("name") or "").strip(),
@@ -522,6 +423,7 @@ class Ways(osmium.SimpleHandler):
         self.no_geometry = 0
         self.by_type = Counter()
         self.by_colour = Counter()
+        self.by_mark = Counter()
         self.by_tier = Counter()
         self.by_way_class = Counter()
         self.lanes = Counter()
@@ -575,6 +477,10 @@ class Ways(osmium.SimpleHandler):
             taken[side] += 1
             self.by_type[info["route"]] += 1
             self.by_colour[info["colour"] or "bez farby"] += 1
+            self.by_mark[
+                f'{info["mark_bg"]}-{info["mark_fg"]}-{info["mark"]}'
+                if info["mark"] else "bez značky"
+            ] += 1
             self.by_tier[info["tier"]] += 1
             if info["name"]:
                 self.named.add(info["rel"])
@@ -590,7 +496,8 @@ class Ways(osmium.SimpleHandler):
                 "cnt": len(lanes),
                 "rel": info["rel"],
             }
-            for key in ("colour", "hex", "network", "name", "ref"):
+            for key in ("colour", "hex", "network", "name", "ref",
+                        "mark", "mark_bg", "mark_fg"):
                 if info[key]:
                     props[key] = info[key]
             self.write(coords, props)
@@ -699,6 +606,9 @@ def main():
     order = sorted(ways.by_type.items(), key=lambda kv: -kv[1])
     print("  druhy:  " + ", ".join(f"{k} {v}" for k, v in order))
     print("  farby:  " + ", ".join(f"{k} {v}" for k, v in ways.by_colour.most_common()))
+    print("  značky: " + ", ".join(
+        f"{k} {v}" for k, v in ways.by_mark.most_common(8))
+        + "  (podklad-farba-tvar; „bez značky\" kreslí ikonku druhu trasy)")
     print("  siete:  " + ", ".join(f"{k} {v}" for k, v in ways.by_tier.most_common()))
     print("  vedú po: " + ", ".join(
         f"{k} {v}" for k, v in ways.by_way_class.most_common())
@@ -731,6 +641,10 @@ def main():
             # cez `.` (source) – bez úvodzoviek by to shell nezobral.
             fh.write('colours="' + ", ".join(
                 f"{k} {v}" for k, v in ways.by_colour.most_common()) + '"\n')
+            # Koľko úsekov dostalo naozajstnú značku (biely/žltý štvorec).
+            # Zvyšok sa kreslí ikonkou druhu trasy – z toho čísla je vidieť,
+            # či sa `osmc:symbol` v tomto kraji vôbec používa.
+            fh.write(f"marked={sum(v for k, v in ways.by_mark.items() if k != 'bez značky')}\n")
     return 0
 
 

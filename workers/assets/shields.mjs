@@ -20,8 +20,7 @@
  * Použitie:
  *   node workers/assets/shields.mjs --sprite=_site/sprites/osm-liberty
  */
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { decodePng, encodePng, packShelves } from "../lib/png.mjs";
+import { bakeIntoSprite } from "../lib/sprite-bake.mjs";
 import { SHIELD_SHAPES, renderShield } from "../../poc/web/shields.js";
 import { THEMES, SHIELD_DEFS } from "../../poc/web/themes.js";
 
@@ -32,6 +31,10 @@ import { THEMES, SHIELD_DEFS } from "../../poc/web/themes.js";
  * rovnako hrubé prstence (biely a za ním farebný) sa cez `icon-color`
  * a jedno `icon-halo` spraviť nedajú. Farba sa tým pečie pri builde, takže
  * každá kombinácia potrebuje vlastný obrázok. Sú to jednotky kB.
+ *
+ * TVAR JE V MENE, a nie je to výzdoba: developer mode ho vie prepnúť
+ * (`overrides.shields`), takže v sprite musia byť naraz VŠETKY tvary –
+ * prepnutie v prehliadači sprite neprebuildováva.
  */
 function stitky() {
   const out = [];
@@ -65,89 +68,25 @@ if (!spriteBase) {
   process.exit(2);
 }
 
-/** Doplní štítky do jednej varianty spritu (1× alebo @2×). */
-function addTo(suffix, pixelRatio) {
-  const jsonPath = `${spriteBase}${suffix}.json`;
-  const pngPath = `${spriteBase}${suffix}.png`;
-  if (!existsSync(jsonPath) || !existsSync(pngPath)) return false;
+const ok = bakeIntoSprite({
+  spriteBase,
+  co: "štítkov ciest",
+  mine: (name) => MENA.has(name),
+  make: (pixelRatio) =>
+    STITKY.map((st) => {
+      const img = renderShield(st.shape, st.colors, pixelRatio);
+      return {
+        name: st.name,
+        image: img,
+        // BEZ `sdf`: obrázok je už farebný. Rozťahovacie pásma naopak treba –
+        // na bežnom rastri fungujú správne a držia štítok obdĺžnikom aj pri
+        // dlhom čísle.
+        entry: { stretchX: img.stretchX, stretchY: img.stretchY, content: img.content }
+      };
+    })
+});
 
-  const index = JSON.parse(readFileSync(jsonPath, "utf8"));
-  const atlas = decodePng(readFileSync(pngPath));
-
-  // Existujúce obrázky sa z atlasu vyberú, aby sa dal preskladať aj s novými.
-  // Štítky, ktoré tam už sú (opakovaný beh nad spritom z cache), sa zahodia
-  // a nakreslia znova – inak by v atlase pribúdali kópie.
-  const boxes = [];
-  for (const [name, e] of Object.entries(index)) {
-    if (MENA.has(name)) continue;
-    const data = Buffer.alloc(e.width * e.height * 4);
-    for (let y = 0; y < e.height; y++) {
-      for (let x = 0; x < e.width; x++) {
-        const s = ((e.y + y) * atlas.width + e.x + x) * 4;
-        atlas.data.copy(data, (y * e.width + x) * 4, s, s + 4);
-      }
-    }
-    boxes.push({ name, width: e.width, height: e.height, data, entry: e });
-  }
-
-  for (const st of STITKY) {
-    const img = renderShield(st.shape, st.colors, pixelRatio);
-    boxes.push({
-      name: st.name,
-      width: img.width,
-      height: img.height,
-      data: Buffer.from(img.data.buffer, img.data.byteOffset, img.data.length),
-      // BEZ `sdf`: obrázok je už farebný. Rozťahovacie pásma naopak treba –
-      // na bežnom rastri fungujú správne a držia štítok obdĺžnikom aj pri
-      // dlhom čísle.
-      entry: {
-        pixelRatio,
-        stretchX: img.stretchX,
-        stretchY: img.stretchY,
-        content: img.content
-      }
-    });
-  }
-
-  const packed = packShelves(boxes, suffix ? 1024 : 512);
-  const out = Buffer.alloc(packed.width * packed.height * 4);
-  const outIndex = {};
-  for (const box of boxes) {
-    for (let y = 0; y < box.height; y++) {
-      box.data.copy(
-        out,
-        ((box.y + y) * packed.width + box.x) * 4,
-        y * box.width * 4,
-        (y + 1) * box.width * 4
-      );
-    }
-    outIndex[box.name] = {
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-      pixelRatio: box.entry.pixelRatio || 1,
-      ...(box.entry.sdf ? { sdf: true } : {}),
-      // Rozťahovacie pásma sa musia preniesť aj pri PRESKLADANÍ cudzieho
-      // obrázka: keby ich preskladanie stratilo, štítok by sa naťahoval celý
-      // aj s rohmi a nikto by nespadol.
-      ...(box.entry.stretchX ? { stretchX: box.entry.stretchX } : {}),
-      ...(box.entry.stretchY ? { stretchY: box.entry.stretchY } : {}),
-      ...(box.entry.content ? { content: box.entry.content } : {})
-    };
-  }
-
-  writeFileSync(pngPath, encodePng({ ...packed, data: out }));
-  writeFileSync(jsonPath, JSON.stringify(outIndex));
-  console.log(
-    `✓ ${jsonPath}: ${boxes.length} obrázkov (z toho ${STITKY.length} štítkov ciest), ` +
-      `atlas ${packed.width}×${packed.height}`
-  );
-  return true;
-}
-
-if (!addTo("", 1)) {
+if (!ok) {
   console.error(`::error::Sprite ${spriteBase}.json/.png neexistuje`);
   process.exit(1);
 }
-addTo("@2x", 2);

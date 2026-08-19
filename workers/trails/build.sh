@@ -42,7 +42,7 @@ python3 workers/trails/routes.py \
 # shellcheck disable=SC1091
 . steps-out/trail-stats.txt
 printf '%s\t%s\t%s\t%s\n' "55" "Značené trasy z OSM" "$(( $(date +%s) - T_F ))" \
-  "${routes:-0} trás, ${features:-0} úsekov, ${multi:-0} ciest s viac trasami" \
+  "${routes:-0} trás, ${features:-0} úsekov, ${multi:-0} ciest s viac trasami, ${marked:-0} so značkou" \
   >> steps-out/trails.tsv
 
 if [ "${features:-0}" -eq 0 ]; then
