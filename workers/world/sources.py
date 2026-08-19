@@ -431,15 +431,23 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--out", default="data/world",
                     help="kam pripravené podklady (default data/world)")
+    # ZOZNAM, nie jedna vrstva: podoba `basic` mapy sveta chce hranice, štáty
+    # a regióny sťahovania, ale NIE vodstvo – a ktoré to sú, vie
+    # `workers/world/variant.py` z toho, na čo sa vrstvy schémy odkazujú.
+    # Jedno meno ostáva platné, je to ten istý zápis o jednom prvku.
     ap.add_argument("--only", default="",
-                    help="len jedna vrstva: " + ", ".join(KROKY))
+                    help="len tieto vrstvy, oddelené čiarkou: " + ", ".join(KROKY))
     args = ap.parse_args()
 
-    kroky = [args.only] if args.only else list(KROKY)
+    kroky = ([k.strip() for k in args.only.split(",") if k.strip()]
+             if args.only else list(KROKY))
     for k in kroky:
         if k not in KROKY:
             raise SystemExit(f"::error::`--only={k}` nepoznám. Vrstvy sú: "
                              f"{', '.join(KROKY)}.")
+    if not kroky:
+        raise SystemExit("::error::`--only` nedostal ani jednu vrstvu. "
+                         f"Vrstvy sú: {', '.join(KROKY)}.")
 
     zdroje = os.path.join(args.out, "zdroje")
     os.makedirs(zdroje, exist_ok=True)
@@ -452,8 +460,9 @@ def main():
         f"na stiahnutie:")
     for i, k in enumerate(kroky, 1):
         log(f"  [{i}/{len(kroky)}] {ZDROJE[k]['popis']} (~{ZDROJE[k]['mb']:.0f} MB)")
-    log("Prevod vodných plôch (ogr2ogr) je z toho to najdlhšie – rátaj "
-        "s jednotkami minút.")
+    if "water" in kroky:
+        log("Prevod vodných plôch (ogr2ogr) je z toho to najdlhšie – rátaj "
+            "s jednotkami minút.")
 
     t_celkom = time.time()
     namerane = []

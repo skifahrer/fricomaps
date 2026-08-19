@@ -7,9 +7,18 @@ name: Mapa · Build svet
 #         svet.zip     celá mapa (dlaždice, štýly, glyfy, manifest)
 #         svet.aar     to isté ako Apple Archive – iOS a macOS ho rozbalia
 #                      systémovo, bez tretej knižnice v aplikácii
+#     <koreň>/svet_basic/
+#         svet_basic.zip   podoba `basic`: iba hranice štátov a regióny
+#         svet_basic.aar   sťahovania, bez vodstva a jazier
 #
 # …a zapíše sa do `maps.json` ako vlastný uzol `svet` (hlavný kľúč katalógu je
 # krajina; svet je nad nimi, tak je uzlom sám).
+#
+# DVE PODOBY, DVE MENÁ, DVA UZLY (input `variant`). `basic` NESMIE sadnúť na
+# `svet.zip` ani na jeho položku v katalógu – kto si podľa neho stiahne „mapu
+# sveta", nesmie dostať mapu bez morí. Meno je sľub o rozsahu (pravidlo 2
+# v CLAUDE.md), tak má vlastný kľúč regiónu; čo je v ktorej podobe, hovorí
+# `workers/data/world-variants.json`.
 #
 # PREČO VLASTNÁ PIPELINE A NIE JOB V BUILD MAP. Rovnaké tri dôvody, pre aké má
 # vlastnú pipeline aj Build wiki:
@@ -33,6 +42,24 @@ name: Mapa · Build svet
 on:
   workflow_dispatch:
     inputs:
+      # ČO Z TEJ MAPY POSTAVIŤ. `plna` je doterajšia mapa; `basic` je z nej iba
+      # to, čo drží tvar výberu – hranice štátov a regióny sťahovania, bez
+      # vodstva a jazier. Vodstvo je v tej mape to drahé (rastie ~3× na zoom),
+      # takže basic vyjde na jednotky MB proti desiatkam.
+      #
+      # Podoby sú v `workers/data/world-variants.json` a nie tu: to isté
+      # rozhodnutie potrebuje schéma pre Planetiler, štýl aj publikovanie,
+      # takže je na jednom mieste a formulár doň len ukazuje. Keď tam pribudne
+      # ďalšia, dopíš ju aj sem – zoznam v `choice` GitHub nevie prečítať zo
+      # súboru a `workers/lint/world.py` to porovná.
+      variant:
+        description: "Podoba mapy (basic = iba hranice štátov a regiónov, do 15 MB)"
+        required: false
+        default: "plna"
+        type: choice
+        options:
+          - "plna"
+          - "basic"
       maxzoom:
         description: "Do akého zoomu dlaždice (svet je podklad, nie mapa na chodenie)"
         required: false
@@ -45,9 +72,9 @@ on:
           - "7"
           - "8"
       limit_mb:
-        description: "Nad koľko MB dlaždíc varovať (vodstvo rastie ~3× na zoom)"
+        description: "Nad koľko MB dlaždíc varovať (auto = podľa podoby: plná 250, basic 15)"
         required: false
-        default: "250"
+        default: "auto"
         type: string
       rebuild:
         description: "Stiahnuť podklady odznova (obíde cache na Drive)"
@@ -79,17 +106,8 @@ env:
   DRIVE_CLIENT: ${{ vars.DRIVE_CLIENT }}
   DRIVE_SECRET: ${{ secrets.DRIVE_SECRET }}
   DRIVE_REFRESH: ${{ secrets.DRIVE_REFRESH }}
-  # Kľúč mapy sveta v `workers/data/regions.json`. Odtiaľ si build berie meno
-  # aj bbox a publikovanie priečinok na Drive – nie je to teda len meno súboru.
-  REGION_KEY: svet
   # Ten istý balík glyfov, aký sťahuje Build map (`workers/assets/glyphs.sh`).
   GLYPHS_ZIP: https://github.com/openmaptiles/fonts/releases/download/v2.0/noto-sans.zip
-  # Čo v tej mape je – ide to do `obsah.json` v balíku a do `layers`
-  # v `maps.json`. Bez toho by publikovanie hlásilo vrstvy mapy kraja
-  # („bez_vrstevnic, bez_skal, bez_tienovania"), ktoré tu nedávajú zmysel.
-  # MUSÍ byť rovnaké v oboch jobov: `.aar` položku katalógu prepisuje navrch
-  # a inou hodnotou by tú od ZIPu prebil.
-  MAP_LAYERS: hranice,vodstvo,jazera,regiony_stahovania
 
 jobs:
   world:
@@ -103,6 +121,12 @@ jobs:
       maxzoom: ${{ steps.build.outputs.maxzoom }}
       size_mb: ${{ steps.build.outputs.size_mb }}
       published: ${{ steps.publish.outcome }}
+      # KĽÚČ REGIÓNU A VRSTVY DO KATALÓGU VYPADNÚ Z PODOBY, takže ich pozná až
+      # build. Idú výstupom aj do jobu s `.aar`: ten prepisuje položku katalógu
+      # navrch, takže inou hodnotou by prebil to, čo napísal ZIP – a mapa by
+      # v katalógu tvrdila vrstvy, ktoré v nej nie sú.
+      region_key: ${{ steps.build.outputs.region_key }}
+      map_layers: ${{ steps.build.outputs.map_layers }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -126,13 +150,21 @@ jobs:
       # BEZ `restore-keys`, teda len PRESNÁ zhoda. V kľúči je týždeň, takže
       # sa podklady raz za týždeň stiahnu čerstvé; predpona by vrátila
       # najnovší starší záznam a tá čerstvosť by ticho prestala platiť.
+      # V KĽÚČI JE AJ PODOBA, a to nie je zbytočnosť: `basic` sťahuje tri
+      # podklady z piatich, takže by uložil NEÚPLNÝ záznam – a existujúci kľúč
+      # sa NEPREPISUJE, takže by plná mapa už do konca týždňa nemala ako
+      # zapísať vodstvo a sťahovala by 60 MB pri každom behu. Tiché, lebo
+      # build je zelený, len trvá dlhšie (to isté, čo raz spravila GitHubová
+      # cache – viď „Cache je na Drive" v CLAUDE.md).
       - name: Kľúč podkladov
         id: key
         env:
           HASH: ${{ hashFiles('workers/world/sources.py') }}
+          VARIANT: ${{ inputs.variant }}
         run: |
           set -euo pipefail
-          echo "key=world-src-v1-${HASH:0:12}-$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+          echo "key=world-src-v1-${VARIANT:-plna}-${HASH:0:12}-$(date -u +%G-W%V)" \
+            >> "$GITHUB_OUTPUT"
 
       - name: Cache podkladov (restore)
         if: ${{ !inputs.rebuild }}
@@ -144,6 +176,7 @@ jobs:
       - name: Postav mapu sveta
         id: build
         env:
+          OPT_VARIANT: ${{ inputs.variant }}
           OPT_MAXZOOM: ${{ inputs.maxzoom }}
           OPT_LIMIT_MB: ${{ inputs.limit_mb }}
         run: workers/world/build.sh
@@ -169,6 +202,8 @@ jobs:
           AREA_KEY: cely
           TEST_KM2: "0"
           TILES_MAXZOOM: ${{ steps.build.outputs.maxzoom }}
+          REGION_KEY: ${{ steps.build.outputs.region_key }}
+          MAP_LAYERS: ${{ steps.build.outputs.map_layers }}
         run: |
           set -euo pipefail
           python3 workers/deploy/publish-map.py --site=_site --maps=maps.json \
@@ -202,6 +237,8 @@ jobs:
           MAXZOOM: ${{ steps.build.outputs.maxzoom }}
           SIZE_MB: ${{ steps.build.outputs.size_mb }}
           NAME: ${{ steps.build.outputs.name }}
+          VARIANT: ${{ inputs.variant }}
+          LAYERS: ${{ steps.build.outputs.map_layers }}
         run: |
           set -uo pipefail
           {
@@ -210,13 +247,16 @@ jobs:
             echo "| | |"
             echo "|---|---|"
             echo "| mapa | ${NAME:-svet} |"
+            echo "| podoba | ${VARIANT:-plna} |"
+            echo "| vrstvy | ${LAYERS:-?} |"
             echo "| maxzoom | ${MAXZOOM:-?} |"
             echo "| dlaždice | ${SIZE_MB:-?} MB |"
             echo
-            echo "Vodstvo je z pobrežných čiar OpenStreetMap, hranice štátov"
-            echo "a jazerá z Natural Earth a regióny sťahovania z indexu"
-            echo "Geofabriku. Cesty, sídla ani terén v tejto mape nie sú –"
-            echo "je to podklad pod výber, ktorý kus mapy si stiahnuť."
+            echo "Hranice štátov sú z Natural Earth a regióny sťahovania"
+            echo "z indexu Geofabriku; v plnej podobe k tomu vodstvo"
+            echo "z pobrežných čiar OpenStreetMap a jazerá z Natural Earth."
+            echo "Cesty, sídla ani terén v tejto mape nie sú – je to podklad"
+            echo "pod výber, ktorý kus mapy si stiahnuť."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # ---------- Apple Archive ----------
@@ -249,6 +289,10 @@ jobs:
           AREA_KEY: cely
           TEST_KM2: "0"
           TILES_MAXZOOM: ${{ needs.world.outputs.maxzoom }}
+          # To isté, čo dostal ZIP – z výstupu prvého jobu, nie druhý raz
+          # napísané tu (položku katalógu prepisuje `.aar` navrch).
+          REGION_KEY: ${{ needs.world.outputs.region_key }}
+          MAP_LAYERS: ${{ needs.world.outputs.map_layers }}
           # Z ktorej vetvy si vypýtať čerstvý `maps.json` – ten predošlý job
           # doň práve zapísal a checkout má stav spred toho.
           BRANCH: ${{ github.ref_name }}

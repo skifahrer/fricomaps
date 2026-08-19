@@ -1965,6 +1965,43 @@ svet.pmtiles     water           moria a oceány z pobrežných čiar OSM + jaze
                  download_label  ich mená
 ```
 
+**Dve podoby, input `variant`.** `plna` je mapa vyššie; **`basic` má z nej iba
+`boundary`, `place`, `download` a `download_label`** – teda hranice štátov
+a regióny sťahovania s ich menami, bez vodstva a jazier. Vodstvo je v tej mape
+to drahé (rastie zhruba 3× na zoom), takže basic vyjde na jednotky MB proti
+desiatkam a **zmestí sa do 15 MB aj na z8**. Namerané (Planetiler; regióny
+sťahovania nahradené polygónmi štátov, lebo Geofabrik nebol z toho stroja
+dostupný):
+
+| | z4 | z6 | z8 |
+|---|---|---|---|
+| hranice + popisky | 0,2 MB | 0,5 MB | 1,1 MB |
+| regióny sťahovania | 0,9 MB | 2,5 MB | 6,4 MB |
+| **basic spolu** | **1,1 MB** | **3,0 MB** | **7,6 MB** |
+
+Celý balík `basic` na z6 vyšiel na **3,3 MB** vrátane štýlov a písma.
+
+**Podoba nie je druhá schéma.** `world.yml` ostáva jediný popis toho, čo sa
+vyrába; [`variant.py`](world/variant.py) z neho vyberie vrstvy podoby (číselník
+[`workers/data/world-variants.json`](data/world-variants.json)) a zloží schému,
+ktorú Planetiler dostane. Zo `sources:` tej orezanej schémy zároveň vypadne,
+ktoré podklady sa vôbec sťahujú – basic tak nesťahuje 60 MB vodných polygónov
+ani nepotrebuje GDAL. Štýl si z toho istého číselníka berie, ktoré vrstvy
+kresliť, a `workers/lint/world.py` porovnáva schému so štýlom pre každú podobu.
+
+**A pozor, v tom balíku nie sú to drahé dlaždice, ale PÍSMO.** Jeden fontstack
+Noto Sans má 33 MB (celý unicode) a v balíku sú dva – do 15 MB by sa basic
+nezmestil ani prázdny. [`glyphs.py`](world/glyphs.py) preto necháva len tie
+rozsahy znakov, ktoré sú v menách na mape, a MERIA ich z podkladov: všetkých
+516 mien z Natural Earth padne do jediného rozsahu 0–255, takže 69 MB písma
+spadne na 256 kB. Keď sa podklad nedá prečítať, neoreže sa nič – väčší balík je
+lepší než prázdne štvorčeky namiesto mien.
+
+**`basic` má vlastný kľúč regiónu `svet_basic`**, teda vlastný priečinok na
+Drive (`<koreň>/svet_basic/`) aj vlastný uzol v `maps.json`. Meno je sľub
+o rozsahu: kto si podľa katalógu stiahne „mapu sveta", nesmie dostať mapu bez
+morí – tá istá úvaha, akou má rýchly test v mene `test4km2`.
+
 Každý región v `download` nesie `id`, `name`, `parent`, `level`
 (svetadiel → štát → výsek) a **`pbf`, teda odkaz, ktorý sa dá naozaj
 stiahnuť**. Úrovne sa odkrývajú podľa zoomu (svetadiel od z0, štát od z2,
@@ -1988,7 +2025,9 @@ témy, glyfy a `manifest.json` – mapa sa teda otvorí aj bez siete.
 
 | súbor | čo robí |
 |---|---|
-| [`workers/world/sources.py`](world/sources.py) | stiahne štyri cudzie zdroje a spraví z nich podklady |
+| [`workers/world/sources.py`](world/sources.py) | stiahne cudzie zdroje (len tie, ktoré podoba potrebuje) a spraví z nich podklady |
+| [`workers/world/variant.py`](world/variant.py) | podoba: ktoré vrstvy, ktoré podklady, aké meno a strop |
+| [`workers/world/glyphs.py`](world/glyphs.py) | oreže písmo na rozsahy znakov, ktoré sú v menách na mape |
 | [`workers/world/world.yml`](world/world.yml) | schéma Planetilera – päť vrstiev a ich zoomy |
 | [`workers/world/style.mjs`](world/style.mjs) | štýl MapLibre (farby z `poc/web/themes.js`) |
 | [`workers/world/build.sh`](world/build.sh) | celý beh: podklady → dlaždice → štýly → manifest |

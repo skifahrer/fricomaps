@@ -6,27 +6,45 @@
 # Bokom od toho sa to takto dá spustiť lokálne a nie „pushni a pozri sa".
 #
 # ČO ROBÍ, V PORADÍ:
+#   0. podoba          `workers/world/variant.py` → schéma, zdroje, meno, strop
 #   1. nástroje (GDAL kvôli vodným plochám, Planetiler)
 #   2. podklady        `workers/world/sources.py` → data/world/
-#   3. dlaždice        Planetiler nad `workers/world/world.yml`
+#   3. dlaždice        Planetiler nad orezanou schémou z kroku 0
 #   4. glyfy a štýly   `workers/assets/glyphs.sh`, `workers/world/style.mjs`
 #   5. manifest        čo v tejto mape je – jediný súbor, z ktorého to appka
 #                      aj `workers/deploy/publish-map.py` zistia
 #
 # Hodnoty z prostredia (viď job „Mapa sveta" vo `world-map.yml`):
-#   REGION_KEY OPT_MAXZOOM OPT_LIMIT_MB GLYPHS_ZIP
-# Bbox a ľudské meno sa NEPODÁVAJÚ – sú v `workers/data/regions.json` a druhá
-# kópia by sa raz rozišla (pravidlo 1).
+#   OPT_VARIANT OPT_MAXZOOM OPT_LIMIT_MB GLYPHS_ZIP
+# Bbox, ľudské meno ANI KĽÚČ REGIÓNU sa nepodávajú: kľúč vyjde z podoby
+# (`plna` → `svet`, `basic` → `svet_basic`) a meno s bboxom z
+# `workers/data/regions.json`. Druhá kópia by sa raz rozišla (pravidlo 1).
 set -euo pipefail
 
 T_CELKOM=$(date +%s)
 mkdir -p _site/tiles _site/styles data/world steps-out
 
-REGION="$REGION_KEY"
+# ---------- 0. podoba ----------
+# ČO SA VLASTNE IDE STAVAŤ – a je to vidieť PRED prácou, nie podľa toho, čo
+# vypadne (pravidlo 4). Podoba rozhoduje o vrstvách, o tom, ktoré podklady sa
+# vôbec sťahujú, o mene balíka a o strope veľkosti; číselník je
+# `workers/data/world-variants.json`.
+VARIANT="${OPT_VARIANT:-plna}"
+# Obe vypadnú do `data/world/`, nie do koreňa repozitára: skript sa má dať
+# spustiť lokálne (CLAUDE.md, „Než niečo pushneš") a po takom behu nemajú
+# v `git status` pribudnúť súbory, ktoré tam nepatria.
+SCHEMA=data/world/schema.yml
+python3 workers/world/variant.py --variant="$VARIANT" \
+  --schema-out="$SCHEMA" --out=data/world/variant.json
+REGION=$(jq -r '.region' data/world/variant.json)
+SOURCES=$(jq -r '.sources | join(",")' data/world/variant.json)
+MAP_LAYERS=$(jq -r '.map_layers' data/world/variant.json)
+VARIANT_LIMIT=$(jq -r '.limit_mb' data/world/variant.json)
+GLYPHS_MODE=$(jq -r '.glyphs' data/world/variant.json)
 NAME=$(jq -r --arg r "$REGION" '.[$r].name // ""' workers/data/regions.json)
 BBOX=$(jq -r --arg r "$REGION" '.[$r].bbox // [] | join(",")' workers/data/regions.json)
 if [ -z "$NAME" ] || [ -z "$BBOX" ]; then
-  echo "::error::Región '$REGION' nie je vo workers/data/regions.json (alebo nemá meno a bbox). Mapa sveta má kľúč `svet` – iný sem nepatrí."
+  echo "::error::Región '$REGION' nie je vo workers/data/regions.json (alebo nemá meno a bbox). Kľúč si berie podoba z `workers/data/world-variants.json` – keď tam pribudla nová, dopíš jej región aj do regions.json."
   exit 1
 fi
 
@@ -41,16 +59,22 @@ if [ "$Z" -gt 8 ]; then
 fi
 if [ "$Z" -lt 3 ]; then Z=3; fi
 
-LIMIT_MB="$OPT_LIMIT_MB"
-case "$LIMIT_MB" in ''|*[!0-9]*) LIMIT_MB=250 ;; esac
+# `auto` = strop podľa podoby (plná 250 MB, basic 15 MB). Číslo vo formulári
+# ho prebije. Bez `auto` by basic dedil strop plnej mapy a 15 MB by nikto
+# nestrážil – rozpočet je pritom to, čo tú podobu vôbec definuje.
+LIMIT_MB="${OPT_LIMIT_MB:-auto}"
+case "$LIMIT_MB" in ''|auto) LIMIT_MB="$VARIANT_LIMIT" ;; esac
+case "$LIMIT_MB" in *[!0-9]*) LIMIT_MB="$VARIANT_LIMIT" ;; esac
 
-echo "Mapa sveta: $NAME ($BBOX), maxzoom $Z, strop veľkosti ${LIMIT_MB} MB"
+echo "Mapa sveta: $NAME ($BBOX), podoba $VARIANT, maxzoom $Z, strop veľkosti ${LIMIT_MB} MB"
 
 # ---------- 1. nástroje ----------
 # GDAL kvôli `ogr2ogr` – vodné plochy z OSM sú shapefile v EPSG:3857 a treba
 # ich premietnuť (rozpis vo `workers/world/sources.py`).
 T0=$(date +%s)
-if ! command -v ogr2ogr >/dev/null 2>&1; then
+# GDAL je tu KVÔLI VODE. Keď ju podoba nemá (basic), nemá sa čo inštalovať –
+# je to ~1 min a 200 MB za nástroj, ktorý v tom behu nikto nezavolá.
+if [ "${SOURCES#*water}" != "$SOURCES" ] && ! command -v ogr2ogr >/dev/null 2>&1; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq gdal-bin
 fi
@@ -61,8 +85,11 @@ echo "Nástroje hotové za $(( $(date +%s) - T0 )) s"
 # Sťahovanie z cudzích serverov a prevod. Skript si píše vlastný plán
 # s odhadom aj postup – hodina ticha v logu sa nedá odlíšiť od zaseknutia.
 T_SRC=$(date +%s)
-echo "::group::Podklady (vodstvo, hranice, štáty, jazerá, regióny sťahovania)"
-python3 workers/world/sources.py --out=data/world
+echo "::group::Podklady ($SOURCES)"
+# LEN TO, ČO SCHÉMA PODOBY NAOZAJ ČÍTA. Zoznam nie je napísaný tu, ale vyšiel
+# zo `sources:` orezanej schémy – pri `basic` tak odpadne 60 MB vodných
+# polygónov aj ich prevod, a nedá sa stať, že by sa zoznamy rozišli.
+python3 workers/world/sources.py --out=data/world --only="$SOURCES"
 echo "::endgroup::"
 echo "Podklady: $(du -sh data/world | cut -f1) za $(( $(date +%s) - T_SRC )) s"
 
@@ -72,7 +99,7 @@ echo "Podklady: $(du -sh data/world | cut -f1) za $(( $(date +%s) - T_SRC )) s"
 # v `workers/features/features.yml`), tak sa to tu porovná vopred.
 NAJVYSSI=$(python3 -c "
 import yaml
-d = yaml.safe_load(open('workers/world/world.yml'))
+d = yaml.safe_load(open('data/world/schema.yml'))
 print(max((f.get('min_zoom', 0) for l in d['layers'] for f in l['features']),
           default=0))
 ")
@@ -82,13 +109,13 @@ fi
 
 T_PM=$(date +%s)
 OUT="_site/tiles/${REGION}.pmtiles"
-echo "::group::Planetiler – mapa sveta, maxzoom $Z"
+echo "::group::Planetiler – mapa sveta ($VARIANT), maxzoom $Z"
 # `--simplify_tolerance` a `--min_feature_size` sa NECHÁVAJÚ NA PREDVOLENÝCH
 # HODNOTÁCH – naopak než pri vrstevniciach, kde sa vypínajú. Tam ide o presný
 # tvar terénu, tu o prehľad sveta: neusporiadané ostrovčeky veľkosti pixela
 # nikto neuvidí a zaplatí sa za ne miestom v balíku.
 java -Xmx4g -jar planetiler.jar generate-custom \
-  --schema=workers/world/world.yml \
+  --schema="$SCHEMA" \
   --output="$OUT" \
   --minzoom=0 --maxzoom="$Z" --render_maxzoom="$Z" \
   --force
@@ -97,7 +124,7 @@ echo "::endgroup::"
 MB=$(( $(stat -c%s "$OUT") / 1048576 ))
 echo "Dlaždice: $(du -h "$OUT" | cut -f1) (${MB} MB) za $(( $(date +%s) - T_PM )) s"
 if [ "$MB" -gt "$LIMIT_MB" ]; then
-  echo "::warning::Mapa sveta má ${MB} MB, čo je nad stropom ${LIMIT_MB} MB. Zníž maxzoom (teraz $Z) – vodstvo rastie zhruba 3× na úroveň – alebo zdvihni input `limit_mb`, ak je taký balík v poriadku."
+  echo "::warning::Dlaždice majú ${MB} MB, čo je nad stropom ${LIMIT_MB} MB podoby $VARIANT. Zníž maxzoom (teraz $Z) – vodstvo rastie zhruba 3× na úroveň – prepni na podobu `basic` (bez vodstva a jazier), alebo zdvihni input `limit_mb`, ak je taký balík v poriadku."
 fi
 
 # ---------- 4. glyfy a štýly ----------
@@ -112,7 +139,15 @@ workers/assets/glyphs.sh
 # viď `workers/world/style.mjs`), tak sa tretí nebalí. Mapa kraja si berie
 # všetky tri – tam kurzívu používajú vodné toky a geografické názvy.
 rm -rf "_site/fonts/Noto Sans Italic"
-node workers/world/style.mjs --out=_site/styles --region="$REGION" --maxzoom="$Z"
+# A PRI `basic` IDE PREČ AJ VÄČŠINA ZVYŠKU. V tomto balíku nie sú to drahé
+# dlaždice, ale PÍSMO: dva stacky sú 69 MB, kým dlaždice basicu jednotky MB –
+# do 15 MB by sa taká mapa nezmestila ani prázdna. Rozsahy sa MERAJÚ z mien
+# v podkladoch, nie hádajú (rozpis vo `workers/world/glyphs.py`).
+if [ "$GLYPHS_MODE" = 'podla_dat' ]; then
+  python3 workers/world/glyphs.py --fonts=_site/fonts --data=data/world
+fi
+node workers/world/style.mjs --out=_site/styles --region="$REGION" \
+  --variant="$VARIANT" --maxzoom="$Z"
 echo "Glyfy ($(du -sh _site/fonts 2>/dev/null | cut -f1)) a štýly za $(( $(date +%s) - T_A )) s"
 
 # ---------- 5. manifest ----------
@@ -134,12 +169,18 @@ jq -n \
   --arg name "$NAME" \
   --arg bbox "$BBOX" \
   --arg built "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg variant "$VARIANT" \
+  --arg layers "$MAP_LAYERS" \
   --argjson maxzoom "$Z" \
   --argjson size_mb "$MB" \
   --argjson styles "$STYLY" \
   '{
     default_region: $region,
     kind: "svet",
+    # Ktorá podoba – bez toho sa z rozbaleného balíka nedá zistiť, či v ňom
+    # more chýba preto, že je to `basic`, alebo preto, že sa build pokazil.
+    variant: $variant,
+    layers: ($layers | split(",") | map(select(length > 0))),
     built_at: $built,
     maxzoom: $maxzoom,
     glyphs: "fonts/{fontstack}/{range}.pbf",
@@ -161,6 +202,13 @@ cat _site/tiles/manifest.json
 echo "maxzoom=$Z" >> "$GITHUB_OUTPUT"
 echo "size_mb=$MB" >> "$GITHUB_OUTPUT"
 echo "name=$NAME" >> "$GITHUB_OUTPUT"
+# Kľúč regiónu a zoznam vrstiev do katalógu vypadli z podoby, takže ich pozná
+# len tento krok. Ide to VÝSTUPOM, nie druhým prepisom vo workflowe: to isté
+# potrebuje aj job, čo dobalí `.aar` (položku katalógu prepisuje navrch), a dve
+# miesta s tou istou hodnotou sa raz rozídu.
+echo "variant=$VARIANT" >> "$GITHUB_OUTPUT"
+echo "region_key=$REGION" >> "$GITHUB_OUTPUT"
+echo "map_layers=$MAP_LAYERS" >> "$GITHUB_OUTPUT"
 du -sh _site
 printf '%s\t%s\t%s\t%s\n' "10" "Mapa sveta" "$(( $(date +%s) - T_CELKOM ))" \
-  "maxzoom $Z, ${MB} MB" >> steps-out/world.tsv
+  "$VARIANT, maxzoom $Z, ${MB} MB" >> steps-out/world.tsv

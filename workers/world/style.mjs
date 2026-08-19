@@ -25,8 +25,9 @@
  *   node workers/world/style.mjs --out=_site/styles --maxzoom=6
  *   node workers/world/style.mjs --out=_site/styles --base-url=https://…/svet
  */
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { THEMES } from "../../poc/web/themes.js";
 
 const args = Object.fromEntries(
@@ -39,6 +40,25 @@ const args = Object.fromEntries(
 const outDir = args.out || "_site/styles";
 const region = args.region || "svet";
 const maxzoom = Number(args.maxzoom || 6);
+
+// PODOBA MAPY (`plna` / `basic`). Číselník je ten istý, z ktorého si build
+// skladá schému pre Planetiler – `workers/data/world-variants.json`. Štýl
+// z neho potrebuje jedinú vec: ktoré vrstvy schémy v tej podobe existujú.
+// Kresliť vrstvu, ktorá v dlaždiciach nie je, by MapLibre nezhodilo a nikto
+// by nepovedal nič (presne to stráži `workers/lint/world.py` pri menách).
+const _HERE = dirname(fileURLToPath(import.meta.url));
+const VARIANTY = JSON.parse(
+  readFileSync(join(_HERE, "..", "data", "world-variants.json"), "utf8")
+);
+const variant = args.variant || "plna";
+if (!VARIANTY[variant] || variant.startsWith("_")) {
+  console.error(
+    `::error::Podobu mapy sveta „${variant}" nepoznám. Sú: ` +
+      Object.keys(VARIANTY).filter((k) => !k.startsWith("_")).join(", ")
+  );
+  process.exit(1);
+}
+const VRSTVY = new Set(VARIANTY[variant].layers);
 // Prázdny `--base-url` = relatívne odkazy (balík na disku). S ním sa z nich
 // stanú absolútne (mapa hosťovaná na URL).
 const base = (args["base-url"] || "").replace(/\/$/, "");
@@ -220,15 +240,24 @@ function styl(temaId) {
     });
   }
 
+  // ČO PODOBA NEMÁ, SA NEKRESLÍ. Filtruje sa tu, na konci a podľa
+  // `source-layer`, a nie `if`-mi po celom súbore: pribudnúť môže vrstva
+  // aj podoba a takto sa nedá zabudnúť na jedno z tých dvoch miest.
+  // `background` zdroj nemá a ostáva vždy – je to farba pevniny.
+  const podla = layers.filter(
+    (l) => !l["source-layer"] || VRSTVY.has(l["source-layer"])
+  );
+
   return {
     version: 8,
     name: `FricoMaps svet – ${c.label}`,
     // Kto štýl otvorí, má vedieť, čo v tej mape je a čo v nej NIE JE.
     metadata: {
       "fricomaps:kind": "svet",
+      "fricomaps:variant": variant,
       "fricomaps:description":
-        "Základná mapa sveta: vodstvo, hranice štátov a regióny, na ktoré je "
-        + "OSM rozdelené na sťahovanie. Cesty, sídla ani terén v nej nie sú.",
+        `Základná mapa sveta (${VARIANTY[variant].label}). Cesty, sídla ani `
+        + "terén v nej nie sú – je to podklad pod výber, ktorý kus si stiahnuť.",
       "fricomaps:theme": temaId
     },
     glyphs,
@@ -241,7 +270,7 @@ function styl(temaId) {
         maxzoom
       }
     },
-    layers
+    layers: podla
   };
 }
 
@@ -252,6 +281,7 @@ for (const temaId of Object.keys(THEMES)) {
   writeFileSync(cesta, JSON.stringify(styl(temaId), null, 2) + "\n");
   napisane.push(cesta);
 }
-console.log(`Štýly mapy sveta (${napisane.length}): ${napisane.join(", ")}`);
+console.log(`Štýly mapy sveta – podoba ${variant} (${napisane.length}): `
+  + napisane.join(", "));
 console.log(`  dlaždice: pmtiles://${url(`tiles/${region}.pmtiles`)}`);
 console.log(`  glyfy:    ${glyphs}`);
