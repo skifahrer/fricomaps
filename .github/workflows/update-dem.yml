@@ -217,7 +217,7 @@ jobs:
               # vypísal, kam ísť ručne, zelene skončil – a build pokračoval do
               # jobu, ktorý si model vypýtal, a spadol tam (beh 31307163093).
               # Doplnenie, ktoré nedopĺňa, musí byť červené hneď.
-              echo "::error::DMR 5.0 sa cez „Dáta · výškové modely“ doplniť nedá (145 GB, runner má ~60 GB). Použi workflow „Dáta · DMR 5.0“: area: <pohorie> → dem-ugkk, alebo area: <bbox stupňov> s tiles: true → dem-dmr5. Build map si ju volá sám (joby „Doplniť DMR 5.0 …“)."
+              echo "::error::DMR 5.0 sa cez „Dáta · výškové modely“ doplniť nedá (145 GB, runner má ~60 GB). Použi workflow „Dáta · DMR 5.0“: area: <pohorie> → dem-ugkk, alebo area: <bbox stupňov> s tiles: true → dem-dmr5-v2. Build map si ju volá sám (joby „Doplniť DMR 5.0 …“)."
               exit 1 ;;
             vlastné|vlastne|custom)
               URL="$CUSTOM"; REL=dem-dmr35; LABEL="vlastné URL" ;;

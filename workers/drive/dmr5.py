@@ -183,6 +183,7 @@ raster = load("dmr5_raster", "dmr5-raster.py")   # Heartbeat, run_live, pomocní
 cut = load("dmr5_cut", "dmr5-cut.py")
 LOG, log, run = cut.LOG, cut.log, cut.run
 src_window, blocks, read_blocks = cut.src_window, cut.blocks, cut.read_blocks
+pyramid_level = cut.pyramid_level
 to_wgs84, country_tiles = cut.to_wgs84, cut.country_tiles
 SRC_EPSG = cut.SRC_EPSG
 
@@ -443,15 +444,16 @@ def stage_plan(args):
     cells = area_m2 / args.grid_m ** 2
 
     # ČO SA BUDE ČÍTAŤ, NIE ČO VYPADNE. Cena je počet pixelov, ktoré prídu
-    # z Drive, a tie nie sú bunky cieľa: `gdal_translate -ovr AUTO` siahne po
-    # najhrubšej pyramíde, ktorá je ešte jemnejšia než cieľ. Pri cieli 5 m to
-    # je úroveň 4 m, čiže (5/4)² = 1,6× viac pixelov, než má výstup – a to je
-    # presne ten rozdiel medzi „13 minút" a „21 minút na stupeň".
-    read_m = native_m
-    for o in info["bands"][0].get("overviews", []):
-        r = native_m * info["size"][0] / o["size"][0]
-        if read_m < r <= args.grid_m + 1e-9:
-            read_m = r
+    # z Drive, a tie nie sú bunky cieľa: číta sa z najhrubšej pyramídy, ktorá
+    # je ešte jemnejšia než cieľ. Pri cieli 5 m to je úroveň 4 m, čiže
+    # (5/4)² = 1,6× viac pixelov, než má výstup – a to je presne ten rozdiel
+    # medzi „13 minút" a „21 minút na stupeň".
+    #
+    # ODPOVEDÁ NA TO `cut.pyramid_level`, NIE TENTO RIADOK. Z tej istej úrovne
+    # totiž vyplýva aj POMER pixel/bunka, a ten rozhoduje, ktorým resamplingom
+    # sa smie čítať; kým to boli dve miesta, plán hovoril „4 m" a čítanie
+    # priemerovalo, akoby bol pomer poctivý (rozpis pri `cut.pyramid_level`).
+    ovr_level, read_m = pyramid_level(info, native_m, args.grid_m)
     src_px = area_m2 / read_m ** 2
 
     # Rýchlosť je meraná pri `--jobs=12`; pri inom počte vlákien sa škáluje,
@@ -467,8 +469,12 @@ def stage_plan(args):
           f"({km_x * km_y:.0f} km²) v EPSG:{SRC_EPSG}")
     print(f"  cieľová mriežka {args.grid_m:g} m → {cells / 1e6:.1f} mil. buniek")
     print(f"  číta sa z       {read_m:g} m "
-          + ("(plné rozlíšenie)" if read_m == native_m else "(pyramída)")
+          + ("(plné rozlíšenie)" if read_m == native_m else
+             f"(pyramída, úroveň {ovr_level})")
           + f" → {src_px / 1e6:.1f} mil. px")
+    # ČÍM sa to prevzorkuje, patrí do plánu rovnako ako to, z čoho: práve
+    # tento riadok je rozdiel medzi mriežkou v tieni a hladkým reliéfom.
+    print(f"  prevzorkovanie  {cut.read_args(args.grid_m, read_m, ovr_level)[1]}")
     print(f"  blokov          {len(parts)} ({nx}×{ny}), {args.jobs} naraz")
     print(f"  odhad           ~{est_min:.0f} min, ~{est_gb:.2f} GB z Drive")
     print("  výstup          " + (f"1° dlaždice do {args.out}/" if tiles_out
@@ -493,6 +499,11 @@ def stage_plan(args):
         "blocks": [list(p) for p in parts],
         "grid_m": args.grid_m,
         "native_m": native_m,
+        # Z ČOHO SA ČÍTA – vyrátané v pláne, použité vo fáze `read`. Fázy sú
+        # samostatné procesy, takže sa to musí preniesť; prepočítať to druhýkrát
+        # by znamenalo dve odpovede na jednu otázku.
+        "read_m": read_m,
+        "ovr_level": ovr_level,
         "tiles": tiles_out,
         "geoid": args.geoid,
         "asset": asset,
@@ -544,7 +555,7 @@ def stage_read(args, state):
     log(f"  {len(parts)} blokov, {args.jobs} naraz, cieľová mriežka "
         f"{state['grid_m']:g} m")
     read_blocks(src, parts, state["grid_m"], args.work, args.jobs, env,
-                state["native_m"])
+                state["native_m"], state.get("read_m"), state.get("ovr_level"))
     got, req = drive_totals(state, stats)
     log(f"Z Drive doteraz {got / 1e9:.2f} GB v {req:,} požiadavkách")
     save_state(args.work, state)
@@ -580,7 +591,7 @@ def stage_finish(args, state):
         # ďalej, aby sa pod menom dlaždice neuložil presah prevodu do WGS84
         # (rozpis pri `country_tiles`). `None` = celé Slovensko.
         country_tiles(parts, args.out, args.work, env, state["geoid"],
-                      window=state["bbox"])
+                      window=state["bbox"], grid_m=state["grid_m"])
         made = sorted(f for f in os.listdir(args.out) if f.endswith(".tif"))
         log(f"Hotovo: {len(made)} dlaždíc v {args.out}")
     else:

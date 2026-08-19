@@ -219,6 +219,26 @@ REBUILD = {
 # prázdny a pregenerovanie by ticho nič neurobilo).
 REBUILD_FLAGS = ("contours_rebuild", "rocks_rebuild", "terrain_rebuild")
 
+# ČO `rebuild` NEPREGENERUJE – a čím sa to teda prepíše.
+#
+# „Pregenerovať: vsetko" znie ako sľub o celom behu, ale `rebuild` je páka na
+# TRI vrstvy: zahodí ich cache aj uloženú verziu v sklade a spočíta ich nanovo.
+# Ostatné veci má beh pod kontrolou iným spôsobom a keď to nie je napísané,
+# vyzerá „vsetko" ako lož – človek čaká, že sa prepočíta aj výškový model,
+# a nevie, prečo mapa vyzerá rovnako. Preto sa to vypisuje, a preto sa pri
+# každej položke hovorí, čím sa TÁ vec vlastne obnoví.
+REBUILD_MIMO = [
+    ("výškový model (DEM)",
+     "z Drive sa číta raz a ostáva v sklade; jeho podobu nesie MENO SKLADU "
+     "(dnes `dem-dmr5-v2`), takže keď sa zmení pravidlo, ktorým vzniká, "
+     "zmení sa meno a `check-dem` si ho doplní sám"),
+    ("články z Wikipédie",
+     "vlastná pipeline `Mapa · Build wiki`, tam je na to `rebuild: clanky`"),
+    ("balíky na Drive (ZIP/AAR) a katalóg `maps.json`",
+     "prepisujú sa pri KAŽDOM behu, ktorý ich vyrobí (nahraj a až potom zmaž "
+     "starý); balík vrstvy, ktorú beh nevyrobil, sa zmaže"),
+]
+
 
 def dem_sources(path=None):
     """Zdroje z workers/data/dem-sources.json → {kľúč: celý zápis zdroja}.
@@ -496,6 +516,14 @@ def main():
               "sa tým prebíja)")
     elif args.rebuild != "nic":
         print(f"Pregenerovať: {args.rebuild}")
+    if test_on or args.rebuild != "nic":
+        # Rule 4: s čím beh ide, musí byť vidieť – vrátane toho, čo sa
+        # NEPREPOČÍTA. Bez tohto riadku „vsetko" sľubuje viac, než robí.
+        print("  prepočíta sa: "
+              + ", ".join(f.replace("_rebuild", "")
+                          for f in REBUILD_FLAGS if values[f] == "true"))
+        for co, ako in REBUILD_MIMO:
+            print(f"  NEprepočíta sa {co} – {ako}")
     print(f"\nVrstevnice: {contour_src}   Skaly: {rock_src}   "
           f"Tieňovanie: {shading_src}   Trasy: {values['trails']}   "
           f"Krajinné prvky: {values['features']}")

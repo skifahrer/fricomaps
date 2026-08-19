@@ -27,7 +27,7 @@ voľných ~60 GB, takže sa nemá kde ani rozbaliť, nieto zlepiť do mozaiky.
 Drive taký strop nie je, ale runner ostal ten istý.)
 
     kľúč výrezu (`area`)   ugkk-<vyrez>.tif v dem-ugkk    plné 1 m
-    bez výrezu (`cely`)    N49E019.tif … v dem-dmr5       prevzorkované na 5 m
+    bez výrezu (`cely`)    N49E019.tif … v dem-dmr5-v2    prevzorkované na 5 m
 
 ROZHODUJE KĽÚČ VÝREZU, NIČ INÉ. Vrstva sa nepýta – pýta sa len ten, kto
 volá: vrstevnice a skaly podávajú `AREA_KEY`, tieňovanie nie (robí sa na
@@ -44,7 +44,7 @@ Použitie:
 Výstup je `key=value` na stdout (rovnaký tvar ako GITHUB_OUTPUT):
 
     form=tiles | area
-    store=dem-dmr5
+    store=dem-dmr5-v2
     assets=N49E019.tif N49E020.tif      (prázdne = bbox nie je známy)
     mirror=dmr5:tiles:19,49,21,50       otlačok toho, čo treba doplniť
     degrees=19,49,21,50                 okno pre doplnenie, na celé stupne

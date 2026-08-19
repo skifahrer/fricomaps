@@ -319,9 +319,34 @@ Tie **dva joby** sú `mirror-dmr5-area` a `mirror-dmr5-tiles` – dve volania
 jedného workflowu, lebo DMR 5.0 má dve podoby a chýbať môžu naraz:
 
 ```
-výrez     ugkk-<kľúč>.tif  → dem-ugkk   plné 1 m   vrstevnice, skaly
-dlaždice  N49E020.tif      → dem-dmr5   5 m        tieňovanie (celý región)
+výrez     ugkk-<kľúč>.tif  → dem-ugkk      plné 1 m   vrstevnice, skaly
+dlaždice  N49E020.tif      → dem-dmr5-v2   5 m        tieňovanie (celý región)
 ```
+
+**Prevzorkúva sa RAZ a kernel vyberá `workers/lib/cell.py`.** Dlaždice sa
+čítajú zo 4 m pyramídy a robia sa z nich 5 m bunky – pomer 1,25. Pri tom
+pomere `-r average` nepriemeruje: GDAL berie celé zdrojové pixely z okna
+`[floor, ceil)`, takže každý štvrtý preskočí, a z toho rytmu spraví hillshade
+(derivácia výšky) pravidelnú svetlo-tmavú **mriežku**. Vrstevnice sa trasujú
+z toho istého modelu, takže boli zubaté s tým istým rastrom – a nepomohli na
+to opravy v `terrain/tiles.py`, lebo tie riešia, ako sa z modelu robia
+dlaždice, kým mriežka bola zapečená už v tom modeli. Namerané
+(`workers/dem/measure-resampling.py`, mriežka = stredná |Laplacián|
+tieňovania ×10⁻³ na hladkom teréne, kolísanie = rozptyl drsnosti na reálnom):
+
+| reťazec | mriežka | kolísanie |
+|---|--:|--:|
+| referencia (nič sa nepokazilo) | 25,5 | 9,1 % |
+| `average`@1,25 + `bilinear`@1:1 | 51,9 | 15,0 % |
+| `cubicspline`@1,25 + `cubicspline`@1:1 | 23,6 | 10,4 % |
+
+**Meno skladu nesie podobu, lebo meno súboru nesmie.** `N49E020.tif` je sľub
+o rozsahu (pravidlo 2) a ten sa meniť nedá, takže opravu nesie `-v2` v mene
+skladu – presne tak, ako ju pri tieňovaní nesie `-v4` v mene assetu. Bez toho
+by `check-dem` našiel staré dlaždice, usúdil „model máme" a mapa by ostala
+zrnitá pri zelenom builde. Cena je, že si prvý build nad každým regiónom
+prečíta DMR 5.0 z Drive znova (~20 min na stupeň); starý `dem-dmr5` na Drive
+ostáva, kým ho niekto nezmaže. Stráži to `workers/lint/dem-resampling.py`.
 
 Skaly z `dmr5` si DEM **nedopĺňajú vôbec**: `workers/contours-rocks/slope-chunks.py` číta
 z Drive rovno tie časti, ktoré územie pretína, a odkladá si ich do skladu.
@@ -838,6 +863,8 @@ python3 workers/dem/target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,
 python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
+python3 workers/lint/dem-resampling.py # kernel DEM vyberá lib/cell.py, nie autor riadku
+python3 workers/dem/measure-resampling.py  # čím prevzorkovať, aby v tieni nebola mriežka
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
@@ -876,7 +903,11 @@ odpoveď podpíše** (`workers/lint/dem-empty.py`), že **tieňovanie nestratí
 zvislú presnosť, ktorou stojí a padá** (`workers/lint/terrain.py` – výška
 zaokrúhlená na celé metre a `-r average` pri zväčšovaní DEM spravili
 z hillshadu, ktorý je derivácia výšky, pravidelnú tkaninu cez celú mapu; nič
-nespadlo), že **predfilter PBF pustí
+nespadlo), že **si resampling výškového modelu nikto nevyberá sám**
+(`workers/lint/dem-resampling.py` – tá istá mriežka o krok skôr, rovno
+v modeli: `-r average` pri pomere 4 m → 5 m, kde GDAL každú štvrtú zdrojovú
+bunku preskočí, takže vrstevnice aj tieňovanie ju majú zapečenú v dátach;
+spoznať sa to dalo len okom na hotovej mape), že **predfilter PBF pustí
 všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py` –
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej

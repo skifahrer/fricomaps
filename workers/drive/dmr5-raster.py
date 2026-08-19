@@ -80,6 +80,10 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _WORKERS = os.path.dirname(_HERE)          # workers/
 _DATA = os.path.join(_WORKERS, "data")     # číselníky (areas, regions, zdroje)
 
+# KTORÝM RESAMPLINGOM – jedna odpoveď pre celú pipeline, viď `lib/cell.py`.
+sys.path.insert(0, os.path.join(_WORKERS, "lib"))
+from cell import resampling  # noqa: E402
+
 
 def load(name, path):
     """workers/*.py sa kvôli pomlčke v mene nedajú `import`-núť normálne."""
@@ -182,8 +186,12 @@ def whole_country(vsi, grid_m, work, out_dir, log, expect=None):
         f"toto je tá dlhá časť.")
     if expect:
         log(f"  čakám ~{expect / 1e9:.0f} GB zo siete")
+    # Z 1 m na 5 m je pomer 5, teda hlboko nad `AVERAGE_RATIO` – priemer tu
+    # má čo priemerovať a je poctivý. Aj tak sa naň pýtame `lib/cell.py`:
+    # keby sa `--grid-m` raz priblížilo k mriežke zdroja, `average` by z nej
+    # spravil mriežku v tieňovaní a nikto by nespozoroval, kedy sa to zlomilo.
     run_live(["gdal_translate", "-tr", str(grid_m), str(grid_m),
-              "-r", "average", "-of", "GTiff",
+              "-r", resampling(grid_m, 1.0), "-of", "GTiff",
               "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
               "-co", "TILED=YES", "-co", "BIGTIFF=YES",
               "-co", "NUM_THREADS=ALL_CPUS", vsi, small],
@@ -237,13 +245,16 @@ def area_cut(vsi, bbox_wgs, grid_m, dest, work, log, info, expect=None):
     dx, dy = degrees_per_metre((bbox_wgs[1] + bbox_wgs[3]) / 2)
     log(f"Krok 2/2: prevod do WGS84 ({grid_m * dx:.7f}° × {grid_m * dy:.7f}°) "
         f"– už len z disku, rýchle.")
+    # Okno je už v cieľovej mriežke, mení sa len projekcia – pomer pixel/bunka
+    # je 1 a kernel vyberá `lib/cell.py` (rozpis pri `dmr5-cut.to_wgs84`).
     run_live(["gdalwarp", "-overwrite",
               "-t_srs", "EPSG:4326",
               "-te", *[repr(v) for v in bbox_wgs],
               "-tr", repr(grid_m * dx), repr(grid_m * dy),
-              "-r", "bilinear", "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
+              "-r", resampling(grid_m, grid_m),
+              "-multi", "-wo", "NUM_THREADS=ALL_CPUS",
               "-of", "COG", "-co", "COMPRESS=DEFLATE", "-co", "PREDICTOR=3",
-              "-co", "RESAMPLING=BILINEAR", "-co", "NUM_THREADS=ALL_CPUS",
+              "-co", "RESAMPLING=AVERAGE", "-co", "NUM_THREADS=ALL_CPUS",
               native, dest])
     os.remove(native)
     mb = os.path.getsize(dest) / 1048576

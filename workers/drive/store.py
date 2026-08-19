@@ -116,7 +116,20 @@ KNOWN = {
     "dem-sonny": "Výškový model – Sonny's LiDAR DTM (1°×1° dlaždice)",
     "dem-sonny1": "Výškový model – Sonny's LiDAR DTM 1″ (.hgt, krok výšky 1 m)",
     "dem-dmr35": "Výškový model – ÚGKK DMR 3.5 (otvorené dáta, 10 m)",
-    "dem-dmr5": "Výškový model – ÚGKK DMR 5.0, dlaždicová podoba (5 m)",
+    # `-v2` NIE JE KOZMETIKA. Dlaždice v `dem-dmr5` vznikli čítaním z 4 m
+    # pyramídy priemerom na 5 m (pomer 1,25) a majú v sebe zapečenú mriežku –
+    # bolo ju vidieť ako svetlo-tmavé políčka v tieňovaní a ako zubatosť
+    # vrstevníc s tým istým rastrom. Oprava je vo `workers/drive/dmr5-cut.py`,
+    # lenže meno súboru je `N49E020.tif` a to sa zmeniť nesmie (je to sľub
+    # o rozsahu, pravidlo 2). Podobu teda nesie MENO SKLADU – presne tak, ako
+    # ju pri tieňovaní nesie `-v4` v mene assetu. Bez toho by `check-dem`
+    # našiel staré dlaždice, povedal „model máme" a mapa by ostala zrnitá
+    # pri zelenom builde (pravidlo 8).
+    #
+    # Starý `dem-dmr5` na Drive OSTÁVA – nič ho nemaže. Keď sa `-v2` osvedčí,
+    # dá sa zmazať ručne (`store.py --prune`), je to zrkadlo a vyrobí sa znova.
+    "dem-dmr5": "Výškový model – ÚGKK DMR 5.0, dlaždicová podoba (5 m), pred opravou resamplingu",
+    "dem-dmr5-v2": "Výškový model – ÚGKK DMR 5.0, dlaždicová podoba (5 m)",
     "dem-ugkk": "Výškový model – ÚGKK DMR 5.0, výrez v plnom 1 m rozlíšení",
     "dem-terrain": "Výškové (terrarium) dlaždice pre tieňovanie a 3D terén",
     "dem-rocks": "Skalné plochy počítané zo sklonu výškového modelu",

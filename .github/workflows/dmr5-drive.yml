@@ -5,7 +5,7 @@ name: Dáta · DMR 5.0
 #
 #   area: <pohorie>       →  ugkk-<pohorie>.tif  →  sklad `dem-ugkk`
 #                            Build map: rock_source: dmr5 + rovnaké `rock_area`
-#   area: cele_slovensko  →  dlaždice N49E019.tif →  sklad `dem-dmr5`
+#   area: cele_slovensko  →  dlaždice N49E019.tif →  sklad `dem-dmr5-v2`
 #                            Build map: rock_source: dmr5 bez výrezu
 #
 # V Build map je to jedna voľba `dmr5` a podobu si vyberá podľa rozsahu:
@@ -14,7 +14,7 @@ name: Dáta · DMR 5.0
 #
 # TOTO JE TÁ PIPELINE, KTORÚ VOLÁ BUILD MAP. Volá ju DVAKRÁT, lebo DMR 5.0 má
 # dve podoby a chýbať môžu naraz (`mirror-dmr5-area` = výrez do `dem-ugkk`,
-# `mirror-dmr5-tiles` = 1° dlaždice do `dem-dmr5`). Sú to dva joby nad JEDNÝM
+# `mirror-dmr5-tiles` = 1° dlaždice do `dem-dmr5-v2`). Sú to dva joby nad JEDNÝM
 # workflowom, nie dve pipeline.
 #
 # SKLADY SÚ PRIEČINKY NA DRIVE, nie GitHub releasy – do releasov sa nepublikuje
@@ -57,7 +57,7 @@ on:
   workflow_dispatch:
     inputs:
       area:
-        description: "Územie. Pohorie ide do dem-ugkk, celé Slovensko do dem-dmr5"
+        description: "Územie. Pohorie ide do dem-ugkk, celé Slovensko do dem-dmr5-v2"
         required: true
         default: vysoke_tatry
         type: choice
@@ -108,11 +108,11 @@ on:
           - "len sonda – čo je v zdroji, nič sa nereže"
       # Podoba výstupu. Pri `cele_slovensko` je to dlaždice tak či tak; toto
       # je na to, aby sa dali doplniť dlaždice aj pre menšie územie – okno sa
-      # rozšíri na celé stupne a vypadnú `N49E020.tif` do `dem-dmr5`. Presne
+      # rozšíri na celé stupne a vypadnú `N49E020.tif` do `dem-dmr5-v2`. Presne
       # to si Build map dopĺňa pre tieňovanie, ktoré výrezovú podobu použiť
       # nevie (robí sa na celý región, kde 1 m verzia neexistuje).
       tiles:
-        description: "Vyrobiť 1° dlaždice do dem-dmr5 aj pre pohorie (inak je z pohoria jeden výrez)"
+        description: "Vyrobiť 1° dlaždice do dem-dmr5-v2 aj pre pohorie (inak je z pohoria jeden výrez)"
         required: false
         default: false
         type: boolean
@@ -166,7 +166,7 @@ on:
         default: ""
         type: string
       tiles:
-        # true = 1° dlaždice do dem-dmr5 (aj z výrezu – okno sa rozšíri na
+        # true = 1° dlaždice do dem-dmr5-v2 (aj z výrezu – okno sa rozšíri na
         # celé stupne). false = jeden COG ugkk-<area>.tif do dem-ugkk.
         required: false
         default: false
@@ -284,7 +284,7 @@ jobs:
           AREA='${{ inputs.area }}'
           # PODOBA. Dve sú a rozhoduje rozsah, nie druhý výber vo formulári:
           #
-          #   dlaždice  N49E019.tif … → dem-dmr5   celé Slovensko, alebo
+          #   dlaždice  N49E019.tif … → dem-dmr5-v2  celé Slovensko, alebo
           #                                        `tiles: true` na výrez
           #   výrez     ugkk-<area>.tif → dem-ugkk plné 1 m rozlíšenie
           #
@@ -296,10 +296,19 @@ jobs:
           if [ '${{ inputs.tiles }}' = 'true' ] || [ "$AREA" = cele_slovensko ]; then
             TILES=true
           fi
-          if [ "$TILES" = true ]; then
-            REL=dem-dmr5
-          else
-            REL=dem-ugkk
+          # DO KTORÉHO SKLADU – pýta sa to `workers/dem/target.py`, teda toho
+          # istého, koho sa pýta `check-dem` aj `workers/dem/fetch.sh`. Kým tu
+          # stáli mená natvrdo, boli to dve odpovede na jednu otázku: `dem-dmr5`
+          # sa pri oprave resamplingu premenoval na `dem-dmr5-v2` (staré
+          # dlaždice majú mriežku zapečenú v sebe) a tento riadok by ticho
+          # napĺňal sklad, do ktorého sa už nikto nepozerá.
+          KEY=cely
+          [ "$TILES" = true ] || KEY="$AREA"
+          REL=$(python3 workers/dem/target.py --source=dmr5 --area-key="$KEY" \
+                | sed -n 's/^store=//p')
+          if [ -z "$REL" ]; then
+            echo "::error::workers/dem/target.py nepovedal, do ktorého skladu sa má DMR 5.0 uložiť. Bez toho by beh hodinu čítal z Drive a nemal to kam dať."
+            exit 1
           fi
           SRC=dmr5
 

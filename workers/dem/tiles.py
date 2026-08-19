@@ -56,6 +56,13 @@ import os
 import subprocess
 import sys
 
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_WORKERS = os.path.dirname(_HERE)
+# KTORÝM RESAMPLINGOM sa nerozhoduje tu – je to tá istá otázka, akú si kladie
+# tieňovanie aj čítanie DMR 5.0 z Drive, a odpovedá na ňu `workers/lib/cell.py`.
+sys.path.insert(0, os.path.join(_WORKERS, "lib"))
+from cell import M_PER_DEG_LAT, resampling  # noqa: E402
+
 
 # GDAL_PAM_ENABLED=NO: bez neho si `gdalinfo -stats` odkladá štatistiky do
 # súborov .aux.xml, ktoré by sa potom viezli do releasu ako smetie.
@@ -306,10 +313,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("src", nargs="+", help="vstupné rastre")
     ap.add_argument("--out", required=True)
-    # bilineárne, nie kubicky: pri prakticky rovnakej mierke je to rovnako
-    # dobré a na okrajoch dát ani pri dierach nič „neprestrelí" mimo rozsah
-    # skutočných výšok.
-    ap.add_argument("--resampling", default="bilinear")
+    # Prázdne = nech rozhodne pomer pixel/bunka (`lib/cell.py`). Natvrdo tu
+    # bolo `bilinear` s odôvodnením „pri prakticky rovnakej mierke je to
+    # rovnako dobré" – a práve pri rovnakej mierke to dobré NIE JE: dvojbodová
+    # interpolácia filtruje podľa toho, kam medzi zdrojové bunky cieľová padne,
+    # a tá fáza sa naprieč rastrom plynule posúva. Striedavo teda nechá plný
+    # detail a striedavo ho spriemeruje, čo je v tieňovaní vidieť ako pruhy.
+    ap.add_argument("--resampling", default="",
+                    help="natvrdo zvolený resampling; prázdne = podľa pomeru "
+                         "pixel/bunka (workers/lib/cell.py)")
     ap.add_argument("--window", default="",
                     help="W,S,E,N – okno, ktoré volajúci NAOZAJ prečítal. "
                          "Stupeň, ktorý doň nepadne celý, sa neuloží; stupeň "
@@ -379,6 +391,26 @@ def main():
             print("::warning::Rozsah výšok nevyzerá ako metre nad morom – "
                   "skontroluj jednotky zdroja (decimetre? stopy?).")
 
+    # `near` pri zhodnej mriežke je ZÁMER a nie lenivosť: zdroj aj cieľ sú
+    # v stupňoch s tým istým krokom, takže je to čisté posunutie o zlomok
+    # pixela – nefiltruje sa nič a nestratí sa nič.
+    #
+    # Pri metrickom zdroji sa mení projekcia, ale NIE MIERKA: cieľová mriežka
+    # (`-tr dlon dlat`) je práve tá istá bunka prepočítaná na stupne. Pomer
+    # pixel/bunka je teda 1 a `lib/cell.py` z neho vyberá kernel rovnako, ako
+    # ho vyberá tieňovanie – natvrdo tu bolo `bilinear`, teda dvojbodová
+    # interpolácia, ktorej sila závisí od toho, kam medzi zdrojové bunky
+    # cieľová padne. Tá fáza sa naprieč rastrom plynule posúva, takže striedavo
+    # nechá plný detail a striedavo ho spriemeruje – a v tieňovaní je z toho
+    # pruhovanie.
+    bunka_m = dlat * M_PER_DEG_LAT
+    how = args.resampling or resampling(bunka_m, bunka_m)
+    if not same_grid:
+        print(f"Prevzorkovanie do WGS84: `{how}`"
+              + (" (zvolené natvrdo)" if args.resampling else
+                 f" – bunka {bunka_m:.1f} m sa nemení, mení sa projekcia, "
+                 f"takže sa musí filtrovať rovnako všade"))
+
     os.makedirs(args.out, exist_ok=True)
     made = []
     empty = []
@@ -398,7 +430,7 @@ def main():
             "gdalwarp", "-q", "-overwrite", "-t_srs", "EPSG:4326",
             "-te", str(lon), str(lat), str(lon + 1), str(lat + 1),
             "-tr", repr(dlon), repr(dlat),
-            "-r", "near" if same_grid else args.resampling,
+            "-r", "near" if same_grid else how,
             "-co", "COMPRESS=DEFLATE", "-co", f"PREDICTOR={predictor}",
             "-co", "TILED=YES", "-multi",
         ]

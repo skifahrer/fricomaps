@@ -50,7 +50,14 @@ REBUILD="${TERRAIN_REBUILD:-false}"
 # (strop veľkosti ho môže zraziť), takže sa meno skladá funkciou a volá sa
 # dvakrát: raz s tým želaným, keď sa hľadá v sklade, a raz s vyrobeným,
 # keď sa nahráva.
-asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}-v4.pmtiles"; }
+# PODOBA KÓDOVANIA JE TU RAZ. Kým bola napísaná dvakrát – `-v4` v `asset_name`
+# a `-v3` v `sed`-e, ktorý sklad prehľadáva – hľadalo sa v sklade niečo iné, než
+# sa doň ukladalo: uložené `…-v4.pmtiles` sa nenašli NIKDY a tieňovanie sa pri
+# každom behu počítalo odznova (a keď v sklade ostala stará `-v3`, vytiahol sa
+# z nej zoom a stiahnuť sa skúsil súbor, ktorý neexistuje). Nič nespadlo, len
+# to trvalo – pravidlo 8 v čistej podobe.
+ENC_VER=v4
+asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}-${ENC_VER}.pmtiles"; }
 
 # Hotové = leží tu hotový archív. Kým to bol strom PNG, stačilo „priečinok
 # nie je prázdny" – lenže polovica stromu je tiež neprázdny priečinok.
@@ -71,7 +78,7 @@ else
   # jemnejšie dlaždice, než sa žiadalo, a stránka by sa nemusela zmestiť).
   HAVE_Z=$(python3 workers/drive/store.py --names --store="$TERRAIN_STORE" \
       2>/dev/null \
-    | sed -n "s/^terrain-${REGION_KEY}-${TDEM}-z\([0-9]\+\)-v3\.pmtiles$/\1/p" \
+    | sed -n "s/^terrain-${REGION_KEY}-${TDEM}-z\([0-9]\+\)-${ENC_VER}\.pmtiles$/\1/p" \
     | awk -v want="$TZ" '$1 <= want' | sort -n | tail -1)
   if [ -n "$HAVE_Z" ] && python3 workers/drive/store.py --get \
        --store="$TERRAIN_STORE" --name="$(asset_name "$HAVE_Z")" --dir=/tmp; then

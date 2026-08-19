@@ -71,7 +71,7 @@ SRC_LABEL=$(get label)
 # dvakrát:
 #
 #   výrez (`area`)   ugkk-<vyrez>.tif v sklade dem-ugkk, plné 1 m rozlíšenie
-#   celý región      dlaždice N49E019.tif v dem-dmr5, prevzorkované na 5 m
+#   celý región      dlaždice N49E019.tif v dem-dmr5-v2, prevzorkované na 5 m
 #
 # Dôvod je veľkosť: pri 1 m má jedna 1°×1° dlaždica ~48 GB a runner má
 # voľných ~60 GB. Celý región v metri sa teda nemá kde ani rozbaliť – a keďže

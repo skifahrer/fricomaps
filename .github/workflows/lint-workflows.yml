@@ -601,6 +601,18 @@ jobs:
       - name: Tieňovanie nestráca presnosť, ktorou stojí a padá
         run: python3 workers/lint/terrain.py
 
+      # A to isté o jeden krok skôr, v samotnom MODELI. Tieňovanie sa opravilo
+      # dvakrát a mriežka v mape ostala – lebo nevznikala pri robení dlaždíc,
+      # ale už pri čítaní DMR 5.0 z Drive: zo 4 m pyramídy na 5 m bunky
+      # príkazom `-r average`, teda pri pomere 1,25, kde GDAL každú štvrtú
+      # zdrojovú bunku preskočí. Vrstevnice sa trasujú z toho istého modelu,
+      # takže boli zubaté s tým istým rastrom. Nič nespadlo a spoznať sa to
+      # dalo len okom na hotovej mape, po hodinách čítania z Drive.
+      # Rozpis: `workers/lint/dem-resampling.py`, čísla:
+      # `workers/dem/measure-resampling.py`.
+      - name: "Výškový model: resampling si nikto nevyberá sám"
+        run: python3 workers/lint/dem-resampling.py
+
       # Vrstevnice boli „vyhladené, ale v pravidelných intervaloch zubaté":
       # dva prechody Chaikina z rohu spravia menší roh, nie oblúk, a keďže
       # rohy ostanú tam, kde ich nechal Douglas–Peucker, sú tie zvyšky

@@ -168,14 +168,32 @@ def main():
     # ---------- 4. podoba kódovania: sklad aj cache ----------
     build = open(BUILD).read()
     keys = open(KEYS).read()
-    v_asset = set(re.findall(r"terrain-\$\{REGION_KEY\}-\$\{TDEM\}-"
-                             r"z[^-\s]*-v(\d+)\\?\.pmtiles", build))
+    # Verzia je v `build.sh` premenná (`ENC_VER`) a NIE napísané číslo. Kým
+    # napísaná bola, boli z nej dve: `asset_name` skladalo `-v4` a `sed`, ktorý
+    # sklad prehľadáva, hľadal `-v3`. Uložené dlaždice sa teda nenašli nikdy
+    # a tieňovanie sa počítalo v každom behu odznova – zelené a pomalé. Preto
+    # sa kontroluje oboje: že premenná je, a že vedľa nej nezostalo napísané
+    # číslo verzie, ktoré by sa od nej mohlo odchýliť.
+    v_asset = set(re.findall(r"^ENC_VER=v(\d+)\s*$", build, re.M))
+    # Komentáre sa vyhadzujú – tie o verzii HOVORIA a majú ju smieť menovať;
+    # zakázané je len napísať ju do kódu, ktorý meno naozaj skladá.
+    kod = "\n".join(r for r in build.splitlines()
+                    if not r.lstrip().startswith("#"))
+    napisane = set(re.findall(r"-v(\d+)\\?\.pmtiles", kod))
     v_cache = set(re.findall(r'echo "terrain=terrain-v(\d+)-', keys))
     if len(v_asset) != 1:
-        bad.append(f"Vo `workers/terrain/build.sh` sa nedá prečítať jedna "
-                   f"verzia kódovania z mena assetu (našlo sa {sorted(v_asset)}). "
-                   f"Meno sa skladá aj pri hľadaní v sklade aj pri ukladaní – "
-                   f"obe musia hovoriť to isté.")
+        bad.append(f"Vo `workers/terrain/build.sh` sa nedá prečítať `ENC_VER=v<číslo>` "
+                   f"(našlo sa {sorted(v_asset)}). Podoba kódovania musí byť "
+                   f"premenná na JEDNOM mieste – meno assetu sa skladá aj pri "
+                   f"hľadaní v sklade, aj pri ukladaní, a obe musia hovoriť "
+                   f"to isté.")
+    elif napisane:
+        bad.append(f"Vo `workers/terrain/build.sh` je verzia kódovania napísaná "
+                   f"číslom ({sorted('v' + v for v in napisane)}) popri `ENC_VER`. "
+                   f"Práve tak sa rozišli `-v4` v mene assetu a `-v3` v `sed`-e, "
+                   f"ktorý sklad prehľadáva: uložené dlaždice sa nenašli nikdy "
+                   f"a tieňovanie sa počítalo v každom behu znova. Použi "
+                   f"`${{ENC_VER}}`.")
     elif not v_cache:
         bad.append("V `workers/plan/cache-keys.sh` nie je verzia v kľúči "
                    "`terrain=` – bez nej vráti cache staré dlaždice.")
