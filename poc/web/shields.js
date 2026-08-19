@@ -53,8 +53,15 @@ export const SHIELD_PAD = 1;
  * a sú ROVNAKO HRUBÉ: vnútri farebné pole s číslom, okolo neho biely
  * prstenec a úplne navrchu ešte jeden vo farbe poľa – tak, ako to má
  * úradná značka D1/R1.
+ *
+ * POZOR NA VZŤAH K POLOMERU. Pásma vznikajú ODSADENÍM vonkajšieho tvaru
+ * dovnútra a pri odsadení sa polomer zaoblenia ZMENŠUJE o to isté – takže
+ * vnútorné pole má polomer `shape.radius - 2 * SHIELD_RING`. Keď to vyjde
+ * nula alebo menej, vnútorné pole má OSTRÉ rohy, hoci vonkajší tvar je
+ * zaoblený; presne to sa raz stalo (prstenec 2, polomer 3 → vnútro −1).
+ * Stráži to `workers/lint/shields.mjs`.
  */
-export const SHIELD_RING = 2;
+export const SHIELD_RING = 1.5;
 
 /** Vnútorné pole s číslom (štvorec). Prstence sa pridávajú okolo neho. */
 export const SHIELD_BOX = 18;
@@ -77,7 +84,10 @@ const SDF_CUTOFF = 0.25;
 //
 // 8 % z 18 px = 1,44 px; 1,5 je najbližšie, čo má na mriežke zmysel.
 export const SHIELD_SHAPES = [
-  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 3 },
+  // 4,5 nie je od oka: `4,5 − 2 × 1,5 = 1,5`, takže zaoblené je aj vnútorné
+  // pole (prostredný prstenec má 3). Menší vonkajší polomer by vnútro
+  // zahrotil – viď rozpis pri `SHIELD_RING`.
+  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 4.5 },
   { id: "shield-round", label: "Štítok – oválny", radius: 8 }
 ];
 
