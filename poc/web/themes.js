@@ -261,6 +261,7 @@ export const THEMES = {
     roadConstruction: "#e0c078",
     roadProposed: "#b0a48c",
     shieldMotorway: "#ba1e10",
+    shieldEuro: "#008c27",
     shieldPrimary: "#1f5aa6",
     shieldSecondary: "#ffffff",
     shieldText: "#ffffff",
@@ -389,6 +390,7 @@ export const THEMES = {
     roadConstruction: "#6a5628",
     roadProposed: "#585044",
     shieldMotorway: "#d63a2a",
+    shieldEuro: "#1fa544",
     shieldPrimary: "#3a6fb5",
     shieldSecondary: "#e9e9f2",
     shieldText: "#f2f2f8",
@@ -516,6 +518,7 @@ export const THEMES = {
     roadConstruction: "#d8a848",
     roadProposed: "#a89878",
     shieldMotorway: "#b31d10",
+    shieldEuro: "#00821f",
     shieldPrimary: "#1a56a0",
     shieldSecondary: "#fffaf0",
     shieldText: "#fffaf0",
@@ -642,6 +645,7 @@ export const THEMES = {
     roadConstruction: "#dcb87c",
     roadProposed: "#b4a488",
     shieldMotorway: "#a83428",
+    shieldEuro: "#3f7a48",
     shieldPrimary: "#4a6fa0",
     shieldSecondary: "#fffdf8",
     shieldText: "#fffdf8",
@@ -784,6 +788,7 @@ export const PALETTE_GROUPS = [
       // je zelená SMEROVÁ TABUĽA, ale ČÍSLO cesty sa píše do červeného štítka.
       // Na mape je vidieť štítok.
       ["shieldMotorway", "Štítok D a R"],
+      ["shieldEuro", "Štítok E-cesty (E75)"],
       ["shieldPrimary", "Štítok cesty I. triedy"],
       ["shieldSecondary", "Štítok cesty II./III. triedy"],
       ["shieldText", "Číslo na farebnom štítku"],
@@ -2242,13 +2247,42 @@ export const ROAD_PASSES = ["-tunnel", "", "-bridge"];
 // Práve kvôli tomu poslednému má každý riadok vlastnú farbu čísla aj rámika:
 // jedno spoločné biele číslo by na bielom štítku zmizlo a biely rámik okolo
 // bieleho štítka by ho na svetlej mape nechal splynúť s podkladom.
+/**
+ * Sieť európskych ciest v dlaždiciach – hodnota `route_*_network`.
+ *
+ * ODKIAĽ SA BERIE ČÍSLO. `ref` na ceste je číslo NÁRODNÉ („D2"); európske
+ * („E 65") visí na RELÁCII a OpenMapTiles ho dáva do párov
+ * `route_1_network`/`route_1_ref` … `route_6_*`. Poradie nie je zaručené,
+ * takže sa musí prejsť všetkých šesť a vziať ten, ktorého sieť je `e-road`.
+ *
+ * Overené na hotových dlaždiciach Bratislavského kraja: `route_*_network` má
+ * hodnoty `sk:national` (138×), `e-road` (109×), `sk:primary` (45×),
+ * turistické `rwn`/`nwn`/`iwn`/`lwn` a niekoľko maďarských; E-čísla prišli
+ * ako `{network: "e-road", ref: "E 65"}` na `class: motorway` s `ref: "D2"`.
+ * Ref má MEDZERU („E 65") – tak sa aj vypíše, tak to má aj tabuľa.
+ */
+export const EURO_NETWORK = "e-road";
+
+/** Koľko `route_N_*` párov OpenMapTiles vydáva. */
+export const ROUTE_SLOTS = 6;
+
 export const SHIELD_DEFS = [
   ["motorway", "Štítky diaľnic a rýchlostných ciest", ["motorway", "trunk"],
     "shieldMotorway", 7, "shield", "shieldText", "shieldBorder"],
   ["primary", "Štítky ciest I. triedy", ["primary"],
     "shieldPrimary", 8, "shield", "shieldText", "shieldBorder"],
   ["secondary", "Štítky ciest II. a III. triedy", ["secondary", "tertiary"],
-    "shieldSecondary", 10, "shield", "shieldTextDark", "shieldBorderDark"]
+    "shieldSecondary", 10, "shield", "shieldTextDark", "shieldBorderDark"],
+  // EURÓPSKA CESTA (E75, E65, E575) – zelený štítok s bielym číslom, tak ako
+  // úradná značka (`E75-SVK-2020.svg`, odmerané #008c27).
+  //
+  // Je to INÉ ČÍSLO NEŽ NÁRODNÉ, nie jeho náhrada: cez ten istý úsek D2 vedie
+  // E65, takže sa kreslia OBE – E-štítok pod národným. Preto tento riadok
+  // nefiltruje podľa `class` (E-cesta ide po diaľnici aj po ceste I. triedy),
+  // ale podľa siete v `route_*`, a číslo si berie odtiaľ. Rozpis pri
+  // `EURO_NETWORK`.
+  ["euro", "Štítky európskych ciest (E75)", null,
+    "shieldEuro", 8, "shield", "shieldText", "shieldBorder", EURO_NETWORK]
 ];
 
 /**
@@ -4055,7 +4089,28 @@ export function buildStyle({
   // POPISKY STOJA NAROVNO (`text-rotation-alignment: viewport`). Značka
   // natočená podľa cesty už nie je značka, ale text – a na serpentíne by
   // stála na hlave.
-  for (const [id, label, classes, colorKey, mz, shapeId, textKey, borderKey]
+  // `route_1_ref` … `route_6_ref` toho slotu, ktorého sieť je hľadaná – číslo
+  // európskej cesty nie je v `ref`, ten nesie národné. Poradie slotov nie je
+  // zaručené, tak sa prejdú všetky.
+  const routeRef = (network) => {
+    const vetvy = [];
+    for (let i = 1; i <= ROUTE_SLOTS; i += 1) {
+      vetvy.push(["==", ["get", `route_${i}_network`], network],
+                 ["to-string", ["get", `route_${i}_ref`]]);
+    }
+    return ["case", ...vetvy, ""];
+  };
+  const routeFilter = (network) => {
+    const vetvy = [];
+    for (let i = 1; i <= ROUTE_SLOTS; i += 1) {
+      vetvy.push(["all",
+        ["==", ["get", `route_${i}_network`], network],
+        ["has", `route_${i}_ref`]]);
+    }
+    return ["any", ...vetvy];
+  };
+
+  for (const [id, label, classes, colorKey, mz, shapeId, textKey, borderKey, network]
        of SHIELD_DEFS) {
     // Obrázok je upečený na TRIEDU aj TÉMU – farba je v ňom, nie v `paint`.
     const shieldName = `${shapeId}-${id}-${theme}`;
@@ -4066,11 +4121,20 @@ export function buildStyle({
         type: "symbol",
         "source-layer": "transportation_name",
         minzoom: mz,
-        filter: [
-          "all",
-          ["has", "ref"],
-          ["in", str("class"), ["literal", classes]]
-        ],
+        filter: network
+          ? routeFilter(network)
+          : [
+              "all",
+              ["has", "ref"],
+              ["in", str("class"), ["literal", classes]],
+              // ZJAZDY VON. `subclass: junction` je mimoúrovňová križovatka
+              // a jej `ref` je ČÍSLO VÝJAZDU („10", „6"), nie číslo cesty –
+              // na diaľnici ich je viac než samotných štítkov. Kým tu tá
+              // podmienka nebola, kreslili sa výjazdy ako diaľničné štítky:
+              // po D1 sedeli červené značky „8" a „13" a vyzerali ako čísla
+              // ciest, ktoré neexistujú.
+              ["!=", ["get", "subclass"], "junction"]
+            ],
         layout: {
           "symbol-placement": "line",
           // Ako často sa značka po ceste opakuje, v pixeloch obrazovky.
@@ -4079,12 +4143,16 @@ export function buildStyle({
           // (220/260/340): na dlhom úseku bez zjazdu bola medzi štítkami
           // obrazovka a pol.
           "symbol-spacing": zl([[7, 170], [12, 190], [16, 230]]),
-          "text-field": ["get", "ref"],
+          "text-field": network ? routeRef(network) : ["get", "ref"],
           "text-font": BOLD,
           "text-size": zl([[7, 9], [12, 10], [16, 12]]),
           "text-rotation-alignment": "viewport",
           "text-pitch-alignment": "viewport",
           "text-padding": 2,
+          // E-štítok sedí POD národným: na tom istom úseku sú obe čísla
+          // (D2 aj E 65) a bez posunu by si jedno druhé odhryzlo cez
+          // kolízie – zmizlo by nepredvídateľne raz jedno, raz druhé.
+          ...(network ? { "text-offset": [0, 1.5] } : {}),
           ...(shieldIcon
             ? {
                 "icon-image": shieldIcon,
