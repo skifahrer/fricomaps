@@ -2064,7 +2064,7 @@ jobs:
           path: |
             _site/fonts
             _site/sprites
-          key: assets-${{ hashFiles('poc/web/icon-sources.js', 'poc/web/shields.js', 'workers/assets/sprite.mjs', 'workers/assets/shields.mjs') }}-${{ env.GLYPHS_ZIP }}
+          key: assets-${{ hashFiles('poc/web/icon-sources.js', 'poc/web/shields.js', 'poc/web/marks.js', 'workers/assets/sprite.mjs', 'workers/assets/shields.mjs', 'workers/assets/marks.mjs', 'workers/lib/sprite-bake.mjs') }}-${{ env.GLYPHS_ZIP }}
 
       # Sedemdesiat riadkov bashu je vo `workers/assets/icons.sh`.
       - name: Stiahni a priprav sady ikoniek

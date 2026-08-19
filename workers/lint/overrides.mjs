@@ -36,6 +36,14 @@ import {
   MAX_DISPLAY_Z
 } from "../../poc/web/themes.js";
 import { MAP_TYPE_IDS } from "../../poc/web/map-types.js";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const TARGET = join(ROOT, "poc", "web", "style-overrides.json");
 import { snapshotStyle, pasteStyle, valueAtZoom } from "../../poc/web/layer-style.js";
 
 let bad = 0;
@@ -249,6 +257,63 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
       chyba("poc/web/layer-style.js",
         `odfotená vlastnosť \`${prop}\` zo \`step\` vrstvy sa cez normalizeOverrides nedostala.`);
     }
+  }
+}
+
+// ---------- 5. čo developer mode nastaví, to sa aj ULOŽÍ ----------
+// TICHÁ VEC, KTORÁ SA STALA: `workers/styles/overrides.mjs` skladá súbor pre
+// repozitár po kľúčoch (`palette`, `layers`, `poi`, `maps`…) a na `trails`
+// zabudol. Developer mode vedel odstup pásikov, vzor čiary aj značku
+// nastaviť, uložiť aj zobraziť – ale do `poc/web/style-overrides.json` z toho
+// neprišlo NIČ a ďalší build kreslil trasy po starom. Nespadlo pri tom nič:
+// zapísaný súbor bol platný, len o polovicu chudobnejší.
+//
+// Kontroluje sa to tak, ako to naozaj chodí: úpravy prejdú tým skriptom
+// (`--file`, bez `--check`, do dočasného repozitára) a musia sa vrátiť.
+{
+  const ukazka = {
+    trails: {
+      gap: { road: 8 },
+      types: { hiking: { dash: "dotted", icon: "", mark: "triangle" } },
+      marks: { spacing: 300, size: 1.2 }
+    },
+    shields: { motorway: { shape: "shield-round" } },
+    palette: {},
+    layers: {}
+  };
+  const { overrides } = normalizeOverrides(ukazka);
+  const dir = mkdtempSync(join(tmpdir(), "overrides-lint-"));
+  try {
+    // Skript zapisuje do `poc/web/style-overrides.json` v koreni repozitára,
+    // tak dostane kópiu tých súborov, ktoré na to potrebuje.
+    const vstup = join(dir, "in.json");
+    writeFileSync(vstup, JSON.stringify(ukazka));
+    const zaloha = readFileSync(TARGET, "utf8");
+    try {
+      execFileSync("node", ["workers/styles/overrides.mjs", `--file=${vstup}`], {
+        stdio: "pipe",
+        cwd: ROOT
+      });
+      const zapisane = normalizeOverrides(JSON.parse(readFileSync(TARGET, "utf8"))).overrides;
+      const chyba_ak = (cesta, a, b) => {
+        if (JSON.stringify(a) !== JSON.stringify(b)) {
+          chyba(
+            "workers/styles/overrides.mjs",
+            `zápis do style-overrides.json stratil \`${cesta}\`: ` +
+              `${JSON.stringify(a)} → ${JSON.stringify(b)}. V prehliadači to platí, ` +
+              `v repozitári nie – mapa na Pages bude iná než developer mode.`
+          );
+        }
+      };
+      chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
+      chyba_ak("trails.types", overrides.trails.types, zapisane.trails.types);
+      chyba_ak("trails.marks", overrides.trails.marks, zapisane.trails.marks);
+      chyba_ak("shields", overrides.shields, zapisane.shields);
+    } finally {
+      writeFileSync(TARGET, zaloha);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

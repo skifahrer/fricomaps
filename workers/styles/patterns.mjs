@@ -12,9 +12,9 @@
  *   node workers/styles/patterns.mjs \
  *        --sprite=_site/sprites/osm-liberty-sdf --styles=_site/styles
  */
-import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { decodePng, encodePng, packShelves } from "../lib/png.mjs";
+import { bakeIntoSprite } from "../lib/sprite-bake.mjs";
 import { collectPatternNames, parsePatternName, renderPattern } from "../../poc/web/patterns.js";
 
 const args = Object.fromEntries(
@@ -53,81 +53,20 @@ if (!names.size) {
 }
 console.log(`Vzory v štýloch (${names.size}): ${[...names].join(", ")}`);
 
-/** Doplní vzory do jednej varianty spritu (1× alebo @2×). */
-function addTo(suffix, pixelRatio) {
-  const jsonPath = `${spriteBase}${suffix}.json`;
-  const pngPath = `${spriteBase}${suffix}.png`;
-  if (!existsSync(jsonPath) || !existsSync(pngPath)) return false;
-
-  const index = JSON.parse(readFileSync(jsonPath, "utf8"));
-  const atlas = decodePng(readFileSync(pngPath));
-
-  // Existujúce obrázky vyberieme z atlasu, aby sa dal preskladať aj s novými.
-  const boxes = [];
-  for (const [name, e] of Object.entries(index)) {
-    if (parsePatternName(name)) continue; // starý vzor – nahradí ho nový
-    const data = Buffer.alloc(e.width * e.height * 4);
-    for (let y = 0; y < e.height; y++) {
-      for (let x = 0; x < e.width; x++) {
-        const s = ((e.y + y) * atlas.width + e.x + x) * 4;
-        atlas.data.copy(data, (y * e.width + x) * 4, s, s + 4);
-      }
-    }
-    boxes.push({ name, width: e.width, height: e.height, data, entry: e });
-  }
-
-  for (const name of names) {
-    const img = renderPattern(parsePatternName(name), pixelRatio);
-    boxes.push({
+const ok = bakeIntoSprite({
+  spriteBase,
+  co: "vzorov",
+  // Naše sú všetky mená, ktoré sú predpisom vzoru – starý vzor sa zahodí
+  // a nakreslí znova z toho, čo je v štýloch teraz.
+  mine: (name) => Boolean(parsePatternName(name)),
+  make: (pixelRatio) =>
+    [...names].map((name) => ({
       name,
-      width: img.width,
-      height: img.height,
-      data: Buffer.from(img.data.buffer, img.data.byteOffset, img.data.length),
-      entry: { pixelRatio }
-    });
-  }
+      image: renderPattern(parsePatternName(name), pixelRatio)
+    }))
+});
 
-  const packed = packShelves(boxes, suffix ? 1024 : 512);
-  const out = Buffer.alloc(packed.width * packed.height * 4);
-  const outIndex = {};
-  for (const box of boxes) {
-    for (let y = 0; y < box.height; y++) {
-      box.data.copy(
-        out,
-        ((box.y + y) * packed.width + box.x) * 4,
-        y * box.width * 4,
-        (y + 1) * box.width * 4
-      );
-    }
-    outIndex[box.name] = {
-      x: box.x,
-      y: box.y,
-      width: box.width,
-      height: box.height,
-      pixelRatio: box.entry.pixelRatio || 1,
-      ...(box.entry.sdf ? { sdf: true } : {}),
-      // ROZŤAHOVACIE PÁSMA SA MUSIA PRENIESŤ. Preskladanie atlasu mení len to,
-      // KDE obrázok leží – čo o sebe hovorí, ostáva jeho. Štítok cesty
-      // (`workers/assets/shields.mjs`) sa bez `stretchX`/`stretchY`/`content`
-      // natiahne celý aj s rohmi a z obdĺžnika je pri dlhom čísle rozmazaná
-      // kapsula; nič pri tom nespadne, lebo štýl aj sprite sú ďalej platné.
-      ...(box.entry.stretchX ? { stretchX: box.entry.stretchX } : {}),
-      ...(box.entry.stretchY ? { stretchY: box.entry.stretchY } : {}),
-      ...(box.entry.content ? { content: box.entry.content } : {})
-    };
-  }
-
-  writeFileSync(pngPath, encodePng({ ...packed, data: out }));
-  writeFileSync(jsonPath, JSON.stringify(outIndex));
-  console.log(
-    `✓ ${jsonPath}: ${boxes.length} obrázkov (z toho ${names.size} vzorov), ` +
-      `atlas ${packed.width}×${packed.height}`
-  );
-  return true;
-}
-
-if (!addTo("", 1)) {
+if (!ok) {
   console.error(`::error::Sprite ${spriteBase}.json/.png neexistuje`);
   process.exit(1);
 }
-addTo("@2x", 2);

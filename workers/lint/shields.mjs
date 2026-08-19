@@ -188,6 +188,47 @@ for (const theme of Object.keys(THEMES)) {
   }
 }
 
+// ---------- 4. tvar prepnutý v developer móde má svoj obrázok ----------
+// Developer mode vie štítku prepnúť TVAR (`overrides.shields`) a v prehliadači
+// sa tým mení len meno obrázka – sprite sa neprebuildováva. Preto musí byť
+// v sprite KAŽDÝ tvar pre KAŽDÚ triedu aj tému; keby nebol, prepnutie by
+// štítok nechalo bez podkladu a vyzeralo by to ako „ten tvar sa nedá".
+const upecene = new Set(
+  SHIELD_SHAPES.flatMap((shape) =>
+    SHIELD_DEFS.flatMap(([id]) => Object.keys(THEMES).map((t) => `${shape.id}-${id}-${t}`))
+  )
+);
+for (const theme of Object.keys(THEMES)) {
+  for (const shape of SHIELD_SHAPES) {
+    const style = buildStyle({
+      theme,
+      tilesUrl: "pmtiles://x/t.pmtiles",
+      spriteUrl: "https://x/sprite",
+      glyphsUrl: "https://x/{fontstack}/{range}.pbf",
+      icons: [...upecene],
+      overrides: {
+        shields: Object.fromEntries(SHIELD_DEFS.map(([id]) => [id, { shape: shape.id }]))
+      }
+    });
+    for (const [id] of SHIELD_DEFS) {
+      const l = style.layers.find((x) => x.id === `road-shield-${id}`);
+      const meno = (l?.layout || {})["icon-image"];
+      if (!meno) {
+        chyba(
+          "poc/web/themes.js",
+          `štítok "${id}" po prepnutí tvaru na "${shape.id}" (${theme}) stratil podklad – ` +
+            `developer mode ponúka tvar, ktorý sa do spritu nepečie.`
+        );
+      } else if (!upecene.has(meno)) {
+        chyba(
+          "workers/assets/shields.mjs",
+          `štítok "${id}" si po prepnutí tvaru pýta obrázok "${meno}", ktorý sa nepečie.`
+        );
+      }
+    }
+  }
+}
+
 console.log(
   `štítky ciest: ${bad} chýb (${SHIELD_DEFS.length} tried, ${SHIELD_SHAPES.length} tvarov, ` +
     `${skusok} kontrol poradia)`

@@ -34,6 +34,14 @@ import {
   patternImageName
 } from "./patterns.js";
 import {
+  MARK_SHAPE_IDS,
+  DEFAULT_MARK_SHAPE,
+  MARK_BOX,
+  MARK_MINZOOM,
+  markImage
+} from "./marks.js";
+import { SHIELD_SHAPE_IDS } from "./shields.js";
+import {
   MAP_TYPE_IDS,
   DEFAULT_MAP_TYPE,
   normalizeMapType,
@@ -1257,6 +1265,97 @@ export function trailGapPx(overrides) {
   return out;
 }
 
+// -------------------------------------------- značky trás v pravidelných
+// TURISTICKÁ A CYKLISTICKÁ ZNAČKA sa kreslí pozdĺž trasy ako obrázok zo
+// spritu (`poc/web/marks.js`, pečie `workers/assets/marks.mjs`), nie ako
+// ikonka druhu trasy. Rozdiel je v tom, čo hovorí: ikonka povie „tadiaľ ide
+// nejaká turistická trasa", značka povie „sleduj červený pás na bielom" –
+// a to je presne to, podľa čoho sa človek v teréne orientuje.
+
+/**
+ * ROZOSTUP ZNAČIEK po trase v pixeloch obrazovky. Značenie v teréne je
+ * pravidelné (KČT má odporúčaných ~100–250 m), takže má byť pravidelné aj
+ * v mape – a v pixeloch, nie v metroch: pri odzoomovaní by inak z trasy bola
+ * šnúra štvorcov a pri priblížení by na obrazovke nebola ani jedna.
+ */
+export const TRAIL_MARK_SPACING = [[12, 150], [14, 190], [16, 230], [20, 260]];
+
+/** Veľkosť značky (`icon-size` nad obrázkom širokým `MARK_BOX` px). */
+export const TRAIL_MARK_SIZE = [[12, 0.5], [14, 0.75], [16, 1], [20, 1.3]];
+
+/** Referenčný zoom, v ktorom sa rozostup aj veľkosť zadávajú a ladia. */
+export const TRAIL_MARK_ZOOM = 16;
+
+/**
+ * ZNAČKY DVOCH TRÁS NA JEDNEJ CESTE SA STAVAJÚ NAD SEBA, nie na seba.
+ *
+ * Po jednom chodníku vedie bežne červená aj modrá turistická a k tomu
+ * cyklotrasa – a všetky majú V DLAŽDICIACH TÚ ISTÚ GEOMETRIU (pásiky vedľa
+ * seba robí až `line-offset`, ktorý na symboly neplatí). Kým bola značka
+ * priamo na čiare, padli všetky na to isté miesto a MapLibre nechala jednu:
+ * ostatné cez kolíziu ZAHODILA. Vždy tie isté, lebo poradie vrstiev je pevné –
+ * modrá značka nebola v mape skoro nikde a vyzeralo to, že tade nevedie.
+ * (Namerané v prehliadači: z troch trás na jednom chodníku bolo vidieť dve.)
+ *
+ * Značka sa preto posunie `icon-offset`-om podľa toho, KOĽKÁ JE TRASA V RADE
+ * (`off`) a na ktorej strane cesty je jej pásik (`side`): pešie idú nahor,
+ * kolesové nadol, a v rámci strany každá o svoju výšku ďalej. Vzniká z toho
+ * stĺpik značiek nad rozcestím – presne tak, ako sú na strome nad sebou.
+ *
+ * `icon-offset` je v PIXELOCH, ktoré MapLibre násobí `icon-size` – takže sa
+ * stĺpik škáluje so značkami sám, ale zadáva sa v pixeloch obrázka, nie
+ * v jeho výškach. (Kým tu boli „výšky značky", teda 0,9 a 2,05, bol posun
+ * v mape pod jeden pixel: značky ostali na čiare, kolízia z troch trás
+ * nechala jednu a vyzeralo to, že tade ostatné nevedú. Overené v prehliadači
+ * na chodníku s červenou, modrou a cyklotrasou.)
+ *
+ * `base` je odstup prvej značky od čiary (nech nezakrýva pásiky pod sebou),
+ * `step` rozostup v stĺpiku. A ten sa NEDÁ zadať ako výška značky:
+ * kolízny obdĺžnik je značka PLUS `icon-padding`, a padding je v pixeloch
+ * obrazovky, kým odstup sa škáluje s `icon-size`. Pri najmenšej veľkosti
+ * (0,5 na z12) tak padding váži dvojnásobne:
+ *
+ *     step ≥ (MARK_BOX + 2 okraj) + 2 × icon-padding / icon-size
+ *          ≥ 16 + 2 × 2 / 0,5 = 24
+ *
+ * 26 je to s dvojpixelovou medzerou, nech je vidieť, že sú to dve tabuľky.
+ * S menším číslom vypadne druhá značka cez kolíziu – overené v prehliadači:
+ * pri kroku 16 bola z červenej a modrej vidieť len červená.
+ */
+export const TRAIL_MARK_STACK = { base: MARK_BOX + 4, step: 26 };
+
+/** Miesto okolo značky, ktoré si drží voľné (v pixeloch obrazovky). */
+export const TRAIL_MARK_PADDING = 2;
+
+/** Koľko priečok stĺpika sa vymenuje (pozri `icon-offset` v štýle). */
+export const TRAIL_MARK_STACK_MAX = 4;
+
+/** Predvolené hodnoty pri `TRAIL_MARK_ZOOM` – to, čo prepisuje developer mode. */
+export const TRAIL_MARK_DEFAULTS = {
+  spacing: atZoom(TRAIL_MARK_SPACING, TRAIL_MARK_ZOOM),
+  size: atZoom(TRAIL_MARK_SIZE, TRAIL_MARK_ZOOM)
+};
+
+/**
+ * Účinný rozostup a veľkosť značiek: predvolené, prípadne prepísané
+ * z developer módu. Celá krivka sa škáluje pomerom voči hodnote pri
+ * `TRAIL_MARK_ZOOM`, takže jedno číslo posunie značky na všetkých zoomoch –
+ * tá istá úvaha ako pri odstupe pásikov (`trailGapPx`).
+ */
+export function trailMarkPx(overrides) {
+  const raw = overrides?.trails?.marks || {};
+  const out = { ...TRAIL_MARK_DEFAULTS };
+  const spacing = Number(raw.spacing);
+  // Nula by znamenala nekonečne veľa značiek na čiare, nie „žiadne";
+  // vypnúť sa dajú tvarom „žiadna" pri druhu trasy.
+  if (Number.isFinite(spacing) && spacing >= 20 && spacing <= 2000) {
+    out.spacing = spacing;
+  }
+  const size = Number(raw.size);
+  if (Number.isFinite(size) && size >= 0.2 && size <= 4) out.size = size;
+  return out;
+}
+
 /**
  * Druhy značených trás. Jeden zoznam pre štýl (vrstvy, ikony, prerušovanie),
  * developer mode aj popup vo viewri – inak by sa tri kópie časom rozišli.
@@ -1352,14 +1451,36 @@ const TRAIL_BY_ID = Object.fromEntries(TRAIL_TYPES.map((t) => [t.id, t]));
 export function trailTypeDef(type, overrides) {
   const own = overrides?.trails?.types?.[type.id] || {};
   const icon = typeof own.icon === "string" ? own.icon.trim() : "";
+  // TVAR ZNAČKY má tri odpovede, nie dve: `undefined` je „ako je v OSM"
+  // (`osmc:symbol` – pásová, vrcholová, bicykel…), prázdny reťazec „žiadna"
+  // a meno tvaru „vždy tento". Prostredná sa nedá vyjadriť menom tvaru, tak
+  // ako sa „žiadna ikona" nedá vyjadriť menom ikony.
+  const mark = typeof own.mark === "string" ? own.mark.trim() : null;
   return {
     ...type,
     dash: DASH_IDS.includes(own.dash) ? own.dash : type.dash,
     // Ikonu treba vedieť aj VYPNÚŤ – prázdny reťazec je „žiadna", nie „vezmi
     // predvolenú"; trasa hustá na ikonky sa inak nedá zbaviť inak než skrytím
     // celej vrstvy.
-    iconPick: "icon" in own ? (icon ? [icon] : []) : type.icons
+    iconPick: "icon" in own ? (icon ? [icon] : []) : type.icons,
+    markPick: mark === null ? null : (MARK_SHAPE_IDS.includes(mark) ? mark : "")
   };
+}
+
+/**
+ * Tvar štítka s číslom cesty pre jednu triedu (`SHIELD_DEFS`), aj s tým, čo
+ * na ňom prepísal developer mode (`overrides.shields[<trieda>].shape`).
+ *
+ * Prepnúť sa dá preto, že sprite nesie VŠETKY tvary naraz (pečie ich
+ * `workers/assets/shields.mjs`) – v prehliadači sa tým mení len meno obrázka,
+ * nič sa neprebuildováva. Neznámy tvar sa ticho ignoruje: obrázok, ktorý
+ * v sprite nie je, by nechal číslo cesty bez podkladu.
+ */
+export function shieldShapeFor(id, fallback, overrides) {
+  const want = overrides?.shields?.[id]?.shape;
+  return typeof want === "string" && SHIELD_SHAPE_IDS.includes(want)
+    ? want
+    : fallback;
 }
 
 const isTunnel = ["==", ["get", "brunnel"], "tunnel"];
@@ -1385,7 +1506,11 @@ export function emptyOverrides() {
     // Značené trasy majú vlastnú položku, lebo to nie sú nastavenia JEDNEJ
     // vrstvy: jeden druh trasy má v štýle tri vrstvy (pásik, ikona, názov)
     // a odstup od cesty je vlastnosť všetkých naraz.
-    trails: { gap: {}, types: {} },
+    trails: { gap: {}, types: {}, marks: {} },
+    // Štítok s číslom cesty má vlastnú položku z toho istého dôvodu ako
+    // trasy: nie je to nastavenie jednej vrstvy, ale tvar OBRÁZKA, ktorý si
+    // vrstva pýta zo spritu – a ten sa nedá vyjadriť `paint` vlastnosťou.
+    shields: {},
     poi: { hidden: [] },
     maps: {}
   };
@@ -1773,7 +1898,64 @@ export function normalizeOverrides(raw) {
         clean.icon = icon;
       }
     }
+    if (def.mark != null) {
+      const mark = String(def.mark).trim();
+      // Prázdny reťazec je „žiadna značka"; meno tvaru je „vždy tento tvar".
+      // Chýbajúci kľúč znamená „taká, aká je v OSM" – to je iná odpoveď než
+      // ktorákoľvek z týchto dvoch, preto sa nezapisuje.
+      if (mark && !MARK_SHAPE_IDS.includes(mark)) {
+        problems.push(
+          `Trasa "${id}": neznámy tvar značky "${def.mark}" ` +
+            `(poznám: ${MARK_SHAPE_IDS.join(", ")}).`
+        );
+      } else {
+        clean.mark = mark;
+      }
+    }
     if (Object.keys(clean).length) out.trails.types[id] = clean;
+  }
+
+  // ---- rozostup a veľkosť značiek ----
+  // Zapisuje sa len to, čo sa od predvoleného naozaj líši – ako pri palete
+  // aj pri odstupoch pásikov.
+  for (const [key, def] of Object.entries(TRAIL_MARK_DEFAULTS)) {
+    const value = (rawTrails.marks || {})[key];
+    if (value == null) continue;
+    const n = Number(value);
+    const medze = key === "spacing" ? [20, 2000] : [0.2, 4];
+    if (!Number.isFinite(n) || n < medze[0] || n > medze[1]) {
+      problems.push(
+        `Značky trás "${key}" musia byť číslo od ${medze[0]} do ${medze[1]} (${value}).`
+      );
+      continue;
+    }
+    const round = Math.round(n * 100) / 100;
+    if (round !== def) out.trails.marks[key] = round;
+  }
+
+  // ---- tvar štítka s číslom cesty ----
+  for (const [id, def] of Object.entries(raw.shields || {})) {
+    const trieda = SHIELD_DEFS.find(([sid]) => sid === id);
+    if (!trieda) {
+      problems.push(`Neznáma trieda štítka "${id}" – preskakujem.`);
+      continue;
+    }
+    if (!def || typeof def !== "object") {
+      problems.push(`Nastavenie štítka "${id}" nie je objekt – preskakujem.`);
+      continue;
+    }
+    if (def.shape == null) continue;
+    const shape = String(def.shape).trim();
+    if (!SHIELD_SHAPE_IDS.includes(shape)) {
+      problems.push(
+        `Štítok "${id}": neznámy tvar "${def.shape}" ` +
+          `(poznám: ${SHIELD_SHAPE_IDS.join(", ")}).`
+      );
+      continue;
+    }
+    // Predvolený tvar netreba do úprav zapisovať – rovnako ako farbu, ktorú
+    // téma už má.
+    if (shape !== trieda[5]) out.shields[id] = { shape };
   }
 
   // ---- vrstvy ----
@@ -1919,6 +2101,8 @@ export function hasOverrides(o) {
     Object.keys(o.layers || {}).length > 0 ||
     Object.keys(o.trails?.gap || {}).length > 0 ||
     Object.keys(o.trails?.types || {}).length > 0 ||
+    Object.keys(o.trails?.marks || {}).length > 0 ||
+    Object.keys(o.shields || {}).length > 0 ||
     (o.poi?.hidden || []).length > 0 ||
     Object.values(o.maps || {}).some(
       (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
@@ -3845,9 +4029,99 @@ export function buildStyle({
       );
     }
 
+    // ---- ZNAČKA, AKO JE NA STROME ----
+    //
+    // Kreslí sa pozdĺž trasy v pravidelných intervaloch a je to obrázok
+    // upečený do spritu (`poc/web/marks.js`): biely alebo žltý štvorec
+    // s farebným pásom, trojuholník na vrchol, bicykel na cyklotrase. Ktorá
+    // trasa akú značku má, je v dlaždiciach (`mark`, `mark_bg`, `mark_fg`
+    // z `osmc:symbol` – rozpis vo `workers/trails/tags.py`), takže meno
+    // obrázka sa skladá z DÁT, nie zo zoznamu tu.
+    //
+    // KEĎ ZNAČKY V SPRITE NIE SÚ (stará sada z cache, nepodarené dopečenie),
+    // vrstva sa nepridá a pozdĺž trasy ostane ikonka druhu trasy – tak, ako
+    // to bolo predtým. Je to horšie, ale je to vidieť; „značky zmizli" by
+    // nikto nespozoroval.
+    const marksBaked = hasIcon(markImage("white", "red", DEFAULT_MARK_SHAPE));
+    const markPx = trailMarkPx(overrides);
+    const markScale = (stops, ref, want) =>
+      stops.map(([z, v]) => [z, Math.round(((v * want) / ref) * 1000) / 1000]);
+    const markSize = zl(
+      markScale(TRAIL_MARK_SIZE, TRAIL_MARK_DEFAULTS.size, markPx.size)
+    );
+    /** Kreslí sa tomuto druhu značka? („žiadna" z developer módu ju vypne.) */
+    const drawsMark = (t) => marksBaked && t.markPick !== "";
+
+    // Stĺpik značiek nad čiarou: koľká je trasa v rade (`off`) a na ktorej
+    // strane cesty má pásik (`side`) – rozpis pri `TRAIL_MARK_STACK`. Záporné
+    // `y` je nahor, takže pešie trasy (`side` +1) idú nad čiaru a kolesové
+    // (−1) pod ňu.
+    //
+    // JE TO VYMENOVANÉ, A NIE JE TO Z LENIVOSTI: `icon-offset` je pole dvoch
+    // čísel a výrazy MapLibre pole POČÍTAŤ nevedia – vyrobiť sa dá len
+    // `["literal", …]`, teda konštanta. Preto je z toho `case` cez tie
+    // dvojice `(side, off)`, ktoré sa v dátach reálne vyskytujú; nad
+    // `TRAIL_MARK_STACK_MAX` je v rade toľko trás, že by stĺpik aj tak
+    // prerástol obrazovku, a ďalšie sa preto kreslia na poslednú priečku.
+    const markOffset = ["case"];
+    for (const side of [1, -1]) {
+      for (let off = 0; off <= TRAIL_MARK_STACK_MAX; off += 1) {
+        markOffset.push(
+          ["all", ["==", num("side", 1), side], ["==", num("off", 0), off]],
+          ["literal", [0, -side * (TRAIL_MARK_STACK.base + TRAIL_MARK_STACK.step * off)]]
+        );
+      }
+    }
+    markOffset.push(["literal", [0, -TRAIL_MARK_STACK.base]]);
+    for (const t of trailTypes) {
+      if (!drawsMark(t)) continue;
+      const { id, label, markPick } = t;
+      add(
+        {
+          id: `trail-${id}-mark`,
+          type: "symbol",
+          source: "trails",
+          "source-layer": "trail",
+          minzoom: MARK_MINZOOM,
+          filter: ["all", ["==", str("route"), id], ["has", "mark"]],
+          layout: {
+            "symbol-placement": "line",
+            "symbol-spacing": zl(
+              markScale(TRAIL_MARK_SPACING, TRAIL_MARK_DEFAULTS.spacing, markPx.spacing)
+            ),
+            // Značky dvoch trás na jednej ceste sa stavajú NAD SEBA – bez
+            // toho by padli na to isté miesto a kolízia by všetky okrem
+            // jednej zahodila (rozpis pri `TRAIL_MARK_STACK`).
+            "icon-offset": markOffset,
+            // Meno obrázka je zložené z dát; `markPick` je „vždy tento tvar"
+            // z developer módu, inak platí tvar, ktorý je v `osmc:symbol`.
+            "icon-image": [
+              "concat",
+              "mark-",
+              ["get", "mark_bg"],
+              "-",
+              ["get", "mark_fg"],
+              "-",
+              markPick || ["get", "mark"]
+            ],
+            "icon-size": markSize,
+            // Značka STOJÍ NAROVNO. Natočená podľa cesty už nie je tabuľka,
+            // ale škvrna – a na serpentíne by stála na hlave.
+            "icon-rotation-alignment": "viewport",
+            "icon-pitch-alignment": "viewport",
+            "icon-padding": TRAIL_MARK_PADDING,
+            // Keď sa nezmestia všetky, nech ostane značka dôležitejšej trasy.
+            "symbol-sort-key": trailSort
+          }
+        },
+        ["trasy", `${label} – značka`, "point", {}]
+      );
+    }
+
     // Ikony a popisky idú až za všetky pásiky, aby sa čiara jednej trasy
     // nekreslila cez popisok druhej.
-    for (const { id, label, palette: paletteKey, iconPick } of trailTypes) {
+    for (const t of trailTypes) {
+      const { id, label, palette: paletteKey, iconPick } = t;
       const icon = pickIcon(iconPick);
       if (!icon) continue;
       add(
@@ -3857,7 +4131,13 @@ export function buildStyle({
           source: "trails",
           "source-layer": "trail",
           minzoom: 13,
-          filter: ["==", str("route"), id],
+          // IKONKA JE NÁHRADA, NIE DRUHÝ SYMBOL. Kde je značka (a kreslí sa),
+          // ikonka druhu trasy nemá čo pridať – dve ikony na jednej čiare si
+          // len berú miesto navzájom. Ostáva tam, kde značka nie je: trasa
+          // s neznámou farbou, ktorej by sme tabuľku vymysleli.
+          filter: drawsMark(t)
+            ? ["all", ["==", str("route"), id], ["!", ["has", "mark"]]]
+            : ["==", str("route"), id],
           layout: {
             "symbol-placement": "line",
             "symbol-spacing": 260,
@@ -4112,8 +4392,11 @@ export function buildStyle({
 
   for (const [id, label, classes, colorKey, mz, shapeId, textKey, borderKey, network]
        of SHIELD_DEFS) {
-    // Obrázok je upečený na TRIEDU aj TÉMU – farba je v ňom, nie v `paint`.
-    const shieldName = `${shapeId}-${id}-${theme}`;
+    // Obrázok je upečený na TVAR × TRIEDU × TÉMU – farba je v ňom, nie
+    // v `paint`. Tvar sa dá prepnúť v developer móde (`overrides.shields`):
+    // v sprite sú všetky tvary naraz, takže je to zmena mena obrázka, nie
+    // prebuildovanie spritu.
+    const shieldName = `${shieldShapeFor(id, shapeId, overrides)}-${id}-${theme}`;
     const shieldIcon = hasIcon(shieldName) ? shieldName : null;
     add(
       {

@@ -65,6 +65,12 @@ while read -r id url; do
     # (viď `hasIcon` v `poc/web/themes.js`), takže je to varovanie, nie chyba.
     node workers/assets/shields.mjs --sprite="_site/sprites/$id" \
       || echo "::warning::Štítky ciest sa do sady $id nepodarilo dopiecť – čísla ciest budú bez podkladu."
+    # To isté pre TURISTICKÉ A CYKLISTICKÉ ZNAČKY (biely či žltý štvorec
+    # s farebným pásom): v cudzej sade ikoniek nie sú a byť nemôžu – je to
+    # obrázok konkrétnej tabuľky z terénu, nie symbol. Keď sa nedopečú, mapa
+    # nespadne: pozdĺž trasy sa kreslí ikonka druhu trasy ako predtým.
+    node workers/assets/marks.mjs --sprite="_site/sprites/$id" \
+      || echo "::warning::Značky trás sa do sady $id nepodarilo dopiecť – trasy budú s ikonkou druhu, nie so značkou."
     ok="$ok $id"
   else
     echo "::warning::Sadu ikoniek $id sa nepodarilo prerobiť na SDF – preskakujem."

@@ -50,6 +50,24 @@ while IFS= read -r icon; do
     || { echo "::error::štýl odkazuje na ikonu '$icon', ktorá v sprite nie je"; fail=1; }
 done < <(jq -r '[.layers[].layout["icon-image"]? | strings] | unique | .[]' "$STYLE")
 
+# ZNAČKY TRÁS sa mená z výrazu netýkajú kontroly vyššie (`strings` ich
+# odfiltruje), ale práve ony sú tá tichá vec: meno obrázka skladá štýl z DÁT
+# (`mark-<podklad>-<farba>-<tvar>`), takže chýbajúci obrázok MapLibre ticho
+# preskočí a po trase nie je nič. Keď je v štýle vrstva so značkami, musia
+# byť v sprite všetky – zoznam povie `poc/web/marks.js`, jediné miesto, kde
+# je napísaný.
+if jq -e '[.layers[] | select(.id | endswith("-mark"))] | length > 0' "$STYLE" >/dev/null; then
+  while IFS= read -r img; do
+    [ -n "$img" ] || continue
+    jq -e --arg i "$img" 'has($i)' "$SITE/sprites/$SPRITE.json" >/dev/null \
+      || { echo "::error::štýl kreslí značky trás, ale '$img' v sprite nie je"; fail=1; }
+  done < <(node -e "
+    import('./poc/web/marks.js').then((m) => {
+      for (const z of m.markImages()) console.log(z.name);
+    });
+  ")
+fi
+
 # vzory plôch a čiar musia byť v sprite (inak sa plocha nevykreslí)
 while IFS= read -r img; do
   [ -n "$img" ] || continue

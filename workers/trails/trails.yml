@@ -15,6 +15,12 @@
 # jednu stranu, kolesové na druhú – po jednom chodníku vedie bežne turistická
 # značka aj cyklotrasa a takto obe začínajú hneď pri ňom.
 #
+# `mark`, `mark_bg` a `mark_fg` sú TURISTICKÁ ZNAČKA, ako je namaľovaná na
+# strome (biely alebo žltý štvorec s farebným pásom, trojuholník na vrchol,
+# bicykel na cyklotrase). Kreslí sa pozdĺž trasy v pravidelných intervaloch –
+# je to to, čo človek v teréne sleduje, kým ikonka druhu trasy hovorí len,
+# že tadiaľ ide „nejaká turistická".
+#
 # `way` (`path` / `road`) hovorí, po čom trasa vedie. Odstup pásika od čiary
 # pod ním totiž nie je jedno číslo: asfaltka je v mape niekoľkonásobne širšia
 # než chodník, takže odstup, pri ktorom sa pásik lepí na chodník, leží
@@ -50,6 +56,15 @@ layers:
           - key: colour
           # surový hex z OSM, keď farba nie je žiadna z pomenovaných
           - key: hex
+          # ZNAČKA, AKO JE NA STROME – tvar, podklad a farba. Sú to tri
+          # atribúty preto, že štýl z nich skladá meno obrázka v sprite
+          # (`mark-<mark_bg>-<mark_fg>-<mark>`) a developer mode vie tvar
+          # prepnúť bez toho, aby prišiel o farby z OSM. Trasa, ktorá značku
+          # nemá (neznáma farba), ich nemá ani jeden a kreslí sa jej ikonka
+          # druhu trasy.
+          - key: mark
+          - key: mark_bg
+          - key: mark_fg
           - key: network
           - key: tier
           - key: name

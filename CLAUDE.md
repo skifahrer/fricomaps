@@ -102,7 +102,7 @@ už neopakuje to, čo hovorí priečinok (`contours-rocks/build.sh` →
 ```
 workers/data/            číselníky: areas, regions, dem-sources
 workers/lib/             čo patrí viacerým jobom (watch, planetiler, png, rozpočet,
-                         bunky, orez dlaždíc na región)
+                         bunky, orez dlaždíc na región, pečenie do spritu)
 workers/plan/            joby `settings`, `plan` a `keys`: čo si vypýtal,
                          voľby, výrez, PBF, kľúče cache
 workers/dem/             job `check-dem` a doplnenie modelu (`update-dem.yml`)
@@ -652,13 +652,20 @@ poc/web/themes.js           SHIELD_DEFS: ktorá trieda, aká farba, od akého zo
 workers/lint/shields.mjs    tri tiché veci nižšie
 ```
 
-**Podklad je JEDEN rozťahovateľný SDF obrázok**, nie šestnásť hotových:
-`icon-text-fit` ho natiahne podľa dĺžky čísla, `icon-color` mu dá farbu podľa
-triedy cesty a `icon-halo-*` orámovanie – takže na štyri témy × tri triedy
-stačí jeden obrázok a farba sa dá doladiť v developer móde. Naťahuje sa len
-rovná časť hrán (`stretchX`/`stretchY`); rohy nie, inak by z obdĺžnika bola pri
-dlhom čísle rozmazaná kapsula. Rozťahovanie SDF nekazí: v naťahovanom pásme sa
-vzdialenostné pole mení len naprieč hranou.
+**Podklad je HOTOVÝ FAREBNÝ obrázok pečený na tvar × triedu × tému**, nie SDF:
+úradná značka má dva rovnako hrubé prstence (biely a za ním farebný) a tie sa
+cez `icon-color` a jedno `icon-halo` spraviť nedajú. Cena je, že farba sa pečie
+pri builde – v developer móde sa zmení až po prebuildovaní spritu. Naťahuje sa
+len rovná časť hrán (`stretchX`/`stretchY`), rohy nie, inak by z obdĺžnika bola
+pri dlhom čísle kapsula; na bežnom rastri to funguje, na vzdialenostnom poli
+nie (rozpis v hlavičke `poc/web/shields.js`).
+
+**Čo sa v developer móde prepnúť DÁ, je TVAR** (záložka „Štítky",
+`overrides.shields[<trieda>].shape`): v sprite sú všetky tvary naraz, takže je
+to zmena mena obrázka, nie prebuildovanie. Preto sa pečie tvar × trieda × téma
+a nie len ten jeden tvar, ktorý je práve v `SHIELD_DEFS` – keby sa pieklo
+menej, prepnutie by nechalo číslo bez podkladu a vyzeralo by to, že sa ten tvar
+nedá. Stráži to `workers/lint/shields.mjs`.
 
 **Triedy sú z dlaždíc, nie z čísla.** Lákalo by rozlíšiť štítok podľa toho, čím
 sa `ref` začína („D" = diaľnica), ale to je pravidlo o slovenskom číslovaní
@@ -672,6 +679,54 @@ dopeká vzory nad tým istým atlasom) ho natiahnu aj s rohmi, a keby sa vrstva
 dostala **za `road-name`**, číslo by na hustej sieti prehrávalo s menom ulice –
 MapLibre umiestňuje popisky v poradí vrstiev a kto je skôr, berie si miesto
 prvý.
+
+### Turistická a cyklistická značka (SK + CZ)
+
+Pozdĺž trasy sa v pravidelných intervaloch kreslí **to, čo je namaľované na
+strome**: štvorec s vodorovným pásom vo farbe trasy, podklad biely (pešia
+značka) alebo žltý (cyklistická), a k tomu tvarové značky – trojuholník na
+vrchol, „L" k pamiatke, „U" k prameňu, bicykel na českej cyklotrase.
+
+```
+poc/web/marks.js            tvary, farby, dvojice podklad×farba, kreslenie
+workers/assets/marks.mjs    dopečie ich do každého spritu (aj @2x)
+workers/trails/tags.py      `osmc:symbol` → tvar, podklad, farba (do dlaždíc)
+poc/web/themes.js           vrstva `trail-<druh>-mark`: rozostup, veľkosť, stĺpik
+workers/lint/marks.mjs      tiché veci nižšie
+```
+
+**Ikonka druhu trasy to nenahradí a preto ju značka vytláča.** Horský štít
+pozdĺž chodníka povie „tadiaľ ide nejaká turistická", ale „choď po červenej"
+sa z neho prečítať nedá. Ikonka preto ostáva len tam, kde trasa značku NEMÁ
+(neznáma farba z OSM) – dva symboly na jednej čiare by si len brali miesto.
+
+**Meno obrázka sa skladá z DÁT** (`mark-<podklad>-<farba>-<tvar>`, `concat`
+v štýle), takže sú to tri miesta, ktoré musia sedieť naraz: `tags.py` píše
+trojicu, `themes.js` z nej skladá meno a `marks.mjs` ho musí mať v sprite.
+Neznámy obrázok MapLibre **ticho preskočí** a po trase nie je nič – preto je na
+to kontrola a preto sa pečú aj dvojice, ktoré vznikajú náhradou (podklad vo
+farbe pásu je prázdny štvorec, takže sa vymení).
+
+**Farby značiek nejdú cez tému, a je to zámer.** Značka je obrázok fyzickej
+tabuľky – červená je červená aj na tmavej mape. Pásik trasy pod ňou naopak
+témou ide (`trailRed` a spol.), lebo to je prvok mapy. Témovať aj značky by
+znamenalo štvornásobok obrázkov v sprite.
+
+**Značky dvoch trás na jednej ceste sa stavajú NAD SEBA.** Trasy majú
+v dlaždiciach tú istú geometriu (pásiky vedľa seba robí až `line-offset`, ktorý
+na symboly neplatí), takže bez posunu padnú všetky značky na jedno miesto
+a kolízia nechá jednu – vždy tú istú, lebo poradie vrstiev je pevné. Posúva sa
+`icon-offset`-om podľa `side` a `off` (pešie nahor, kolesové nadol), a to je
+v PIXELOCH násobených `icon-size`, nie vo výškach značky: kým tu boli „výšky",
+bol posun pod jeden pixel a z troch trás bola v mape vidieť jedna. Krok stĺpika
+musí byť väčší než značka **plus dvakrát `icon-padding`**, lebo padding sa
+so zoomom neškáluje.
+
+**Čo sa dá v developer móde** (záložka „Trasy"): rozostup značiek a ich
+veľkosť (`overrides.trails.marks`), a pri každom druhu trasy tvar značky –
+`podľa OSM` (predvolené), konkrétny tvar, alebo `žiadna`
+(`overrides.trails.types[<druh>].mark`). Tie tri odpovede sa nedajú stlačiť do
+dvoch: „taká, aká je v OSM" nie je meno tvaru.
 
 ## Build svet: vlastná pipeline, `svet.zip` a `svet.aar`
 
@@ -785,6 +840,8 @@ python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
+node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
+python3 workers/trails/tags.py --osmc=red:white:red_bar --route=hiking  # akú značku z toho
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
@@ -828,6 +885,11 @@ zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **štítok s číslo
 (`D1`) prežije preskladanie spritu a ostane nad menom ulice**
 (`workers/lint/shields.mjs` – rozťahovateľný obrázok bez `stretchX` sa natiahne
 aj s rohmi a premenovaný obrázok nechá číslo bez podkladu; ani jedno nespadne),
+že **turistická značka, ktorej meno obrázka sa skladá až z DÁT, je naozaj
+v sprite** (`workers/lint/marks.mjs` – tvar z `osmc:symbol`, dvojica
+podklad × farba a meno `mark-…` musia sedieť v troch súboroch naraz, inak
+MapLibre obrázok ticho preskočí a po trase nie je nič; a bez posunu podľa
+pruhu si značky dvoch trás sadnú na jedno miesto a kolízia nechá jednu),
 že **úprava z developer
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy

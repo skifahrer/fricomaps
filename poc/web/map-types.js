@@ -55,11 +55,20 @@ export const ROAD_SERVICE_CLASSES = [
 ];
 
 /** Vrstvy značených trás okrem lyžiarskych. */
-const OTHER_TRAILS = /^trail-(hiking|bicycle|mtb|horse)(-icon|-label)?$/;
+import { MARK_MINZOOM } from "./marks.js";
+
+const OTHER_TRAILS = /^trail-(hiking|bicycle|mtb|horse)(-icon|-mark|-label)?$/;
 /** Vrstvy lyžiarskych trás. */
-const SKI_TRAILS = /^trail-ski(-icon|-label)?$/;
+const SKI_TRAILS = /^trail-ski(-icon|-mark|-label)?$/;
 /** Všetky značené trasy vrátane podkladu pod pásikmi. */
 const ALL_TRAILS = /^trail-/;
+/**
+ * Značky trás (biely či žltý štvorec s farebným pásom). Vlastný vzor preto,
+ * že pravidlá, ktoré púšťajú PÁSIKY nižšie („trasy vidieť už z prehľadu"),
+ * na ne neplatia: značka je tabuľka, nie čiara – pod z12 je z nej škvrna
+ * a je ich toľko, koľko trás, takže by z mapy spravili šum.
+ */
+const TRAIL_MARKS = /^trail-.*-mark$/;
 /** Tematické vrstvy – každá patrí len niektorým mapám. */
 const TOPIC_LAYERS = ["poi-historic", "poi-mining", "poi-ski", "poi-road"];
 /** Skalné plochy z vrstevnicových dlaždíc. */
@@ -100,6 +109,9 @@ export const MAP_TYPES = [
       { match: { id: "road-cycleway" }, minzoom: 11 },
       { match: { id: "road-footway" }, minzoom: 12 },
       { match: { id: ALL_TRAILS }, minzoom: 8 },
+      // …ale značky nie: pásik má zmysel aj ako čiara z prehľadu, značka až
+      // vtedy, keď je z nej vidieť, čo na nej je.
+      { match: { id: TRAIL_MARKS }, minzoomFloor: MARK_MINZOOM },
       { match: { id: "trail-halo" }, minzoom: 10 },
       // Vrcholy, chaty a studničky sú tu to hlavné.
       { match: { id: "poi-major" }, minzoom: 13 },
@@ -122,6 +134,7 @@ export const MAP_TYPES = [
       { match: { id: BARRIERS }, visible: false },
       // Lyžiarske trasy a vleky sú tu hlavná kresba.
       { match: { id: SKI_TRAILS }, minzoom: 8 },
+      { match: { id: TRAIL_MARKS }, minzoomFloor: MARK_MINZOOM },
       { match: { id: "trail-ski-label" }, minzoom: 11 },
       { match: { id: "trail-halo" }, minzoom: 9 },
       { match: { id: "aerialway" }, minzoom: 9 },

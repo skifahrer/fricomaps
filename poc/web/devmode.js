@@ -59,14 +59,21 @@ import {
   TRAIL_MARK_COLOURS,
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
+  TRAIL_MARK_DEFAULTS,
+  TRAIL_MARK_ZOOM,
+  SHIELD_DEFS,
   trailGapPx,
+  trailMarkPx,
   trailTypeDef,
+  shieldShapeFor,
   DEFAULT_MAP_TYPE,
   mapTypeDef,
   mapTypeHidden,
   normalizeMapType
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
+import { MARK_SHAPES } from "./marks.js";
+import { SHIELD_SHAPES } from "./shields.js";
 import { snapshotStyle, pasteStyle, valueAtZoom } from "./layer-style.js";
 
 const STORAGE_KEY = "fricomaps.overrides";
@@ -75,6 +82,22 @@ const KIND_LABELS = Object.fromEntries(LAYER_KINDS.map((k) => [k.id, k.label]));
 const GROUP_LABELS = Object.fromEntries(LAYER_GROUPS.map((g) => [g.id, g.label]));
 /** Meno značky z dlaždíc → kľúč palety (rovnako ako v štýle). */
 const TRAIL_MARK_KEYS = Object.fromEntries(TRAIL_MARK_COLOURS);
+
+/**
+ * Obrázky, ktoré si do spritu pečieme sami – značky trás (`mark-…`) a podklady
+ * štítkov ciest (`shield-…`). V zoznamoch „vyber ikonu" nemajú čo robiť: nie sú
+ * to symboly, ale hotové farebné obrázky konkrétnej veci, a je ich viac než
+ * samotných ikoniek (154 značiek proti pár stovkám ikon). Prepínajú sa tam, kam
+ * patria – v záložke „Trasy" a „Štítky".
+ */
+const BAKED_IMAGE = /^(mark|shield)-/;
+const pickableIcons = (set, extra) =>
+  [
+    ...new Set([
+      ...(extra ? [extra] : []),
+      ...(set?.icons || []).filter((n) => !BAKED_IMAGE.test(n))
+    ])
+  ].sort();
 
 /** Načíta úpravy uložené v prehliadači. */
 export function loadOverrides() {
@@ -300,6 +323,7 @@ export function initDevMode({
     ["pick", "Prvky"],
     ["palette", "Paleta"],
     ["trails", "Trasy"],
+    ["shields", "Štítky"],
     ["icons", "Ikony"],
     ["poi", "POI"],
     ["file", "Súbor"]
@@ -565,7 +589,9 @@ export function initDevMode({
     const nPoi = overrides.poi.hidden.length;
     const nTrails =
       Object.keys(overrides.trails.gap).length +
+      Object.keys(overrides.trails.marks).length +
       Object.keys(overrides.trails.types).length;
+    const nShields = Object.keys(overrides.shields).length;
     const perMap = Object.entries(overrides.maps)
       .map(([id, m]) => `${mapTypeDef(id).label} ${Object.keys(m.layers).length}`)
       .join(", ");
@@ -573,6 +599,7 @@ export function initDevMode({
       (hasOverrides(overrides)
         ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
           `${nPoi} skrytých POI · ${nTrails} úprav trás · ` +
+          `${nShields} štítkov · ` +
           `ikony ${selectedIconSource(overrides)}` +
           (perMap ? ` · po mapách: ${perMap}` : "") +
           " · uložené v prehliadači"
@@ -2012,7 +2039,7 @@ export function initDevMode({
       ) || (getIconSets?.() || [])[0];
       // Súčasná ikona je v zozname vždy, aj keby ju nasadená sada nemala –
       // inak by `select` ticho ukázal prvú položku a tvrdil, že je vybraná.
-      const names = [...new Set([iconNow, ...(set?.icons || [])])].sort();
+      const names = pickableIcons(set, iconNow);
       parts.push(
         el("div", { class: `dev-sub${o.icon ? " changed" : ""}` }, [
           selectField({
@@ -2326,7 +2353,13 @@ export function initDevMode({
       colours[type?.palette] ||
       "#888888";
     const title = [p.ref, p.name].filter(Boolean).join(" ") || "(bez názvu)";
-    const detail = [type?.short || p.route, p.colour || p.hex, p.network, p.tier]
+    // Značka, ako ju do dlaždíc zapísal `workers/trails/tags.py` – v teréne
+    // je to práve ona, takže patrí do inšpektora hneď vedľa farby.
+    const markLabel = p.mark
+      ? `značka ${MARK_SHAPES.find((sh) => sh.id === p.mark)?.label || p.mark} ` +
+        `(${p.mark_fg} na ${p.mark_bg === "yellow" ? "žltom" : p.mark_bg})`
+      : "";
+    const detail = [type?.short || p.route, p.colour || p.hex, markLabel, p.network, p.tier]
       .filter(Boolean)
       .join(" · ");
     const link = osmLink(p);
@@ -2663,6 +2696,16 @@ export function initDevMode({
     else delete overrides.trails.types[id];
   }
 
+  /** Rozostup a veľkosť značiek; `undefined` = späť na predvolené. */
+  function setTrailMarks(key, value) {
+    if (value === undefined || value === null || value === "" ||
+        Number(value) === TRAIL_MARK_DEFAULTS[key]) {
+      delete overrides.trails.marks[key];
+    } else {
+      overrides.trails.marks[key] = Number(value);
+    }
+  }
+
   /** Odstup pásikov od cesty; `undefined` = späť na predvolený. */
   function setTrailGap(key, value) {
     if (value === undefined || value === null || value === "" ||
@@ -2678,7 +2721,7 @@ export function initDevMode({
     const set = (getIconSets?.() || []).find(
       (s2) => s2.id === selectedIconSource(overrides)
     ) || (getIconSets?.() || [])[0];
-    return [...new Set([...(extra ? [extra] : []), ...(set?.icons || [])])].sort();
+    return pickableIcons(set, extra);
   }
 
   /** Ktorá ikona je pre daný druh trasy naozaj v mape (z hotového štýlu). */
@@ -2715,6 +2758,33 @@ export function initDevMode({
           }
         }),
         el("span", { class: "dev-note", text: `${note} · predvolené ${TRAIL_GAP_DEFAULTS[key]} px` })
+      ])
+    );
+
+    // ---- značky v teréne ----
+    // Rozostup je to, čo z „v pravidelných intervaloch" naozaj rozhoduje:
+    // menší = značka je vidieť častejšie, ale trasa sa zaplní štvorcami.
+    const marks = trailMarkPx(overrides);
+    const markFields = [
+      ["spacing", "Rozostup značiek", 20, 2000, 5,
+        "vzdialenosť dvoch značiek na obrazovke; každý druh trasy ho má " +
+        "o kúsok iný, aby si značky dvoch trás na tej istej ceste nesadli na seba"],
+      ["size", "Veľkosť značky", 0.2, 4, 0.05,
+        "násobok predvolenej veľkosti štvorca"]
+    ].map(([key, label, min, max, step, note]) =>
+      el("div", { class: `dev-sub${overrides.trails.marks[key] != null ? " changed" : ""}` }, [
+        numberField({
+          label,
+          value: marks[key],
+          min,
+          max,
+          step,
+          onChange: (v) => {
+            setTrailMarks(key, v);
+            apply({ immediate: true });
+          }
+        }),
+        el("span", { class: "dev-note", text: `${note} · predvolené ${TRAIL_MARK_DEFAULTS[key]}` })
       ])
     );
 
@@ -2772,6 +2842,31 @@ export function initDevMode({
               })
             : null
         ]),
+        el("div", { class: `dev-sub${own.mark != null ? " changed" : ""}` }, [
+          selectField({
+            label: "Značka",
+            // Tri odpovede, nie dve: prázdna položka je „taká, aká je v OSM"
+            // (`osmc:symbol` – pásová, vrcholová, bicykel), „žiadna" značky
+            // vypne a meno tvaru ich všetky prekreslí na jeden.
+            value: own.mark != null ? own.mark || "ziadna" : "",
+            options: [
+              ["", "— podľa OSM —"],
+              ["ziadna", "— žiadna —"],
+              ...MARK_SHAPES.map((sh) => [sh.id, sh.label])
+            ],
+            onChange: (v) => {
+              setTrailType(type.id, {
+                mark: v === "" ? undefined : (v === "ziadna" ? "" : v)
+              });
+              apply({ immediate: true });
+            }
+          }),
+          el("span", {
+            class: "dev-note",
+            text: "biely (pešia) alebo žltý (cyklo) štvorec s farebným pásom – " +
+              "farbu aj podklad berie z OSM, tvar sa dá prekresliť"
+          })
+        ]),
         el("div", { class: `dev-sub${own.icon != null ? " changed" : ""}` }, [
           selectField({
             label: "Ikona",
@@ -2779,6 +2874,8 @@ export function initDevMode({
             // nedá zbaviť inak než skrytím celej vrstvy.
             value: own.icon != null ? own.icon : trailIconNow(type.id),
             options: [["", "— žiadna —"], ...icons.map((n) => [n, n])],
+            // Ikonka sa kreslí len tam, kde trasa značku NEMÁ (neznáma farba
+            // z OSM) – inak by na jednej čiare boli dva symboly naraz.
             onChange: (v) => {
               setTrailType(type.id, { icon: v });
               apply({ immediate: true });
@@ -2845,16 +2942,22 @@ export function initDevMode({
         el("button", {
           type: "button",
           class: "dev-btn danger",
-          text: "Späť na predvolené odstupy",
+          text: "Späť na predvolené odstupy a značky",
           onclick: () => {
             overrides.trails.gap = {};
+            overrides.trails.marks = {};
             apply();
           }
         })
       ]),
       el("div", { class: "dev-h5" }, [
+        el("span", { text: "Značky v teréne" }),
+        el("small", { text: `v pixeloch pri z${TRAIL_MARK_ZOOM}, ostatné zoomy sa škálujú s ním` })
+      ]),
+      ...markFields,
+      el("div", { class: "dev-h5" }, [
         el("span", { text: "Druhy trás" }),
-        el("small", { text: "farba, čiara a ikona podľa druhu (route)" })
+        el("small", { text: "farba, čiara, značka a ikona podľa druhu (route)" })
       ]),
       el("div", { class: "dev-list" }, typeRows),
       el("div", { class: "dev-h5" }, [
@@ -2868,9 +2971,114 @@ export function initDevMode({
           class: "dev-btn danger",
           text: "Späť na pôvodné trasy",
           onclick: () => {
-            overrides.trails = { gap: {}, types: {} };
+            overrides.trails = { gap: {}, types: {}, marks: {} };
             for (const [, key] of TRAIL_MARK_COLOURS) setPaletteColor(key, undefined);
             for (const t of TRAIL_TYPES) setPaletteColor(t.palette, undefined);
+            apply();
+          }
+        })
+      ])
+    ]);
+  }
+
+  // ---------- tab: štítky ciest ----------
+  // Štítok s číslom cesty („D1", „I/18") sa nedá ladiť v záložke Vrstiev
+  // rovnako ako trasa: farba ani tvar nie sú v `paint`, sú UPEČENÉ do obrázka
+  // v sprite (`workers/assets/shields.mjs`). V prehliadači sa preto dá
+  // prepnúť TVAR – všetky tvary sú v sprite naraz, takže je to zmena mena
+  // obrázka; farba štítka sa mení v palete a prejaví sa až po builde.
+
+  /** Tvar štítka jednej triedy cesty; `undefined` = späť na predvolený. */
+  function setShieldShape(id, shape) {
+    if (shape === undefined) delete overrides.shields[id];
+    else overrides.shields[id] = { shape };
+  }
+
+  function renderShields() {
+    const theme = getTheme();
+    const colors = mergedPalette(theme, overrides);
+    const changedPalette = overrides.palette[theme] || {};
+
+    const rows = SHIELD_DEFS.map(([id, label, classes, colorKey, mz, shapeId, textKey]) => {
+      const shape = shieldShapeFor(id, shapeId, overrides);
+      const own = overrides.shields[id];
+      return el("div", { class: `dev-item${own ? " changed" : ""}` }, [
+        el("div", { class: "dev-row" }, [
+          // Náhľad je obyčajný HTML štvorček vo farbách štítka – obrázok
+          // v sprite je až v mape a tu ide o to, ktorý riadok je ktorý.
+          el("span", {
+            class: "dev-swatch",
+            style: `background:${colors[colorKey]};color:${colors[textKey]};` +
+              `border-radius:${shape === "shield-round" ? "50%" : "3px"}`
+          }),
+          el("span", { class: "dev-name" }, [
+            el("span", { text: label }),
+            el("small", { text: `${classes ? classes.join(", ") : "podľa siete"} · od z${mz}` })
+          ])
+        ]),
+        el("div", { class: `dev-sub${own ? " changed" : ""}` }, [
+          selectField({
+            label: "Tvar štítka",
+            value: shape,
+            options: SHIELD_SHAPES.map((sh) => [sh.id, sh.label]),
+            onChange: (v) => {
+              setShieldShape(id, v === shapeId ? undefined : v);
+              apply({ immediate: true });
+            }
+          }),
+          own
+            ? el("button", {
+                type: "button",
+                class: "dev-mini",
+                title: "Späť na pôvodný tvar",
+                text: "⟲",
+                onclick: () => {
+                  setShieldShape(id, undefined);
+                  apply({ immediate: true });
+                }
+              })
+            : null
+        ]),
+        el("div", { class: "dev-sub" }, [
+          el("span", { class: "dev-note", text: "Farba štítka" }),
+          colorControl({
+            value: colors[colorKey],
+            changed: !!changedPalette[colorKey],
+            onInput: (v) => {
+              setPaletteColor(colorKey, v);
+              apply({ rerender: false });
+            },
+            onReset: changedPalette[colorKey]
+              ? () => {
+                  setPaletteColor(colorKey, undefined);
+                  apply({ immediate: true });
+                }
+              : null
+          })
+        ])
+      ]);
+    });
+
+    return el("div", {}, [
+      el("p", {
+        class: "dev-hint",
+        text:
+          "Číslo cesty je značka, nie text – má podklad, stojí narovno a opakuje " +
+          "sa po celej ceste. Podklad je obrázok upečený do spritu, takže sa tu " +
+          "prepína jeho TVAR; farba sa v mape prejaví až po prebuildovaní spritu " +
+          "(v prehliadači je vidieť len na náhľade vľavo)."
+      }),
+      el("div", { class: "dev-list" }, rows),
+      el("div", { class: "dev-bulk on" }, [
+        el("button", {
+          type: "button",
+          class: "dev-btn danger",
+          text: "Späť na pôvodné štítky",
+          onclick: () => {
+            overrides.shields = {};
+            for (const [, , , colorKey, , , textKey, borderKey] of SHIELD_DEFS) {
+              for (const key of [colorKey, textKey, borderKey]) setPaletteColor(key, undefined);
+            }
             apply();
           }
         })
@@ -3200,6 +3408,8 @@ export function initDevMode({
         ? renderPalette()
         : tab === "trails"
         ? renderTrails()
+        : tab === "shields"
+        ? renderShields()
         : tab === "icons"
         ? renderIcons()
         : tab === "poi"
