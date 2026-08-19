@@ -22,7 +22,35 @@
  */
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { decodePng, encodePng, packShelves } from "../lib/png.mjs";
-import { SHIELD_SHAPES, SHIELD_SHAPE_IDS, renderShield } from "../../poc/web/shields.js";
+import { SHIELD_SHAPES, renderShield } from "../../poc/web/shields.js";
+import { THEMES, SHIELD_DEFS } from "../../poc/web/themes.js";
+
+/**
+ * Mená štítkov, ktoré tento skript pečie: tvar × trieda cesty × téma.
+ *
+ * Je ich toľko preto, že štítok je HOTOVÝ FAREBNÝ obrázok, nie SDF – dva
+ * rovnako hrubé prstence (biely a za ním farebný) sa cez `icon-color`
+ * a jedno `icon-halo` spraviť nedajú. Farba sa tým pečie pri builde, takže
+ * každá kombinácia potrebuje vlastný obrázok. Sú to jednotky kB.
+ */
+function stitky() {
+  const out = [];
+  for (const shape of SHIELD_SHAPES) {
+    for (const [id, , , colorKey, , , , borderKey] of SHIELD_DEFS) {
+      for (const [temaKey, tema] of Object.entries(THEMES)) {
+        out.push({
+          name: `${shape.id}-${id}-${temaKey}`,
+          shape,
+          colors: { field: tema[colorKey], ring: tema[borderKey] }
+        });
+      }
+    }
+  }
+  return out;
+}
+
+const STITKY = stitky();
+const MENA = new Set(STITKY.map((s) => s.name));
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -51,7 +79,7 @@ function addTo(suffix, pixelRatio) {
   // a nakreslia znova – inak by v atlase pribúdali kópie.
   const boxes = [];
   for (const [name, e] of Object.entries(index)) {
-    if (SHIELD_SHAPE_IDS.includes(name)) continue;
+    if (MENA.has(name)) continue;
     const data = Buffer.alloc(e.width * e.height * 4);
     for (let y = 0; y < e.height; y++) {
       for (let x = 0; x < e.width; x++) {
@@ -62,18 +90,18 @@ function addTo(suffix, pixelRatio) {
     boxes.push({ name, width: e.width, height: e.height, data, entry: e });
   }
 
-  for (const shape of SHIELD_SHAPES) {
-    const img = renderShield(shape, pixelRatio);
+  for (const st of STITKY) {
+    const img = renderShield(st.shape, st.colors, pixelRatio);
     boxes.push({
-      name: shape.id,
+      name: st.name,
       width: img.width,
       height: img.height,
       data: Buffer.from(img.data.buffer, img.data.byteOffset, img.data.length),
-      // `sdf` aj rozťahovacie pásma idú do indexu – bez nich by MapLibre
-      // štítok ani nezafarbil, ani nenatiahol (a nepovedal by nič).
+      // BEZ `sdf`: obrázok je už farebný. Rozťahovacie pásma naopak treba –
+      // na bežnom rastri fungujú správne a držia štítok obdĺžnikom aj pri
+      // dlhom čísle.
       entry: {
         pixelRatio,
-        sdf: true,
         stretchX: img.stretchX,
         stretchY: img.stretchY,
         content: img.content
@@ -112,7 +140,7 @@ function addTo(suffix, pixelRatio) {
   writeFileSync(pngPath, encodePng({ ...packed, data: out }));
   writeFileSync(jsonPath, JSON.stringify(outIndex));
   console.log(
-    `✓ ${jsonPath}: ${boxes.length} obrázkov (z toho ${SHIELD_SHAPES.length} štítkov ciest), ` +
+    `✓ ${jsonPath}: ${boxes.length} obrázkov (z toho ${STITKY.length} štítkov ciest), ` +
       `atlas ${packed.width}×${packed.height}`
   );
   return true;

@@ -46,9 +46,17 @@
  * `pixelRatio` 1. Musí byť väčšie než najväčší rozumný `icon-halo-width`,
  * inak sa rámik oreže o okraj obrázka.
  */
-export const SHIELD_PAD = 4;
+export const SHIELD_PAD = 1;
 
-/** Najmenší štítok (štvorec) bez toho okraja – od tejto veľkosti sa naťahuje. */
+/**
+ * Hrúbka JEDNÉHO prstenca v pixeloch pri `pixelRatio` 1. Prstence sú dva
+ * a sú ROVNAKO HRUBÉ: vnútri farebné pole s číslom, okolo neho biely
+ * prstenec a úplne navrchu ešte jeden vo farbe poľa – tak, ako to má
+ * úradná značka D1/R1.
+ */
+export const SHIELD_RING = 2;
+
+/** Vnútorné pole s číslom (štvorec). Prstence sa pridávajú okolo neho. */
 export const SHIELD_BOX = 18;
 
 /** Dosah vzdialenostného poľa – rovnaká konvencia ako `workers/assets/sprite.mjs`. */
@@ -69,7 +77,7 @@ const SDF_CUTOFF = 0.25;
 //
 // 8 % z 18 px = 1,44 px; 1,5 je najbližšie, čo má na mriežke zmysel.
 export const SHIELD_SHAPES = [
-  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 1.5 },
+  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 3 },
   { id: "shield-round", label: "Štítok – oválny", radius: 8 }
 ];
 
@@ -103,34 +111,92 @@ function roundedRectDistance(px, py, w, h, r) {
  *          `data` je RGBA (biela, SDF v alfe) – presne to, čo do atlasu
  *          zapisuje `workers/assets/sprite.mjs`.
  */
-export function renderShield(shape, pixelRatio = 1) {
+/** `#rrggbb` → `[r, g, b]`. */
+function rozlozFarbu(hex) {
+  const h = String(hex || "#000000").replace("#", "");
+  const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+  return [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16) || 0);
+}
+
+/**
+ * Vykreslí štítok ako HOTOVÝ FAREBNÝ OBRÁZOK (nie SDF) s tromi pásmami:
+ *
+ *     ┌──────────────┐  vonkajší prstenec – farba poľa
+ *     │ ┌──────────┐ │  vnútorný prstenec – kontrastná farba (biela)
+ *     │ │   D1     │ │  pole s číslom
+ *     │ └──────────┘ │
+ *     └──────────────┘
+ *
+ * Oba prstence sú rovnako hrubé (`SHIELD_RING`).
+ *
+ * PREČO NIE SDF. SDF vie zafarbiť tvar (`icon-color`) a dať mu JEDEN
+ * prstenec (`icon-halo-*`) – dva prstence sa ním spraviť nedajú. A druhá vec:
+ * deväťdielne naťahovanie (`stretchX`/`stretchY`) je robené na bežný raster,
+ * na vzdialenostnom poli rozladí hodnoty a pretrhne obrys. Hotový obrázok
+ * rieši oboje naraz: má toľko pásem, koľko treba, a naťahuje sa správne,
+ * takže je štítok OBDĹŽNIK pri každej dĺžke čísla (aj „III/3059").
+ *
+ * CENA: farba sa pečie pri builde, takže sa nedá meniť za behu
+ * (`icon-color`) – preto sa pečie jeden obrázok na KAŽDÚ dvojicu
+ * trieda × téma. V developer móde sa farba štítka zmení až po prebuildovaní
+ * spritu, nie hneď v prehliadači.
+ *
+ * @param {object} shape   položka zo `SHIELD_SHAPES` (polomer zaoblenia)
+ * @param {object} colors  `{ field, ring }` – farba poľa a kontrastný prstenec
+ * @param {number} pixelRatio
+ */
+export function renderShield(shape, colors, pixelRatio = 1) {
   const r = pixelRatio;
   const pad = SHIELD_PAD * r;
+  const ring = SHIELD_RING * r;
   const box = SHIELD_BOX * r;
-  const radius = Math.min(shape.radius * r, box / 2);
-  const size = box + 2 * pad;
+  // Pole + dva prstence na každej strane + pixel priehľadného okraja, aby
+  // sa hrana pri škálovaní nemala o čo oprieť a nezačala sa opakovať.
+  const size = box + 4 * ring + 2 * pad;
+  const outer = size - 2 * pad;
+  const radius = Math.min(shape.radius * r, outer / 2);
+
+  const pole = rozlozFarbu(colors.field);
+  const prstenec = rozlozFarbu(colors.ring);
   const data = new Uint8Array(size * size * 4);
+
+  // Krytie pásma: 1 vnútri, 0 vonku, na hrane plynulo cez jeden pixel.
+  const kryt = (dist, hranica) => Math.max(0, Math.min(1, 0.5 - (dist - hranica)));
 
   for (let y = 0; y < size; y += 1) {
     for (let x = 0; x < size; x += 1) {
-      // Stred pixela, nie jeho roh – inak je tvar o pol pixela posunutý.
-      const dist = roundedRectDistance(x + 0.5 - pad, y + 0.5 - pad, box, box, radius);
-      const alpha = Math.max(
-        0,
-        Math.min(255, Math.round(255 - 255 * (dist / (SDF_RADIUS * r) + SDF_CUTOFF)))
-      );
+      // Vzdialenosť od VONKAJŠIEHO obdĺžnika; pásma sú jeho odsadenia dovnútra.
+      const d = roundedRectDistance(x + 0.5 - pad, y + 0.5 - pad, outer, outer, radius);
+      const aVonku = kryt(d, 0);              // celý štítok
+      const aPrstenec = kryt(d, -ring);       // od vnútra vonkajšieho prstenca
+      const aPole = kryt(d, -2 * ring);       // samotné pole s číslom
+
+      // Zhora nadol: pole prekryje prstenec, prstenec prekryje vonkajší lem.
+      const rr = pole[0] * aVonku * (1 - aPrstenec) + prstenec[0] * (aPrstenec - aPole) + pole[0] * aPole;
+      const gg = pole[1] * aVonku * (1 - aPrstenec) + prstenec[1] * (aPrstenec - aPole) + pole[1] * aPole;
+      const bb = pole[2] * aVonku * (1 - aPrstenec) + prstenec[2] * (aPrstenec - aPole) + pole[2] * aPole;
+
       const i = (y * size + x) * 4;
-      data[i] = 255;
-      data[i + 1] = 255;
-      data[i + 2] = 255;
-      data[i + 3] = alpha;
+      data[i] = Math.round(Math.min(255, rr / Math.max(aVonku, 1e-6)));
+      data[i + 1] = Math.round(Math.min(255, gg / Math.max(aVonku, 1e-6)));
+      data[i + 2] = Math.round(Math.min(255, bb / Math.max(aVonku, 1e-6)));
+      data[i + 3] = Math.round(255 * aVonku);
     }
   }
 
-  // BEZ `stretchX`/`stretchY`/`content` – viď rozpis v hlavičke súboru.
-  // `icon-text-fit` tým obrázok škáluje celý a rovnomerne, čo je na SDF
-  // jediný správny spôsob: vzdialenostné pole sa škáluje s ním a ostane
-  // konzistentné. Pridať sem pásma späť znamená vrátiť ten kríž – stráži
-  // to `workers/lint/shields.mjs`.
-  return { width: size, height: size, data };
+  // Naťahuje sa len ROVNÁ časť hrán – rohy nie. Na bežnom rastri to funguje
+  // presne tak, ako má (na SDF nie, viď hlavičku súboru), takže štítok ostane
+  // obdĺžnik aj pri dlhom čísle namiesto toho, aby sa z neho stala kapsula.
+  const od = pad + radius;
+  const doX = Math.max(od + 1, size - pad - radius);
+  return {
+    width: size,
+    height: size,
+    data,
+    stretchX: [[od, doX]],
+    stretchY: [[od, doX]],
+    // Kam sa vojde text: vnútro poľa, teda za oba prstence.
+    content: [pad + 2 * ring, pad + 2 * ring, size - pad - 2 * ring, size - pad - 2 * ring]
+  };
 }
+
