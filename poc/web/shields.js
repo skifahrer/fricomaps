@@ -17,17 +17,28 @@
  * šestnástich – a farba štítka sa dá doladiť v developer móde ako každá iná,
  * bez prebuildovania spritu.
  *
- * PREČO ROZŤAHOVATEĽNÝ (`stretchX`/`stretchY`). Štítok má byť okolo textu,
- * ktorý má raz dva znaky („D1") a raz šesť („III/3059"). MapLibre to vie sám
- * (`icon-text-fit`), ale len pri obrázku, ktorý má povedané, KTORÁ jeho časť
- * sa smie natiahnuť: rohy nie, rovné časti hrán áno. Bez toho by sa
- * natiahol celý aj s rohmi a z obdĺžnika by bola pri dlhom čísle rozmazaná
- * kapsula.
+ * NEROZŤAHUJE SA (žiadne `stretchX`/`stretchY`), a je to opravená chyba.
  *
- * ROZŤAHOVANIE SDF NEKAZÍ: v pásme, ktoré sa naťahuje, je vzdialenostné pole
- * rovnobežné s hranou (mení sa len naprieč ňou), takže natiahnutie pozdĺž
- * hrany nemení nič. Rohy, kde sa pole mení v oboch smeroch, sa nenaťahujú
- * práve preto.
+ * Kedysi tu stálo, že „rozťahovanie SDF nekazí, lebo v naťahovanom pásme je
+ * vzdialenostné pole rovnobežné s hranou". Tá úvaha platí pre HRANY, ale nie
+ * pre celok, a v mape z toho bol ROZMAZANÝ KRÍŽ namiesto štítka: SDF nesie
+ * vzdialenosť V PIXELOCH, takže natiahnutím pásma sa pole rozladí voči novej
+ * geometrii (gradient sa zriedi a prah 0,75 rozmaže), a na švíkoch medzi
+ * naťahovaným pásmom a pevným rohom na seba hodnoty nenadviažu – obrys sa
+ * pretrhne a rohy odpadnú. Deväťdielne naťahovanie je robené na BEŽNÝ raster,
+ * nie na vzdialenostné pole.
+ *
+ * Namerané (MapLibre 4.7.1, `icon-text-fit: both`, text-size 11, „D1"):
+ *   so `stretchX`/`stretchY`  … 89 × 85 px, rozmazaný kríž
+ *   bez nich                  … ~20 × 14 px, ostrý zaoblený obdĺžnik
+ *
+ * CENA: `icon-text-fit` teraz škáluje obrázok CELÝ, takže sa s dĺžkou čísla
+ * škáluje aj polomer zaoblenia – z „D1" je zaoblený obdĺžnik, z „III/3059"
+ * kapsula. Je to viditeľne horšie než pravý obdĺžnik, ale nesúmerne lepšie
+ * než kríž, ktorý tam bol. Pravý obdĺžnik pri každej dĺžke by chcel obrázok
+ * BEZ SDF (deväťdielne naťahovanie na ňom funguje, ako má) a s farbou
+ * zapečenou pri builde – čo je iná pipeline a stojí za samostatné rozhodnutie,
+ * lebo farba štítka sa tým prestane dať ladiť v developer móde.
  */
 
 /**
@@ -48,8 +59,17 @@ const SDF_CUTOFF = 0.25;
  * Tvary štítka. `radius` je polomer zaoblenia rohov v pixeloch pri
  * `pixelRatio` 1; `SHIELD_BOX / 2` je už úplný ovál.
  */
+// Polomer je ODMERANÝ Z NAOZAJSTNEJ ZNAČKY, nie odhadnutý: na úradnom
+// slovenskom štítku D1/R1 (Wikimedia Commons `D1-SVK-2020.svg`) má zaoblenie
+// 8 % výšky červeného poľa. Dovtedy tu boli 4 px na 18 px poli, teda 22 % –
+// takmer trojnásobok, a štítok preto pôsobil ako pilulka, nie ako dopravná
+// značka. Pri dlhom čísle to bolo ešte vypuklejšie: `icon-text-fit` škáluje
+// obrázok v oboch osiach zvlášť, takže sa vodorovný polomer natiahol s ním
+// a z „III/3059" bola kapsula. S malým polomerom to ostane obdĺžnik.
+//
+// 8 % z 18 px = 1,44 px; 1,5 je najbližšie, čo má na mriežke zmysel.
 export const SHIELD_SHAPES = [
-  { id: "shield", label: "Štítok – zaoblený obdĺžnik", radius: 4 },
+  { id: "shield", label: "Štítok – zaoblený obdĺžnik (ako značka D1/R1)", radius: 1.5 },
   { id: "shield-round", label: "Štítok – oválny", radius: 8 }
 ];
 
@@ -107,18 +127,10 @@ export function renderShield(shape, pixelRatio = 1) {
     }
   }
 
-  // Naťahuje sa len rovná časť hrán – rohy (polomer zaoblenia) nie. Pásmo
-  // musí mať aspoň pixel, inak MapLibre nemá čo opakovať.
-  const od = pad + radius;
-  const doX = Math.max(od + 1, pad + box - radius);
-  return {
-    width: size,
-    height: size,
-    data,
-    stretchX: [[od, doX]],
-    stretchY: [[od, doX]],
-    // Kam sa vojde text. Dva pixely od hrany na každej strane, aby sa
-    // číslo nedotýkalo rámika; zvyšok dorovná `icon-text-fit-padding`.
-    content: [pad + 2 * r, pad + 2 * r, pad + box - 2 * r, pad + box - 2 * r]
-  };
+  // BEZ `stretchX`/`stretchY`/`content` – viď rozpis v hlavičke súboru.
+  // `icon-text-fit` tým obrázok škáluje celý a rovnomerne, čo je na SDF
+  // jediný správny spôsob: vzdialenostné pole sa škáluje s ním a ostane
+  // konzistentné. Pridať sem pásma späť znamená vrátiť ten kríž – stráži
+  // to `workers/lint/shields.mjs`.
+  return { width: size, height: size, data };
 }
