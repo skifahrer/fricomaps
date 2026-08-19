@@ -229,7 +229,7 @@ env:
   # ÚGKK DMR 5.0 (LLS) – opäť tie isté 1°×1° dlaždice, mriežka 5 m. Napĺňa
   # ich job `mirror-dmr5-tiles` cez „Dáta · DMR 5.0" – po stupňoch, ktoré
   # bbox pretína (celé Slovensko naraz netreba).
-  DMR5_STORE: dem-dmr5
+  DMR5_STORE: dem-dmr5-v2
   # Výrez DMR 5.0 v plnom 1 m rozlíšení, jeden COG na pohorie.
   UGKK_STORE: dem-ugkk
   # Vrstevnice: rovnaká dvojica ako pri skalách nižšie a z rovnakého dôvodu.
