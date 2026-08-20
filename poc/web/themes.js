@@ -290,9 +290,13 @@ export const THEMES = {
     pisteLine: "#4a90c8",
     featurePoi: "#3f7a6a",
     trailFerrata: "#c04a1a",
-    hillShadow: "#5a4a3a",
-    hillHighlight: "#ffffff",
-    hillAccent: "#8a7a6a",
+    // Tri farby tieňovania reliéfu majú ALFU a je to to podstatné na nich:
+    // MapLibre nimi svah PREKRÝVA (krytie rastie so sklonom), takže bez alfy
+    // je nad 20° pod tieňovaním vidieť už len tú farbu a nie mapu. Rozpis
+    // aj namerané čísla sú pri vrstve `hillshade` nižšie.
+    hillShadow: "#5a4a3ab3",
+    hillHighlight: "#ffffff5c",
+    hillAccent: "#8a7a6a38",
     // Značené trasy. Prvá desiatka sú farby značiek, ako ich pozná OSM
     // (`osmc:symbol`, `colour`): dáta nesú meno farby, mapa až tento odtieň –
     // takže sa dá každá značka doladiť zvlášť a v každej téme inak. Zvyšok sú
@@ -419,9 +423,9 @@ export const THEMES = {
     pisteLine: "#3a7098",
     featurePoi: "#6aa898",
     trailFerrata: "#c05a2a",
-    hillShadow: "#000000",
-    hillHighlight: "#4a4a60",
-    hillAccent: "#2a2a3a",
+    hillShadow: "#000000b3",
+    hillHighlight: "#4a4a605c",
+    hillAccent: "#2a2a3a38",
     // V tmavej téme sa značky nekreslia doslova: čierna značka by na tmavom
     // podklade zmizla, preto je svetlosivá. Podstatné je, aby sa dala od
     // ostatných rozoznať – nie aby mala presne tú farbu, čo v teréne.
@@ -547,9 +551,9 @@ export const THEMES = {
     pisteLine: "#2f86bc",
     featurePoi: "#2f6f5c",
     trailFerrata: "#b03c14",
-    hillShadow: "#6a5030",
-    hillHighlight: "#fffaf0",
-    hillAccent: "#9a8060",
+    hillShadow: "#6a5030b3",
+    hillHighlight: "#fffaf05c",
+    hillAccent: "#9a806038",
     // Outdoor téma je na turistiku – značky sú tu najsýtejšie, aby sa dali
     // rozoznať aj cez vrstevnice a tieňovanie.
     trailRed: "#cc2222",
@@ -674,9 +678,9 @@ export const THEMES = {
     pisteLine: "#6aa8c8",
     featurePoi: "#5a8a78",
     trailFerrata: "#c06038",
-    hillShadow: "#8a6a58",
-    hillHighlight: "#fffdf8",
-    hillAccent: "#c0a090",
+    hillShadow: "#8a6a58b3",
+    hillHighlight: "#fffdf85c",
+    hillAccent: "#c0a09038",
     trailRed: "#d06a5a",
     trailBlue: "#6a8fb8",
     trailGreen: "#6aa06a",
@@ -3018,6 +3022,21 @@ export function buildStyle({
         type: "hillshade",
         source: "dem",
         paint: {
+          // SVETLO IDE OD SEVEROZÁPADU A DRŽÍ SA TERÉNU, NIE OBRAZOVKY.
+          //
+          // MapLibre má predvolene 335° – to je 25° od severu, takže SEVERNÉ
+          // svahy dostávali skoro plné svetlo a boli v mape tou najsvetlejšou
+          // plochou. 315° je kartografická konvencia (svetlo od severozápadu)
+          // a severný svah je pri nej 45° od svetla, teda len spolu-osvetlený.
+          //
+          // `map` znamená, že svetlo je priviazané k TERÉNU. Predvolený
+          // `viewport` ho drží pri hornom okraji obrazovky, takže sa
+          // otočením mapy – a tá sa v teréne otáča s kompasom – prelieva
+          // z jednej strany hrebeňa na druhú a to isté údolie raz vyzerá ako
+          // údolie a raz ako chrbát. Na severne orientovanej mape sú obe
+          // hodnoty to isté, rozdiel je vidieť až pri otáčaní.
+          "hillshade-illumination-direction": 315,
+          "hillshade-illumination-anchor": "map",
           // SILA TIEŇOVANIA RASTIE SO ZOOMOM, nie naopak.
           //
           // Krivka tu roky klesala (`[[6, 0.5], [12, 0.4], [16, 0.25]]`),
@@ -3030,10 +3049,46 @@ export function buildStyle({
           // prehľadovom zoome stačí naznačiť tvar, v detaile má reliéf niesť
           // to hlavné.
           //
-          // Nie je to celá jednotka: `hillshade-shadow-color` je v témach
-          // NEPRIEHĽADNÁ farba, takže pri 1,0 je zatienený svah takmer čierna
-          // plocha a popisky ani cesty v ňom nie sú čitateľné. 0,95 v detaile
-          // je najsilnejšie, čo ešte nechá mapu prečítať.
+          // Nie je to celá jednotka: aj so stropom, ktorý drží alfa farieb
+          // (nižšie), je 1,0 už len o tom, ako rýchlo krytie so sklonom
+          // nabehne – a v detaile nabehne aj tak celé. 0,95 nechá miernym
+          // svahom ešte odstupňovanie.
+          //
+          // A STROP DRŽÍ ALFA FARIEB, NIE TÁTO KRIVKA. Tieňovanie je
+          // PREKRYVNÁ vrstva: krytie, ktorým prekrýva mapu pod sebou, je
+          // `sin` zo sklonu (a ten sa prevýšením ešte natiahne), takže
+          // s nepriehľadnou farbou je nad ~20° sklonu krytie 0,97–1,0 –
+          // pod tieňovaním potom nie je vidieť mapu, ale samotnú farbu
+          // tieňovania. Namerané na svetlej téme (z15, 49° s. š.,
+          // prevýšenie 0,95, `workers/lint/hillshade.mjs` počíta ten istý
+          // shader):
+          //
+          //   svah 30° privrátený k svetlu   les #b7d69f → #fcfcfb (biela)
+          //   svah 30° odvrátený od svetla   les #b7d69f → #5c4c3c (hnedá)
+          //
+          // Teda: na privrátenej strane bola z lesa BIELA PLOCHA a na
+          // odvrátenej tá istá hnedá ako z lúky – nad 20° sklonu mapa pod
+          // tieňovaním zmizla a ostala z nej vytieňovaná reliéfna maketa.
+          // Najviac to bilo do očí na severných svahoch, ktoré predvolené
+          // svetlo (335°) osvetľovalo skoro kolmo.
+          //
+          // Preto majú všetky tri farby v témach ALFU (`#rrggbbaa`):
+          //
+          //   tieň      0,70   svah ostane zreteľne tmavý, ale je pod ním
+          //                    vidieť les, cestu aj vrstevnicu
+          //   svetlo    0,36   privrátený svah sa len jemne rozjasní
+          //   akcent    0,22   akcent kreslí sklon bez ohľadu na svetlo;
+          //                    kým bolo krytie vysoké, nebolo ho vidieť
+          //                    vôbec, teraz ho vidieť je – a nesmie
+          //                    prekričať zvyšok
+          //
+          // Po nej je z toho istého lesa na 30° svahu #cbdabb (privrátený)
+          // a #757257 (odvrátený) – v oboch prípadoch stále les. Reliéf sa
+          // tým NEstratí: rozdiel medzi privrátenou a odvrátenou stranou je
+          // 41 jednotiek L*, čo je viac, než potrebuje oko na tvar. Ubudlo
+          // len to, čo tvar nenieslo – vypálená biela a nasýtená hnedá,
+          // pod ktorou nebolo nič. Že sa nepriehľadná farba nevráti, stráži
+          // `workers/lint/hillshade.mjs`.
           //
           // Dá sa to doladiť: `hillshade-exaggeration` je bežná vlastnosť
           // úprav (developer mode → vrstva „Tieňovanie reliéfu"), takže na

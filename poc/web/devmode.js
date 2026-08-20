@@ -155,16 +155,47 @@ const el = (tag, props = {}, children = []) => {
 };
 
 const isHex6 = (v) => /^#[0-9a-f]{6}$/i.test(v);
+/** Farba, akú berie štýl: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`. */
+const isHexColor = (v) =>
+  /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(String(v || "").trim());
 /** `input[type=color]` vie iba 6-miestny hex – kratšie zápisy dopočítame. */
 const toHex6 = (v) => {
   const s = String(v || "").trim();
   if (isHex6(s)) return s.toLowerCase();
-  const m = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(s);
+  const m = /^#([0-9a-f])([0-9a-f])([0-9a-f])([0-9a-f])?$/i.exec(s);
   if (m) return `#${m[1]}${m[1]}${m[2]}${m[2]}${m[3]}${m[3]}`.toLowerCase();
   const m8 = /^#([0-9a-f]{6})[0-9a-f]{2}$/i.exec(s);
   if (m8) return `#${m8[1]}`.toLowerCase();
   return "#000000";
 };
+
+/**
+ * ALFA FARBY, ODDELENE OD ODTIEŇA – a je to kvôli tieňovaniu reliéfu.
+ *
+ * `hillShadow`, `hillHighlight` a `hillAccent` sú `#rrggbbaa` (prečo, je
+ * v `themes.js` pri vrstve `hillshade`) a `input[type=color]` alfu nepozná:
+ * vrátil by `#rrggbb`. Kým sa alfa nedržala bokom, stačilo ťuknúť do
+ * farby tieňa a alfa TICHO zmizla – v mape z toho bola nepriehľadná plocha
+ * cez celý svah a v `style-overrides.json` farba, ktorá vyzerá ako drobná
+ * úprava odtieňa. Preto je alfa vlastná hodnota: pipetka mení odtieň
+ * a alfu nesie ďalej, textové políčko ukazuje a berie celý zápis.
+ */
+const alphaOf = (v) => {
+  const s = String(v || "").trim();
+  const m8 = /^#[0-9a-f]{6}([0-9a-f]{2})$/i.exec(s);
+  if (m8) return parseInt(m8[1], 16) / 255;
+  const m4 = /^#[0-9a-f]{3}([0-9a-f])$/i.exec(s);
+  if (m4) return parseInt(m4[1] + m4[1], 16) / 255;
+  return 1;
+};
+/** Odtieň + alfa späť do jedného zápisu; pri plnej alfe ostáva `#rrggbb`. */
+const withAlpha = (hex6, alpha) => {
+  const a = Math.min(1, Math.max(0, Number(alpha)));
+  if (!(a < 1)) return toHex6(hex6);
+  return `${toHex6(hex6)}${Math.round(a * 255).toString(16).padStart(2, "0")}`;
+};
+/** Zápis farby, ako sa má uložiť do úprav (malými písmenami, bez medzier). */
+const normColor = (v) => withAlpha(toHex6(v), alphaOf(v));
 
 /** Stmaví farbu – použité ako predvolená farba vzoru a okraja. */
 const darken = (hex, factor = 0.55) => {
@@ -811,16 +842,31 @@ export function initDevMode({
   // ---------- ovládacie prvky ----------
   function colorControl({ value, onInput, onReset, changed, note }) {
     const hex = toHex6(value);
+    // Alfu drží políčko, nie pipetka – rozpis pri `alphaOf` vyššie.
+    let alpha = alphaOf(value);
     const picker = el("input", { type: "color", class: "dev-color", value: hex });
-    const text = el("input", { type: "text", class: "dev-hex", value: hex, spellcheck: "false" });
+    const text = el("input", {
+      type: "text",
+      class: "dev-hex",
+      value: withAlpha(hex, alpha),
+      spellcheck: "false",
+      title: "#rrggbb, alebo #rrggbbaa aj s krytím"
+    });
     picker.addEventListener("input", () => {
-      text.value = picker.value;
-      onInput(picker.value);
+      text.value = withAlpha(picker.value, alpha);
+      onInput(text.value);
     });
     text.addEventListener("change", () => {
-      const v = toHex6(text.value);
+      // Nezrozumiteľný zápis nemá prepísať farbu na čiernu: vrátime sa
+      // k tomu, čo v políčku bolo, a alfa ostane, kde bola.
+      if (!isHexColor(text.value)) {
+        text.value = withAlpha(picker.value, alpha);
+        return;
+      }
+      const v = normColor(text.value);
+      alpha = alphaOf(v);
       text.value = v;
-      picker.value = v;
+      picker.value = toHex6(v);
       onInput(v);
     });
     return el("div", { class: `dev-colorrow${changed ? " changed" : ""}` }, [
@@ -2596,7 +2642,7 @@ export function initDevMode({
           if (!raw) return;
           try {
             for (const [k, v] of Object.entries(JSON.parse(raw))) {
-              if (PALETTE_LABELS[k] && isHex6(toHex6(v))) setPaletteColor(k, toHex6(v));
+              if (PALETTE_LABELS[k] && isHexColor(v)) setPaletteColor(k, normColor(v));
             }
             apply();
           } catch (err) {
