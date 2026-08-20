@@ -654,15 +654,41 @@ pásma vnoriť nedá ani obchádzkou – kto chce plynulý prechod, píše krivk
 Krivka `hillshade-exaggeration` roky klesala (`0,5 → 0,25`), takže presne tam,
 kde má výškový model najviac detailu (DMR 5.0 má mriežku 5 m a dlaždice idú do
 z15), bolo tieňovanie najslabšie – terénne nerovnosti, kvôli ktorým sa človek
-približuje, pri priblížení mizli. Teraz je to obrátene
-(`0,55 → 0,95`). Nie je to celá jednotka: `hillshade-shadow-color` je v témach
-nepriehľadná farba, takže pri 1,0 je zatienený svah takmer čierny a mapa sa
-v ňom nedá prečítať.
+približuje, pri priblížení mizli. Teraz je to obrátene (`0,55 → 0,95`).
 
 `hillshade-exaggeration` je odteraz **bežná vlastnosť úprav** – jediná mimo
 trojice farba/krytie/hrúbka. Menuje sa celá, nie príponou: `hillshade` je
 jediný druh vrstvy, ktorý ju má, a `line-exaggeration` z preklepu by MapLibre
 odmietol aj s celým štýlom.
+
+**Silu ale nedrží tá krivka, ale ALFA FARIEB.** Tieňovanie je prekryvná
+vrstva: krytie, ktorým prekrýva mapu pod sebou, je `sin` zo sklonu (a ten sa
+prevýšením ešte natiahne), takže s nepriehľadnou farbou je nad ~20° sklonu
+krytie 0,97–1,0 – pod tieňovaním nie je vidieť mapu, ale samotnú farbu
+tieňovania. Namerané na svetlej téme (z15, 49° s. š., prevýšenie 0,95, svah
+30°, ten istý shader počíta `workers/lint/hillshade.mjs`):
+
+| farba lesa `#b7d69f` na 30° svahu | privrátený k svetlu | odvrátený |
+|---|---|---|
+| nepriehľadné farby | `#fcfcfb` (biela) | `#5c4c3c` (hnedá) |
+| s alfou (0,36 / 0,70 / akcent 0,22) | `#cbdabb` | `#757257` |
+
+Teda: z lesa bola na osvetlenom svahu **biela plocha** a na zatienenom tá istá
+hnedá ako z lúky – nad hranicou lesa bola z mapy vytieňovaná reliéfna maketa
+bez krajinnej pokrývky. Reliéf sa alfou nestratí (rozdiel medzi stranami je
+41 jednotiek L*, viac, než oko na tvar potrebuje); ubudlo len to, čo tvar
+nenieslo.
+
+**A svetlo svieti od severozápadu a drží sa terénu.** MapLibre má predvolene
+335° (25° od severu – práve preto boli najbielejšie SEVERNÉ svahy) a
+`illumination-anchor: viewport`, teda svetlo priviazané k obrazovke: pri
+otočení mapy sa prelieva na druhú stranu hrebeňa a to isté údolie raz vyzerá
+ako údolie a raz ako chrbát. V štýle je preto `315` a `map` – oboje napísané,
+lebo predvolená hodnota je tu tá zlá.
+
+Alfa má cenu, ktorú platí developer mód: `input[type=color]` alfu nepozná,
+takže ju drží textové políčko vedľa pipetky (`normColor` v `devmode.js`). Kým
+to tak nebolo, ťuknutie do farby tieňa ju ticho zahodilo.
 
 ### Štítky s číslom cesty (`D1`, `R1`, `I/18`)
 
@@ -866,6 +892,7 @@ python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 python3 workers/lint/dem-resampling.py # kernel DEM vyberá lib/cell.py, nie autor riadku
 python3 workers/dem/measure-resampling.py  # čím prevzorkovať, aby v tieni nebola mriežka
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
+node    workers/lint/hillshade.mjs     # tieňovanie neprekryje mapu pod sebou
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
 python3 workers/trails/tags.py --osmc=red:white:red_bar --route=hiking  # akú značku z toho
@@ -912,7 +939,11 @@ všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej
 trasy drží naprieč tromi súbormi** (`workers/lint/trails.mjs` – strana cesty,
-zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **štítok s číslom cesty
+zlomy kriviek odstupu a atribúty v schéme dlaždíc), že **tieňovanie
+reliéfu neprekryje mapu pod sebou** (`workers/lint/hillshade.mjs` – krytie
+prekryvnej vrstvy rastie so sklonom, takže z nepriehľadnej `hillHighlight`
+je na svahu privrátenom k svetlu biela plocha namiesto lesa; štýl je pri tom
+platný), že **štítok s číslom cesty
 (`D1`) prežije preskladanie spritu a ostane nad menom ulice**
 (`workers/lint/shields.mjs` – rozťahovateľný obrázok bez `stretchX` sa natiahne
 aj s rohmi a premenovaný obrázok nechá číslo bez podkladu; ani jedno nespadne),

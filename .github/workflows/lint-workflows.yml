@@ -524,6 +524,16 @@ jobs:
       - name: "Štýl: výplne chcú plochy, vzory držia s predlohou, cesty poradie"
         run: node workers/lint/style.mjs
 
+      # Tieňovanie reliéfu je PREKRYVNÁ vrstva: krytie, ktorým prekrýva mapu
+      # pod sebou, rastie so sklonom, takže s nepriehľadnou farbou je nad ~20°
+      # sklonu 0,97–1,0 – a pod tieňovaním potom nie je vidieť mapu, ale farbu
+      # tieňovania. Kým bola `hillHighlight` `#ffffff`, bola z lesa na svahu
+      # privrátenom k svetlu BIELA PLOCHA; najviac na severných svahoch, lebo
+      # predvolené svetlo MapLibre (335°) je 25° od severu. Štýl je pri tom
+      # platný a nikto nepovie nič. Rozpis: `workers/lint/hillshade.mjs`.
+      - name: "Tieňovanie reliéfu neprekryje mapu pod sebou"
+        run: node workers/lint/hillshade.mjs
+
       # `maps.json` je zoznam hotových máp, ktorý dopisuje BEH – a to je presne
       # ten druh veci, čo sa rozíde ticho: mená v katalógu prestanú sedieť s
       # menami balíkov, katalóg sa zapíše aj po neúspešnom nahratí, alebo build
