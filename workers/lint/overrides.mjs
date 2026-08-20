@@ -46,6 +46,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TARGET = join(ROOT, "poc", "web", "style-overrides.json");
 import { snapshotStyle, pasteStyle, valueAtZoom } from "../../poc/web/layer-style.js";
 
+/** Najmenšie platné PNG (1 × 1 px) – na skúšanie vlastných ikon. */
+const PNG_1PX = "data:image/png;base64,"
+  + "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 let bad = 0;
 const chyba = (subor, text) => {
   console.log(`::error file=${subor}::${text}`);
@@ -278,8 +282,21 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
       marks: { spacing: 300, size: 1.2 }
     },
     shields: { motorway: { shape: "shield-round" } },
+    // Vlastná sada aj vlastná ikona: oboje ovplyvňuje BUILD (sťahovanie
+    // spritu a jeho dopečenie), takže sa musí dostať do repozitára celé –
+    // vrátane samotného obrázka, ktorý je tou najväčšou časťou súboru.
+    iconSets: [
+      { id: "own-test", label: "Test", sprite: "https://example.org/sprites/test", suffix: "_11" }
+    ],
+    customIcons: [{ name: "own:test", png: PNG_1PX, pixelRatio: 2 }],
     palette: {},
-    layers: {}
+    // `layout` je druhá polica vedľa `paint` – veľkosť ikony a rozostup po
+    // čiare sa ňou ladia (značky trás), takže tá istá otázka: prežije zápis?
+    layers: {
+      "trail-hiking-mark": {
+        layout: { "icon-size": 1.2, "symbol-spacing": [[12, 13, 120], [14, 20, 260]] }
+      }
+    }
   };
   const { overrides } = normalizeOverrides(ukazka);
   const dir = mkdtempSync(join(tmpdir(), "overrides-lint-"));
@@ -306,6 +323,13 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
         }
       };
       chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
+      chyba_ak("iconSets", overrides.iconSets, zapisane.iconSets);
+      chyba_ak("customIcons", overrides.customIcons, zapisane.customIcons);
+      chyba_ak(
+        "layers[trail-hiking-mark].layout",
+        overrides.layers["trail-hiking-mark"]?.layout,
+        zapisane.layers["trail-hiking-mark"]?.layout
+      );
       chyba_ak("trails.types", overrides.trails.types, zapisane.trails.types);
       chyba_ak("trails.marks", overrides.trails.marks, zapisane.trails.marks);
       chyba_ak("shields", overrides.shields, zapisane.shields);

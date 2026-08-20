@@ -57,6 +57,11 @@ import {
   selectedIconSource,
   TRAIL_TYPES,
   TRAIL_MARK_COLOURS,
+  LAYOUT_PROPS,
+  LAYOUT_PROP_IDS,
+  CUSTOM_ICON_PREFIX,
+  CUSTOM_ICON_MAX_COUNT,
+  CUSTOM_ICON_MAX_BYTES,
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
   TRAIL_MARK_DEFAULTS,
@@ -72,9 +77,18 @@ import {
   normalizeMapType
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
+import { CUSTOM_SET_PREFIX } from "./icon-sources.js";
 import { MARK_SHAPES } from "./marks.js";
 import { SHIELD_SHAPES } from "./shields.js";
 import { snapshotStyle, pasteStyle, valueAtZoom } from "./layer-style.js";
+import { el } from "./dom.js";
+import {
+  iconPicker,
+  drawSpriteIcon,
+  fileToIconPng,
+  iconNameFromFile,
+  CUSTOM_ICON_MAX_PX
+} from "./dev-icons.js";
 
 const STORAGE_KEY = "fricomaps.overrides";
 const SCOPE_KEY = "fricomaps.devscope";
@@ -84,20 +98,26 @@ const GROUP_LABELS = Object.fromEntries(LAYER_GROUPS.map((g) => [g.id, g.label])
 const TRAIL_MARK_KEYS = Object.fromEntries(TRAIL_MARK_COLOURS);
 
 /**
- * Obrázky, ktoré si do spritu pečieme sami – značky trás (`mark-…`) a podklady
- * štítkov ciest (`shield-…`). V zoznamoch „vyber ikonu" nemajú čo robiť: nie sú
+ * Obrázky, ktoré si do spritu pečieme sami – značky trás (`mark-…`), podklady
+ * štítkov ciest (`shield-…`) a vzory plôch (`pat:…`, tie sú zároveň svojím
+ * vlastným predpisom a nastavujú sa ako vzor, nie ako ikona). V zoznamoch „vyber ikonu" nemajú čo robiť: nie sú
  * to symboly, ale hotové farebné obrázky konkrétnej veci, a je ich viac než
  * samotných ikoniek (154 značiek proti pár stovkám ikon). Prepínajú sa tam, kam
  * patria – v záložke „Trasy" a „Štítky".
  */
-const BAKED_IMAGE = /^(mark|shield)-/;
-const pickableIcons = (set, extra) =>
-  [
-    ...new Set([
-      ...(extra ? [extra] : []),
-      ...(set?.icons || []).filter((n) => !BAKED_IMAGE.test(n))
-    ])
-  ].sort();
+const BAKED_IMAGE = /^(mark-|shield-|pat:)/;
+const pickableIcons = (set, extra) => {
+  const vsetky = (set?.icons || []).filter((n) => !BAKED_IMAGE.test(n));
+  // SADA MÁ TÚ ISTÚ IKONU DVAKRÁT: `aerialway` aj `aerialway_11`. Štýl
+  // používa tú s príponou (`specialIcons`, `iconClasses`), takže tá bez nej
+  // je v zozname len dvojička, ktorá vyzerá rovnako a nedá sa od nej odlíšiť.
+  const s = set?.suffix;
+  const maPriponu = new Set(s ? vsetky.filter((n) => n.endsWith(s)) : []);
+  const bezDvojiciek = s
+    ? vsetky.filter((n) => n.endsWith(s) || !maPriponu.has(`${n}${s}`))
+    : vsetky;
+  return [...new Set([...(extra ? [extra] : []), ...bezDvojiciek])].sort();
+};
 
 /** Načíta úpravy uložené v prehliadači. */
 export function loadOverrides() {
@@ -141,18 +161,6 @@ export function serializeOverrides(overrides) {
   );
 }
 
-const el = (tag, props = {}, children = []) => {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(props)) {
-    if (k === "class") node.className = v;
-    else if (k === "text") node.textContent = v;
-    else if (k === "html") node.innerHTML = v;
-    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else if (v !== null && v !== undefined && v !== false) node.setAttribute(k, v === true ? "" : v);
-  }
-  for (const c of [].concat(children)) if (c) node.appendChild(c);
-  return node;
-};
 
 const isHex6 = (v) => /^#[0-9a-f]{6}$/i.test(v);
 /** Farba, akú berie štýl: `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa`. */
@@ -341,6 +349,19 @@ export function initDevMode({
    * `style-overrides.json` nepatrí, je to schránka, nie nastavenie.
    */
   let styleClip = null;
+  /**
+   * Krátka správa do stavového riadku („ikona pridaná", „adresa chýba").
+   * Ten istý riadok, ktorý hlási, čo sa nepodarilo preniesť pri kopírovaní
+   * štýlu – nech nie sú dve miesta, kam sa panel prihovára.
+   */
+  const poznamka = (text) => {
+    clipNote = text;
+    renderStatus();
+  };
+
+  /** Ktoré druhy trás majú v záložke „Trasy" rozbalené zoomy a pásma. */
+  const trailOpen = new Set();
+
   /** Čo sa pri poslednom vložení nedalo preniesť – vypíše to stavový riadok. */
   let clipNote = "";
 
@@ -623,6 +644,8 @@ export function initDevMode({
       Object.keys(overrides.trails.marks).length +
       Object.keys(overrides.trails.types).length;
     const nShields = Object.keys(overrides.shields).length;
+    const nIkony = (overrides.customIcons || []).length;
+    const nSady = (overrides.iconSets || []).length;
     const perMap = Object.entries(overrides.maps)
       .map(([id, m]) => `${mapTypeDef(id).label} ${Object.keys(m.layers).length}`)
       .join(", ");
@@ -631,6 +654,9 @@ export function initDevMode({
         ? `Zmeny: ${nPalette} farieb palety · ${nLayers} vrstiev (všetky mapy) · ` +
           `${nPoi} skrytých POI · ${nTrails} úprav trás · ` +
           `${nShields} štítkov · ` +
+          (nIkony || nSady
+            ? `${nIkony} vlastných ikon${nSady ? `, ${nSady} vlastných sád` : ""} · `
+            : "") +
           `ikony ${selectedIconSource(overrides)}` +
           (perMap ? ` · po mapách: ${perMap}` : "") +
           " · uložené v prehliadači"
@@ -677,6 +703,9 @@ export function initDevMode({
       ...own,
       ...(base.paint || own.paint
         ? { paint: { ...(base.paint || {}), ...(own.paint || {}) } }
+        : {}),
+      ...(base.layout || own.layout
+        ? { layout: { ...(base.layout || {}), ...(own.layout || {}) } }
         : {})
     };
   }
@@ -693,6 +722,7 @@ export function initDevMode({
       else cur[k] = v;
     }
     if (cur.paint && !Object.keys(cur.paint).length) delete cur.paint;
+    if (cur.layout && !Object.keys(cur.layout).length) delete cur.layout;
     if (Object.keys(cur).length) bucket[id] = cur;
     else delete bucket[id];
     pruneMaps();
@@ -703,6 +733,18 @@ export function initDevMode({
     if (value === undefined) delete cur[prop];
     else cur[prop] = value;
     setLayerOverride(id, { paint: Object.keys(cur).length ? cur : undefined });
+  }
+
+  /**
+   * To isté pre `layout` (veľkosť ikony, rozostup po čiare, veľkosť písma).
+   * Je to vlastná vetva, a nie „paint s iným menom": MapLibre drží `paint`
+   * a `layout` zvlášť a neznáma vlastnosť v `layout` zhodí celý štýl.
+   */
+  function setLayerLayout(id, prop, value) {
+    const cur = { ...((scopedOverride(id) || {}).layout || {}) };
+    if (value === undefined) delete cur[prop];
+    else cur[prop] = value;
+    setLayerOverride(id, { layout: Object.keys(cur).length ? cur : undefined });
   }
 
   /**
@@ -1557,9 +1599,13 @@ export function initDevMode({
    * (`interpolate` ani `step` s jediným výstupom by nemal čo robiť, preto ich
    * `paintValue` rozbalí).
    */
-  function zoomStopsEditor({ layer, prop, kind, min, max, step }) {
+  function zoomStopsEditor({ layer, prop, kind, min, max, step, where = "paint" }) {
     const o = layerOverride(layer.id) || {};
-    const cur = o.paint && o.paint[prop];
+    // `paint` alebo `layout` – ten istý editor, lebo je to tá istá otázka
+    // („čo platí na ktorom zoome"). Rozdiel je len v tom, kam sa hodnota
+    // zapíše a odkiaľ sa číta, čo je tu na dvoch riadkoch.
+    const zapisVlastnost = where === "layout" ? setLayerLayout : setLayerPaint;
+    const cur = o[where] && o[where][prop];
     const list = Array.isArray(cur) ? cur : null;
     const pasma = list ? isBandList(list) : false;
     const stops = list && !pasma ? list : null;
@@ -1572,7 +1618,7 @@ export function initDevMode({
       // a `interpolate` chce striktne rastúce – MapLibre by pri porušení
       // odmietol CELÝ štýl a mapa by sa nenačítala. Uložené má byť to isté,
       // čo je platné. Prázdny zoznam neukladáme – to je „nechaj, čo je v štýle".
-      setLayerPaint(layer.id, prop, next && next.length ? next : undefined);
+      zapisVlastnost(layer.id, prop, next && next.length ? next : undefined);
       apply({ immediate: true });
     };
     const setStops = (next) => zapis(next && next.length ? sortStops(next) : null);
@@ -1596,7 +1642,7 @@ export function initDevMode({
     // Hodnota, s ktorou nový zlom (pásmo) začína: čo tá vlastnosť práve
     // v mape má.
     const nowValue = () => {
-      const v = (layer.paint || {})[prop];
+      const v = (layer[where] || {})[prop];
       const naZoome = valueAtZoom(list || v, zNow);
       if (naZoome != null) return naZoome;
       if (typeof v === "number" || (typeof v === "string" && v.startsWith("#"))) return v;
@@ -1777,13 +1823,16 @@ export function initDevMode({
    * zmenenej hodnote `⟲` ako všade inde v paneli a v bublinke je aj to, čo
    * „auto" na tomto zoome znamená – aby bolo z čoho vyjsť.
    */
-  function paintNumber({ layer, prop, label, min, max, step }) {
+  function paintNumber({ layer, prop, label, min, max, step, where = "paint" }) {
     const o = layerOverride(layer.id) || {};
-    const cur = (layer.paint || {})[prop];
+    // `paint` aj `layout` – to isté políčko, len iná polica (rozpis pri
+    // `zoomStopsEditor`).
+    const zapisVlastnost = where === "layout" ? setLayerLayout : setLayerPaint;
+    const cur = (layer[where] || {})[prop];
     const isNum = typeof cur === "number";
-    const overridden = !!(o.paint && o.paint[prop] !== undefined);
+    const overridden = !!(o[where] && o[where][prop] !== undefined);
     const back = () => {
-      setLayerPaint(layer.id, prop, undefined);
+      zapisVlastnost(layer.id, prop, undefined);
       apply({ immediate: true });
     };
     const resetBtn = (title) =>
@@ -1792,7 +1841,7 @@ export function initDevMode({
     // Keď tú istú vlastnosť riadia zoomové zlomy, pevná hodnota by ich prepísala
     // – políčko sa preto zamkne a povie, kde sa to teraz nastavuje. Dve páky na
     // jednu vlastnosť by sa inak tichým prepisom navzájom rušili.
-    if (Array.isArray(o.paint && o.paint[prop])) {
+    if (Array.isArray(o[where] && o[where][prop])) {
       // Do políčka širokého 46 px sa „podľa zoomu" nezmestí (odsekne sa na
       // „podľa"), takže tam je pomlčka a vysvetlenie v bublinke – vedľajší
       // riadok „… podľa zoomu" povie zvyšok.
@@ -1827,7 +1876,7 @@ export function initDevMode({
           (autoText ? ` (na z${zoomCell()} je to ${autoText})` : "") +
           " – vyplnením sa nahradí pevnou hodnotou",
       onChange: (v) => {
-        setLayerPaint(layer.id, prop, v);
+        zapisVlastnost(layer.id, prop, v);
         apply({ immediate: true });
       }
     });
@@ -2088,15 +2137,7 @@ export function initDevMode({
       const names = pickableIcons(set, iconNow);
       parts.push(
         el("div", { class: `dev-sub${o.icon ? " changed" : ""}` }, [
-          selectField({
-            label: "Ikona",
-            value: iconNow,
-            options: names.map((n) => [n, n]),
-            onChange: (v) => {
-              setLayerOverride(layer.id, { icon: v === iconNow && !o.icon ? undefined : v });
-              apply({ immediate: true });
-            }
-          }),
+          el("span", { class: "dev-note", text: `teraz: ${iconNow}` }),
           o.icon
             ? el("button", {
                 type: "button",
@@ -2109,8 +2150,49 @@ export function initDevMode({
                 }
               })
             : null
-        ])
+        ]),
+        iconGrid({
+          kluc: `layer:${layer.id}`,
+          value: iconNow,
+          names,
+          onPick: (v) => {
+            setLayerOverride(layer.id, { icon: v === iconNow && !o.icon ? undefined : v });
+            apply({ immediate: true });
+          }
+        })
       );
+    }
+
+    // ---- veľkosť a rozostup symbolov ----
+    // `layout` vlastnosti, nie `paint`: veľkosť ikony a to, ako husto sedia
+    // symboly po čiare (turistické značky, šípky jednosmeriek, čísla ciest),
+    // sú rozloženie, nie farba. Ladia sa okom a PO ZOOMOCH – práve preto je
+    // pod každou z nich ten istý editor kriviek a pásiem ako pri hrúbke.
+    if (layer.type === "symbol") {
+      const layoutRows = LAYOUT_PROP_IDS.filter(
+        (prop) => (layer.layout || {})[prop] !== undefined
+      );
+      if (layoutRows.length) {
+        parts.push(sectionTitle("Veľkosť a rozostup", "koľko miesta symbol zaberie"));
+        for (const prop of layoutRows) {
+          const medze = LAYOUT_PROPS[prop];
+          parts.push(
+            el("div", { class: "dev-sub" }, [
+              paintNumber({
+                layer, prop, where: "layout", label: medze.label,
+                min: medze.min, max: medze.max, step: medze.step
+              })
+            ]),
+            el("div", { class: "dev-prop" }, [
+              el("span", { class: "dev-propname", text: `${medze.label} podľa zoomu` }),
+              zoomStopsEditor({
+                layer, prop, where: "layout", kind: "number",
+                min: medze.min, max: medze.max, step: medze.step
+              })
+            ])
+          );
+        }
+      }
     }
 
     // ---- sila tieňovania reliéfu ----
@@ -2734,6 +2816,150 @@ export function initDevMode({
   // vo výraze podľa značky z OSM, a odstup od cesty je vlastnosť všetkých
   // naraz. Táto záložka je preto o druhu trasy, nie o vrstve.
 
+  /**
+   * ČO SA NA JEDNEJ TRASE DÁ LADIŤ PODĽA ZOOMU.
+   *
+   * Jeden druh trasy je v štýle NIEKOĽKO vrstiev a každá odpovedá na inú
+   * otázku: pásik „ako hrubo", značka „ako veľká a ako často", názov „aké
+   * veľké písmo". Zoom a pásma sa preto nastavujú na tej vrstve, ktorej sa
+   * týkajú – je to tá istá úprava (`overrides.layers[<id>]`), akú robí
+   * záložka Vrstvy, len tu je pokope to, čo patrí k jednej trase.
+   *
+   * `paint` a `layout` sú dve police MapLibre a nedajú sa zamieňať: hrúbka
+   * čiary je `paint`, veľkosť ikony `layout` (rozpis pri `LAYOUT_PROPS`).
+   */
+  const TRAIL_LAYER_ROLES = [
+    {
+      suffix: "",
+      label: "Pásik",
+      note: "farebná čiara vedľa cesty",
+      paint: ["line-width", "line-opacity"]
+    },
+    {
+      suffix: "-mark",
+      label: "Značka",
+      note: "štvorec s pásom – veľkosť a ako často sa opakuje",
+      layout: ["icon-size", "symbol-spacing", "icon-padding"]
+    },
+    {
+      suffix: "-icon",
+      label: "Ikona druhu",
+      note: "kreslí sa len tam, kde trasa značku nemá",
+      layout: ["icon-size", "symbol-spacing"],
+      paint: ["icon-opacity"]
+    },
+    {
+      suffix: "-label",
+      label: "Názov trasy",
+      note: "„0801 Cesta hrdinov SNP“ pozdĺž čiary",
+      layout: ["text-size", "symbol-spacing"],
+      paint: ["text-opacity"]
+    }
+  ];
+
+  /** Medze číselných vlastností z `paint` – `layout` si ich nesie sám. */
+  const PAINT_RANGES = {
+    // NIE 0: nulová hrúbka je zmiznutá čiara, nie vypnutá vrstva.
+    "line-width": { min: 0.1, max: 40, step: 0.5, label: "hrúbka" },
+    "line-opacity": { min: 0, max: 1, step: 0.05, label: "krytie" },
+    "icon-opacity": { min: 0, max: 1, step: 0.05, label: "krytie ikony" },
+    "text-opacity": { min: 0, max: 1, step: 0.05, label: "krytie písma" }
+  };
+
+  /**
+   * Jedna vrstva trasy: rozsah zoomu a k tomu jej čísla – každé s krivkou
+   * alebo pásmami, teda „na týchto zoomoch takto, na týchto inak".
+   */
+  function trailLayerBlock(role, typeId) {
+    const id = `trail-${typeId}${role.suffix}`;
+    const layer = getStyle().layers.find((l) => l.id === id);
+    // Vrstva nemusí existovať: ikona sa nekreslí, keď ju sada ikoniek nemá,
+    // a značka vtedy, keď ju developer mode vypol. Mlčky sa preskočiť nesmie
+    // – inak by panel vyzeral, že sa tá vec nedá nastaviť.
+    if (!layer) {
+      return el("div", { class: "dev-sub" }, [
+        el("span", { class: "dev-note", text: `${role.label}: v mape teraz nie je (${role.note})` })
+      ]);
+    }
+    const o = layerOverride(id) || {};
+    const zmenene = o.minzoom != null || o.maxzoom != null || o.paint || o.layout;
+    const rows = [];
+    for (const prop of role.paint || []) {
+      if ((layer.paint || {})[prop] === undefined) continue;
+      const m = PAINT_RANGES[prop];
+      rows.push(propRow(layer, prop, "paint", m));
+    }
+    for (const prop of role.layout || []) {
+      if ((layer.layout || {})[prop] === undefined) continue;
+      rows.push(propRow(layer, prop, "layout", LAYOUT_PROPS[prop]));
+    }
+    return el("div", { class: `dev-sub${zmenene ? " changed" : ""}` }, [
+      el("div", { class: "dev-row" }, [
+        el("span", { class: "dev-name" }, [
+          el("span", { text: role.label }),
+          el("small", { text: `${id} · ${role.note}` })
+        ]),
+        el("button", {
+          type: "button",
+          class: `dev-zrange${activeAt(layer, zoomView) ? "" : " off"}`,
+          text: zoomRangeText(layer),
+          title: `Na z${zoomCell()} ${activeAt(layer, zoomView) ? "sa kreslí – klikni, nech sa nekreslí" : "sa nekreslí – klikni, nech sa kreslí"}`,
+          onclick: () => {
+            setZoomAt(layer, zoomCell(), !activeAt(layer, zoomView));
+            apply({ immediate: true });
+          }
+        })
+      ]),
+      el("div", { class: `dev-fields${o.minzoom != null || o.maxzoom != null ? " changed" : ""}` }, [
+        numberField({
+          label: "od z",
+          value: layer.minzoom,
+          min: 0, max: 24, step: 0.5, placeholder: "0", stepFrom: 0,
+          onChange: (v) => {
+            setLayerOverride(id, { minzoom: v });
+            apply({ immediate: true });
+          }
+        }),
+        numberField({
+          label: "do z",
+          value: layer.maxzoom,
+          min: 0, max: 24, step: 0.5, placeholder: "24", stepFrom: MAX_DISPLAY_Z,
+          onChange: (v) => {
+            setLayerOverride(id, { maxzoom: v });
+            apply({ immediate: true });
+          }
+        }),
+        o.minzoom != null || o.maxzoom != null
+          ? el("button", {
+              type: "button", class: "dev-mini", text: "⟲",
+              title: "Späť na pôvodný rozsah zoomu",
+              onclick: () => {
+                setLayerOverride(id, { minzoom: undefined, maxzoom: undefined });
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]),
+      ...rows
+    ]);
+  }
+
+  /** Jedno číslo vrstvy: pevná hodnota + krivka/pásma pod ňou. */
+  function propRow(layer, prop, where, medze) {
+    const m = medze || { min: 0, max: 100, step: 1, label: prop };
+    return el("div", { class: "dev-prop" }, [
+      el("span", { class: "dev-propname", text: m.label }),
+      paintNumber({
+        layer, prop, where, label: "",
+        min: m.min, max: m.max, step: m.step
+      }),
+      zoomStopsEditor({
+        layer, prop, where, kind: "number",
+        min: m.min, max: m.max, step: m.step
+      })
+    ]);
+  }
+
   /** Nastavenie jedného druhu trasy (`overrides.trails.types[id]`). */
   function setTrailType(id, patch) {
     const cur = { ...(overrides.trails.types[id] || {}), ...patch };
@@ -2760,6 +2986,59 @@ export function initDevMode({
     } else {
       overrides.trails.gap[key] = Number(value);
     }
+  }
+
+  /** Hľadanie v mriežke ikon – zvlášť pre každé miesto, kde sa vyberá. */
+  const iconQuery = new Map();
+
+  /** Sada, z ktorej sa práve berú ikony (a jej sprite na náhľady). */
+  function currentSet() {
+    const sets = getIconSets?.() || [];
+    return sets.find((s2) => s2.id === selectedIconSource(overrides)) || sets[0] || null;
+  }
+
+  /**
+   * Načíta PNG spritu, nech je z čoho kresliť náhľady. Beží raz na sadu;
+   * po dokreslení sa panel prekreslí, aby sa mriežka naplnila.
+   */
+  function spriteImageFor(set) {
+    if (!set) return null;
+    if (spriteImages.has(set.id)) return spriteImages.get(set.id);
+    if (!set.spriteUrl) return null;
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => renderBody();
+    img.src = `${set.spriteUrl}.png`;
+    spriteImages.set(set.id, img);
+    return img;
+  }
+
+  /**
+   * Výber ikony s NÁHĽADMI – jedno miesto pre vrstvy aj pre druhy trás.
+   *
+   * @param {string} kluc     kde sa vyberá (drží si hľadaný text)
+   * @param {string} value    práve vybraná ikona
+   * @param {string[]} names  mená zo sady
+   * @param {(n: string) => void} onPick
+   * @param {string} [noneLabel] keď sa má dať vybrať aj „žiadna"
+   */
+  function iconGrid({ kluc, value, names, onPick, noneLabel }) {
+    const set = currentSet();
+    return iconPicker({
+      set,
+      image: spriteImageFor(set),
+      value,
+      names,
+      custom: overrides.customIcons || [],
+      color: mergedPalette(getTheme(), overrides).poiIcon || "#444444",
+      noneLabel,
+      query: iconQuery.get(kluc) || "",
+      onQuery: (q) => {
+        iconQuery.set(kluc, q);
+        renderBody();
+      },
+      onPick
+    });
   }
 
   /** Mená ikon z nasadenej sady (aj s tou, ktorú štýl práve používa). */
@@ -2839,13 +3118,30 @@ export function initDevMode({
       const def = trailTypeDef(type, overrides);
       const own = overrides.trails.types[type.id] || {};
       const icons = iconNames(trailIconNow(type.id));
-      return el("div", { class: `dev-item${Object.keys(own).length ? " changed" : ""}` }, [
+      // Zoomy a pásma sú za rozkliknutím: sú to štyri vrstvy krát pár čísel,
+      // takže rozbalené naraz pri šiestich druhoch trás by sa v paneli
+      // nedalo nič nájsť. Zbalené ostáva to, čo sa mení najčastejšie.
+      const otvorene = trailOpen.has(type.id);
+      const layerZmeny = TRAIL_LAYER_ROLES.filter(
+        (r) => layerOverride(`trail-${type.id}${r.suffix}`)
+      ).length;
+      return el("div", { class: `dev-item${Object.keys(own).length || layerZmeny ? " changed" : ""}` }, [
         el("div", { class: "dev-row" }, [
           el("span", { class: "dev-swatch", style: `background:${colors[type.palette]}` }),
-          el("span", { class: "dev-name" }, [
-            el("span", { text: type.label }),
+          el("button", {
+            type: "button",
+            class: "dev-name",
+            title: "Zoom a pásma tejto trasy – klikni pre detaily",
+            onclick: () => {
+              if (otvorene) trailOpen.delete(type.id);
+              else trailOpen.add(type.id);
+              renderBody();
+            }
+          }, [
+            el("span", { text: `${otvorene ? "▾ " : "▸ "}${type.label}` }),
             el("small", {
               text: `${type.id} · ${type.side > 0 ? "vpravo od cesty" : "vľavo od cesty (opačná strana než pešie)"}`
+                + (layerZmeny ? ` · ${layerZmeny} upravených vrstiev` : "")
             })
           ])
         ]),
@@ -2914,18 +3210,13 @@ export function initDevMode({
           })
         ]),
         el("div", { class: `dev-sub${own.icon != null ? " changed" : ""}` }, [
-          selectField({
-            label: "Ikona",
-            // Prázdna položka je „žiadna" – trasa hustá na ikonky sa inak
-            // nedá zbaviť inak než skrytím celej vrstvy.
-            value: own.icon != null ? own.icon : trailIconNow(type.id),
-            options: [["", "— žiadna —"], ...icons.map((n) => [n, n])],
+          el("span", {
+            class: "dev-note",
             // Ikonka sa kreslí len tam, kde trasa značku NEMÁ (neznáma farba
             // z OSM) – inak by na jednej čiare boli dva symboly naraz.
-            onChange: (v) => {
-              setTrailType(type.id, { icon: v });
-              apply({ immediate: true });
-            }
+            text: `Ikona druhu: ${own.icon != null
+              ? (own.icon || "žiadna")
+              : (trailIconNow(type.id) || "žiadna")} · kreslí sa tam, kde trasa značku nemá`
           }),
           own.icon != null
             ? el("button", {
@@ -2939,7 +3230,41 @@ export function initDevMode({
                 }
               })
             : null
-        ])
+        ]),
+        iconGrid({
+          kluc: `trail:${type.id}`,
+          value: own.icon != null ? own.icon : trailIconNow(type.id),
+          names: icons,
+          // Prázdna položka je „žiadna" – trasa hustá na ikonky sa inak
+          // nedá zbaviť inak než skrytím celej vrstvy.
+          noneLabel: "žiadna",
+          onPick: (v) => {
+            setTrailType(type.id, { icon: v });
+            apply({ immediate: true });
+          }
+        }),
+        // ---- zoom a pásma všetkých vrstiev tejto trasy ----
+        otvorene
+          ? el("div", { class: "dev-details" }, [
+              el("div", { class: "dev-h5" }, [
+                el("span", { text: "Od akého zoomu a ako" }),
+                el("small", { text: "krivka = plynulý prechod, pásma = na každom intervale iná hodnota" })
+              ]),
+              ...TRAIL_LAYER_ROLES.map((role) => trailLayerBlock(role, type.id)),
+              el("div", { class: "dev-bulk on" }, [
+                el("button", {
+                  type: "button",
+                  class: "dev-btn danger",
+                  text: "Späť na pôvodné zoomy a pásma",
+                  title: "Zahodí zoomy, hrúbky, veľkosti a rozostupy VŠETKÝCH vrstiev tejto trasy",
+                  onclick: () => {
+                    for (const r of TRAIL_LAYER_ROLES) resetLayer(`trail-${type.id}${r.suffix}`);
+                    apply({ immediate: true });
+                  }
+                })
+              ])
+            ])
+          : null
       ]);
     });
 
@@ -3138,8 +3463,7 @@ export function initDevMode({
    * hrana symbolu leží na 0,75. Prekreslíme ho na plnú farbu, nech je vidieť,
    * ako budú ikony na mape naozaj vyzerať.
    */
-  function drawPreview(canvas, set, names, color) {
-    const image = spriteImages.get(set.id);
+  function drawPreview(canvas, image, names, color) {
     if (!image || !image.complete || !image.naturalWidth) return;
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -3204,26 +3528,16 @@ export function initDevMode({
       const names = PREVIEW_CLASSES.map((c) => `${c}${set.suffix || ""}`)
         .filter((n) => set.icons.includes(n))
         .slice(0, 14);
+      // Sprite načítava `spriteImageFor` – jedno miesto pre náhľad sady aj
+      // pre mriežku s výberom ikoniek. Kým sa obrázok stiahne, je plátno
+      // prázdne a po dokreslení sa panel prekreslí sám.
       if (names.length) {
-        const load = () => {
-          const img = spriteImages.get(set.id);
-          if (!img) return;
-          drawPreview(
-            canvas,
-            set,
-            names.map((n) => [n, (index || {})[n]]).filter(([, e]) => e),
-            color
-          );
-        };
-        if (!spriteImages.has(set.id)) {
-          const img = new Image();
-          img.crossOrigin = "anonymous";
-          img.onload = () => renderBody();
-          img.src = `${set.spriteUrl}.png`;
-          spriteImages.set(set.id, img);
-        } else {
-          load();
-        }
+        drawPreview(
+          canvas,
+          spriteImageFor(set),
+          names.map((n) => [n, (index || {})[n]]).filter(([, e]) => e),
+          color
+        );
       }
 
       return el("label", { class: `dev-iconset${set.id === current ? " on" : ""}` }, [
@@ -3253,7 +3567,172 @@ export function initDevMode({
           "vyrobí SDF sprite bez podkladov, takže sa dajú prepínať naživo a " +
           "vybraná sada sa zapečie do štýlu pre web aj iOS."
       }),
-      ...cards
+      ...cards,
+      customSetSection(),
+      customIconSection()
+    ]);
+  }
+
+  // ---------- vlastná sada ikoniek ----------
+  // Sprite je verejná dvojica súborov, takže nie je dôvod, aby bol zoznam
+  // sád uzavretý v zdrojáku. Sem sa zadá adresa BEZ prípony (pipeline si
+  // doplní `.json` aj `.png`) a prípona mien ikon, ak ju sada má (`_11`).
+  function customSetSection() {
+    const rows = (overrides.iconSets || []).map((set) =>
+      el("div", { class: "dev-prow changed" }, [
+        el("span", { class: "dev-name", title: set.sprite }, [
+          el("span", { text: set.label }),
+          el("small", { text: `${set.id}${set.suffix ? ` · prípona ${set.suffix}` : ""}` })
+        ]),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          title: "Zmazať túto sadu",
+          text: "×",
+          onclick: () => {
+            overrides.iconSets = (overrides.iconSets || []).filter((x) => x.id !== set.id);
+            // Zmazaná sada nesmie ostať vybraná – mapa by sa pýtala na sprite,
+            // ktorý nikto nesťahuje, a ostala by bez ikon.
+            if (overrides.icons === set.id) overrides.icons = DEFAULT_ICON_SOURCE;
+            apply({ immediate: true });
+          }
+        })
+      ])
+    );
+
+    const meno = el("input", { type: "text", class: "dev-text", placeholder: "Moja sada" });
+    const adresa = el("input", {
+      type: "url",
+      class: "dev-text",
+      placeholder: "https://…/sprites/moja  (bez .json a .png)"
+    });
+    const pripona = el("input", { type: "text", class: "dev-num", placeholder: "_11", size: "4" });
+
+    return el("div", {}, [
+      el("div", { class: "dev-h5" }, [
+        el("span", { text: "Vlastná sada ikoniek" }),
+        el("small", { text: "adresa spritu bez prípony – build si ho stiahne a prerobí na SDF" })
+      ]),
+      ...rows,
+      el("div", { class: "dev-sub" }, [meno, adresa, pripona,
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "+ Pridať sadu",
+          onclick: () => {
+            const url = adresa.value.trim().replace(/\.(json|png)$/i, "");
+            if (!url) return poznamka("Zadaj adresu spritu (bez .json a .png).");
+            const id = `${CUSTOM_SET_PREFIX}${(meno.value.trim() || "sada")
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/[^a-z0-9-]+/g, "-")
+              .replace(/^-+|-+$/g, "")
+              .slice(0, 32) || "sada"}`;
+            const next = [...(overrides.iconSets || []), {
+              id,
+              label: meno.value.trim() || id,
+              sprite: url,
+              suffix: pripona.value.trim()
+            }];
+            const { overrides: clean, problems } = normalizeOverrides({ ...overrides, iconSets: next });
+            if (problems.length) return poznamka(problems[0]);
+            overrides = clean;
+            meno.value = "";
+            adresa.value = "";
+            apply({ immediate: true });
+          }
+        })
+      ]),
+      el("p", {
+        class: "dev-hint",
+        text:
+          "Kým beh mapy sadu nespracuje, načíta sa v prehliadači priamo z jej " +
+          "adresy – ikony vtedy majú svoje pôvodné farby a nedajú sa prefarbiť. " +
+          "Po builde je z nej SDF sprite ako z ostatných."
+      })
+    ]);
+  }
+
+  // ---------- vlastné ikony ----------
+  // Jedna konkrétna vec inak: značka, POI, čokoľvek symbolové. Obrázok sa
+  // prevedie na PNG a leží PRIAMO v úpravách, takže ho má aj mapa v mobile
+  // (rozpis v hlavičke `poc/web/dev-icons.js`).
+  function customIconSection() {
+    const zoznam = overrides.customIcons || [];
+    const rows = zoznam.map((ikona) => {
+      const nahlad = el("canvas", { class: "dev-icon", width: "22", height: "22" });
+      const img = new Image();
+      img.onload = () => {
+        const ctx = nahlad.getContext("2d");
+        const scale = Math.min(1, 20 / img.width, 20 / img.height);
+        ctx.drawImage(img, (22 - img.width * scale) / 2, (22 - img.height * scale) / 2,
+                      img.width * scale, img.height * scale);
+      };
+      img.src = ikona.png;
+      return el("div", { class: "dev-prow changed" }, [
+        nahlad,
+        el("span", { class: "dev-name" }, [
+          el("span", { text: ikona.name }),
+          el("small", { text: `${Math.round(ikona.png.length / 1024)} kB · @${ikona.pixelRatio || 1}x` })
+        ]),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          title: "Zmazať túto ikonu (vrstvy, ktoré ju používajú, ostanú bez ikony)",
+          text: "×",
+          onclick: () => {
+            overrides.customIcons = zoznam.filter((x) => x.name !== ikona.name);
+            apply({ immediate: true });
+          }
+        })
+      ]);
+    });
+
+    const subor = el("input", { type: "file", class: "dev-file", accept: "image/png,image/jpeg,image/svg+xml" });
+    subor.addEventListener("change", async () => {
+      const file = subor.files && subor.files[0];
+      if (!file) return;
+      try {
+        const { png, pixelRatio } = await fileToIconPng(file, CUSTOM_ICON_MAX_PX);
+        const name = iconNameFromFile(file.name, CUSTOM_ICON_PREFIX);
+        const next = [
+          ...(overrides.customIcons || []).filter((x) => x.name !== name),
+          { name, png, pixelRatio }
+        ];
+        const { overrides: clean, problems } = normalizeOverrides({ ...overrides, customIcons: next });
+        if (problems.length) {
+          poznamka(problems[0]);
+          return;
+        }
+        overrides = clean;
+        poznamka(`Ikona "${name}" pridaná – nájdeš ju vo výbere ikon.`);
+        apply({ immediate: true });
+      } catch (err) {
+        poznamka(`Ikonu sa nepodarilo načítať: ${err.message}`);
+      } finally {
+        subor.value = "";
+      }
+    });
+
+    return el("div", {}, [
+      el("div", { class: "dev-h5" }, [
+        el("span", { text: "Vlastné ikony" }),
+        el("small", {
+          text: `PNG, JPG alebo SVG · najviac ${CUSTOM_ICON_MAX_COUNT} po `
+            + `${Math.round(CUSTOM_ICON_MAX_BYTES / 1024)} kB`
+        })
+      ]),
+      ...rows,
+      el("div", { class: "dev-sub" }, [subor]),
+      el("p", {
+        class: "dev-hint",
+        text:
+          `Obrázok sa zmenší na ${CUSTOM_ICON_MAX_PX} px a uloží sa priamo do ` +
+          "úprav, takže mapa má ikonu hneď – a build ju dopečie do každého " +
+          "spritu, aby bola aj v mape pre mobil. Vybrať sa dá všade, kde sa " +
+          "vyberá ikona (vrstva aj druh trasy)."
+      })
     ]);
   }
 

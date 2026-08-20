@@ -52,7 +52,7 @@ import {
   MAP_TYPES,
   DEFAULT_MAP_TYPE
 } from "../../poc/web/themes.js";
-import { ICON_SOURCES } from "../../poc/web/icon-sources.js";
+import { allIconSources } from "../../poc/web/icon-sources.js";
 
 // Vlastný priečinok je `workers/styles`. Číselníky sú v susednom
 // `workers/data/`, koreň repozitára o dve úrovne vyššie – kým bol tento
@@ -220,9 +220,12 @@ console.log(
 // Sadu ikoniek určujú úpravy; sprite k nej musí byť nasadený.
 iconSetId = selectedIconSource(overrides);
 if (spritesDir) {
+  // Náhradníci: keď vybraná sada nie je nasadená (stiahnutie z cudzieho
+  // servera môže zlyhať), vezme sa prvá, ktorá je. Vlastné sady z úprav sú
+  // medzi nimi tiež – kto si pridal vlastnú, tú aj chce.
   const candidates = [
     iconSetId,
-    ...ICON_SOURCES.map((s) => s.id).filter((id) => id !== iconSetId)
+    ...allIconSources(overrides).map((s) => s.id).filter((id) => id !== iconSetId)
   ];
   const found = candidates.find((id) => existsSync(join(spritesDir, `${id}.json`)));
   if (!found) {

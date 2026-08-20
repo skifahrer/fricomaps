@@ -29,9 +29,22 @@ CACHED_SPRITES=$(find _site/sprites -maxdepth 1 -name '*.json' | wc -l)
 # Zoznam zdrojov je v poc/web/icon-sources.js – jedno miesto pre web
 # aj pipeline. Z každého sa vyrobí SDF sprite: symboly bez koliesok
 # a podkladov, ktorým sa dá nastaviť farba.
+#
+# VLASTNÉ SADY z developer módu (`overrides.iconSets`) sú v tom zozname tiež:
+# je to tá istá vec – dvojica `<url>.json` + `<url>.png` – len ju nezapísal
+# repozitár, ale človek. Prechádza tým istým prerobením na SDF, takže sa
+# vybrať dá rovnako ako tie tri overené.
 node -e "
-  import('./poc/web/icon-sources.js').then((m) => {
-    for (const s of m.ICON_SOURCES) console.log(s.id + ' ' + s.sprite);
+  Promise.all([
+    import('./poc/web/icon-sources.js'),
+    import('./poc/web/themes.js'),
+    import('node:fs')
+  ]).then(([ic, th, fs]) => {
+    let raw = {};
+    try { raw = JSON.parse(fs.readFileSync('poc/web/style-overrides.json', 'utf8')); } catch {}
+    for (const s of ic.allIconSources(th.normalizeOverrides(raw).overrides)) {
+      console.log(s.id + ' ' + s.sprite);
+    }
   });
 " > /tmp/icons/list.txt
 cat /tmp/icons/list.txt
@@ -71,6 +84,11 @@ while read -r id url; do
     # nespadne: pozdĺž trasy sa kreslí ikonka druhu trasy ako predtým.
     node workers/assets/marks.mjs --sprite="_site/sprites/$id" \
       || echo "::warning::Značky trás sa do sady $id nepodarilo dopiecť – trasy budú s ikonkou druhu, nie so značkou."
+    # A nakoniec VLASTNÉ IKONY z úprav – obrázky, ktoré si niekto nahral
+    # v developer móde. Sú v `style-overrides.json` ako PNG, takže sa len
+    # dekódujú a vložia do atlasu.
+    node workers/assets/custom-icons.mjs --sprite="_site/sprites/$id" \
+      || echo "::warning::Vlastné ikony sa do sady $id nepodarilo dopiecť – vrstvy, ktoré ich používajú, ostanú bez ikony."
     ok="$ok $id"
   else
     echo "::warning::Sadu ikoniek $id sa nepodarilo prerobiť na SDF – preskakujem."
