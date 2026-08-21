@@ -8,13 +8,25 @@
 # rozišli.
 #
 # ČO TO RIEŠI. Planetiler si rozsah berie z hlavičky PBF, čiže z OBDĹŽNIKA
-# bboxu – a do tých dlaždíc kreslí okrem OSM dát aj vodstvo, pobrežia a
-# Natural Earth, ktoré sú celosvetové. Bbox Prešovského kraja je 199 × 82 km,
-# takmer dvojnásobok jeho plochy, takže mapa pokračovala do Poľska aj na
-# Ukrajinu – s podfarbeným prázdnom bez ciest a sídel. Po stiahnutí regiónu do
-# telefónu to vyzerá ako mapa, ktorá sa nedonačítala. `--polygon` je
-# v Planetileri „emit any tile that intersects the shape", takže sa tie
-# dlaždice prestanú vyrábať.
+# bboxu, nie z tvaru regiónu. Bbox Prešovského kraja je 199 × 82 km, takmer
+# dvojnásobok jeho plochy, takže mapa pokračuje do Poľska aj na Ukrajinu.
+# `--polygon` je v Planetileri „emit any tile that intersects the shape",
+# takže sa dlaždice, ktoré sa tvaru nedotknú, prestanú vyrábať.
+#
+# ČO V TÝCH DLAŽDICIACH ZA HRANICOU NAOZAJ JE – NAMERANÉ, lebo pôvodné
+# vysvetlenie („vodstvo, pobrežia a Natural Earth, ktoré sú celosvetové")
+# na vysokých zoomoch NEPLATÍ. Kontrolný pokus: ten istý PBF Bratislavského
+# kraja a `--bounds=16.30,47.90,16.70,48.20`, teda obdĺžnik CELÝ mimo kraja.
+# Na z12 z neho vypadli TRI dlaždice a v každej jedna čiara trajektu – žiadne
+# vodné polygóny, žiadny Natural Earth. Dôvod: pobrežné polygóny sú OCEÁN
+# (Slovensko žiadny nemá) a Natural Earth končí na nízkych zoomoch, kde
+# dlaždica pretína kraj tak či tak.
+#
+# Za hranicou teda vzniká to, čo cez rez PBF PRESAHUJE – a v našich dátach to
+# je riedke. Rozpis z dlaždíc navyše (Bratislavský kraj, maxzoom 14): na z14
+# 232 dlaždíc s 628 prvkami dokopy, čiže ~2,7 prvku na dlaždicu – obecné
+# hranice (`admin_level` 8 a 10), mená jazier, CHKO, lesy a polia, potoky,
+# poľné cesty, trajekty. Všetko OSM, nič celosvetové.
 #
 # ═══ `--bounds` A `--polygon` NARAZ NEDÁVAJ. TICHO SI VYPNEŠ POLYGÓN. ═══
 #
@@ -55,14 +67,15 @@
 #                       dlaždíc     bajtov      čas
 #     --polygon            1271   19 330 130     56 s
 #     --bounds             1607   19 467 060     54 s
-#                         +26 %       +0,7 %     rovnako
+#                         +27 %       +0,7 %     rovnako
 #
-# Tých 336 dlaždíc navyše NIE JE prázdnych – na z12 v nich bolo 228 popisov
-# sídel, 55 chránených území, 19 hraníc, cesty, vodstvo aj krajinná pokrývka,
-# a to aj rakúske a maďarské mená. Nie je to teda „nič", len to nikto neuvidí,
-# kým sa maska načíta. PBF rezaný na kraj to nerieši: vodstvo, pobrežia a
-# Natural Earth kreslí Planetiler zo SVOJICH celosvetových podkladov, ktoré
-# v našom PBF nie sú vôbec.
+# A po zoomoch, lebo priemer to skresľuje: do z9 VRÁTANE nepribudla ani jedna
+# dlaždica – tam sa kraja dotýka každá, takže orez nemá čo vypustiť. Celý
+# rozdiel je hore: z10 +1, z11 +9, z12 +27, z13 +70, z14 +232, dokopy 339
+# dlaždíc a 138 209 B.
+#
+# Prázdne nie sú, ale ani plné (rozpis vyššie: ~2,7 prvku na dlaždicu na z14).
+# Je to lem cez hranicu kraja – presne to, čo maska aj tak prekryje.
 #
 # Kým je vypínač v `false`, hovorí to `::warning::` v každom behu – aby sa
 # nezabudlo, že sa v stiahnutej mape vezie územie za hranicou (pravidlo 8).
@@ -83,7 +96,7 @@ CLIP_ON="${OPT_REGION_CLIP:-true}"
 # Argumenty idú na stdout (volajúci si ich načíta), vysvetlenie do logu.
 if [ -s "$POLY" ] && [ "$CLIP_ON" != 'true' ]; then
   if [ -n "$BBOX" ]; then echo "--bounds=$BBOX"; fi
-  echo "::warning::Orez na región je vypnutý (\`region_clip=false\`), takže sa dlaždice vyrobia na celom obdĺžniku bboxu – na Bratislavskom kraji je to o 26 % dlaždíc viac a je v nich územie za hranicou kraja (aj cudzie sídla). V mape to nevidno, lebo hranicu dokresľuje maska v štýle. Späť to zapneš \`region_clip=true\` v inpute \`options\`." >&2
+  echo "::warning::Orez na región je vypnutý (\`region_clip=false\`), takže sa dlaždice vyrobia na celom obdĺžniku bboxu – na Bratislavskom kraji je to o 27 % dlaždíc a 0,7 % bajtov viac a je v nich lem dát cez hranicu kraja. V mape to nevidno, lebo hranicu dokresľuje maska v štýle. Späť to zapneš \`region_clip=true\` v inpute \`options\`." >&2
 elif [ -s "$POLY" ]; then
   echo "--polygon=$POLY"
   echo "Orez na región: $POLY – dlaždice mimo regiónu sa nevyrobia. (\`--bounds\` sa zámerne NEPRIDÁVA, tichý vypínač polygónu – viď hlavičku skriptu.)" >&2

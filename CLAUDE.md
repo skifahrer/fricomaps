@@ -570,14 +570,22 @@ maska aj tak schová.
 **Orez je DOČASNE VYPNUTÝ** (`region_clip=false` vo voľbách). Merané na
 Bratislavskom kraji (maxzoom 14, kraj je 57 % svojho bboxu): `--polygon` dá
 1271 dlaždíc a 19 330 130 B, `--bounds` 1607 dlaždíc a 19 467 060 B – teda
-**+26 % dlaždíc za +0,7 % bajtov** a rovnaký čas. Vidieť to nie je, lebo maska
-je „celý svet mínus región" a všetko za hranicou prekryje. Nie je to ale nič:
-v tých 336 dlaždiciach navyše bolo na z12 228 popisov sídel, 55 chránených
-území, 19 hraníc, cesty aj vodstvo – vrátane rakúskych a maďarských mien.
-**Rezaný PBF to nerieši**: vodstvo, pobrežia a Natural Earth kreslí Planetiler
-zo svojich celosvetových podkladov, ktoré v našom PBF nie sú vôbec, takže orez
-a rez PBF sú dve rôzne veci. Kým je vypínač v `false`, hlási to `::warning::`
-v každom behu (pravidlo 8); späť sa zapína `region_clip=true`.
+**+27 % dlaždíc za +0,7 % bajtov** a rovnaký čas. Vidieť to nie je, lebo maska
+je „celý svet mínus región" a všetko za hranicou prekryje.
+
+**Čo za tou hranicou vzniká, je lem z NÁŠHO PBF – nie celosvetové podklady.**
+Do z9 vrátane nepribudne ani jedna dlaždica (tam sa kraja dotýka každá); celý
+rozdiel je z10 +1, z11 +9, z12 +27, z13 +70, z14 +232, dokopy 339 dlaždíc
+a 138 kB. Na z14 je v nich 628 prvkov, čiže ~2,7 na dlaždicu: obecné hranice,
+mená jazier, CHKO, lesy, potoky, poľné cesty, trajekty. Kontrolný pokus –
+`--bounds` na obdĺžnik CELÝ mimo kraja s tým istým PBF – dal na z12 tri
+dlaždice s jedným trajektom a **žiadne vodstvo ani Natural Earth**: pobrežné
+polygóny sú oceán (ten Slovensko nemá) a Natural Earth končí na nízkych
+zoomoch. Pôvodné vysvetlenie orezu („kreslí tam celosvetové vodstvo a NE")
+teda platí len na nízkych zoomoch, kde orez nevypúšťa nič.
+
+Kým je vypínač v `false`, hlási to `::warning::` v každom behu (pravidlo 8);
+späť sa zapína `region_clip=true`.
 
 `--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
 nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
