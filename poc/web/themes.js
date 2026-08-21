@@ -22,6 +22,9 @@
 
 import {
   ICON_SOURCE_IDS,
+  CUSTOM_SET_PREFIX,
+  allIconSources,
+  iconSourceIn,
   DEFAULT_ICON_SOURCE,
   iconSource,
   specialIcons
@@ -1515,6 +1518,12 @@ export function emptyOverrides() {
     // trasy: nie je to nastavenie jednej vrstvy, ale tvar OBRÁZKA, ktorý si
     // vrstva pýta zo spritu – a ten sa nedá vyjadriť `paint` vlastnosťou.
     shields: {},
+    // Vlastné sady ikoniek (sprite z cudzieho servera) a vlastné ikony
+    // (obrázok, ktorý si človek nahrá). Sú to dve rôzne veci: sada je
+    // odpoveď na „chcem INÉ ikony na všetko", vlastná ikona na „chcem TÚTO
+    // jednu vec inak" – a preto sa nedajú stlačiť do jednej položky.
+    iconSets: [],
+    customIcons: [],
     poi: { hidden: [] },
     maps: {}
   };
@@ -1550,6 +1559,33 @@ export const NO_FILL = "none";
 const NO_FILL_PROPS = new Set(["fill-color", "fill-extrusion-color"]);
 /** Strop počtu zoomových zlomov na jednu vlastnosť. */
 export const MAX_PAINT_STOPS = 8;
+
+/**
+ * VLASTNOSTI Z `layout`, ktoré sa dajú prepísať – a ich medze.
+ *
+ * `paint` je „ako to vyzerá", `layout` je „ako to je rozložené", a MapLibre
+ * ich drží zvlášť: veľkosť ikony ani rozostup symbolov po čiare v `paint`
+ * nie sú. Práve tie dve pritom rozhodujú o tom, ako husto sedia turistické
+ * značky po trase a aké sú veľké – teda o veci, ktorá sa ladí okom
+ * a po jednom zoome, nie zmenou zdrojáku.
+ *
+ * Je to VYMENOVANÝ zoznam, nie „čokoľvek z layoutu": `symbol-placement`
+ * alebo `icon-rotation-alignment` sú rozhodnutia štýlu (značka stojí
+ * narovno, lebo natočená tabuľka už nie je tabuľka), nie ladenie – a
+ * prepísané by tichým spôsobom rozbili to, čo je pri nich napísané.
+ *
+ * VŠETKY SÚ ZO SYMBOLOVEJ VRSTVY. Iný druh vrstvy ich nepozná a MapLibre by
+ * taký štýl ODMIETOL CELÝ (neznáma vlastnosť v `layout` je tvrdá chyba, na
+ * rozdiel od neznámej v `paint`), takže `applyLayerOverrides` ich inde než
+ * na `symbol` nenasadí.
+ */
+export const LAYOUT_PROPS = {
+  "icon-size": { min: 0.05, max: 8, step: 0.05, label: "veľkosť ikony" },
+  "symbol-spacing": { min: 1, max: 2000, step: 5, label: "rozostup po čiare" },
+  "icon-padding": { min: 0, max: 40, step: 1, label: "miesto okolo ikony" },
+  "text-size": { min: 1, max: 60, step: 0.5, label: "veľkosť písma" }
+};
+export const LAYOUT_PROP_IDS = Object.keys(LAYOUT_PROPS);
 
 /**
  * Zoradí zoomové zlomy podľa zoomu. JEDNA funkcia pre všetky tri cesty, ktoré
@@ -1688,6 +1724,31 @@ function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
 }
 
 /**
+ * Jedna hodnota vlastnosti z `layout` (bez zoomu).
+ *
+ * Oddelené od `cleanPaintScalar` preto, že sa pýta na inú vec: `paint`
+ * pozná farbu, krytie a hrúbku podľa PRÍPONY mena, kým `layout` má
+ * vymenovaný zoznam aj s medzami (`LAYOUT_PROPS`) – „rozostup 0" je
+ * nekonečne veľa symbolov na čiare, „veľkosť 0" je neviditeľná ikona,
+ * a ani jedno by nič nezhodilo.
+ */
+function cleanLayoutScalar(prop, value, id, problems, where, atZoom = "") {
+  const kde = `${where}Vrstva "${id}": ${prop}${atZoom}`;
+  const medze = LAYOUT_PROPS[prop];
+  if (!medze) {
+    problems.push(`${kde} sa nedá prepísať – z \`layout\` sa dajú `
+      + `${LAYOUT_PROP_IDS.join(", ")}. Ostatné sú rozhodnutia štýlu, nie ladenie.`);
+    return undefined;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < medze.min || n > medze.max) {
+    problems.push(`${kde} musí byť číslo od ${medze.min} do ${medze.max} (${value}).`);
+    return undefined;
+  }
+  return Math.round(n * 100) / 100;
+}
+
+/**
  * Zoznam podľa zoomu – KRIVKA alebo PÁSMA. Jedna brána pre oba tvary, aby
  * bolo na jednom mieste povedané, ktorý je ktorý a čo sa nesmie.
  *
@@ -1696,7 +1757,7 @@ function cleanPaintScalar(prop, value, id, problems, where, atZoom = "") {
  * pásmo?) a ktorúkoľvek stranu by sme uhádli, tá druhá by ticho zmizla –
  * presne ten druh chyby, po ktorej mapa vyzerá skoro dobre.
  */
-function cleanPaintZoom(prop, list, id, problems, where) {
+function cleanPaintZoom(prop, list, id, problems, where, scalar = cleanPaintScalar) {
   const kde = `${where}Vrstva "${id}": ${prop}`;
   if (!Array.isArray(list) || !list.length) {
     problems.push(`${kde} má prázdny zoznam – vymaž ho, alebo doplň zlom či pásmo.`);
@@ -1711,8 +1772,8 @@ function cleanPaintZoom(prop, list, id, problems, where) {
     return undefined;
   }
   return trojice
-    ? cleanPaintBands(prop, list, id, problems, where)
-    : cleanPaintStops(prop, list, id, problems, where);
+    ? cleanPaintBands(prop, list, id, problems, where, scalar)
+    : cleanPaintStops(prop, list, id, problems, where, scalar);
 }
 
 /**
@@ -1728,7 +1789,7 @@ function cleanPaintZoom(prop, list, id, problems, where) {
  * Zoomy sú CELÉ ČÍSLA. Pásmo je „na tomto zoome to vyzerá takto" a zoomy sa
  * v mape prepínajú po celých; desatina je otázka pre krivku, kde má zmysel.
  */
-function cleanPaintBands(prop, list, id, problems, where) {
+function cleanPaintBands(prop, list, id, problems, where, scalar = cleanPaintScalar) {
   const kde = `${where}Vrstva "${id}": ${prop}`;
   if (list.length > MAX_PAINT_STOPS) {
     problems.push(`${kde} má ${list.length} zoomových pásiem, strop je ${MAX_PAINT_STOPS}.`);
@@ -1748,7 +1809,7 @@ function cleanPaintBands(prop, list, id, problems, where) {
       problems.push(`${kde}: pásmo od z${od} do z${doZ} je naopak – "do" nesmie byť menšie než "od".`);
       return undefined;
     }
-    const v = cleanPaintScalar(prop, hodnota, id, problems, where, ` v pásme z${od}–z${doZ}`);
+    const v = scalar(prop, hodnota, id, problems, where, ` v pásme z${od}–z${doZ}`);
     if (v === undefined) return undefined;
     out.push([Number(od), Number(doZ), v]);
   }
@@ -1777,7 +1838,7 @@ function cleanPaintBands(prop, list, id, problems, where) {
  * vôbec. Namiesto odmietnutia sa preto zoradia – z developer módu môžu prijsť
  * v poradí, v akom ich niekto naklikal.
  */
-function cleanPaintStops(prop, list, id, problems, where) {
+function cleanPaintStops(prop, list, id, problems, where, scalar = cleanPaintScalar) {
   const kde = `${where}Vrstva "${id}": ${prop}`;
   if (!list.length) {
     problems.push(`${kde} má prázdny zoznam zoomových zlomov – vymaž ho, alebo doplň zlom.`);
@@ -1798,7 +1859,7 @@ function cleanPaintStops(prop, list, id, problems, where) {
       problems.push(`${kde}: "${stop[0]}" nie je zoom.`);
       return undefined;
     }
-    const v = cleanPaintScalar(prop, stop[1], id, problems, where, ` pri z${z}`);
+    const v = scalar(prop, stop[1], id, problems, where, ` pri z${z}`);
     if (v === undefined) return undefined;
     out.push([z, v]);
   }
@@ -1832,9 +1893,89 @@ export function normalizeOverrides(raw) {
   // spraví hnedý šum. Kto ho chce, zapne si ho.
   out.hillshade = raw.hillshade === true;
 
+  // ---- vlastné sady ikoniek ----
+  // Musia byť skôr než výber sady: vybrať sa dá aj vlastná a bez zoznamu by
+  // sa práve pridaná sada tvárila ako neznáma.
+  for (const def of Array.isArray(raw.iconSets) ? raw.iconSets : []) {
+    if (!def || typeof def !== "object") {
+      problems.push("Vlastná sada ikoniek nie je objekt – preskakujem.");
+      continue;
+    }
+    const id = String(def.id || "").trim();
+    if (!/^own-[a-z0-9-]{1,32}$/.test(id)) {
+      problems.push(`Vlastná sada "${def.id}": id musí byť `
+        + `"${CUSTOM_SET_PREFIX}<meno>" z malých písmen, číslic a pomlčiek.`);
+      continue;
+    }
+    if (ICON_SOURCE_IDS.includes(id) || out.iconSets.some((x) => x.id === id)) {
+      problems.push(`Vlastná sada "${id}" už existuje – preskakujem.`);
+      continue;
+    }
+    // Sprite je dvojica súborov `<url>.json` + `<url>.png`, takže sa URL
+    // zadáva BEZ prípony – to je aj tvar, v akom ju čaká MapLibre.
+    const sprite = String(def.sprite || "").trim();
+    if (!/^https:\/\/[^\s"']+$/.test(sprite) || /\.(json|png)$/i.test(sprite)) {
+      problems.push(`Vlastná sada "${id}": adresa musí byť https a BEZ prípony `
+        + `(pipeline si k nej doplní .json aj .png).`);
+      continue;
+    }
+    const suffix = String(def.suffix ?? "").trim();
+    if (!/^[A-Za-z0-9_-]{0,8}$/.test(suffix)) {
+      problems.push(`Vlastná sada "${id}": prípona mien ikon smie mať `
+        + `len písmená, číslice, "_" a "-" (najviac 8 znakov).`);
+      continue;
+    }
+    out.iconSets.push({
+      id,
+      label: String(def.label || id).slice(0, 60),
+      sprite,
+      suffix
+    });
+  }
+
+  // ---- vlastné ikony ----
+  // Obrázok sa nesie PRIAMO v úpravách ako PNG v `data:` adrese. Odkaz na
+  // cudzí server by v mape bez internetu (a v balíku pre mobil) nebol ničím –
+  // a sprite sa skladá pri builde, takže tam musí byť samotný obrázok.
+  for (const def of Array.isArray(raw.customIcons) ? raw.customIcons : []) {
+    if (!def || typeof def !== "object") {
+      problems.push("Vlastná ikona nie je objekt – preskakujem.");
+      continue;
+    }
+    const name = String(def.name || "").trim();
+    if (!new RegExp(`^${CUSTOM_ICON_PREFIX}[a-z0-9_-]{1,40}$`).test(name)) {
+      problems.push(`Vlastná ikona "${def.name}": meno musí byť `
+        + `"${CUSTOM_ICON_PREFIX}<meno>" z malých písmen, číslic, "_" a "-".`);
+      continue;
+    }
+    if (out.customIcons.some((x) => x.name === name)) {
+      problems.push(`Vlastná ikona "${name}" je v úpravách dvakrát – nechávam prvú.`);
+      continue;
+    }
+    const png = String(def.png || "");
+    if (!png.startsWith("data:image/png;base64,")) {
+      problems.push(`Vlastná ikona "${name}": obrázok musí byť PNG v \`data:\` adrese.`);
+      continue;
+    }
+    if (png.length > CUSTOM_ICON_MAX_BYTES) {
+      problems.push(`Vlastná ikona "${name}" má ${Math.round(png.length / 1024)} kB, `
+        + `strop je ${Math.round(CUSTOM_ICON_MAX_BYTES / 1024)} kB – zmenši ju.`);
+      continue;
+    }
+    const pixelRatio = Number(def.pixelRatio) === 2 ? 2 : 1;
+    if (out.customIcons.length >= CUSTOM_ICON_MAX_COUNT) {
+      problems.push(`Vlastných ikon je najviac ${CUSTOM_ICON_MAX_COUNT} – `
+        + `"${name}" a ďalšie preskakujem.`);
+      break;
+    }
+    out.customIcons.push({ name, png, pixelRatio });
+  }
+
   // ---- sada ikoniek ----
   if (raw.icons != null) {
-    if (ICON_SOURCE_IDS.includes(raw.icons)) out.icons = raw.icons;
+    const znama = ICON_SOURCE_IDS.includes(raw.icons)
+      || out.iconSets.some((s2) => s2.id === raw.icons);
+    if (znama) out.icons = raw.icons;
     else problems.push(`Neznáma sada ikoniek "${raw.icons}" – použije sa predvolená.`);
   }
 
@@ -2033,6 +2174,20 @@ function cleanLayers(rawLayers, target, problems, where) {
     }
     if (Object.keys(paint).length) clean.paint = paint;
 
+    // ---- rozloženie (veľkosť ikony, rozostup po čiare, veľkosť písma) ----
+    // Ten istý tvar hodnoty ako pri `paint`: skalár, krivka `[[zoom, v], …]`
+    // alebo pásma `[[od, do, v], …]`. Preto sa aj kontroluje tou istou bránou,
+    // len s iným čističom skalárov – inak by sa „rozostup" musel opísať
+    // druhýkrát a raz by sa tie dva popisy rozišli.
+    const layout = {};
+    for (const [prop, value] of Object.entries(def.layout || {})) {
+      const c = Array.isArray(value)
+        ? cleanPaintZoom(prop, value, id, problems, where, cleanLayoutScalar)
+        : cleanLayoutScalar(prop, value, id, problems, where);
+      if (c !== undefined) layout[prop] = c;
+    }
+    if (Object.keys(layout).length) clean.layout = layout;
+
     // ---- ikona symbolovej vrstvy ----
     // Zoznam ikon závisí od nasadenej sady, tu sa preto kontroluje len tvar
     // mena; či taká ikona v sprite naozaj je, rieši `applyLayerOverrides`.
@@ -2107,6 +2262,8 @@ export function hasOverrides(o) {
     Object.keys(o.trails?.types || {}).length > 0 ||
     Object.keys(o.trails?.marks || {}).length > 0 ||
     Object.keys(o.shields || {}).length > 0 ||
+    (o.iconSets || []).length > 0 ||
+    (o.customIcons || []).length > 0 ||
     (o.poi?.hidden || []).length > 0 ||
     Object.values(o.maps || {}).some(
       (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
@@ -2136,6 +2293,13 @@ export function resolveOverrides(overrides, mapType) {
           ...def,
           ...(base.paint || def.paint
             ? { paint: { ...(base.paint || {}), ...(def.paint || {}) } }
+            : {}),
+          // To isté, čo `paint`, aj pre `layout`: mieša sa po vlastnostiach,
+          // aby sa dal na jednej mape prepísať len rozostup a veľkosť ikony
+          // ostala spoločná. Bez toho by celý `layout` z konkrétnej mapy
+          // prebil ten spoločný a ticho zahodil, čo v ňom nie je.
+          ...(base.layout || def.layout
+            ? { layout: { ...(base.layout || {}), ...(def.layout || {}) } }
             : {})
         }
       : def;
@@ -2154,7 +2318,34 @@ export { ICON_SOURCES, ICON_SOURCE_IDS, DEFAULT_ICON_SOURCE } from "./icon-sourc
 /** Vybraná sada ikoniek (z úprav, inak predvolená). */
 export function selectedIconSource(overrides) {
   const id = overrides?.icons;
-  return ICON_SOURCE_IDS.includes(id) ? id : DEFAULT_ICON_SOURCE;
+  // Aj vlastná sada z úprav je platná odpoveď – inak by sa dala pridať, ale
+  // nie zapnúť, a panel by ticho ukazoval predvolenú.
+  return allIconSources(overrides).some((s) => s.id === id) ? id : DEFAULT_ICON_SOURCE;
+}
+
+/**
+ * PREDPONA MIEN VLASTNÝCH IKON. Tá istá úvaha ako pri značkách (`mark-`)
+ * a štítkoch (`shield-`): podľa mena musí byť vidieť, kto obrázok do spritu
+ * dal – a vlastná ikona sa nesmie tichou zhodou mien dostať namiesto ikony
+ * zo sady.
+ */
+export const CUSTOM_ICON_PREFIX = "own:";
+
+/**
+ * Strop na jednu vlastnú ikonu a na ich počet.
+ *
+ * Obrázok leží priamo v úpravách, takže sa nesie všade, kde sa nesú ony:
+ * v prehliadači, v `poc/web/style-overrides.json` v repozitári a odtiaľ do
+ * každého spritu. 64 kB je pri 64 × 64 px veľkorysé (bežná ikona má
+ * jednotky kB) a dvadsať ikon sa do repozitára aj do atlasu zmestí bez toho,
+ * aby si to niekto všimol.
+ */
+export const CUSTOM_ICON_MAX_BYTES = 64 * 1024;
+export const CUSTOM_ICON_MAX_COUNT = 20;
+
+/** Mená vlastných ikon z úprav (to, čo štýl smie použiť ako `icon-image`). */
+export function customIconNames(overrides) {
+  return (overrides?.customIcons || []).map((i) => i.name);
 }
 
 /** Farby témy po aplikovaní úprav z developer módu. */
@@ -2328,6 +2519,16 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
       layer.paint = { ...(layer.paint || {}) };
       for (const [prop, value] of Object.entries(o.paint)) {
         layer.paint[prop] = paintValue(value);
+      }
+    }
+    // `layout` len na SYMBOLOVEJ vrstve: `icon-size` na čiare je pre MapLibre
+    // neznáma vlastnosť a taký štýl odmietne CELÝ (na rozdiel od `paint`,
+    // kde neznáme len ignoruje). Developer mode ich inde než na symbole
+    // neponúka, toto je poistka pre ručne upravený súbor.
+    if (o.layout && layer.type === "symbol") {
+      layer.layout = { ...(layer.layout || {}) };
+      for (const [prop, value] of Object.entries(o.layout)) {
+        layer.layout[prop] = paintValue(value);
       }
     }
     if (o.dash && layer.type === "line") {
@@ -2561,8 +2762,8 @@ export function buildStyle({
   const c = mergedPalette(theme, overrides);
   // Sada ikoniek určuje, ako sa mená skladajú (osm-liberty používa `_11`).
   const iconSetId = iconSet || selectedIconSource(overrides);
-  const { suffix } = iconSource(iconSetId);
-  const SPECIAL = specialIcons(iconSetId);
+  const { suffix } = iconSourceIn(iconSetId, overrides);
+  const SPECIAL = specialIcons(iconSetId, overrides);
 
   const f = { ...DEFAULT_FONTS, ...(fonts || {}) };
   const REG = [f.regular];
@@ -2584,7 +2785,14 @@ export function buildStyle({
         ]
       : FALLBACK_ICONS
   ).filter((n) => !SHAPE_ICONS.has(n));
-  const hasIcon = (n) => (icons && icons.length ? icons.includes(n) : true);
+  // VLASTNÁ IKONA JE „V SPRITE" AJ VTEDY, KEĎ V ŇOM EŠTE NIE JE. Zoznam mien
+  // sa berie z hotového spritu, takže práve pridaná ikona by v ňom nebola
+  // a štýl by ju ticho vynechal – hoci v prehliadači ju mapa má hneď
+  // (`map.addImage` v poc/web/app.js) a do spritu ju pri builde dopečie
+  // `workers/assets/custom-icons.mjs`.
+  const vlastne = new Set(customIconNames(overrides));
+  const hasIcon = (n) =>
+    vlastne.has(n) || (icons && icons.length ? icons.includes(n) : true);
 
   const nameExpr = [
     "coalesce",

@@ -566,6 +566,15 @@ jobs:
       - name: "Značky trás: tvar, dvojica farieb a meno obrázka sedia"
         run: node workers/lint/marks.mjs
 
+      # Vlastná ikona (obrázok nahratý v paneli) a vlastná sada ikoniek sa
+      # dajú pridať v developer móde – ale platné sú až vtedy, keď ich pipeline
+      # naozaj dopečie do spritu a stiahne. Keď sa niektorý z tých krokov
+      # stratí, ikona sa dá vybrať a v mape po nej ostane prázdno; a `layout`
+      # úprava na inej než symbolovej vrstve by zhodila CELÝ štýl.
+      # Rozpis: `workers/lint/icons.mjs`.
+      - name: "Ikony: vlastné obrázky a sady sa naozaj dostanú do mapy"
+        run: node workers/lint/icons.mjs
+
       # Developer mode zapisuje úpravy, ktoré potom pipeline zapečie do mapy –
       # a keď ich `normalizeOverrides` pri zápise do repozitára odmietne, je to
       # tiché: v prehliadači to platí, na Pages nie. Dve veci naraz (rozpis vo

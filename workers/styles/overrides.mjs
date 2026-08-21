@@ -135,6 +135,39 @@ for (const [id, def] of Object.entries(overrides.shields || {})) {
   summary.push(`  štítok ${id}: tvar ${def.shape}`);
 }
 
+// Vlastné sady ikoniek a vlastné ikony. Sady sťahuje `workers/assets/icons.sh`
+// spolu s tými z repozitára, ikony sa dopekajú do každého spritu
+// (`workers/assets/custom-icons.mjs`) – oboje teda ovplyvní BUILD, nie len
+// prehliadač, a v súhrne to má byť vidieť.
+if (overrides.iconSets?.length) {
+  summary.push(
+    `  vlastné sady ikoniek: ` +
+      overrides.iconSets.map((s2) => `${s2.id} (${s2.sprite})`).join(", ")
+  );
+}
+if (overrides.customIcons?.length) {
+  const kB = Math.round(
+    overrides.customIcons.reduce((n, i) => n + i.png.length, 0) / 1024
+  );
+  summary.push(
+    `  vlastné ikony (${kB} kB): ` +
+      overrides.customIcons.map((i) => i.name).join(", ")
+  );
+}
+
+// Vlastnosti z `layout` (veľkosť ikony, rozostup po čiare, veľkosť písma)
+// sú v `layers` ako všetko ostatné, ale v súhrne by inak zmizli medzi
+// „prefarbenými vrstvami" – a pritom sa nimi ladia práve značky trás.
+const rozlozene = Object.entries(overrides.layers).filter(([, o]) => o.layout);
+if (rozlozene.length) {
+  summary.push(
+    `  veľkosti a rozostupy: ` +
+      rozlozene
+        .map(([id, o]) => `${id} (${Object.keys(o.layout).join(", ")})`)
+        .join(", ")
+  );
+}
+
 // Úpravy, ktoré platia len pre jeden typ mapy. Všetko vyššie je spoločné –
 // tu je vidieť, čo si ktorá mapa robí po svojom.
 for (const [typeId, m] of Object.entries(overrides.maps)) {
@@ -181,6 +214,8 @@ const payload = {
   // `workers/lint/overrides.mjs`.
   trails: overrides.trails,
   shields: overrides.shields,
+  iconSets: overrides.iconSets,
+  customIcons: overrides.customIcons,
   // Úpravy pre jednotlivé typy máp (turistická, lyžiarska, cestná, …).
   maps: overrides.maps
 };

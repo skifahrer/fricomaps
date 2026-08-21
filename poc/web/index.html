@@ -337,6 +337,34 @@
       border: 1px solid #ccc; border-radius: 6px; padding: 6px;
     }
     .dev-file { display: block; margin: 4px 0 6px; font-size: 11px; }
+
+    /* Výber ikony: mriežka s náhľadmi namiesto zoznamu mien. Meno pod
+       obrázkom je orezané – dôležité je, ako ikona vyzerá; celé meno je
+       v bublinke. */
+    .dev-icons { margin: 4px 0 8px; }
+    .dev-iconsearch { margin-bottom: 5px; }
+    .dev-icongrid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+      gap: 4px; max-height: 210px; overflow-y: auto;
+      padding: 4px; border: 1px solid #e2e2e8; border-radius: 6px; background: #fafafc;
+    }
+    .dev-icontile {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      border: 1px solid transparent; border-radius: 6px; background: none;
+      padding: 3px 1px; cursor: pointer; overflow: hidden;
+    }
+    .dev-icontile:hover { background: #eceef4; }
+    .dev-icontile.on { border-color: #3a6ea5; background: #e3ecf7; }
+    .dev-icontile small {
+      font-size: 9px; color: #666; max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dev-icon { display: block; }
+    .dev-iconnone { display: block; width: 22px; height: 22px; line-height: 22px; color: #999; }
+    .dev-text {
+      box-sizing: border-box; padding: 4px 6px; font-size: 11px; min-width: 90px;
+      border: 1px solid #ccc; border-radius: 5px;
+    }
     .dev-clip { position: fixed; left: -9999px; top: 0; }
 
     body.dark #toggle { background: rgba(24,24,36,.94); color: #ddd; }
@@ -377,6 +405,11 @@
     body.dark .dev-zrange { color: #9ab08a; background: #232d22; }
     body.dark .dev-zrange.off { color: #777; background: #26263a; }
     body.dark .dev-btn, body.dark .dev-chip, body.dark .dev-select,
+    body.dark .dev-icongrid { background: #1e1e2c; border-color: #33334a; }
+    body.dark .dev-icontile:hover { background: #2c2c40; }
+    body.dark .dev-icontile.on { background: #26364e; border-color: #4a7ab5; }
+    body.dark .dev-icontile small { color: #9a9aa8; }
+    body.dark .dev-text { background: #222; color: #ddd; border-color: #444; }
     body.dark .dev-search, body.dark .dev-hex, body.dark .dev-num, body.dark .dev-json {
       background: #1e1e2c; color: #ddd; border-color: #3a3a52;
     }

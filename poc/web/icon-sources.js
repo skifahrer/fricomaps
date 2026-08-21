@@ -56,6 +56,35 @@ export const ICON_SOURCES = [
   }
 ];
 
+/**
+ * VLASTNÁ SADA IKONIEK. Zdroje vyššie sú tie, ktoré má repozitár overené –
+ * ale nie je dôvod, aby to bol uzavretý zoznam: sprite je verejný súbor
+ * (`<niečo>.json` + `<niečo>.png`) a kto má vlastný, má ho vedieť skúsiť bez
+ * zásahu do zdrojáku. Vlastné sady sú preto v úpravách z developer módu
+ * (`overrides.iconSets`) a pipeline ich sťahuje a prerába na SDF presne tak
+ * ako tie tri hore.
+ *
+ * `id` má PREDPONU `own-`, a to nie je kozmetika: podľa nej sa dá odlíšiť,
+ * čo je z repozitára a čo dopísal človek – a zároveň sa tým nedá prepísať
+ * overená sada tichou zhodou mien.
+ */
+export const CUSTOM_SET_PREFIX = "own-";
+
+/** Vlastné sady z úprav (už prečistené `normalizeOverrides`). */
+export function customIconSources(overrides) {
+  return Array.isArray(overrides?.iconSets) ? overrides.iconSets : [];
+}
+
+/** Všetky sady: overené z repozitára + vlastné z úprav. */
+export function allIconSources(overrides) {
+  return [...ICON_SOURCES, ...customIconSources(overrides)];
+}
+
+/** Sada podľa id (aj vlastná); pri neznámom id vráti predvolenú. */
+export function iconSourceIn(id, overrides) {
+  return allIconSources(overrides).find((s) => s.id === id) || ICON_SOURCES[0];
+}
+
 export const DEFAULT_ICON_SOURCE = "osm-liberty";
 
 export const ICON_SOURCE_IDS = ICON_SOURCES.map((s) => s.id);
@@ -69,8 +98,8 @@ export function iconSource(id) {
  * Mená ikon, na ktoré sa štýl odkazuje priamo (nie cez `class`/`subclass`).
  * Odvodzujú sa z prípony zdroja; ak ich sprite nemá, štýl ich vynechá.
  */
-export function specialIcons(id) {
-  const { suffix } = iconSource(id);
+export function specialIcons(id, overrides) {
+  const { suffix } = overrides ? iconSourceIn(id, overrides) : iconSource(id);
   return {
     peak: `mountain${suffix}`,
     volcano: `volcano${suffix}`,

@@ -46,10 +46,20 @@ fi
 # byť napísaný druhýkrát. Filtruje sa na tie, čo naozaj vznikli
 # (`ICONS_AVAILABLE`): stiahnutie sady z cudzieho servera môže zlyhať
 # a chýbajúci sprite by vo vieweri bol prázdny prepínač.
+# Vlastné sady z úprav developer módu (`overrides.iconSets`) sú v tom
+# zozname tiež: pipeline ich sťahuje a prerába rovnako, takže by bolo zvláštne,
+# keby sa dali pridať, ale viewer by o nich nevedel.
 ICON_SOURCES=$(node -e "
-  import('./poc/web/icon-sources.js').then((m) => {
+  Promise.all([
+    import('./poc/web/icon-sources.js'),
+    import('./poc/web/themes.js'),
+    import('node:fs')
+  ]).then(([ic, th, fs]) => {
+    let raw = {};
+    try { raw = JSON.parse(fs.readFileSync('poc/web/style-overrides.json', 'utf8')); } catch {}
     const ok = (process.env.ICONS_AVAILABLE || '').split(/\\s+/).filter(Boolean);
-    console.log(JSON.stringify(m.ICON_SOURCES.filter((s) => ok.includes(s.id))
+    const vsetky = ic.allIconSources(th.normalizeOverrides(raw).overrides);
+    console.log(JSON.stringify(vsetky.filter((s) => ok.includes(s.id))
       .map((s) => ({ id: s.id, label: s.label, sprite: 'sprites/' + s.id,
                      license: s.license, source: s.source, suffix: s.suffix, note: s.note }))));
   });

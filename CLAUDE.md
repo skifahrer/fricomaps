@@ -649,6 +649,83 @@ pásma vnoriť nedá ani obchádzkou – kto chce plynulý prechod, píše krivk
 | `poc/web/devmode.js` | prepínač krivka ⇄ pásma (prepnutie nezahodí, čo je nastavené) |
 | `workers/lint/overrides.mjs` | medzera, prekryv, zmiešaný tvar, hranica pásma |
 
+**Krivka aj pásma platia aj na `layout`, nie len na `paint`.** MapLibre má dve
+police a veľkosť ikony ani rozostup symbolov po čiare v `paint` nie sú – práve
+tie dve pritom rozhodujú, ako husto sedia turistické značky po trase a aké sú
+veľké. Prepísať sa dá VYMENOVANÝ zoznam (`LAYOUT_PROPS` v `themes.js`:
+`icon-size`, `symbol-spacing`, `icon-padding`, `text-size`); `symbol-placement`
+alebo `icon-rotation-alignment` sú rozhodnutia štýlu, nie ladenie.
+
+**A `layout` sa nasadzuje LEN na symbolovú vrstvu.** Neznáma vlastnosť
+v `layout` je pre MapLibre tvrdá chyba – neodmietne vrstvu, ale CELÝ štýl,
+takže by sa mapa nenačítala vôbec (v `paint` neznáme len ignoruje). Stráži to
+`workers/lint/icons.mjs`.
+
+### Trasy sa v developer móde ladia po vrstvách
+
+Jeden druh značenej trasy je v štýle ŠTYRI vrstvy a každá odpovedá na inú
+otázku: pásik „ako hrubo", značka „ako veľká a ako často", ikonka druhu „kde
+značka nie je", názov „aké veľké písmo". V záložke „Trasy" sú preto pod každým
+druhom rozkliknuteľné všetky štyri – s rozsahom zoomu a s tými istými krivkami
+a pásmami, aké má záložka Vrstiev:
+
+```
+Turistické trasy (značené)          ▾
+  Pásik        trail-hiking         od z8  do z–   hrúbka · krytie
+  Značka       trail-hiking-mark    od z12 do z–   veľkosť · rozostup · padding
+  Ikona druhu  trail-hiking-icon    od z13 do z–   veľkosť · rozostup · krytie
+  Názov trasy  trail-hiking-label   od z12 do z–   veľkosť písma · rozostup
+```
+
+Nie je to druhá páka na tú istú vec: zapisuje sa do `overrides.layers[<id>]`,
+teda presne tam, kam píše záložka Vrstiev. Rozdiel je len v tom, že je tu
+pokope to, čo patrí k jednej trase – v zozname vrstiev sú tie štyri na štyroch
+rôznych miestach a bez farby a značky vedľa nich sa nedá povedať, ktorá je
+ktorá.
+
+### Ikony: vidieť, čo si vyberám – a vlastné obrázky
+
+Výber ikony bol `select` s menami (`aeroway_11`, `alcohol_shop_11`, …), z
+ktorých sa nedalo prečítať, ako ikona vyzerá; vybrať tú správnu znamenalo
+skúšať jednu po druhej a pozerať sa do mapy. Teraz je to **mriežka s náhľadmi**
+(`poc/web/dev-icons.js`) – kreslí sa z toho istého spritu, aký má mapa, takže
+je to presne to, čo v nej bude. SDF sa pri tom musí prekresliť: vzdialenostné
+pole v alfe vyzerá bez prahovania ako rozmazaná škvrna.
+
+**Tá istá ikona je v sade dvakrát** (`aerialway` aj `aerialway_11`) a v mriežke
+by boli dve dlaždice, ktoré vyzerajú rovnako. Štýl používa tú s príponou, takže
+tá bez nej sa zo zoznamu vynecháva.
+
+**Vlastná ikona je obrázok, ktorý si človek nahrá** (PNG, JPG aj SVG). Prevedie
+sa v prehliadači na PNG a uloží sa PRIAMO do úprav ako `data:` adresa – nie ako
+odkaz na cudzí server. Má to tri dôvody a všetky tri sú o tom istom: obrázok
+musí byť tam, kde je mapa.
+
+  * offline mapa a balík pre mobil odkaz na cudzí server nemajú kde načítať,
+  * pipeline ho vie dopiecť do spritu bez toho, aby musela rasterizovať SVG
+    (`workers/assets/custom-icons.mjs` len dekóduje PNG),
+  * a čo je v mape vidieť, je presne to, čo sa uložilo.
+
+V prehliadači sa ikona nakreslí HNEĎ (`styleimagemissing` v `poc/web/app.js`,
+to isté miesto, kde sa dokresľujú vzory), do spritu ju dopečie build. Preto
+`hasIcon` v štýle pokladá vlastnú ikonu za dostupnú aj vtedy, keď v sprite ešte
+nie je – inak by sa dala vybrať, ale mapa by ju ticho nenakreslila.
+
+**Vlastná sada ikoniek** je adresa spritu bez prípony
+(`overrides.iconSets`, id s predponou `own-`). Pipeline ju sťahuje a prerába na
+SDF rovnako ako tie tri overené v `icon-sources.js` a `deploy/site.sh` ju dá do
+manifestu, takže ju viewer ponúkne v prepínači. Kým ju build nespracuje, načíta
+sa v prehliadači priamo z jej adresy – vtedy je to cudzí sprite, takže ikony
+majú svoje pôvodné farby a nedajú sa prefarbiť.
+
+| kde | čo |
+|---|---|
+| `poc/web/dev-icons.js` | mriežka s náhľadmi, prevod nahraného súboru na PNG |
+| `poc/web/dom.js` | `el()` – zdieľa ho panel aj výber ikoniek |
+| `workers/assets/custom-icons.mjs` | dopečie vlastné ikony do každého spritu |
+| `workers/assets/icons.sh` | sťahuje aj vlastné sady (`allIconSources`) |
+| `workers/lint/icons.mjs` | tiché veci: nedopečená ikona, nesťahovaná sada, `layout` na čiare |
+
 ### Tieňovanie reliéfu: sila RASTIE so zoomom
 
 Krivka `hillshade-exaggeration` roky klesala (`0,5 → 0,25`), takže presne tam,
@@ -895,6 +972,7 @@ node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 node    workers/lint/hillshade.mjs     # tieňovanie neprekryje mapu pod sebou
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
+node    workers/lint/icons.mjs         # vlastné ikony a sady sa dostanú do mapy
 python3 workers/trails/tags.py --osmc=red:white:red_bar --route=hiking  # akú značku z toho
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
@@ -947,8 +1025,12 @@ platný), že **štítok s číslom cesty
 (`D1`) prežije preskladanie spritu a ostane nad menom ulice**
 (`workers/lint/shields.mjs` – rozťahovateľný obrázok bez `stretchX` sa natiahne
 aj s rohmi a premenovaný obrázok nechá číslo bez podkladu; ani jedno nespadne),
-že **turistická značka, ktorej meno obrázka sa skladá až z DÁT, je naozaj
-v sprite** (`workers/lint/marks.mjs` – tvar z `osmc:symbol`, dvojica
+že **vlastná ikona a vlastná sada ikoniek sa naozaj dostanú do mapy**
+(`workers/lint/icons.mjs` – obrázok nahratý v paneli musí dopiecť
+`custom-icons.mjs` do spritu, sadu musí stiahnuť `icons.sh` a zapísať
+`site.sh` do manifestu; a `layout` úprava na inej než symbolovej vrstve by
+zhodila celý štýl), že **turistická značka, ktorej meno obrázka sa skladá až
+z DÁT, je naozaj v sprite** (`workers/lint/marks.mjs` – tvar z `osmc:symbol`, dvojica
 podklad × farba a meno `mark-…` musia sedieť v troch súboroch naraz, inak
 MapLibre obrázok ticho preskočí a po trase nie je nič; a bez posunu podľa
 pruhu si značky dvoch trás sadnú na jedno miesto a kolízia nechá jednu),

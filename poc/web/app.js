@@ -21,7 +21,7 @@ import {
 } from "./themes.js";
 import { initDevMode, loadOverrides, saveOverrides } from "./devmode.js";
 import { parsePatternName, renderPattern } from "./patterns.js";
-import { ICON_SOURCES, DEFAULT_ICON_SOURCE } from "./icon-sources.js";
+import { ICON_SOURCES, DEFAULT_ICON_SOURCE, customIconSources } from "./icon-sources.js";
 
 // Základná URL stránky (funguje na GitHub Pages aj lokálne).
 const baseUrl = new URL(".", location.href).href.replace(/\/$/, "");
@@ -362,8 +362,25 @@ function applyStyle(manifest) {
     // predpis, takže sa dokreslí presne vtedy, keď ho štýl použije.
     // (Pipeline tie isté obrázky dopečie do spritu pre iOS.)
     map.on("styleimagemissing", (ev) => {
+      if (map.hasImage(ev.id)) return;
+      // VLASTNÁ IKONA sa nesie priamo v úpravách ako PNG v `data:` adrese –
+      // v sprite je až po builde, ale v prehliadači má byť vidieť HNEĎ, inak
+      // by sa nedala vybrať a pozrieť. Toto je to isté miesto, kde sa
+      // dokresľujú vzory: „štýl si pýta obrázok, ktorý v sprite nie je".
+      const vlastna = (overrides.customIcons || []).find((i) => i.name === ev.id);
+      if (vlastna) {
+        const img = new Image();
+        img.onload = () => {
+          if (!map.hasImage(ev.id)) {
+            map.addImage(ev.id, img, { pixelRatio: vlastna.pixelRatio || 1 });
+          }
+        };
+        img.onerror = () => warn(`Vlastnú ikonu "${ev.id}" sa nepodarilo načítať.`);
+        img.src = vlastna.png;
+        return;
+      }
       const spec = parsePatternName(ev.id);
-      if (!spec || map.hasImage(ev.id)) return;
+      if (!spec) return;
       map.addImage(ev.id, renderPattern(spec, 2), { pixelRatio: 2 });
     });
 
@@ -533,6 +550,28 @@ async function main() {
       overrides = clean;
       for (const p of problems) warn(`style-overrides.json: ${p}`);
     }
+  }
+
+  // Vlastné sady ikoniek z úprav. Pipeline ich sťahuje a prerába na SDF
+  // rovnako ako tie z repozitára, ale v prehliadači sa dá práve pridaná sada
+  // pozrieť hneď – načíta sa priamo z jej adresy. Kým ju build nespracuje,
+  // je to CUDZÍ sprite: ikony majú svoje pôvodné farby a nedajú sa prefarbiť.
+  for (const set of customIconSources(overrides)) {
+    if (iconSets.some((s2) => s2.id === set.id)) continue;
+    const index = await loadJson(`${set.sprite}.json`, { optional: true });
+    if (!index) {
+      warn(`Vlastnú sadu ikoniek "${set.id}" sa nepodarilo načítať z ${set.sprite}.json`);
+      continue;
+    }
+    const names = Object.keys(index);
+    iconSets.push({
+      ...set,
+      spriteUrl: set.sprite,
+      index,
+      icons: names,
+      count: names.length,
+      sdf: Object.values(index).some((e) => e && e.sdf)
+    });
   }
 
   for (const [key, r] of Object.entries(manifest.regions)) {
