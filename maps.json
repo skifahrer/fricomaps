@@ -305,26 +305,6 @@
             "updated_at": "2026-08-17T12:36:19Z"
           }
         },
-        "maxzoom": 16,
-        "name": "Bratislavský kraj – rýchly test 4 km²",
-        "rock_slope": 50,
-        "rock_source": "dmr5",
-        "rocks_maxzoom": 16,
-        "run": "134",
-        "terrain_maxzoom": 15,
-        "terrain_source": "dmr5",
-        "test_km2": "4",
-        "tiles": {
-          "contours": "tiles/bratislavsky_test4-contours.pmtiles",
-          "features": "tiles/bratislavsky_test4-features.pmtiles",
-          "pmtiles": "tiles/bratislavsky_test4.pmtiles",
-          "rocks": "tiles/bratislavsky_test4-rocks.pmtiles",
-          "terrain": "tiles/bratislavsky_test4-terrain.pmtiles",
-          "trails": "tiles/bratislavsky_test4-trails.pmtiles"
-        },
-        "trails_maxzoom": 14,
-        "updated_at": "2026-08-17T12:37:05Z"
-      },
       "presovsky": {
         "bbox": [
           19.865,
