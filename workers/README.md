@@ -81,16 +81,15 @@ Mapa · úpravy štýlu          style-overrides.json z developer módu
   [osm.fr](https://download.openstreetmap.fr/extracts/europe/slovakia/)
   (rezané po skutočných administratívnych hraniciach, denne aktualizované);
   mapovanie a presné bboxy z osm.fr rezacích polygónov sú vo
-  [workers/data/regions.json](data/regions.json). **Kraj sa ale nesťahuje
-  hotový, reže sa z rodičovského extraktu** (`osmfr.parent`, teda
-  `europe/slovakia-latest.osm.pbf`, ~373 MB) cez `osmium extract -s smart`
-  na `.poly` kraja: v hotovom `{kraj}-latest.osm.pbf` (36–63 MB) chýbajú
-  objektu, ktorý pokračuje do vedľajšieho kraja, uzly za hranicou a
-  viacpolygónovej ploche celé členské cesty – Planetiler taký objekt **zahodí
-  celý** a v stiahnutej mape nie je vôbec (rozpis
-  [workers/plan/pbf.sh](plan/pbf.sh)). Trvá to ~1 minútu a raz za deň (kľúč
-  cache nesie dátum). `Build wiki` z PBF číta len tagy, tak mu hotový extrakt
-  stačí (`PBF_NEEDS_GEOMETRY: false`).
+  [workers/data/regions.json](data/regions.json). **Kraj sa sťahuje priamo** –
+  má na osm.fr vlastný `{kraj}-latest.osm.pbf` (36–63 MB) rezaný po svojej
+  administratívnej hranici, takže sa nikde nič nevyrezáva (rozpis
+  [workers/plan/pbf.sh](plan/pbf.sh), stráži
+  [workers/lint/pbf-source.py](lint/pbf-source.py)). Cache nesie dátum, takže
+  sa v rámci dňa sťahuje raz. Cenou je, že objektu, ktorý pokračuje do
+  vedľajšieho kraja, chýbajú v extrakte uzly za hranicou a Planetiler ho zahodí
+  – na Bratislavskom kraji je to 0,7 % prvkov v dlaždiciach, a sú to práve tie
+  na hranici, ktoré maska regiónu aj tak schová.
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
@@ -2979,7 +2978,17 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails`, `trails_maxzoom`,
    `terrain_maxzoom`, `maxzoom`, `rock_img_asset`, `rock_img_zoom`,
-   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`,
+   `region_clip`.
+
+   **`region_clip` je DOČASNE `false`**, teda dlaždice sa nerežú na hranicu
+   regiónu (`--polygon` Planetileru) a vyrobia sa na celom obdĺžniku bboxu.
+   V mape to vidieť nie je – hranicu dokresľuje maska v štýle, ktorá je „celý
+   svet mínus región". Merané na Bratislavskom kraji (maxzoom 14): 1607
+   dlaždíc namiesto 1271 (+26 %) za +0,7 % bajtov a rovnaký čas, a v tých
+   navyše je územie za hranicou kraja vrátane cudzích sídel. Kým je vypnutý,
+   hlási to `::warning::` v každom behu; späť sa zapína `region_clip=true`.
+   Rozpis a merania: [workers/lib/region-clip.sh](lib/region-clip.sh).
 
    Zdroj skál sa vyberá **inputom `rock_source`**, nie tu – prepína celý
    pôvod vrstvy, takže patrí do formulára. Cez `options` sa dá nanajvýš

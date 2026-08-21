@@ -542,46 +542,46 @@ a Planetiler do nich okrem OSM dát kreslí aj vodstvo, pobrežia a Natural Eart
 ktoré sú celosvetové. Za hranicou teda ostalo podfarbené prázdno bez ciest
 a sídel – čo vyzerá ako mapa, ktorá sa nedonačítala, nie ako koniec mapy.
 
-Sú na to **tri kusy a všetky treba**:
+Sú na to **dva kusy a oba treba**:
 
 | kus | čo robí | kde |
 |---|---|---|
-| do PBF sa dostanú CELÉ objekty | kraj sa vyreže z rodičovského extraktu (`osmium extract -s smart`) | `workers/plan/pbf.sh` |
 | dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
 | presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
 
-**Ten prvý je opačný problém než zvyšok kapitoly: nie „mapa presahuje", ale
-„v mape CHÝBA".** Hotový `presovsky-latest.osm.pbf` z osm.fr je orezaný NA
-TVRDO – ceste, rieke či lesu, ktorý pokračuje do vedľajšieho kraja, v ňom
-chýbajú uzly za hranicou a viacpolygónovej ploche (`type=multipolygon`) celé
-členské cesty. Planetiler z takého objektu geometriu nepostaví a **zahodí ho
-celý**, takže v stiahnutom kraji nebol vôbec – nie orezaný, ale žiadny.
+**PBF sa sťahuje PRIAMO, jeden súbor na región.** osm.fr reže svoje extrakty
+po skutočných administratívnych hraniciach a denne ich prerába, takže kraj má
+vlastný `{kraj}-latest.osm.pbf` (36–63 MB) a `workers/plan/pbf.sh` stiahne
+rovno ten – nič sa nikde nevyrezáva. Chvíľu sa namiesto toho ťahalo celé
+Slovensko (373 MB) a kraj sa z neho rezal `osmium extract -s smart --polygon`
+na jeho `.poly`; bol to krok navyše, 300 MB navyše a `osmfr.parent` v číselníku
+navyše. Zrušené – sťahuje sa ten región, ktorý sa stavia (pravidlo 7), a stráži
+to `workers/lint/pbf-source.py`.
+
+Čo ten rez naozaj riešil, treba vedieť: v hotovom extrakte chýbajú objektu,
+ktorý pokračuje do vedľajšieho kraja, uzly za hranicou a viacpolygónovej ploche
+(`type=multipolygon`) členské cesty, a Planetiler taký objekt **zahodí celý**.
 Namerané na Bratislavskom kraji (maxzoom 12, schéma na `highway`/`waterway`/
-`landuse`/`natural`):
+`landuse`/`natural`): hotový extrakt zahodil 97 čiar, 66 plôch a 19
+viacpolygónových plôch proti 5, 6 a 1 z rodiča (260 486 proti 262 377 prvkov
+v dlaždiciach, teda 0,7 %). Sú to objekty NA HRANICI kraja – presne tie, ktoré
+maska aj tak schová.
 
-| | hotový extrakt kraja | z rodiča `-s smart` |
-|---|--:|--:|
-| zahodené čiary (way) | 97 | 5 |
-| zahodené plochy (way) | 66 | 6 |
-| zahodené plochy (multipolygon) | 19 | 1 |
-| prvkov v dlaždiciach | 260 486 | 262 377 |
-
-Preto má kraj vo `workers/data/regions.json` **`osmfr.parent`** a PBF sa reže
-z neho (Slovensko, 373 MB, `osmium extract -s smart --polygon`; ~1 minúta, raz
-za deň – kľúč cache nesie dátum). Objekt cez hranicu je tým celý, takže
-presahuje – a schová ho maska. **To, čo vyčnieva, sa má schovať, nie zahodiť.**
-Zvyšok (252 uzlov) je na ŠTÁTNEJ hranici, kde je rodičom orezané Slovensko;
-na to by bola treba Európa (28 GB) a mapa tam aj tak končí.
-
-Reže sa to len pre PBF, z ktorého sa **kreslí** (`PBF_NEEDS_GEOMETRY: true`);
-`Build wiki` z neho číta iba tagy, takže mu hotový extrakt kraja stačí a 373 MB
-rodiča by sťahoval pre nič (pravidlo 7). Vypnúť sa to dá poradím krokov – bez
-`data/region.poly` sa kraj nemá čím vyrezať a beh je pri tom zelený –, tak to
-stráži `workers/lint/pbf-parent.py`.
+**Orez je DOČASNE VYPNUTÝ** (`region_clip=false` vo voľbách). Merané na
+Bratislavskom kraji (maxzoom 14, kraj je 57 % svojho bboxu): `--polygon` dá
+1271 dlaždíc a 19 330 130 B, `--bounds` 1607 dlaždíc a 19 467 060 B – teda
+**+26 % dlaždíc za +0,7 % bajtov** a rovnaký čas. Vidieť to nie je, lebo maska
+je „celý svet mínus región" a všetko za hranicou prekryje. Nie je to ale nič:
+v tých 336 dlaždiciach navyše bolo na z12 228 popisov sídel, 55 chránených
+území, 19 hraníc, cesty aj vodstvo – vrátane rakúskych a maďarských mien.
+**Rezaný PBF to nerieši**: vodstvo, pobrežia a Natural Earth kreslí Planetiler
+zo svojich celosvetových podkladov, ktoré v našom PBF nie sú vôbec, takže orez
+a rez PBF sú dve rôzne veci. Kým je vypínač v `false`, hlási to `::warning::`
+v každom behu (pravidlo 8); späť sa zapína `region_clip=true`.
 
 `--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
 nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
-preto je aj ten tretí kus; a preto je maska v štýle **posledná vrstva**
+preto je aj ten druhý kus; a preto je maska v štýle **posledná vrstva**
 (prekrýva aj popisky a tieňovanie). Vrstva pridaná za ňu by mimo regiónu opäť
 kreslila a nikto by to nepovedal – stráži to `workers/lint/style.mjs`.
 
@@ -978,7 +978,7 @@ python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov c
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
 python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
-python3 workers/lint/pbf-parent.py     # kraj sa reže z rodiča, nie z dieravého extraktu
+python3 workers/lint/pbf-source.py     # PBF regiónu sa sťahuje priamo z osm.fr
 python3 workers/world/variant.py --list        # podoby mapy sveta
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
@@ -1038,11 +1038,11 @@ pruhu si značky dvoch trás sadnú na jedno miesto a kolízia nechá jednu),
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
 nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
-zahodí), že **PBF kraja vzniká rezom
-z rodičovského extraktu, a nie z toho hotového, dieravého**
-(`workers/lint/pbf-parent.py` – v hotovom extrakte z osm.fr chýbajú objektu cez
-hranicu uzly aj členské cesty, Planetiler ho zahodí celý a v stiahnutom kraji
-nie je vôbec; vypnúť sa to dá poradím krokov a beh je pri tom zelený), že
+zahodí), že **PBF regiónu sa sťahuje
+priamo z osm.fr a nie obchádzkou cez rodičovský extrakt**
+(`workers/lint/pbf-source.py` – kraj má na osm.fr vlastný súbor rezaný po jeho
+administratívnej hranici, takže rez z 373 MB Slovenska je krok aj 300 MB
+navyše; kontrola stráži aj to, že v číselníku neostane mŕtvy `osmfr.parent`), že
 **každý job, ktorý
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do
