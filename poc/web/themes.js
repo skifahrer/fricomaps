@@ -1318,30 +1318,65 @@ export const TRAIL_MARK_ZOOM = 16;
  * na chodníku s červenou, modrou a cyklotrasou.)
  *
  * `base` je odstup prvej značky od čiary (nech nezakrýva pásiky pod sebou),
- * `step` rozostup v stĺpiku. A ten sa NEDÁ zadať ako výška značky:
- * kolízny obdĺžnik je značka PLUS `icon-padding`, a padding je v pixeloch
- * obrazovky, kým odstup sa škáluje s `icon-size`. Pri najmenšej veľkosti
- * (0,5 na z12) tak padding váži dvojnásobne:
+ * `step` rozostup v stĺpiku.
  *
- *     step ≥ (MARK_BOX + 2 okraj) + 2 × icon-padding / icon-size
- *          ≥ 16 + 2 × 2 / 0,5 = 24
+ * ZNAČKY STOJA TESNE NA SEBE, BEZ MEDZERY – tak, ako sú na strome. Obrázok
+ * značky je `MARK_BOX` plus jeden priehľadný pixel na každej strane
+ * (`MARK_PAD` – v atlase drží hranu od susedného obrázka), takže krok
+ * `MARK_BOX` položí VIDITEĽNÉ štvorce presne na seba: priehľadné okraje sa
+ * prekryjú a medzi tabuľkami nie je nič. Krok `MARK_IMAGE` by nechal medzeru
+ * dvoch pixelov, krok 26 (ten tu bol) medzeru dvanástich.
  *
- * 26 je to s dvojpixelovou medzerou, nech je vidieť, že sú to dve tabuľky.
- * S menším číslom vypadne druhá značka cez kolíziu – overené v prehliadači:
- * pri kroku 16 bola z červenej a modrej vidieť len červená.
+ * CENA JE `icon-allow-overlap`, A BEZ NEJ TO NEJDE. Kolízny obdĺžnik je celý
+ * obrázok VRÁTANE priehľadného okraja plus `icon-padding`, takže sa dve
+ * susedné priečky o dva pixely prekrývajú – a MapLibre by druhú značku
+ * zahodila. Presne to sa dialo predtým z opačnej strany (pri kroku 16 bola
+ * z červenej a modrej vidieť len červená) a riešilo sa to medzerou; odteraz
+ * sa to rieši tým, že sa stĺpik kreslí bez ohľadu na kolízie. Je to bezpečné
+ * práve pri ňom: rad je krátky (`TRAIL_MARK_STACK_MAX`), stojí kolmo na
+ * trasu a čo si prekrýva, je jeho vlastná priečka. Stráži to
+ * `workers/lint/marks.mjs`.
  */
-export const TRAIL_MARK_STACK = { base: MARK_BOX + 4, step: 26 };
+export const TRAIL_MARK_STACK = { base: MARK_BOX + 4, step: MARK_BOX };
 
-/** Miesto okolo značky, ktoré si drží voľné (v pixeloch obrazovky). */
-export const TRAIL_MARK_PADDING = 2;
+/**
+ * Miesto okolo značky, ktoré si drží voľné (v pixeloch obrazovky).
+ *
+ * NULA, lebo stĺpik má stáť na sebe (viď `TRAIL_MARK_STACK`) a padding sa
+ * na rozdiel od odstupu NEŠKÁLUJE s `icon-size` – pri malej značke by preto
+ * vážil dvojnásobne a rad by rozhodil práve tam, kde je najtesnejší.
+ */
+export const TRAIL_MARK_PADDING = 0;
 
 /** Koľko priečok stĺpika sa vymenuje (pozri `icon-offset` v štýle). */
 export const TRAIL_MARK_STACK_MAX = 4;
 
-/** Predvolené hodnoty pri `TRAIL_MARK_ZOOM` – to, čo prepisuje developer mode. */
+/**
+ * Predvolené hodnoty pri `TRAIL_MARK_ZOOM` – to, čo prepisuje developer mode.
+ *
+ * `step` medzi nimi nie je od zoomu: je to odstup v stĺpiku a MapLibre ho
+ * násobí `icon-size`, takže sa so značkami škáluje sám.
+ */
 export const TRAIL_MARK_DEFAULTS = {
   spacing: atZoom(TRAIL_MARK_SPACING, TRAIL_MARK_ZOOM),
-  size: atZoom(TRAIL_MARK_SIZE, TRAIL_MARK_ZOOM)
+  size: atZoom(TRAIL_MARK_SIZE, TRAIL_MARK_ZOOM),
+  step: TRAIL_MARK_STACK.step
+};
+
+/**
+ * Medze tých troch čísel – JEDNO miesto pre normalizáciu, štýl aj políčka
+ * v paneli. Kým boli napísané pri každom z nich zvlášť, mohli sa rozísť:
+ * panel by pustil hodnotu, ktorú zápis do repozitára potom odmietne.
+ *
+ * Rozostup NESMIE byť nula (to nie je „žiadne značky", ale nekonečne veľa na
+ * čiare – vypínajú sa tvarom „žiadna" pri druhu trasy), odstup v stĺpiku
+ * nulu SMIE: vtedy sedia značky presne na sebe, čo je platná odpoveď na
+ * „nechcem stĺpik".
+ */
+export const TRAIL_MARK_RANGES = {
+  spacing: [20, 2000],
+  size: [0.2, 4],
+  step: [0, 80]
 };
 
 /**
@@ -1353,14 +1388,10 @@ export const TRAIL_MARK_DEFAULTS = {
 export function trailMarkPx(overrides) {
   const raw = overrides?.trails?.marks || {};
   const out = { ...TRAIL_MARK_DEFAULTS };
-  const spacing = Number(raw.spacing);
-  // Nula by znamenala nekonečne veľa značiek na čiare, nie „žiadne";
-  // vypnúť sa dajú tvarom „žiadna" pri druhu trasy.
-  if (Number.isFinite(spacing) && spacing >= 20 && spacing <= 2000) {
-    out.spacing = spacing;
+  for (const [key, [min, max]] of Object.entries(TRAIL_MARK_RANGES)) {
+    const n = Number(raw[key]);
+    if (Number.isFinite(n) && n >= min && n <= max) out[key] = n;
   }
-  const size = Number(raw.size);
-  if (Number.isFinite(size) && size >= 0.2 && size <= 4) out.size = size;
   return out;
 }
 
@@ -2068,7 +2099,7 @@ export function normalizeOverrides(raw) {
     const value = (rawTrails.marks || {})[key];
     if (value == null) continue;
     const n = Number(value);
-    const medze = key === "spacing" ? [20, 2000] : [0.2, 4];
+    const medze = TRAIL_MARK_RANGES[key];
     if (!Number.isFinite(n) || n < medze[0] || n > medze[1]) {
       problems.push(
         `Značky trás "${key}" musia byť číslo od ${medze[0]} do ${medze[1]} (${value}).`
@@ -4370,16 +4401,22 @@ export function buildStyle({
     // dvojice `(side, off)`, ktoré sa v dátach reálne vyskytujú; nad
     // `TRAIL_MARK_STACK_MAX` je v rade toľko trás, že by stĺpik aj tak
     // prerástol obrazovku, a ďalšie sa preto kreslia na poslednú priečku.
-    const markOffset = ["case"];
-    for (const side of [1, -1]) {
-      for (let off = 0; off <= TRAIL_MARK_STACK_MAX; off += 1) {
-        markOffset.push(
-          ["all", ["==", num("side", 1), side], ["==", num("off", 0), off]],
-          ["literal", [0, -side * (TRAIL_MARK_STACK.base + TRAIL_MARK_STACK.step * off)]]
-        );
+    const stackOffset = (base, step) => {
+      const expr = ["case"];
+      for (const side of [1, -1]) {
+        for (let off = 0; off <= TRAIL_MARK_STACK_MAX; off += 1) {
+          expr.push(
+            ["all", ["==", num("side", 1), side], ["==", num("off", 0), off]],
+            ["literal", [0, -side * (base + step * off)]]
+          );
+        }
       }
-    }
-    markOffset.push(["literal", [0, -TRAIL_MARK_STACK.base]]);
+      expr.push(["literal", [0, -base]]);
+      return expr;
+    };
+    // Krok stĺpika je z developer módu (`overrides.trails.marks.step`), takže
+    // sa dá doladiť tak isto ako rozostup po trase a veľkosť značky.
+    const markOffset = stackOffset(TRAIL_MARK_STACK.base, markPx.step);
     for (const t of trailTypes) {
       if (!drawsMark(t)) continue;
       const { id, label, markPick } = t;
@@ -4417,7 +4454,14 @@ export function buildStyle({
             "icon-rotation-alignment": "viewport",
             "icon-pitch-alignment": "viewport",
             "icon-padding": TRAIL_MARK_PADDING,
-            // Keď sa nezmestia všetky, nech ostane značka dôležitejšej trasy.
+            // STĹPIK SA KRESLÍ CELÝ. Značky v ňom stoja tesne na sebe, takže
+            // sa im kolízne obdĺžniky o priehľadný okraj prekrývajú – bez
+            // tohto by MapLibre všetky okrem prvej zahodila a z troch trás na
+            // chodníku by bola v mape jedna (rozpis pri `TRAIL_MARK_STACK`).
+            "icon-allow-overlap": true,
+            // Poradie v rade rozhodujú dáta (`off`), nie to, kto sa zmestí
+            // prvý; sort-key ostáva pre značky dvoch RÔZNYCH ciest, ktoré si
+            // sadnú na to isté miesto.
             "symbol-sort-key": trailSort
           }
         },
@@ -4451,7 +4495,15 @@ export function buildStyle({
             "icon-image": icon,
             "icon-size": zl([[13, 0.5], [16, 0.75], [20, 1]]),
             "icon-rotation-alignment": "viewport",
-            "icon-padding": 6
+            // TEN ISTÝ STĹPIK AKO PRI ZNAČKÁCH, a z toho istého dôvodu: trasy
+            // majú v dlaždiciach tú istú geometriu, takže bez posunu padnú
+            // ikonky všetkých trás na jedno miesto a kolízia nechá jednu.
+            // `off` a `side` sú pri tom spoločné pre značky aj ikonky (číslujú
+            // sa raz na cestu, `workers/trails/routes.py`), takže trasa so
+            // značkou a trasa bez nej si navzájom priečku neberú.
+            "icon-offset": markOffset,
+            "icon-allow-overlap": true,
+            "icon-padding": 0
           },
           paint: {
             "icon-opacity": 0.85,

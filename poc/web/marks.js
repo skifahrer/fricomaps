@@ -229,6 +229,19 @@ export const MARK_BOX = 14;
  * a je ich toľko, koľko trás – z mapy by bol šum.
  */
 export const MARK_MINZOOM = 12;
+/**
+ * Priehľadný okraj okolo štvorca v pixeloch pri `pixelRatio` 1.
+ *
+ * Je tam preto, aby sa pri škálovaní neoprela hrana obrázka o susedný obrázok
+ * v atlase a netiekla po nej jeho farba. Pýta sa naň ale aj štýl: kolízny
+ * obdĺžnik značky je CELÝ obrázok vrátane tohto okraja, takže od neho závisí,
+ * či sa stĺpik značiek zmestí (rozpis pri `TRAIL_MARK_STACK` v `themes.js`).
+ */
+export const MARK_PAD = 1;
+
+/** Celá strana obrázka značky – to, čo MapLibre kreslí aj počíta do kolízie. */
+export const MARK_IMAGE = MARK_BOX + 2 * MARK_PAD;
+
 /** Tenký lem okolo štvorca – bez neho biela značka na svetlej mape zmizne. */
 export const MARK_EDGE = "#00000055";
 /** Hrúbka lemu v pixeloch pri `pixelRatio` 1. */
@@ -263,9 +276,8 @@ export function renderMark(shape, bgHex, fgHex, pixelRatio = 1) {
   const r = pixelRatio;
   const box = Math.round(MARK_BOX * r);
   const edge = MARK_EDGE_W * r;
-  // Pixel priehľadného okraja: bez neho by sa pri škálovaní hrana obrázka
-  // „oprela" o susedný obrázok v atlase a v mape by po nej tiekla jeho farba.
-  const pad = Math.max(1, Math.round(r));
+  // Priehľadný okraj (rozpis pri `MARK_PAD`).
+  const pad = Math.max(1, Math.round(MARK_PAD * r));
   const size = box + 2 * pad;
 
   const bg = rozlozFarbu(bgHex);
