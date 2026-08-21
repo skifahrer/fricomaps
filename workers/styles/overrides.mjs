@@ -118,6 +118,16 @@ if (reiconed.length) {
 if (overrides.poi.hidden.length) {
   summary.push(`  skryté POI triedy: ${overrides.poi.hidden.join(", ")}`);
 }
+// Ikony kategórií. Sú v `poi` vedľa skrytých tried, ale je to iná otázka –
+// a keby v súhrne chýbali, nebolo by z behu vidieť, že sa mapa kreslí inými
+// značkami (vrátane vlastných obrázkov, ktoré sa musia dopiecť do spritu).
+const poiIcons = Object.entries(overrides.poi.icons || {});
+if (poiIcons.length) {
+  summary.push(
+    `  ikony POI kategórií: ` +
+      poiIcons.map(([cls, name]) => `${cls} → ${name || "žiadna"}`).join(", ")
+  );
+}
 
 // Značené trasy. Nie sú to úpravy jednej vrstvy (jeden druh trasy má v štýle
 // tri), tak majú v súhrne vlastný riadok – inak by z neho zmizli.

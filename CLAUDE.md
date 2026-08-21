@@ -750,6 +750,32 @@ pokope to, čo patrí k jednej trase – v zozname vrstiev sú tie štyri na št
 rôznych miestach a bez farby a značky vedľa nich sa nedá povedať, ktorá je
 ktorá.
 
+### Ikona kategórie: vidieť tú terajšiu a vymeniť ju
+
+Záložka „POI" vedela kategórie len skrývať – aká ikona je pri ktorej, sa
+z nej nedalo zistiť ani zmeniť. Teraz je pri každom riadku **náhľad tej
+ikony, ktorá je naozaj v mape**, a po rozkliknutí mriežka na výber
+(`overrides.poi.icons[<kategória>]`).
+
+**Tri odpovede, nie dve** – tá istá úvaha ako pri značke druhu trasy:
+chýbajúci kľúč je „ikona podľa sady", prázdny reťazec je „žiadna" (ostane len
+popisok) a meno je „táto". Preto sa rozhoduje podľa toho, či kľúč EXISTUJE,
+nie podľa toho, či je hodnota pravdivá.
+
+**Ktorá ikona kategórii patrí, hovorí `poiIconName`** – jedna funkcia pre štýl
+(čo nakresliť) aj pre panel (čo ukázať). Kým to boli dva výpočty, ukazoval by
+panel raz niečo iné, než je v mape; `iconClassesOf` je z toho istého dôvodu
+funkcia, a nie riadok v `buildStyle`.
+
+**Ikona je nasadená ako HOLÉ MENO obrázka** (`case` nad `class`/`subclass`),
+nie `concat` z dát – a meno, ktoré sprite nemá, MapLibre ticho preskočí, takže
+prejde len to, čo `hasIcon` pozná (vlastná ikona sa pritom za dostupnú pokladá
+aj pred dopečením). Zoznam kategórií aj samotný výber platia rovnako pre POI
+z OpenMapTiles aj pre **vlastné body** (prameň, jaskyňa, rozhľadňa) – je to tá
+istá otázka a jeden zoznam, takže od tejto zmeny na `feature-point` platia aj
+skryté kategórie. Ikony sú spoločné pre všetky typy máp (skrývanie ostáva
+podľa rozsahu). Stráži to `workers/lint/icons.mjs`.
+
 ### Ikony: vidieť, čo si vyberám – a vlastné obrázky
 
 Výber ikony bol `select` s menami (`aeroway_11`, `alcohol_shop_11`, …), z
