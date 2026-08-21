@@ -253,8 +253,18 @@ export function dashPreview(dash, scale = 2) {
   return d ? d.map((n) => Math.max(0.1, n * scale)).join(" ") : "";
 }
 
-/** Predvolený predpis vzoru – doplní, čo používateľ nezadal. */
+/**
+ * Predvolený predpis vzoru – doplní, čo používateľ nezadal.
+ *
+ * VLASTNÝ OBRÁZOK JE INÝ DRUH ODPOVEDE, nie ďalšie pole vedľa ostatných:
+ * keď je `image`, vzor sa nekreslí z tvarov, ale dlaždicuje sa nahratý
+ * obrázok – a farba, veľkosť ani hrúbka naň neplatia (sú zapečené v ňom).
+ * Preto sa v tom prípade vracia len `image`: keby sa vliekli aj tie tri,
+ * panel by ich ponúkal a nič by nerobili.
+ */
 export function patternSpec(spec = {}) {
+  const image = typeof spec?.image === "string" ? spec.image.trim() : "";
+  if (image) return { image };
   return {
     id: PATTERN_BY_ID[spec.id] ? spec.id : "hatch",
     color: /^#[0-9a-f]{6}$/i.test(spec.color || "") ? spec.color.toLowerCase() : "#000000",
@@ -283,6 +293,10 @@ export function patternDef(spec = {}) {
  */
 export function patternImageName(spec) {
   const s = patternSpec(spec);
+  // Vlastný obrázok už meno má – je to vlastná ikona z úprav (`own:…`) a do
+  // spritu ju pečie `workers/assets/custom-icons.mjs`. Tým pádom preň netreba
+  // druhú pečiacu cestu ani druhý formát mena.
+  if (s.image) return s.image;
   return `pat:${s.id}:${s.color.slice(1)}:${s.size}:${Math.round(s.weight * 10)}`;
 }
 

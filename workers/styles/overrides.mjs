@@ -105,7 +105,12 @@ if (recolored.length) summary.push(`  prefarbené vrstvy: ${recolored.length}`);
 if (rezoomed.length) summary.push(`  zmenený rozsah zoomu: ${rezoomed.length}`);
 if (patterned.length) {
   summary.push(
-    `  vzory: ${patterned.map(([id, o]) => `${id} → ${o.pattern.id}`).join(", ")}`
+    // Vzor môže byť KRESLENÝ (`id`) alebo VLASTNÝ OBRÁZOK (`image`) – bez
+    // toho druhého by v súhrne stálo „→ undefined" práve pri tom, čo build
+    // musí dopiecť do spritu.
+    `  vzory: ${patterned
+      .map(([id, o]) => `${id} → ${o.pattern.image || o.pattern.id}`)
+      .join(", ")}`
   );
 }
 if (outlined.length) summary.push(`  okraje: ${outlined.map(([id]) => id).join(", ")}`);

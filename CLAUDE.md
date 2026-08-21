@@ -750,6 +750,43 @@ pokope to, čo patrí k jednej trase – v zozname vrstiev sú tie štyri na št
 rôznych miestach a bez farby a značky vedľa nich sa nedá povedať, ktorá je
 ktorá.
 
+### Vzor: vidieť ho ako obrázok, aj nad čím leží – a dá sa nahrať vlastný
+
+Vzor sa vyberal z rozbaľovačky s menami („Šrafovanie /", „Šupiny (skaly)")
+a to je horšie než pri ikone: meno nepovie ani ako je hustý, ani ako je hrubý,
+ani ako vyzerá nad farbou, ktorú tá plocha má. Teraz je z toho **mriežka
+s náhľadmi**, kreslená tým istým rasterizérom (`renderPattern`), aký vyrobí
+obrázok pre mapu aj pre sprite.
+
+**Náhľad sa kreslí NAD FARBOU PODKLADU** a tá je hneď vedľa neho na zmenu
+(vrátane „bez výplne"). Vzor je totiž vždy DRUHÁ vrstva nad plochou
+(`fill-pattern` sa nedá kresliť do tej istej vrstvy ako výplň), takže sám
+o sebe nehovorí nič – to isté šrafovanie vyzerá inak nad tmavozeleným lesom
+a inak nad svetlou lúkou.
+
+**Vlastný obrázok ako vzor je uložený ako VLASTNÁ IKONA** (`own:…`, PNG
+v `data:` adrese) – a to nie je obchádzka, ale celá pointa: taký obrázok sa
+nesie priamo v úpravách (funguje offline aj v balíku pre mobil), prehliadač ho
+dokreslí cez `styleimagemissing` a do každého spritu ho dopečie
+`workers/assets/custom-icons.mjs`. Druhá pečiaca cesta pre „obrázky, ktoré sú
+vzory" by bola druhé miesto, ktoré sa raz rozíde s prvým. Preto sa aj
+**kontroluje, že to meno je naozaj medzi vlastnými ikonami úprav**: hocijaké
+iné by sa do štýlu dostalo, do spritu nie, a MapLibre neznámy `fill-pattern`
+ticho preskočí.
+
+**Veľkosť dlaždice sa vyberá pri nahratí** a obrázok sa na ňu rovno
+prevzorkuje. `fill-pattern` sa v MapLibre neškáluje – dlaždicuje sa tak, ako
+je obrázok veľký –, takže „veľkosť až pri kreslení" by musel rovnako spraviť
+aj sprite; čo je uložené, je to, čo mapa kreslí. Farba, veľkosť a hrúbka
+zostávajú len pri KRESLENOM vzore: obrázok ich má v sebe, takže by to pri ňom
+boli tri políčka, ktoré nič nerobia.
+
+| kde | čo |
+|---|---|
+| `poc/web/dev-patterns.js` | náhľad nad podkladom, mriežka vzorov |
+| `poc/web/patterns.js` | `patternSpec`/`patternImageName` – obrázok je iný druh odpovede, nie ďalšie pole |
+| `workers/lint/icons.mjs` | obrázok vzoru musí byť medzi vlastnými ikonami a nesmie sa dostať medzi kreslené vzory (rasterizér by ho v atlase prepísal) |
+
 ### Ikona kategórie: vidieť tú terajšiu a vymeniť ju
 
 Záložka „POI" vedela kategórie len skrývať – aká ikona je pri ktorej, sa
