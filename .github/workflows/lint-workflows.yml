@@ -584,7 +584,10 @@ jobs:
       # normalizácia prijme celú – nie polovicu. K tomu tretia: čo developer
       # mode nastaví, to sa musí aj ULOŽIŤ – `overrides.mjs` skladá súbor pre
       # repozitár po kľúčoch a na `trails` raz zabudol, takže z nastavení trás
-      # do neho neprišlo nič.
+      # do neho neprišlo nič. A štvrtá: prerušovanie, ktoré má vrstva ZO ŠTÝLU
+      # (železnica), musí byť vo výbere vidieť a „Plná" ho musí vedieť zrušiť –
+      # kým sa zahadzovala ako predvolená, čiarkovanie železnice sa nedalo ani
+      # zmeniť, ani vypnúť.
       - name: "Úpravy štýlu prejdú normalizáciou celé"
         run: node workers/lint/overrides.mjs
 

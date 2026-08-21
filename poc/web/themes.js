@@ -33,6 +33,7 @@ import {
   PATTERN_IDS,
   DASH_IDS,
   dashArray,
+  dashIdOf,
   patternDef,
   patternImageName
 } from "./patterns.js";
@@ -2201,10 +2202,16 @@ function cleanLayers(rawLayers, target, problems, where) {
     }
 
     // ---- prerušovanie čiary ----
+    // AJ „solid" JE ÚPRAVA. Kým sa zahadzovala ako „veď to je predvolené",
+    // nedalo sa vypnúť prerušovanie tam, kde ho vrstva má zo štýlu
+    // (`rail-hatch`, `road-ford`, `road-construction`): panel voľbu prijal,
+    // uložil z nej prázdno a v mape ostala pôvodná čiarkovaná čiara. Tichý
+    // omyl – nespadlo nič, len sa nič nestalo. Developer mode ju zapíše len
+    // vtedy, keď vrstva zabudované prerušovanie naozaj má (`frico:dash`).
     if (def.dash != null) {
       if (!DASH_IDS.includes(def.dash)) {
         problems.push(`${where}Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
-      } else if (def.dash !== "solid") {
+      } else {
         clean.dash = def.dash;
       }
     }
@@ -2386,6 +2393,9 @@ function derived(layer, suffix, label) {
       "frico:derived": layer.id
     }
   };
+  // Prerušovanie si odvodená vrstva nesie vlastné (okraj má svoje, vzor
+  // žiadne), takže zdedené `frico:dash` predlohy by o nej klamalo.
+  delete out.metadata["frico:dash"];
   for (const key of ["source-layer", "filter", "minzoom", "maxzoom"]) {
     if (layer[key] !== undefined) out[key] = layer[key];
   }
@@ -2401,6 +2411,20 @@ function derived(layer, suffix, label) {
 export function patternLayerFor(layer) {
   const parent = (layer?.metadata || {})["frico:derived"];
   return parent && layer.id === `${parent}__pattern` ? parent : null;
+}
+
+/**
+ * Prerušovanie, ktoré má vrstva ZABUDOVANÉ V ŠTÝLE – teda to, na čo sa
+ * v developer móde dá vrátiť. Vracia predvoľbu (`"rail"`), rovno pole čísel
+ * (keď to žiadna predvoľba nie je) alebo `"solid"` pri plnej čiare.
+ *
+ * Číta sa z metadát, NIE z `paint`: panel dostáva štýl, na ktorom už úprava
+ * sedí, takže v `paint` je to, čo je nastavené TERAZ. Bez tohto ukazoval
+ * výber pri každej čiare „Plná“ (rozpis v `add`).
+ */
+export function builtinDash(layer) {
+  const d = (layer?.metadata || {})["frico:dash"];
+  return d === undefined ? "solid" : d;
 }
 
 /** Vrstva s opakujúcim sa vzorom nad plochou / pozdĺž čiary. */
@@ -2531,8 +2555,15 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
         layer.layout[prop] = paintValue(value);
       }
     }
+    // „Plná" NIE JE „nič": vrstva, ktorá má prerušovanie zabudované v štýle
+    // (železnica, brod, cesta vo výstavbe), sa musí dať vrátiť na plnú čiaru
+    // – a to znamená vlastnosť ZMAZAŤ. `line-dasharray: null` by MapLibre
+    // neprijal a `dashArray("solid")` je práve `null`.
     if (o.dash && layer.type === "line") {
-      layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
+      layer.paint = { ...(layer.paint || {}) };
+      const arr = dashArray(o.dash);
+      if (arr) layer.paint["line-dasharray"] = arr;
+      else delete layer.paint["line-dasharray"];
     }
 
     // Okraj čiary ide pod ňu, okraj plochy a vzor nad ňu.
@@ -2974,6 +3005,16 @@ export function buildStyle({
     const l = { ...layer };
     if (l.type !== "background" && !l.source) l.source = "omt";
     const pat = pattern ? patternDef(pattern) : null;
+    // ZABUDOVANÉ PRERUŠOVANIE do metadát – inak sa v developer móde nedá
+    // ukázať ani vrátiť. Panel dostáva štýl, na ktorom už úpravy sedia,
+    // takže z `paint` sa „aké to bolo pôvodne" prečítať nedá: kým tu tento
+    // riadok nebol, ukazoval výber pri KAŽDEJ čiare „Plná" – aj pri
+    // železnici, ktorá má `rail` – a voľba „Plná" sa navyše zahodila ako
+    // „veď to je predvolené", takže čiarkovanie železnice sa nedalo ani
+    // zmeniť, ani vypnúť. Ukladá sa PREDVOĽBA, a keď žiadna nesedí, rovno
+    // to pole čísel – aby aj vlastné prerušovanie zo štýlu vedel panel
+    // pomenovať a vrátiť.
+    const dashBuiltin = (l.paint || {})["line-dasharray"];
     l.metadata = {
       "frico:group": group,
       "frico:label": label,
@@ -2982,7 +3023,10 @@ export function buildStyle({
       ...(paletteExtra && paletteExtra.length
         ? { "frico:palette-extra": paletteExtra }
         : {}),
-      ...(pat ? { "frico:pattern": pat } : {})
+      ...(pat ? { "frico:pattern": pat } : {}),
+      ...(Array.isArray(dashBuiltin)
+        ? { "frico:dash": dashIdOf(dashBuiltin) || dashBuiltin }
+        : {})
     };
     L.push(l);
     if (pat) {

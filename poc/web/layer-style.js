@@ -31,7 +31,9 @@ import {
   sortBands,
   isBandList
 } from "./themes.js";
-import { DASH_PRESETS } from "./patterns.js";
+import { dashIdOf } from "./patterns.js";
+
+export { dashIdOf };
 
 /** Vlastnosti, ktoré formát úprav vôbec pozná (`cleanPaintScalar`). */
 const SUFFIXES = ["-color", "-opacity", "-width", "-exaggeration"];
@@ -260,16 +262,6 @@ function thin(stops) {
   return out.filter(([z]) => (seen.has(z) ? false : seen.add(z)));
 }
 
-/** Predvoľba prerušovania podľa `line-dasharray` zo štýlu (`null` = neznáme). */
-export function dashIdOf(dasharray) {
-  if (!Array.isArray(dasharray)) return null;
-  const found = DASH_PRESETS.find(
-    (d) => d.dash && d.dash.length === dasharray.length &&
-      d.dash.every((n, i) => Math.abs(n - dasharray[i]) < 0.001)
-  );
-  return found ? found.id : null;
-}
-
 /**
  * Odfotí vzhľad vrstvy tak, ako je NAOZAJ v mape.
  *
@@ -301,8 +293,13 @@ export function snapshotStyle(layer, o = {}) {
   };
 
   const dasharray = (layer.paint || {})["line-dasharray"];
-  const dash = o.dash || dashIdOf(dasharray);
-  if (dash && dash !== "solid") out.dash = dash;
+  // Plná čiara sa odfotí AKO „solid", nie ako prázdno – „sprav túto vrstvu
+  // takú, ako je tamtá" musí vedieť aj zrušiť prerušovanie, ktoré má cieľová
+  // vrstva zo štýlu (železnica, brod). Len pri čiare: na ploche by „solid"
+  // nebola odpoveď na nič.
+  const dash = o.dash || dashIdOf(dasharray)
+    || (layer.type === "line" && !Array.isArray(dasharray) ? "solid" : null);
+  if (dash) out.dash = dash;
   // Prerušovanie, ktoré nie je ani jedna z predvolieb (štýl si ho môže napísať
   // vlastné), sa do úprav zapísať nedá – a mlčať o tom by znamenalo, že vložená
   // vrstva vyzerá inak než tá, z ktorej sa kopírovalo.
@@ -379,7 +376,9 @@ export function pasteStyle(snap, target) {
 
   if (snap.dash) {
     if (target.type === "line") patch.dash = snap.dash;
-    else skipped.push("prerušovanie čiary");
+    // „Plná" na inú než čiarovú vrstvu nie je strata – tá o prerušovaní
+    // nevie a v zozname „neprenieslo sa" by len mýlila.
+    else if (snap.dash !== "solid") skipped.push("prerušovanie čiary");
   }
   if (snap.pattern) {
     if (canDecorate(target)) patch.pattern = { ...snap.pattern };
