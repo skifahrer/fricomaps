@@ -567,6 +567,18 @@ viacpolygónových plôch proti 5, 6 a 1 z rodiča (260 486 proti 262 377 prvkov
 v dlaždiciach, teda 0,7 %). Sú to objekty NA HRANICI kraja – presne tie, ktoré
 maska aj tak schová.
 
+**Orez je DOČASNE VYPNUTÝ** (`region_clip=false` vo voľbách). Merané na
+Bratislavskom kraji (maxzoom 14, kraj je 57 % svojho bboxu): `--polygon` dá
+1271 dlaždíc a 19 330 130 B, `--bounds` 1607 dlaždíc a 19 467 060 B – teda
+**+26 % dlaždíc za +0,7 % bajtov** a rovnaký čas. Vidieť to nie je, lebo maska
+je „celý svet mínus región" a všetko za hranicou prekryje. Nie je to ale nič:
+v tých 336 dlaždiciach navyše bolo na z12 228 popisov sídel, 55 chránených
+území, 19 hraníc, cesty aj vodstvo – vrátane rakúskych a maďarských mien.
+**Rezaný PBF to nerieši**: vodstvo, pobrežia a Natural Earth kreslí Planetiler
+zo svojich celosvetových podkladov, ktoré v našom PBF nie sú vôbec, takže orez
+a rez PBF sú dve rôzne veci. Kým je vypínač v `false`, hlási to `::warning::`
+v každom behu (pravidlo 8); späť sa zapína `region_clip=true`.
+
 `--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
 nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
 preto je aj ten druhý kus; a preto je maska v štýle **posledná vrstva**

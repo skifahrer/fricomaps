@@ -718,6 +718,9 @@ jobs:
       opt_crop_bbox: ${{ steps.opts.outputs.opt_crop_bbox }}
       opt_size_limit_mb: ${{ steps.opts.outputs.opt_size_limit_mb }}
       opt_auto_shrink: ${{ steps.opts.outputs.opt_auto_shrink }}
+      # Orez dlaždíc na hranicu regiónu – potrebujú ho TRI joby (`tiles`,
+      # `trails`, `features`), lebo orez musí byť vo všetkých rovnaký.
+      opt_region_clip: ${{ steps.opts.outputs.opt_region_clip }}
       opt_ugkk_fallback: ${{ steps.opts.outputs.opt_ugkk_fallback }}
       opt_ugkk_urls: ${{ steps.opts.outputs.opt_ugkk_urls }}
       opt_contour_interval: ${{ steps.opts.outputs.opt_contour_interval }}
@@ -1741,6 +1744,7 @@ jobs:
         id: trails
         env:
           OPT_TRAILS_MAXZOOM: ${{ needs.plan.outputs.opt_trails_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
@@ -1842,6 +1846,7 @@ jobs:
         id: features
         env:
           OPT_FEATURES_MAXZOOM: ${{ needs.plan.outputs.opt_features_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
@@ -2001,6 +2006,7 @@ jobs:
         env:
           OPT_AUTO_SHRINK: ${{ needs.plan.outputs.opt_auto_shrink }}
           OPT_MAXZOOM: ${{ needs.plan.outputs.opt_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}

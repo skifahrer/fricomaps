@@ -2978,7 +2978,17 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails`, `trails_maxzoom`,
    `terrain_maxzoom`, `maxzoom`, `rock_img_asset`, `rock_img_zoom`,
-   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`,
+   `region_clip`.
+
+   **`region_clip` je DOČASNE `false`**, teda dlaždice sa nerežú na hranicu
+   regiónu (`--polygon` Planetileru) a vyrobia sa na celom obdĺžniku bboxu.
+   V mape to vidieť nie je – hranicu dokresľuje maska v štýle, ktorá je „celý
+   svet mínus región". Merané na Bratislavskom kraji (maxzoom 14): 1607
+   dlaždíc namiesto 1271 (+26 %) za +0,7 % bajtov a rovnaký čas, a v tých
+   navyše je územie za hranicou kraja vrátane cudzích sídel. Kým je vypnutý,
+   hlási to `::warning::` v každom behu; späť sa zapína `region_clip=true`.
+   Rozpis a merania: [workers/lib/region-clip.sh](lib/region-clip.sh).
 
    Zdroj skál sa vyberá **inputom `rock_source`**, nie tu – prepína celý
    pôvod vrstvy, takže patrí do formulára. Cez `options` sa dá nanajvýš
