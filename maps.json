@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-21T11:38:30Z",
+  "_updated_at": "2026-08-21T11:39:18Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -508,6 +508,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1_vhQLyWfr7qpBi07Rnx9QiaCkVwaPtOP",
             "file": "trnavsky.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1z3GX7T-_-BXwRUvcq4q6lej7xJEkuhuu",
+                "file": "trnavsky.aar",
+                "link": "https://drive.google.com/file/d/1z3GX7T-_-BXwRUvcq4q6lej7xJEkuhuu/view",
+                "run": "156",
+                "size": 143199274,
+                "updated_at": "2026-08-21T11:39:18Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1_vhQLyWfr7qpBi07Rnx9QiaCkVwaPtOP",
                 "file": "trnavsky.zip",
@@ -526,6 +534,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1uwB_schbPSs7_wp9yiRicrcEHsFwTkxU",
             "file": "trnavsky-search.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1KfXctdIC4Bo3Zkd0IaZpURbnFZIkhZ3v",
+                "file": "trnavsky-search.aar",
+                "link": "https://drive.google.com/file/d/1KfXctdIC4Bo3Zkd0IaZpURbnFZIkhZ3v/view",
+                "run": "156",
+                "size": 3480933,
+                "updated_at": "2026-08-21T11:39:18Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1uwB_schbPSs7_wp9yiRicrcEHsFwTkxU",
                 "file": "trnavsky-search.zip",
@@ -544,6 +560,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1ofRK3CaQetDyHwaHlC6dePjNPEpkFOoP",
             "file": "trnavsky-tienovanie.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1t5J1ezUnnpgOHnYzCjiccL4xgpx5IZYT",
+                "file": "trnavsky-tienovanie.aar",
+                "link": "https://drive.google.com/file/d/1t5J1ezUnnpgOHnYzCjiccL4xgpx5IZYT/view",
+                "run": "156",
+                "size": 51484387,
+                "updated_at": "2026-08-21T11:39:18Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1ofRK3CaQetDyHwaHlC6dePjNPEpkFOoP",
                 "file": "trnavsky-tienovanie.zip",
@@ -562,6 +586,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1qmNDOYhDnEROgpCA9uXohTDUt3HjdapT",
             "file": "trnavsky-vrstevnice-skaly.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1XLETSS421hAGEfQ126BAg1cvhGaypErn",
+                "file": "trnavsky-vrstevnice-skaly.aar",
+                "link": "https://drive.google.com/file/d/1XLETSS421hAGEfQ126BAg1cvhGaypErn/view",
+                "run": "156",
+                "size": 48510578,
+                "updated_at": "2026-08-21T11:39:18Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1qmNDOYhDnEROgpCA9uXohTDUt3HjdapT",
                 "file": "trnavsky-vrstevnice-skaly.zip",
@@ -594,7 +626,7 @@
           "trails": "tiles/trnavsky-trails.pmtiles"
         },
         "trails_maxzoom": 14,
-        "updated_at": "2026-08-21T11:38:30Z"
+        "updated_at": "2026-08-21T11:39:18Z"
       }
     }
   }
