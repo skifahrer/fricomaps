@@ -490,6 +490,16 @@ Kopíruje sa to z `manifest.json`, ktorý tie fakty už nesie.
 a navyše by tú celú prepísala. Publikuje sa len mapa, ktorá prešla kontrolou
 pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
+**A tie 4 km² sú odteraz CELÝ beh, nie len terén.** Rýchly test (switch `test`)
+oreže aj samotné PBF, takže dlaždice, trasy, prvky a ZIP sú z toho štvorca –
+`bbox` behu sa rovná `dem_bbox`. Kým sa mapa nechávala celá, bol test polovičný:
+kraj sa aj tak stiahol, prehnal Planetilerom, zabalil a nahral, takže sa okolo
+štvorca s pár km² terénu viezol celý kraj. Dôvod, prečo to tak bolo – „nech sa
+ten štvorec dá pozerať v mape, do ktorej patrí" – nesie obrázok „kde to je"
+(`workers/plan/test-map.py`), na ktorý celý kraj netreba. Celý kraj s terénom
+len v jednom pohorí sa dá stále postaviť: switch `test` odškrtnúť a `area`
+prepnúť na pohorie.
+
 **Ktoré mapy vôbec existujú, hovorí `maps.json` v koreni repozitára** – na Drive
 sa to bez tokenu a bez klikania nezistí. Dopisuje ho build hneď po nahratí
 (`publish-map.py --maps=`, pozná id súborov) a commitne `deploy/catalog.sh`; je
@@ -506,14 +516,14 @@ ju z katalógu každý build mapy, hoci ZIP na Drive ležal ďalej. **Rýchly te
 zapisuje tiež, ale do VLASTNÉHO uzla** (`vysoke_tatry_test4km2` – tá istá
 prípona, akú nesú jeho balíky): na Drive leží v priečinku ostrej mapy, takže
 bez katalógu sa o ňom bez tokenu nedá dozvedieť, ale na jej položku sadnúť
-nesmie – terén je v ňom na pár km² a kto si ho podľa zoznamu stiahne, dostane
-mapu s dierou. Že je to test, hovorí kľúč, meno („– rýchly test 4 km²") aj
+nesmie – je to mapa na pár km² a kto si ju podľa zoznamu stiahne namiesto
+kraja, dostane štvorec. Že je to test, hovorí kľúč, meno („– rýchly test 4 km²") aj
 `test_km2` a `area_bbox` v položke.
 
 **Z kľúča uzla sa NEDÁ odvodiť meno súboru** a položka je preto písaná tak, aby
 to nikto nemusel skúšať: uzol je `bratislavsky_test4km2`, balík
 `bratislavsky-test4km2.zip` a dlaždice v ňom `tiles/bratislavsky_test4-…`
-(pri výreze sa volajú dokonca podľa KRAJA, lebo mapa je celý kraj). Tri zápisy,
+(prípona `_test4` je z voľby `test_km2`, nie z mena kraja). Tri zápisy,
 lebo každý odpovedá na inú otázku. Cesty preto nesie `tiles` v položke –
 prepísané z `manifest.json`, ktorý ich pozná, lebo podľa neho číta dlaždice aj
 viewer. **A strop zoomu musí byť pri každej vrstve, ktorá ho má vlastný**
@@ -549,23 +559,41 @@ Sú na to **dva kusy a oba treba**:
 | dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
 | presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
 
-**PBF sa sťahuje PRIAMO, jeden súbor na región.** osm.fr reže svoje extrakty
-po skutočných administratívnych hraniciach a denne ich prerába, takže kraj má
-vlastný `{kraj}-latest.osm.pbf` (36–63 MB) a `workers/plan/pbf.sh` stiahne
-rovno ten – nič sa nikde nevyrezáva. Chvíľu sa namiesto toho ťahalo celé
-Slovensko (373 MB) a kraj sa z neho rezal `osmium extract -s smart --polygon`
-na jeho `.poly`; bol to krok navyše, 300 MB navyše a `osmfr.parent` v číselníku
-navyše. Zrušené – sťahuje sa ten región, ktorý sa stavia (pravidlo 7), a stráži
-to `workers/lint/pbf-source.py`.
+**PBF kraja sa REŽE Z RODIČA (`osmfr.parent`), hotový export kraja sa
+nepoužíva.** osm.fr má pre každý kraj vlastný `{kraj}-latest.osm.pbf` (36 MB)
+rezaný po jeho administratívnej hranici a chvíľu sa sťahoval priamo – bolo to
+o krok kratšie a o 337 MB lacnejšie. Lenže **ten súbor nie je referenčne
+úplný**: viacpolygónovej ploche, ktorá pokračuje do susedného kraja, v ňom
+chýbajú členské cesty, a Planetiler taký objekt **zahodí CELÝ** – aj tú
+polovicu, čo v kraji leží. Preto sa sťahuje `slovakia-latest.osm.pbf` (373 MB)
+a kraj sa z neho reže `osmium extract -s smart -S types=multipolygon,boundary
+--polygon` na jeho `.poly` (`workers/plan/pbf.sh`, ~30 s).
 
-Čo ten rez naozaj riešil, treba vedieť: v hotovom extrakte chýbajú objektu,
-ktorý pokračuje do vedľajšieho kraja, uzly za hranicou a viacpolygónovej ploche
-(`type=multipolygon`) členské cesty, a Planetiler taký objekt **zahodí celý**.
-Namerané na Bratislavskom kraji (maxzoom 12, schéma na `highway`/`waterway`/
-`landuse`/`natural`): hotový extrakt zahodil 97 čiar, 66 plôch a 19
-viacpolygónových plôch proti 5, 6 a 1 z rodiča (260 486 proti 262 377 prvkov
-v dlaždiciach, teda 0,7 %). Sú to objekty NA HRANICI kraja – presne tie, ktoré
-maska aj tak schová.
+**Nie je to kozmetika na hranici a raz sme sa na tom pomýlili.** Prvé meranie
+počítalo objekty (97 čiar, 66 plôch, 19 viacpolygónových plôch, dokopy 0,7 %
+prvkov v dlaždiciach) a uzavrelo to „sú to objekty na hranici, tie maska aj tak
+schová". Lenže objekt sa nezmenší, zmizne CELÝ – a tie veľké sú vidieť najviac.
+Namerané na `bratislavsky-latest.osm.pbf`: z 3075 plošných relácií malo 250
+chýbajúceho člena, z toho 49 krajinnej pokrývky a ochrany prírody. Chýbala
+**CHKO Malé Karpaty, CHKO Záhorie, CHKO Dunajské luhy, NPR Aluvium Moravy**,
+les Záhoria (relácia s 1011 členmi) aj Zdrž Hrušov – teda plochy z vnútra
+kraja, ktoré maska neschová, lebo ich niet. Po reze z rodiča ostane z tých 49
+päť a všetky sú na rakúskej hranici pozdĺž Dunaja a Moravy (ich členovia nie sú
+ani v slovenskom extrakte, doplnil by ich až extrakt Európy).
+
+**`-S types=multipolygon,boundary` nie je ozdoba.** Predvolene `smart` dopĺňa
+členov len reláciám `type=multipolygon`, kým CHKO je `type=boundary` – bez toho
+prepínača ostali všetky tri CHKO rozbité aj po reze z rodiča (9 zvyšných plôch
+namiesto 5). Platí to pri KAŽDOM reze v `pbf.sh`, aj pri `crop_bbox` a pri
+štvorci rýchleho testu; zo 4 km² vytŕča skoro každá plocha, takže sa tam ten
+prepínač prejaví najskôr.
+
+Koľko plôch beh naozaj stratil, počíta `workers/plan/pbf-areas.py` (dve volania
+`osmium`, ~1 s) a píše to do logu aj do súhrnu behu – inak by sa tento druh
+chyby zase neohlásil. Statickú stranu stráži `workers/lint/pbf-source.py`:
+rodiča v číselníku, oba prepínače rezu a to, že sa pri chýbajúcom `.poly`
+**spadne** namiesto návratu k priamemu sťahovaniu (na tom padla prvá verzia
+tohto kroku – beh bol zelený a CHKO zase chýbali).
 
 **Orez je DOČASNE VYPNUTÝ** (`region_clip=false` vo voľbách). Merané na
 Bratislavskom kraji (maxzoom 14, kraj je 57 % svojho bboxu): `--polygon` dá
@@ -1144,7 +1172,8 @@ python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov c
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
 python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
-python3 workers/lint/pbf-source.py     # PBF regiónu sa sťahuje priamo z osm.fr
+python3 workers/lint/pbf-source.py     # kraj sa reže z rodiča a dopĺňa členov plôch
+python3 workers/plan/pbf-areas.py data/region.osm.pbf  # ktoré plochy Planetiler zahodí celé
 python3 workers/world/variant.py --list        # podoby mapy sveta
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
@@ -1204,11 +1233,12 @@ pruhu si značky dvoch trás sadnú na jedno miesto a kolízia nechá jednu),
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
 nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
-zahodí), že **PBF regiónu sa sťahuje
-priamo z osm.fr a nie obchádzkou cez rodičovský extrakt**
-(`workers/lint/pbf-source.py` – kraj má na osm.fr vlastný súbor rezaný po jeho
-administratívnej hranici, takže rez z 373 MB Slovenska je krok aj 300 MB
-navyše; kontrola stráži aj to, že v číselníku neostane mŕtvy `osmfr.parent`), že
+zahodí), že **PBF kraja sa reže z rodičovského extraktu a dopĺňa členov
+plôch** (`workers/lint/pbf-source.py` – hotový `{kraj}-latest.osm.pbf` z osm.fr
+nie je referenčne úplný, takže CHKO Malé Karpaty, Záhorie aj Dunajské luhy
+Planetiler zahodil CELÉ a build bol pri tom zelený; kontrola stráži rodiča
+v číselníku, `-s smart -S types=multipolygon,boundary` pri každom reze aj to,
+že sa pri chýbajúcom `.poly` spadne a nesiahne po hotovom exporte), že
 **každý job, ktorý
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do

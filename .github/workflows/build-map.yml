@@ -19,8 +19,7 @@ on:
     inputs:
       # Predvolený je kraj, na ktorom sa reálne pracuje, nie celé Slovensko:
       # formulár sa po každom otvorení vracia na predvolené hodnoty, takže
-      # default je to, čo netreba prekliknúť. Prešovský kraj drží Vysoké
-      # Tatry, ktoré sú predvolený výrez o pár riadkov nižšie.
+      # default je to, čo netreba prekliknúť.
       region:
         description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
         required: true
@@ -38,10 +37,15 @@ on:
           - kosicky
       # Celý kraj trvá ~40 min, jedno pohorie ~2. Ešte rýchlejší je switch
       # `test` pod týmto. Vlastný bbox: `options: area_bbox=W,S,E,N`.
+      #
+      # PREDVOLENE `cely_region`. Kým tu stálo `vysoke_tatry`, dostal ten, kto
+      # si vybral iný kraj a tento riadok prehliadol, mapu bez vrstevníc a skál
+      # skoro všade – a v logu o tom bolo len `::warning::`. Zmenšovanie behu
+      # má JEDNU páku, switch `test` pod týmto; výrez ostáva na to, na čo je.
       area:
         description: "Pohorie, na ktorom sa počítajú vrstevnice a skaly"
         required: false
-        default: vysoke_tatry
+        default: cely_region
         type: choice
         options:
           - cely_region
@@ -69,13 +73,14 @@ on:
       # Kľúč testovacieho behu má príponu `_test4` (číslo je z tej voľby, nie
       # natvrdo), takže si nesadne do cache
       # ani na uložené výsledky ostrého behu.
-      # Zmenší LEN to drahé – vrstevnice, skaly a tieňovanie sa spočítajú na
-      # štvorci zo stredu výrezu. Mapa (kraj, cesty, trasy, prvky) ostáva celá
-      # podľa nastavení regiónu, aby sa ten štvorec dal pozerať v mape, do
-      # ktorej patrí. Mapa sa otvorí rovno na ňom. Iná veľkosť:
-      # `options: test_km2=8`. Iné miesto: `options: test_at=lon,lat`.
+      # Zmenší CELÝ BEH na štvorec zo stredu výrezu – terén aj samotnú mapu:
+      # PBF sa oreže, takže dlaždice, trasy, prvky aj ZIP sú z tých 4 km².
+      # Kým sa mapa nechávala celá, bol test polovičný (kraj sa aj tak stiahol,
+      # prehnal Planetilerom, zabalil a nahral). Kde štvorec leží, ukáže
+      # obrázok „kde to je“; rozpis vo `workers/plan/pbf.sh`.
+      # Iná veľkosť: `options: test_km2=8`. Iné miesto: `options: test_at=lon,lat`.
       test:
-        description: "Rýchly test: terén (vrstevnice, skaly, tieňovanie) len na 4 km² zo stredu výrezu"
+        description: "Rýchly test: celý beh (mapa aj terén) len na 4 km² zo stredu výrezu"
         required: false
         default: true
         type: boolean
@@ -676,9 +681,11 @@ jobs:
     outputs:
       key: ${{ steps.region.outputs.key }}
       name: ${{ steps.region.outputs.name }}
-      # `bbox` je CELÝ región (mapa, cesty, trasy, prvky), `dem_bbox` je to,
-      # čo sa počíta z výškového modelu (vrstevnice, skaly, tieňovanie).
-      # Líšia sa len pri rýchlom teste: ten zmenšuje výpočet z DEM, nie mapu.
+      # `bbox` je územie MAPY (dlaždice, trasy, prvky, maska, rozpočet
+      # stránky), `dem_bbox` územie vrstiev z výškového modelu (vrstevnice,
+      # skaly, tieňovanie). Pri rýchlom teste sú to TIE ISTÉ 4 km² – odkedy
+      # test orezáva aj PBF, sa nelíšia; rozdielne ostávajú len vtedy, keď je
+      # výrez (`area`) menší než región.
       bbox: ${{ steps.region.outputs.bbox }}
       dem_bbox: ${{ steps.region.outputs.dem_bbox }}
       dem_bboxkey: ${{ steps.region.outputs.dem_bboxkey }}
@@ -864,9 +871,12 @@ jobs:
       # stiahnu samy – keby jednému z nich zlyhalo sťahovanie, rezal by na
       # bboxe, kým ostatní na kraji, čiže dve pravdy o jednej hranici.
       #
-      # Sám PBF ho nepotrebuje (kraj sa sťahuje hotový), ale `--polygon`
-      # Planetileru, `-cutline` vrstevníc, maska tieňovania aj hranica pre
-      # viewer áno – a všetci tú istú.
+      # POTREBUJE HO UŽ SÁM PBF, preto tento krok stojí PRED ním: kraj sa
+      # podľa neho reže z rodičovského extraktu (workers/plan/pbf.sh). Keď
+      # `.poly` nie je, ten krok SPADNE – návrat k hotovému exportu kraja by
+      # znamenal mapu bez plôch, čo presahujú do susedného kraja.
+      # Tú istú hranicu chce aj `--polygon` Planetileru, `-cutline` vrstevníc,
+      # maska tieňovania a hranica pre viewer.
       - name: Polygón kraja (orez mapy aj vrstiev z DEM)
         run: |
           set -euo pipefail
@@ -885,12 +895,14 @@ jobs:
           path: data/region.osm.pbf
           # `v2`: kým rýchly test orezával región, ukladal orezané PBF pod
           # kľúč BEZ orezu (`crop_bbox` bol pri teste prázdny) – ostrý beh
-          # v ten istý deň potom postavil celú mapu z tých 2 km². Odteraz test
-          # neorezáva nič, ale staré záznamy by ešte deň strašili.
-          # `v4`: kraj sa zase sťahuje priamo z osm.fr namiesto rezania
-          # z 373 MB Slovenska. Pod `v3` ležia vyrezané súbory a beh by ich
-          # ešte deň bral namiesto toho, čo si naozaj vypýtal.
-          key: pbf-v4-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
+          # v ten istý deň potom postavil celú mapu z tých 2 km².
+          # `v5`: kraj sa zase REŽE z rodiča (pod `v4` ležia hotové exporty
+          # z osm.fr, ktorým chýbajú členovia plôch – to sa práve opravuje,
+          # takže sa nesmú vrátiť z cache) a test zase orezáva aj mapu.
+          # A PRETO JE V KĽÚČI TESTOVACÍ ŠTVOREC – tá istá chyba ako pri `v2`,
+          # len naopak: uložené 4 km² by si ostrý beh v ten istý deň vzal ako
+          # celý kraj. Počíta sa až v `plan/area.py`, tu sú jeho vstupy.
+          key: pbf-v5-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-t${{ steps.opts.outputs.opt_test_km2 }}-a${{ inputs.area }}${{ steps.opts.outputs.opt_area_bbox }}-at${{ steps.opts.outputs.opt_test_at }}-${{ steps.day.outputs.d }}
 
       # Bash je vo `workers/plan/pbf.sh` – tento súbor má strop 128 kB a nad
       # ním ho GitHub ticho neprijme (stráži Lint workflows). Sem chodia len
