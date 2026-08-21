@@ -300,6 +300,10 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     ],
     customIcons: [{ name: "own:test", png: PNG_1PX, pixelRatio: 2 }],
     palette: {},
+    // Poradie kreslenia je v súbore vlastný kľúč (`order`), nie vlastnosť
+    // vrstvy – teda presne ten druh položky, na ktorý `overrides.mjs` už raz
+    // pri skladaní súboru zabudol.
+    order: [{ id: "feature-embankment", before: "road-minor" }],
     // `layout` je druhá polica vedľa `paint` – veľkosť ikony a rozostup po
     // čiare sa ňou ladia (značky trás), takže tá istá otázka: prežije zápis?
     layers: {
@@ -333,6 +337,7 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
         }
       };
       chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
+      chyba_ak("order", overrides.order, zapisane.order);
       chyba_ak("iconSets", overrides.iconSets, zapisane.iconSets);
       chyba_ak("customIcons", overrides.customIcons, zapisane.customIcons);
       chyba_ak(
@@ -442,6 +447,77 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
       "`dashIdOf` pomenovalo vlastné prerušovanie predvoľbou – panel by ho " +
       "pri prvom uložení prepísal na inú čiaru.");
   }
+}
+
+// ---------- 7. poradie kreslenia ----------
+// Presun vrstvy je jediná úprava, ktorá mení ŠTRUKTÚRU štýlu, nie hodnoty
+// v ňom – a tri veci sa pri tom dajú pokaziť ticho:
+//
+//   * vrstva sa pri presune STRATÍ (alebo sa zdvojí) a v mape jednoducho nie
+//     je – štýl je pritom platný,
+//   * odvodená vrstva (vzor, okraj) alebo druhá polovica dvojice (zúbky
+//     hrany, čiarkovanie železnice) ostane, kde bola, takže sa prvok rozpadne
+//     na dve polovice na dvoch miestach,
+//   * niekto presunie vrstvu ZA masku regiónu a tá potom kreslí aj mimo
+//     stiahnutého regiónu – presne to, kvôli čomu maska existuje.
+{
+  const postav = (order) => buildStyle({
+    theme: "svetla",
+    tilesUrl: "pmtiles://x/t.pmtiles",
+    spriteUrl: "https://x/sprite",
+    glyphsUrl: "https://x/{fontstack}/{range}.pbf",
+    featuresUrl: "pmtiles://x/f.pmtiles",
+    regionOutline: { type: "FeatureCollection", features: [] },
+    overrides: normalizeOverrides({ order }).overrides
+  });
+
+  const bez = postav([]).layers.map((l) => l.id);
+  const skus = (popis, order, over) => {
+    const layers = postav(order).layers;
+    const ids = layers.map((l) => l.id);
+    if (ids.length !== bez.length || new Set(ids).size !== ids.length) {
+      chyba("poc/web/themes.js",
+        `presun vrstiev (${popis}) zmenil počet vrstiev: ${bez.length} → ${ids.length} ` +
+        `(z toho ${new Set(ids).size} rôznych). Vrstva, ktorá sa pri presune stratí, ` +
+        `nie je v mape a štýl je pritom platný.`);
+    }
+    const posledne = ids.slice(-2);
+    if (JSON.stringify(posledne) !== JSON.stringify(["region-outside", "region-border"])) {
+      chyba("poc/web/themes.js",
+        `presun vrstiev (${popis}) nechal navrchu ${posledne.join(", ")} namiesto masky ` +
+        `regiónu. Vrstva za maskou kreslí aj mimo stiahnutého regiónu.`);
+    }
+    over(ids);
+  };
+
+  skus("násyp pod cesty", [{ id: "feature-embankment", before: "road-minor" }], (ids) => {
+    if (!(ids.indexOf("feature-embankment") < ids.indexOf("road-minor"))) {
+      chyba("poc/web/themes.js", "presun `feature-embankment` pod `road-minor` sa neprejavil.");
+    }
+    // Zúbky sú druhá polovica tej istej hrany (`frico:with`) – musia ísť s ňou.
+    if (ids.indexOf("feature-embankment-teeth") - ids.indexOf("feature-embankment") !== 1) {
+      chyba("poc/web/themes.js",
+        "`feature-embankment-teeth` ostali pri presune na mieste – hrana by bola pod " +
+        "cestou a jej zúbky nad ňou.");
+    }
+  });
+
+  skus("železnica navrch", [{ id: "rail-bg", before: null }], (ids) => {
+    if (ids.indexOf("rail-hatch") - ids.indexOf("rail-bg") !== 1) {
+      chyba("poc/web/themes.js",
+        "`rail-hatch` sa nepresunul s `rail-bg` – z čiarkovanej železnice by bola " +
+        "tmavá čiara na jednom mieste a biele čiarky na druhom.");
+    }
+  });
+
+  skus("vrstva, ktorú tento štýl nemá", [
+    { id: "neexistuje", before: "water" },
+    { id: "water", before: "tiez-neexistuje" }
+  ], () => {});
+
+  // Presun ZA masku sa nesmie dať – kontroluje to `skus` vyššie pri každom
+  // volaní, tu je to napísané výslovne.
+  skus("pokus prekryť masku", [{ id: "background", before: null }], () => {});
 }
 
 console.log(

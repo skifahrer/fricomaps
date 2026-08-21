@@ -1542,6 +1542,10 @@ export function emptyOverrides() {
     hillshade: false,
     palette: {},
     layers: {},
+    // PORADIE KRESLENIA. Nie je to vlastnosť vrstvy (tá o svojich susedoch
+    // nevie), ale zoznam presunov „túto kresli tesne pod tamtú" – rozpis pri
+    // `applyLayerOrder`.
+    order: [],
     // Značené trasy majú vlastnú položku, lebo to nie sú nastavenia JEDNEJ
     // vrstvy: jeden druh trasy má v štýle tri vrstvy (pásik, ikona, názov)
     // a odstup od cesty je vlastnosť všetkých naraz.
@@ -1562,6 +1566,9 @@ export function emptyOverrides() {
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/** Tvar id vrstvy – to isté, čo pripúšťa MapLibre aj naše `__pattern`. */
+const LAYER_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 const isColor = (v) => typeof v === "string" && HEX.test(v.trim());
 
@@ -2110,6 +2117,32 @@ export function normalizeOverrides(raw) {
     if (round !== def) out.trails.marks[key] = round;
   }
 
+  // ---- poradie kreslenia ----
+  // JEDEN PRESUN NA VRSTVU a vyhráva ten POSLEDNÝ: presuny sa vyhodnocujú
+  // v rade za sebou, takže by ich pri opakovanom klikaní pribúdali stovky
+  // a nedalo by sa z nich prečítať, kde vrstva vlastne skončí. Posledný
+  // presun tej istej vrstvy je zároveň to, čo si človek naposledy vybral.
+  const presuny = new Map();
+  for (const item of Array.isArray(raw.order) ? raw.order : []) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      problems.push(`Presun vrstvy nie je objekt {id, before} – preskakujem.`);
+      continue;
+    }
+    const id = String(item.id ?? "").trim();
+    const before = item.before == null ? null : String(item.before).trim();
+    if (!LAYER_ID.test(id) || (before !== null && !LAYER_ID.test(before))) {
+      problems.push(`Presun vrstvy: neplatné id ("${item.id}" → "${item.before}").`);
+      continue;
+    }
+    if (before === id) {
+      problems.push(`Vrstva "${id}" sa má kresliť pod seba – to nie je poradie.`);
+      continue;
+    }
+    presuny.delete(id);
+    presuny.set(id, { id, before });
+  }
+  out.order = [...presuny.values()];
+
   // ---- tvar štítka s číslom cesty ----
   for (const [id, def] of Object.entries(raw.shields || {})) {
     const trieda = SHIELD_DEFS.find(([sid]) => sid === id);
@@ -2296,6 +2329,7 @@ export function hasOverrides(o) {
     (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
+    (o.order || []).length > 0 ||
     Object.keys(o.trails?.gap || {}).length > 0 ||
     Object.keys(o.trails?.types || {}).length > 0 ||
     Object.keys(o.trails?.marks || {}).length > 0 ||
@@ -2615,6 +2649,73 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
   });
   return style;
 }
+
+/**
+ * PORADIE KRESLENIA: presuny „túto vrstvu kresli tesne pod tamtú".
+ *
+ * MapLibre kreslí vrstvy v tom poradí, v akom sú v štýle – posledná je
+ * navrchu. Čo je nad čím, je teda rozhodnutie štýlu, lenže vidieť ho je až
+ * v mape: násyp nad cestou, popisok pod tieňovaním, plot cez chodník. Kým sa
+ * to dalo zmeniť len v zdrojáku, znamenala každá taká otázka commit a build.
+ *
+ * FORMÁT JE ZOZNAM PRESUNOV, NIE CELÉ PORADIE. Uložiť všetkých ~250 id by
+ * znamenalo, že sa úpravy rozsypú pri prvej vrstve, ktorá v štýle pribudne
+ * alebo zmizne (iná téma, iný typ mapy, chýbajúci `featuresUrl`) – a rozsypú
+ * sa TICHO. Presun je oproti tomu odpoveď na jednu otázku, dá sa prečítať
+ * (`{"id": "feature-embankment", "before": "road-motorway"}`) a vrstvu, ktorú
+ * v tomto štýle nikto nepozná, jednoducho preskočí.
+ *
+ * PRESÚVA SA CELÁ RODINA. Vzor aj okraj sú vlastné vrstvy odvodené od
+ * predlohy (`frico:derived`) a musia ostať pri nej – inak by šrafovanie
+ * ostalo kresliť tam, kde plocha už nie je.
+ *
+ * MASKA REGIÓNU OSTÁVA POSLEDNÁ, nech si ju nikto nechtiac neprekryje:
+ * vrstva za ňou by kreslila aj mimo stiahnutého regiónu a bola by to presne
+ * tá tichá chyba, kvôli ktorej maska existuje (rozpis v CLAUDE.md, stráži to
+ * `workers/lint/style.mjs`).
+ *
+ * @param {object} style   hotový štýl (už s úpravami vrstiev)
+ * @param {{id: string, before: string|null}[]} order  presuny v poradí,
+ *        v akom sa naklikali; `before: null` znamená „úplne navrch"
+ */
+export function applyLayerOrder(style, order) {
+  if (!order?.length) return style;
+  let layers = style.layers;
+  const rodina = (id) => (l) => {
+    const meta = l.metadata || {};
+    return l.id === id || meta["frico:derived"] === id || meta["frico:with"] === id;
+  };
+
+  for (const { id, before } of order) {
+    const blok = layers.filter(rodina(id));
+    // Vrstva, ktorú tento štýl nemá (iná téma, iný typ mapy, vypnuté trasy),
+    // nie je chyba – presun sa jednoducho netýka ničoho.
+    if (!blok.length) continue;
+    const zvysok = layers.filter((l) => !blok.includes(l));
+    if (before == null) {
+      layers = [...zvysok, ...blok];
+      continue;
+    }
+    const kam = zvysok.findIndex((l) => l.id === before);
+    if (kam < 0) continue;
+    layers = [...zvysok.slice(0, kam), ...blok, ...zvysok.slice(kam)];
+  }
+
+  // Maska regiónu späť navrch – rozpis vyššie.
+  const maska = layers.filter((l) => REGION_MASK_LAYERS.includes(l.id));
+  if (maska.length) {
+    layers = [...layers.filter((l) => !maska.includes(l)), ...maska];
+  }
+  style.layers = layers;
+  return style;
+}
+
+/**
+ * Vrstvy masky regiónu – tie, ktoré musia ostať úplne navrchu. Sú tu, a nie
+ * ako reťazec v `applyLayerOrder`, lebo sa na ne pýta aj developer mode
+ * (neponúka ich presúvať) a `workers/lint/style.mjs`.
+ */
+export const REGION_MASK_LAYERS = ["region-outside", "region-border"];
 
 /**
  * Cesty: jeden riadok na triedu, ZORADENÉ OD NAJDÔLEŽITEJŠEJ.
@@ -3064,6 +3165,21 @@ export function buildStyle({
       const p = patternLayer(l, pat);
       if (p) L.push(p);
     }
+  };
+
+  /**
+   * „Táto vrstva patrí k tamtej a presúva sa s ňou."
+   *
+   * Niektoré prvky sú v štýle DVE vrstvy, lebo MapLibre inak nevie, čo od
+   * nich chceme: hrana so zúbkami (druhá čiara odsunutá nabok) a železnica
+   * (tmavá čiara a na nej svetlé čiarkovanie). Pri farbe a hrúbke sa ladia
+   * zvlášť – to je v poriadku, sú to naozaj dve otázky –, ale PORADIE
+   * KRESLENIA je pri nich jedna: keby sa dala presunúť len polovica, ostali
+   * by zúbky nad cestou a hrana pod ňou. Zapisuje sa preto, ku ktorej vrstve
+   * tá druhá patrí, a `applyLayerOrder` ich presúva spolu.
+   */
+  const spolu = (parent) => {
+    L[L.length - 1].metadata["frico:with"] = parent;
   };
 
   add(
@@ -3574,6 +3690,7 @@ export function buildStyle({
       },
       [group, `${label} – zúbky`, "line", { "line-color": paletteKey }]
     );
+    spolu(id);
   };
 
   // ================= bralné hrany a hrebene z OSM =================
@@ -3947,6 +4064,7 @@ export function buildStyle({
     },
     ["doprava", "Železnica – čiarkovanie", "line", { "line-color": "railHatch" }]
   );
+  spolu("rail-bg");
 
   // --- mosty (nad všetkým ostatným) ---
   roadPass("-bridge", " (most)", isBridge, { cap: "butt" });
@@ -5308,7 +5426,12 @@ export function buildStyle({
   // Najprv profil typu mapy (čo táto mapa vôbec ukazuje), až potom úpravy
   // z developer módu – tie musia vedieť profil prebiť.
   applyMapType(style, mapTypeId);
-  return applyLayerOverrides(style, overrides?.layers, hasIcon);
+  // Poradie kreslenia sa mení až NAD hotovým štýlom: presúva sa aj vzor
+  // a okraj, ktoré vznikli práve v `applyLayerOverrides`.
+  return applyLayerOrder(
+    applyLayerOverrides(style, overrides?.layers, hasIcon),
+    overrides?.order
+  );
 }
 
 export {

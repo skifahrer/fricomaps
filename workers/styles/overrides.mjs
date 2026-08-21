@@ -80,6 +80,17 @@ for (const [theme, colors] of Object.entries(overrides.palette)) {
     .join(", ");
   summary.push(`  téma ${THEMES[theme].label}: ${Object.keys(colors).length} farieb (${names})`);
 }
+// PORADIE KRESLENIA. Nie je to úprava vrstvy (tá o svojich susedoch nevie),
+// ale zoznam presunov – v súhrne preto vlastný riadok, nech je vidieť, že sa
+// mapa nemení len farbou, ale aj tým, čo je nad čím.
+if (overrides.order.length) {
+  summary.push(
+    `  poradie kreslenia: ` +
+      overrides.order
+        .map((m) => `${m.id} → ${m.before ? `pod ${m.before}` : "navrch"}`)
+        .join(", ")
+  );
+}
 const hidden = Object.entries(overrides.layers).filter(([, o]) => o.visible === false);
 const recolored = Object.entries(overrides.layers).filter(([, o]) => o.paint);
 const rezoomed = Object.entries(overrides.layers).filter(
@@ -205,6 +216,7 @@ const payload = {
   hillshade: overrides.hillshade,
   palette: overrides.palette,
   layers: overrides.layers,
+  order: overrides.order,
   poi: overrides.poi,
   // ZNAČENÉ TRASY A ŠTÍTKY CIEST. Kým tu neboli, developer mode ich vedel
   // nastaviť aj uložiť, ale do repozitára z nich nedošlo NIČ – `payload` ich
