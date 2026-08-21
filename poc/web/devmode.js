@@ -383,6 +383,11 @@ export function initDevMode({
   /** Ktoré kategórie majú v záložke „POI" rozbalený výber ikony. */
   const poiOpen = new Set();
 
+  /** Ktorú vrstvu práve ťaháme v stohu (záložka „Poradie"). */
+  let dragId = null;
+  /** Hľadanie v stohu – kým je zadané, ťahanie nedáva zmysel (rozpis v `renderStack`). */
+  let stackSearch = "";
+
   /** Čo sa pri poslednom vložení nedalo preniesť – vypíše to stavový riadok. */
   let clipNote = "";
 
@@ -393,6 +398,7 @@ export function initDevMode({
 
   const TABS = [
     ["layers", "Vrstvy"],
+    ["stack", "Poradie"],
     ["pick", "Prvky"],
     ["palette", "Paleta"],
     ["trails", "Trasy"],
@@ -1513,6 +1519,236 @@ export function initDevMode({
       chips,
       bulk,
       el("div", { class: "dev-list" }, groups)
+    ]);
+  }
+
+  // ---------- tab: poradie (stoh vrstiev) ----------
+  /**
+   * CELÝ STOH VRSTIEV NARAZ – odhora nadol tak, ako sa kreslia.
+   *
+   * Záložka „Vrstvy" ich radí PO SKUPINÁCH (cesty, vodstvo, popisky), lebo
+   * tam sa hľadá „kde sa nastaví hrúbka chodníka". Poradie kreslenia je ale
+   * iná otázka – „čo je nad čím" – a v zozname po skupinách sa odpovedať
+   * nedá: násyp a cesta sú v ňom na dvoch rôznych miestach a z ničoho nie je
+   * vidieť, že násyp je vyššie. Tu je preto jeden dlhý zoznam v tom poradí,
+   * v akom MapLibre kreslí: PRVÝ RIADOK JE NAVRCHU.
+   *
+   * Presúva sa ťahaním (myšou aj prstom cez `draggable`) alebo šípkami; oboje
+   * zapisuje to isté, čo sekcia „Poradie kreslenia" v detaile vrstvy –
+   * `overrides.order`, teda presun „kresli tesne pod tamtú" (rozpis pri
+   * `applyLayerOrder`).
+   */
+  function renderStack() {
+    const poradie = drawOrder();
+    // Odhora nadol: prvý riadok je posledná vrstva štýlu, teda tá navrchu.
+    const zhora = [...poradie].reverse();
+    const q = stackSearch.trim().toLowerCase();
+    const presuny = new Set((overrides.order || []).map((m) => m.id));
+
+    const hladanie = el("input", {
+      type: "search",
+      class: "dev-search",
+      placeholder: "Hľadať vrstvu v stohu (napr. násyp, road-motorway…)",
+      value: stackSearch
+    });
+    hladanie.addEventListener("input", () => {
+      stackSearch = hladanie.value;
+      renderBody();
+      const next = body.querySelector(".dev-search");
+      if (next) {
+        next.focus();
+        next.setSelectionRange(next.value.length, next.value.length);
+      }
+    });
+
+    /** Kam presun zapíše `before`, keď má vrstva skončiť tesne NAD `cielom`. */
+    const nadCiel = (cielIndex) => {
+      // „Nad" v zozname zhora nadol znamená „kreslí sa neskôr", teda tesne
+      // pred vrstvu, ktorá je nad cieľom. Nad prvým riadkom už nič nie je –
+      // vtedy je to „úplne navrch" (`null`).
+      const vyssie = zhora[cielIndex - 1];
+      return vyssie ? vyssie.id : null;
+    };
+
+    const presun = (id, before) => {
+      setLayerOrder(id, before);
+      apply({ immediate: true });
+    };
+
+    const riadok = (layer, i) => {
+      const meta = layer.metadata || {};
+      const kind = meta["frico:kind"] || "line";
+      const hidden = isHidden(layer);
+      const inactive = !activeAt(layer, zoomView);
+      const zmeneny = presuny.has(layer.id);
+      // Vzor, okraj a druhá polovica dvojice sa presúvajú s ňou – nech je
+      // vidieť, že sa nehýbe jedna vrstva, ale prvok.
+      const rodina = (getStyle()?.layers || []).filter(
+        (l) => (l.metadata || {})["frico:derived"] === layer.id ||
+               (l.metadata || {})["frico:with"] === layer.id
+      ).length;
+
+      const row = el("div", {
+        class:
+          `dev-stackrow${zmeneny ? " changed" : ""}${hidden ? " off" : ""}` +
+          `${inactive && !hidden ? " inactive" : ""}`,
+        // Reťazec, nie `true`: `draggable` je vymenovaný atribút a prázdna
+        // hodnota znamená „auto", teda NEŤAHATEĽNÉ – riadok by sa chytiť
+        // nedal a nikde by to nezasvietilo.
+        draggable: q ? null : "true",
+        title: `${layer.id} · ${zhora.length - i}. odspodku`
+      }, [
+        el("span", { class: "dev-grip", text: q ? "·" : "⠿" }),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          title: hidden ? "Zobraziť vrstvu" : "Skryť vrstvu",
+          text: hidden ? "🚫" : "👁",
+          onclick: () => {
+            setVisible([layer.id], hidden);
+            apply();
+          }
+        }),
+        el("span", { class: `dev-kind k-${kind}`, text: KIND_LABELS[kind] || kind }),
+        el("span", { class: "dev-swatch", style: `background:${primaryColor(layer)}` }),
+        el("button", {
+          type: "button",
+          class: "dev-name",
+          title: "Otvoriť túto vrstvu v záložke Vrstvy",
+          onclick: () => {
+            tab = "layers";
+            search = layer.id;
+            expanded.add(layer.id);
+            collapsed.delete(meta["frico:group"]);
+            render();
+          }
+        }, [
+          el("span", { text: meta["frico:label"] || layer.id }),
+          el("small", {
+            text:
+              `${layer.id}` +
+              `${rodina ? ` +${rodina}` : ""}` +
+              ` · ${GROUP_LABELS[meta["frico:group"]] || meta["frico:group"] || ""}`
+          })
+        ]),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          text: "▲",
+          disabled: i === 0 ? true : null,
+          title: i === 0 ? "Vyššie to už nejde" : `Kresliť nad „${zhora[i - 1].metadata["frico:label"] || zhora[i - 1].id}"`,
+          onclick: () => presun(layer.id, nadCiel(i - 1))
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          text: "▼",
+          disabled: i === zhora.length - 1 ? true : null,
+          title:
+            i === zhora.length - 1
+              ? "Nižšie to už nejde"
+              : `Kresliť pod „${zhora[i + 1].metadata["frico:label"] || zhora[i + 1].id}"`,
+          onclick: () => presun(layer.id, zhora[i + 1].id)
+        }),
+        zmeneny
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na poradie zo štýlu",
+              onclick: () => presun(layer.id, undefined)
+            })
+          : null
+      ]);
+
+      // ŤAHANIE. Kam vrstva padne, hovorí polovica riadka, nad ktorou kurzor
+      // je: horná = nad tento riadok, dolná = pod neho. Bez toho by sa nedalo
+      // povedať, či ide o „pred" alebo „za" – a jedna z tých dvoch odpovedí
+      // by vždy chýbala (napr. úplne navrch).
+      row.addEventListener("dragstart", (ev) => {
+        dragId = layer.id;
+        ev.dataTransfer.effectAllowed = "move";
+        // Bez `setData` Firefox ťahanie vôbec nespustí.
+        ev.dataTransfer.setData("text/plain", layer.id);
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => {
+        dragId = null;
+        row.classList.remove("dragging");
+      });
+      row.addEventListener("dragover", (ev) => {
+        if (!dragId || dragId === layer.id) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "move";
+        const r = row.getBoundingClientRect();
+        const hore = ev.clientY < r.top + r.height / 2;
+        row.classList.toggle("drop-above", hore);
+        row.classList.toggle("drop-below", !hore);
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drop-above", "drop-below");
+      });
+      row.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        row.classList.remove("drop-above", "drop-below");
+        if (!dragId || dragId === layer.id) return;
+        const r = row.getBoundingClientRect();
+        const hore = ev.clientY < r.top + r.height / 2;
+        presun(dragId, hore ? nadCiel(i) : layer.id);
+        dragId = null;
+      });
+      return row;
+    };
+
+    const rows = zhora
+      .map((layer, i) => [layer, i])
+      .filter(([layer]) =>
+        !q ||
+        layer.id.toLowerCase().includes(q) ||
+        String((layer.metadata || {})["frico:label"] || "").toLowerCase().includes(q))
+      .map(([layer, i]) => riadok(layer, i));
+
+    return el("div", {}, [
+      el("p", {
+        class: "dev-hint",
+        html:
+          "Celý stoh vrstiev tak, ako sa kreslia: <b>prvý riadok je navrchu</b>. " +
+          "Presuň vrstvu ťahaním za <b>⠿</b> alebo šípkami – napríklad násyp " +
+          "(<code>feature-embankment</code>) pod cesty. Vzor, okraj aj druhá " +
+          "polovica dvojice (zúbky hrany, čiarkovanie železnice) idú s ňou; " +
+          "maska regiónu ostáva navrchu vždy. Poradie platí pre všetky typy máp " +
+          "a ukladá sa do <code>style-overrides.json</code>."
+      }),
+      zoomBar(),
+      hladanie,
+      q
+        ? el("p", {
+            class: "dev-hint",
+            text:
+              "Kým je zadané hľadanie, ťahať sa nedá – v prefiltrovanom zozname " +
+              "nie je vidieť, medzi ktoré dve vrstvy by vrstva padla. Šípky " +
+              "fungujú ďalej a posúvajú po skutočnom poradí."
+          })
+        : null,
+      el("div", { class: "dev-bulk on" }, [
+        el("span", {
+          class: "dev-bulklabel",
+          text: `${zhora.length} vrstiev · ${presuny.size} presunutých`
+        }),
+        presuny.size
+          ? el("button", {
+              type: "button",
+              class: "dev-btn danger",
+              text: "Späť na pôvodné poradie",
+              title: "Zahodí všetky presuny; farby, zoomy a ostatné úpravy ostanú",
+              onclick: () => {
+                overrides.order = [];
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]),
+      el("div", { class: "dev-stack" }, rows)
     ]);
   }
 
@@ -4460,6 +4696,8 @@ export function initDevMode({
     const view =
       tab === "layers"
         ? renderLayers()
+        : tab === "stack"
+        ? renderStack()
         : tab === "pick"
         ? renderPick()
         : tab === "palette"
