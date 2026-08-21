@@ -82,6 +82,12 @@ import {
   normalizeMapType
 } from "./themes.js";
 import { PATTERNS, DASH_PRESETS, dashPreview, dashLabel } from "./patterns.js";
+import {
+  patternPreview,
+  patternPicker,
+  IMAGE_PATTERN_SIZES,
+  IMAGE_PATTERN_SIZE
+} from "./dev-patterns.js";
 import { CUSTOM_SET_PREFIX } from "./icon-sources.js";
 import { MARK_SHAPES } from "./marks.js";
 import { SHIELD_SHAPES } from "./shields.js";
@@ -341,6 +347,12 @@ export function initDevMode({
   const selectedPaletteKeys = new Set();
   const collapsed = new Set();
   const expanded = new Set();
+  /** Pri ktorých vrstvách je rozbalená mriežka vzorov. */
+  const patternOpen = new Set();
+  const setPatternPickerOpen = (id, open) => {
+    if (open) patternOpen.add(id);
+    else patternOpen.delete(id);
+  };
   let poiClasses = [];
   let applyTimer = null;
   let zoomTimer = null;
@@ -2378,22 +2390,62 @@ export function initDevMode({
     const builtinPattern = (layer.metadata || {})["frico:pattern"] || null;
     const patChanged = "pattern" in o;
     const pat = patChanged ? o.pattern : builtinPattern;
+    // ČO JE POD VZOROM. Vzor je vždy DRUHÁ vrstva nad plochou, takže sám
+    // o sebe nehovorí nič: šrafovanie nad tmavozeleným lesom vyzerá inak než
+    // nad svetlou lúkou. Farba podkladu je preto priamo tu – aj v náhľade,
+    // aj ako ovládanie.
+    const podkladProp = primaryColorProp(layer);
+    const podklad =
+      o.paint && o.paint[podkladProp] === NO_FILL ? "none" : primaryColor(layer);
+    const nastavenyPodklad = !!(o.paint && o.paint[podkladProp] !== undefined);
+
+    const vyber = () => {
+      setPatternPickerOpen(layer.id, !patternOpen.has(layer.id));
+      renderBody();
+    };
     const patternRow = [
-      selectField({
-        label: "Vzor",
-        value: pat ? pat.id : "",
-        options: [["", "žiadny"], ...PATTERNS.map((p) => [p.id, p.label])],
-        onChange: (v) => {
-          setLayerOverride(layer.id, {
-            pattern: v
-              ? { ...(pat || { size: 16, weight: 1, opacity: 1, color: darken(primaryColor(layer)) }), id: v }
-              // „Žiadny" nad vrstvou so vzorom zo štýlu musí vzor vypnúť,
-              // nie len zahodiť úpravu – tá by ho vrátila späť.
-              : builtinPattern ? null : undefined
-          });
-          apply({ immediate: true });
-        }
-      })
+      // NÁHĽAD, NIE MENO. „Šupiny (skaly)" nepovie ani ako hustý ten vzor je,
+      // ani ako vyzerá nad farbou tejto plochy – a práve to sú tie dve veci,
+      // kvôli ktorým sa vzor prepína.
+      el("button", {
+        type: "button",
+        class: "dev-patbtn",
+        title: "Vybrať vzor (kreslený alebo vlastný obrázok)",
+        onclick: vyber
+      }, [
+        patternPreview({ spec: pat, background: podklad, custom: overrides.customIcons || [] })
+      ]),
+      el("button", {
+        type: "button",
+        class: "dev-name",
+        title: "Vybrať vzor",
+        onclick: vyber
+      }, [
+        el("span", { text: `${patternOpen.has(layer.id) ? "▾ " : "▸ "}Vzor` }),
+        el("small", {
+          text: pat
+            ? pat.image
+              ? `vlastný obrázok ${pat.image}`
+              : (PATTERNS.find((p) => p.id === pat.id) || {}).label || pat.id
+            : "žiadny"
+        })
+      ]),
+      pat
+        ? el("button", {
+            type: "button",
+            class: "dev-mini",
+            text: "×",
+            title: builtinPattern && !patChanged
+              ? "Vypnúť vzor, ktorý má vrstva zo štýlu"
+              : "Bez vzoru",
+            onclick: () => {
+              // „Žiadny" nad vrstvou so vzorom zo štýlu musí vzor VYPNÚŤ
+              // (`null`), nie len zahodiť úpravu – tá by ho vrátila späť.
+              setLayerOverride(layer.id, { pattern: builtinPattern ? null : undefined });
+              apply({ immediate: true });
+            }
+          })
+        : null
     ];
     if (pat) {
       // Doladenie vychádza z ÚČINNÉHO vzoru (`pat`), nie z prázdna – inak by
@@ -2402,31 +2454,38 @@ export function initDevMode({
         patchSub(layer.id, "pattern", p, pat);
         apply({ immediate: true });
       };
+      // FARBA, VEĽKOSŤ A HRÚBKA PLATIA LEN NA KRESLENÝ VZOR. Vlastný obrázok
+      // ich má zapečené v sebe (prevzorkoval sa pri nahratí), takže ponúkať
+      // ich pri ňom by boli tri políčka, ktoré nič nerobia.
+      if (!pat.image) {
+        patternRow.push(
+          colorControl({
+            value: pat.color,
+            changed: patChanged,
+            onInput: (v) => {
+              patchSub(layer.id, "pattern", { color: v }, pat);
+              apply({ rerender: false });
+            }
+          }),
+          numberField({
+            label: "veľkosť",
+            value: pat.size,
+            min: 4,
+            max: 64,
+            step: 1,
+            onChange: (v) => patch({ size: v ?? 16 })
+          }),
+          numberField({
+            label: "hrúbka",
+            value: pat.weight,
+            min: 0.5,
+            max: 8,
+            step: 0.5,
+            onChange: (v) => patch({ weight: v ?? 1 })
+          })
+        );
+      }
       patternRow.push(
-        colorControl({
-          value: pat.color,
-          changed: patChanged,
-          onInput: (v) => {
-            patchSub(layer.id, "pattern", { color: v }, pat);
-            apply({ rerender: false });
-          }
-        }),
-        numberField({
-          label: "veľkosť",
-          value: pat.size,
-          min: 4,
-          max: 64,
-          step: 1,
-          onChange: (v) => patch({ size: v ?? 16 })
-        }),
-        numberField({
-          label: "hrúbka",
-          value: pat.weight,
-          min: 0.5,
-          max: 8,
-          step: 0.5,
-          onChange: (v) => patch({ weight: v ?? 1 })
-        }),
         numberField({
           label: "krytie",
           value: pat.opacity,
@@ -2440,6 +2499,77 @@ export function initDevMode({
     // „Zmenené" je úprava vzoru, nie vzor samotný: kamienky zo štýlu sú
     // predvolený stav mapy, nie niečo, čo v tejto relácii niekto naklikal.
     parts.push(el("div", { class: `dev-sub${patChanged ? " changed" : ""}` }, patternRow));
+
+    // ---- podklad pod vzorom ----
+    if (podkladProp) {
+      parts.push(
+        el("div", { class: `dev-sub${nastavenyPodklad ? " changed" : ""}` }, [
+          el("span", { class: "dev-note", text: "Podklad" }),
+          podklad === "none"
+            ? el("span", { class: "dev-note", text: "bez výplne – vidno mapu pod vrstvou" })
+            : colorControl({
+                value: podklad,
+                changed: nastavenyPodklad,
+                onInput: (v) => {
+                  setLayerPaint(layer.id, podkladProp, v);
+                  apply({ rerender: false });
+                },
+                onReset: nastavenyPodklad
+                  ? () => {
+                      setLayerPaint(layer.id, podkladProp, undefined);
+                      apply({ immediate: true });
+                    }
+                  : null
+              }),
+          layer.type === "fill" || layer.type === "fill-extrusion"
+            ? el("button", {
+                type: "button",
+                class: "dev-btn",
+                text: podklad === "none" ? "vrátiť výplň" : "bez výplne",
+                title:
+                  "Plocha bez farby pozadia – vzor a okraj na nej ostanú " +
+                  "(nie je to krytie 0 ani vypnutá vrstva)",
+                onclick: () => {
+                  setLayerPaint(layer.id, podkladProp, podklad === "none" ? undefined : NO_FILL);
+                  apply({ immediate: true });
+                }
+              })
+            : null
+        ])
+      );
+    }
+
+    // ---- mriežka vzorov + vlastný obrázok ----
+    if (patternOpen.has(layer.id)) {
+      parts.push(
+        patternPicker({
+          spec: pat,
+          background: podklad,
+          custom: overrides.customIcons || [],
+          onPick: (next) => {
+            setLayerOverride(layer.id, {
+              pattern: next
+                ? {
+                    // Kreslený vzor si nesie farbu, veľkosť a hrúbku – keď ich
+                    // vrstva ešte nemá, začne sa tmavším odtieňom vlastnej
+                    // výplne, nie čiernou: vzor má plochu kresliť, nie prebiť.
+                    ...(next.image
+                      ? {}
+                      : { size: 16, weight: 1, color: darken(primaryColor(layer)) }),
+                    opacity: pat?.opacity ?? 1,
+                    ...(pat && !pat.image && !next.image ? pat : {}),
+                    ...next
+                  }
+                : builtinPattern
+                ? null
+                : undefined
+            });
+            apply({ immediate: true });
+          }
+        })
+      );
+      parts.push(patternUpload(layer));
+    }
 
     // ---- okraj ----
     const out = o.outline;
@@ -3883,6 +4013,89 @@ export function initDevMode({
   // Jedna konkrétna vec inak: značka, POI, čokoľvek symbolové. Obrázok sa
   // prevedie na PNG a leží PRIAMO v úpravách, takže ho má aj mapa v mobile
   // (rozpis v hlavičke `poc/web/dev-icons.js`).
+  /**
+   * NAHRATIE VLASTNÉHO OBRÁZKA AKO VZORU.
+   *
+   * Obrázok sa uloží ako VLASTNÁ IKONA úprav (`own:…`) – to nie je obchádzka,
+   * ale celá pointa: taký obrázok sa nesie priamo v úpravách (funguje offline
+   * aj v balíku pre mobil), prehliadač ho dokreslí hneď a do každého spritu
+   * ho dopečie `workers/assets/custom-icons.mjs`. Druhá cesta pre „obrázky,
+   * ktoré sú vzory" by bola druhé miesto, ktoré sa raz rozíde s prvým.
+   *
+   * VEĽKOSŤ DLAŽDICE SA VYBERÁ TU, pri nahratí, a obrázok sa na ňu rovno
+   * prevzorkuje. `fill-pattern` sa v MapLibre neškáluje – dlaždicuje sa tak,
+   * ako je obrázok veľký –, takže „veľkosť až pri kreslení" by musel rovnako
+   * spraviť aj sprite. Čo je uložené, je to, čo mapa kreslí.
+   */
+  function patternUpload(layer) {
+    const velkost = el("select", { class: "dev-select", title: "Strana dlaždice" },
+      IMAGE_PATTERN_SIZES.map((px) =>
+        el("option", {
+          value: String(px),
+          text: `${px} px`,
+          ...(px === IMAGE_PATTERN_SIZE ? { selected: true } : {})
+        })
+      )
+    );
+
+    const subor = el("input", {
+      type: "file",
+      class: "dev-file",
+      accept: "image/png,image/jpeg,image/svg+xml"
+    });
+    subor.addEventListener("change", async () => {
+      const file = subor.files && subor.files[0];
+      if (!file) return;
+      try {
+        const px = Number(velkost.value) || IMAGE_PATTERN_SIZE;
+        const { png, pixelRatio } = await fileToIconPng(file, px);
+        const name = iconNameFromFile(file.name, CUSTOM_ICON_PREFIX);
+        const next = [
+          ...(overrides.customIcons || []).filter((x) => x.name !== name),
+          { name, png, pixelRatio }
+        ];
+        // Obrázok aj jeho použitie ako vzoru naraz: keby sa uložil len
+        // obrázok, musel by ho človek ešte nájsť v mriežke – a keby sa uložil
+        // len vzor, ukazoval by na obrázok, ktorý v úpravách nie je.
+        const skuska = {
+          ...overrides,
+          customIcons: next,
+          layers: {
+            ...overrides.layers,
+            [layer.id]: { ...(overrides.layers[layer.id] || {}), pattern: { image: name, opacity: 1 } }
+          }
+        };
+        const { overrides: clean, problems } = normalizeOverrides(skuska);
+        if (problems.length) {
+          poznamka(problems[0]);
+          return;
+        }
+        overrides = clean;
+        poznamka(`Vzor „${name}" (${px} px) nahratý a nasadený na ${layer.id}.`);
+        apply({ immediate: true });
+      } catch (err) {
+        poznamka(`Obrázok sa nepodarilo načítať: ${err.message}`);
+      } finally {
+        subor.value = "";
+      }
+    });
+
+    return el("div", { class: "dev-sub" }, [
+      el("span", { class: "dev-note", text: "Vlastný obrázok ako vzor" }),
+      velkost,
+      subor,
+      el("p", {
+        class: "dev-hint",
+        text:
+          "PNG, JPG alebo SVG. Obrázok sa prevzorkuje na zvolenú stranu dlaždice " +
+          "a uloží sa priamo do úprav – mapa ho má hneď a build ho dopečie do " +
+          "spritu (aj pre mobil). Dlaždicuje sa v tej veľkosti, v akej je " +
+          "uložený; inú veľkosť dostaneš nahratím znova. Nahraté obrázky sú " +
+          "vo výbere vzoru pri každej ploche aj čiare."
+      })
+    ]);
+  }
+
   function customIconSection() {
     const zoznam = overrides.customIcons || [];
     const rows = zoznam.map((ikona) => {

@@ -2211,7 +2211,10 @@ export function normalizeOverrides(raw) {
   }
 
   // ---- vrstvy ----
-  cleanLayers(raw.layers, out.layers, problems, "");
+  // Vlastné ikony sú prečistené vyššie, takže je už známe, ktoré obrázky sa
+  // smú použiť ako vzor (a ktoré by v sprite nikdy neskončili).
+  const vlastneObrazky = out.customIcons.map((i) => i.name);
+  cleanLayers(raw.layers, out.layers, problems, "", vlastneObrazky);
 
   // ---- vrstvy pre jednotlivé typy máp ----
   // Tu je nadstavba nad tým, čo je vyššie: to isté id vrstvy môže mať iné
@@ -2226,7 +2229,7 @@ export function normalizeOverrides(raw) {
       continue;
     }
     const layers = {};
-    cleanLayers(def.layers, layers, problems, `${typeId}: `);
+    cleanLayers(def.layers, layers, problems, `${typeId}: `, vlastneObrazky);
     const hidden = Array.isArray(def.poi?.hidden) ? def.poi.hidden : [];
     const poiHidden = [
       ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
@@ -2273,7 +2276,7 @@ export function normalizeOverrides(raw) {
  * Prečistí sadu úprav vrstiev (spoločnú aj tú pre jeden typ mapy) do `target`.
  * `where` je predpona do hlásení, aby bolo vidieť, ktorej mapy sa problém týka.
  */
-function cleanLayers(rawLayers, target, problems, where) {
+function cleanLayers(rawLayers, target, problems, where, images = []) {
   for (const [id, def] of Object.entries(rawLayers || {})) {
     if (!def || typeof def !== "object") {
       problems.push(`${where}Úprava vrstvy "${id}" nie je objekt – preskakujem.`);
@@ -2352,6 +2355,21 @@ function cleanLayers(rawLayers, target, problems, where) {
     // výslovne vypnúť. Chýbajúci kľúč znamená „nechaj, čo je v štýle".
     if (def.pattern === null) {
       clean.pattern = null;
+    } else if (def.pattern?.image) {
+      // VLASTNÝ OBRÁZOK AKO VZOR. Musí to byť vlastná ikona z týchto úprav –
+      // teda obrázok, ktorý sa nesie SPOLU s nimi a ktorý pipeline dopečie do
+      // spritu (`workers/assets/custom-icons.mjs`). Hocijaké iné meno by sa
+      // do štýlu dostalo, ale do spritu nie: MapLibre neznámy `fill-pattern`
+      // ticho preskočí a plocha ostane bez vzoru.
+      const image = String(def.pattern.image).trim();
+      if (!images.includes(image)) {
+        problems.push(
+          `${where}Vrstva "${id}": obrázok vzoru "${image}" nie je medzi vlastnými ` +
+          `ikonami úprav – nemal by ho kto dopiecť do spritu.`
+        );
+      } else {
+        clean.pattern = patternDef({ image, opacity: def.pattern.opacity });
+      }
     } else if (def.pattern) {
       if (!PATTERN_IDS.includes(def.pattern.id)) {
         problems.push(`${where}Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
@@ -2648,9 +2666,14 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     const builtin = (layer.metadata || {})["frico:pattern"] || null;
     const pat = o && "pattern" in o ? o.pattern : builtin;
 
+    // Vzor z vlastného obrázka sa nasadí len vtedy, keď ten obrázok naozaj
+    // je (v sprite alebo aspoň v úpravách) – neznámy `fill-pattern` MapLibre
+    // ticho preskočí a plocha ostane bez vzoru.
+    const patOk = (p) => !p || !p.image || hasIcon(p.image);
+
     if (!o) {
       out.push(layer);
-      if (pat) out.push(patternLayer(layer, pat));
+      if (pat && patOk(pat)) out.push(patternLayer(layer, pat));
       continue;
     }
 
@@ -2706,7 +2729,7 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     if (outline && layer.type === "line") out.push(outline);
     out.push(layer);
     if (outline && layer.type !== "line") out.push(outline);
-    const pattern = pat ? patternLayer(layer, pat) : null;
+    const pattern = pat && patOk(pat) ? patternLayer(layer, pat) : null;
     if (pattern) out.push(pattern);
   }
 

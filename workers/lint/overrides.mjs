@@ -312,7 +312,11 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     layers: {
       "trail-hiking-mark": {
         layout: { "icon-size": 1.2, "symbol-spacing": [[12, 13, 120], [14, 20, 260]] }
-      }
+      },
+      // Vzor z vlastného obrázka: obrázok je vlastná ikona vyššie, takže sa
+      // do repozitára musia dostať OBE polovice – meno vo vrstve aj samotný
+      // PNG. Keby prežila len jedna, mapa by ostala bez vzoru.
+      "landcover-wood": { pattern: { image: "own:test", opacity: 0.8 } }
     }
   };
   const { overrides } = normalizeOverrides(ukazka);
@@ -342,6 +346,11 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
       chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
       chyba_ak("order", overrides.order, zapisane.order);
       chyba_ak("poi.icons", overrides.poi.icons, zapisane.poi.icons);
+      chyba_ak(
+        "layers[landcover-wood].pattern",
+        overrides.layers["landcover-wood"]?.pattern,
+        zapisane.layers["landcover-wood"]?.pattern
+      );
       chyba_ak("iconSets", overrides.iconSets, zapisane.iconSets);
       chyba_ak("customIcons", overrides.customIcons, zapisane.customIcons);
       chyba_ak(
