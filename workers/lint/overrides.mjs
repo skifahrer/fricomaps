@@ -304,6 +304,9 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     // vrstvy – teda presne ten druh položky, na ktorý `overrides.mjs` už raz
     // pri skladaní súboru zabudol.
     order: [{ id: "feature-embankment", before: "road-minor" }],
+    // Ikony kategórií sedia v `poi` vedľa skrytých tried – ten kľúč sa
+    // zapisuje ako celok, takže sa pri ňom dá zabudnúť práve na polovicu.
+    poi: { hidden: ["fuel"], icons: { restaurant: "bar_11", spring: "" } },
     // `layout` je druhá polica vedľa `paint` – veľkosť ikony a rozostup po
     // čiare sa ňou ladia (značky trás), takže tá istá otázka: prežije zápis?
     layers: {
@@ -338,6 +341,7 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
       };
       chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
       chyba_ak("order", overrides.order, zapisane.order);
+      chyba_ak("poi.icons", overrides.poi.icons, zapisane.poi.icons);
       chyba_ak("iconSets", overrides.iconSets, zapisane.iconSets);
       chyba_ak("customIcons", overrides.customIcons, zapisane.customIcons);
       chyba_ak(

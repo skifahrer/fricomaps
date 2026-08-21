@@ -1007,6 +1007,48 @@ const FALLBACK_ICONS = [
  * Ako ikona POI nič nehovoria – mapa s nimi vyzerá ako pole bodiek, preto
  * sa z výberu vylučujú a POI bez vlastnej ikony zostane len s popiskom.
  */
+/**
+ * Triedy, pre ktoré má sada ikonu `<trieda><prípona>`.
+ *
+ * Je to funkcia, a nie riadok v `buildStyle`, lebo tú istú otázku si kladie
+ * aj developer mode: bez nej by v paneli pri každej kategórii svietilo
+ * „bez ikony" alebo naopak ikona, ktorú sada nemá – teda niečo iné, než je
+ * v mape. Čisto geometrické tvary (kruh, štvorec…) sa vynechávajú: POI bez
+ * vlastnej ikony nemá dostať kruh, ale zostať len s popiskom.
+ */
+export function iconClassesOf(icons, suffix) {
+  return (
+    icons && icons.length
+      ? [
+          ...new Set(
+            icons
+              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
+              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
+          )
+        ]
+      : FALLBACK_ICONS
+  ).filter((n) => !SHAPE_ICONS.has(n));
+}
+
+/**
+ * IKONA JEDNEJ KATEGÓRIE – jedna otázka, jedna odpoveď.
+ *
+ * Poradie je to isté, aké má výraz v štýle: najprv to, čo si vybral developer
+ * mode (`overrides.poi.icons`, prázdny reťazec = „žiadna"), potom
+ * `<trieda><prípona>` zo sady, a keď ju sada nemá, nič – žiadne náhradné
+ * koliesko. Pýta sa na to štýl (aby vedel, čo nakresliť) aj panel (aby vedel,
+ * čo ukázať), a keby si to počítali zvlášť, panel by raz ukazoval inú ikonu,
+ * než je v mape.
+ *
+ * @param {string} cls  `subclass` alebo `class` z dlaždíc
+ * @param {{classes: string[], suffix: string, overrides?: object}} opts
+ */
+export function poiIconName(cls, { classes, suffix, overrides }) {
+  const own = overrides?.poi?.icons?.[cls];
+  if (own !== undefined) return own;
+  return classes.includes(cls) ? `${cls}${suffix || ""}` : "";
+}
+
 const SHAPE_ICONS = new Set([
   "circle", "circle_stroked", "square", "square_stroked",
   "triangle", "triangle_stroked", "star", "star_stroked",
@@ -1560,7 +1602,7 @@ export function emptyOverrides() {
     // jednu vec inak" – a preto sa nedajú stlačiť do jednej položky.
     iconSets: [],
     customIcons: [],
-    poi: { hidden: [] },
+    poi: { hidden: [], icons: {} },
     maps: {}
   };
 }
@@ -2200,6 +2242,30 @@ export function normalizeOverrides(raw) {
     ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
   ].sort();
 
+  // ---- ikona POI kategórie ----
+  // PRÁZDNY REŤAZEC JE PLATNÁ HODNOTA („táto kategória bez ikony"), takže sa
+  // rozhoduje podľa toho, či kľúč existuje – nie podľa toho, či je hodnota
+  // pravdivá. Chýbajúci kľúč znamená „ikona podľa sady", a to je iná odpoveď
+  // než „žiadna".
+  //
+  // Ikony sú SPOLOČNÉ pre všetky typy máp (na rozdiel od skrytých tried):
+  // akou značkou sa kreslí studnička, je vlastnosť tej kategórie, nie tej
+  // mapy – a keby si ju každá mapa niesla vlastnú, ten istý výber by sa
+  // musel naklikať štyrikrát.
+  out.poi.icons = {};
+  for (const [cls, name] of Object.entries(raw.poi?.icons || {})) {
+    if (!LAYER_ID.test(cls)) {
+      problems.push(`Ikona POI: neplatná kategória "${cls}" – preskakujem.`);
+      continue;
+    }
+    const icon = String(name ?? "").trim();
+    if (icon !== "" && !/^[A-Za-z0-9_.:-]{1,64}$/.test(icon)) {
+      problems.push(`Ikona POI "${cls}": neplatné meno ikony "${name}".`);
+      continue;
+    }
+    out.poi.icons[cls] = icon;
+  }
+
   return { overrides: out, problems };
 }
 
@@ -2337,6 +2403,7 @@ export function hasOverrides(o) {
     (o.iconSets || []).length > 0 ||
     (o.customIcons || []).length > 0 ||
     (o.poi?.hidden || []).length > 0 ||
+    Object.keys(o.poi?.icons || {}).length > 0 ||
     Object.values(o.maps || {}).some(
       (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
     )
@@ -2380,7 +2447,10 @@ export function resolveOverrides(overrides, mapType) {
     ...overrides,
     layers,
     poi: {
-      hidden: [...new Set([...(overrides.poi?.hidden || []), ...(own.poi?.hidden || [])])].sort()
+      hidden: [...new Set([...(overrides.poi?.hidden || []), ...(own.poi?.hidden || [])])].sort(),
+      // Ikony kategórií sú spoločné pre všetky mapy (rozpis v normalizácii),
+      // takže sa nezlievajú – len sa nesmú stratiť.
+      icons: { ...(overrides.poi?.icons || {}) }
     }
   };
 }
@@ -2933,21 +3003,7 @@ export function buildStyle({
   const BOLD = [f.bold];
   const ITAL = [f.italic];
 
-  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona
-  // `<trieda><prípona>`. Čisto geometrické tvary (kruh, štvorec…) sa
-  // vynechávajú – POI bez vlastnej ikony nemá dostať kruh, ale zostať
-  // len s popiskom.
-  const iconClasses = (
-    icons && icons.length
-      ? [
-          ...new Set(
-            icons
-              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
-              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
-          )
-        ]
-      : FALLBACK_ICONS
-  ).filter((n) => !SHAPE_ICONS.has(n));
+  const iconClasses = iconClassesOf(icons, suffix);
   // VLASTNÁ IKONA JE „V SPRITE" AJ VTEDY, KEĎ V ŇOM EŠTE NIE JE. Zoznam mien
   // sa berie z hotového spritu, takže práve pridaná ikona by v ňom nebola
   // a štýl by ju ticho vynechal – hoci v prehliadači ju mapa má hneď
@@ -5009,14 +5065,34 @@ export function buildStyle({
   // ---- POI ----
   // Ikona sa vyberá podľa `subclass`, potom `class`. Ak pre ne sprite ikonu
   // nemá, nekreslí sa nič (prázdny reťazec) – žiadne náhradné kolieska.
-  const iconExpr = [
+  // IKONA VYBRANÁ V DEVELOPER MÓDE IDE PRVÁ. Je to jediná odpoveď na „tejto
+  // kategórii chcem inú značku": `class`/`subclass` z dlaždíc sú stovky
+  // hodnôt a sada ikoniek ich pokrýva menami, ktoré si nikto nevyberá –
+  // dostane sa `restaurant_11`, aj keď by tam patrila vlastná ikona chaty.
+  // Prázdny reťazec je platná voľba („tu žiadnu ikonu"), preto sa rozhoduje
+  // podľa TOHO, ČI KĽÚČ EXISTUJE, nie podľa toho, či je hodnota pravdivá.
+  //
+  // Ikona, ktorú sprite nemá, sa nenasadí (`hasIcon`) – MapLibre by symbol
+  // ticho nevykreslil a v mape by kategória zmizla aj s popiskom.
+  const poiIconPicks = Object.entries(overrides?.poi?.icons || {})
+    .filter(([, name]) => name === "" || hasIcon(name));
+  const withPoiIcons = (base) => [
+    "case",
+    ...poiIconPicks.flatMap(([cls, name]) => [
+      ["any", ["==", str("subclass"), cls], ["==", str("class"), cls]],
+      name
+    ]),
+    ...base.slice(1)
+  ];
+
+  const iconExpr = withPoiIcons([
     "case",
     ["in", str("subclass"), ["literal", iconClasses]],
     ["concat", str("subclass"), suffix],
     ["in", str("class"), ["literal", iconClasses]],
     ["concat", str("class"), suffix],
     ""
-  ];
+  ]);
 
   // SDF sprite obsahuje samotný symbol bez kolieska, ktoré predtým vypĺňalo
   // celý štvorec ikony – aby ikony opticky nezmenšeli, sú o kúsok väčšie.
@@ -5106,14 +5182,17 @@ export function buildStyle({
   // Ikona sa hľadá rovnako ako pri POI: podľa `class`, a keď ju sada nemá,
   // ostane len popisok – žiadne náhradné kolieska.
   if (featuresUrl) {
-    const featureIcon = [
+    // Tá istá voľba ikony ako pri POI (`withPoiIcons`): triedy sú iné
+    // (prameň, jaskyňa, rozhľadňa), ale otázka je jedna – „akú značku má
+    // táto kategória" – a dve odpovede by sa raz rozišli.
+    const featureIcon = withPoiIcons([
       "case",
       ["in", str("class"), ["literal", iconClasses]],
       ["concat", str("class"), suffix],
       ["in", str("subclass"), ["literal", iconClasses]],
       ["concat", str("subclass"), suffix],
       ""
-    ];
+    ]);
     add(
       {
         id: "feature-point",
@@ -5121,6 +5200,10 @@ export function buildStyle({
         source: "features",
         "source-layer": "feature_point",
         minzoom: 12,
+        // Skryté kategórie platia aj tu. Zoznam v paneli je jeden pre POI aj
+        // pre vlastné body, takže by odškrtnutie prameňa neurobilo nič –
+        // a nikto by nepovedal prečo.
+        ...(poiFilter(null) ? { filter: poiFilter(null) } : {}),
         layout: {
           ...poiLayout,
           "icon-image": featureIcon,

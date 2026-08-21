@@ -57,6 +57,8 @@ import {
   hasOverrides,
   mergedPalette,
   selectedIconSource,
+  iconClassesOf,
+  poiIconName,
   TRAIL_TYPES,
   TRAIL_MARK_COLOURS,
   LAYOUT_PROPS,
@@ -87,6 +89,7 @@ import { snapshotStyle, pasteStyle, valueAtZoom } from "./layer-style.js";
 import { el } from "./dom.js";
 import {
   iconPicker,
+  iconPreview,
   drawSpriteIcon,
   fileToIconPng,
   iconNameFromFile,
@@ -364,6 +367,9 @@ export function initDevMode({
 
   /** Ktoré druhy trás majú v záložke „Trasy" rozbalené zoomy a pásma. */
   const trailOpen = new Set();
+
+  /** Ktoré kategórie majú v záložke „POI" rozbalený výber ikony. */
+  const poiOpen = new Set();
 
   /** Čo sa pri poslednom vložení nedalo preniesť – vypíše to stavový riadok. */
   let clipNote = "";
@@ -3960,15 +3966,21 @@ export function initDevMode({
     const map2 = getMap();
     if (!map2) return [];
     const counts = new Map();
-    let features = [];
-    try {
-      features = map2.querySourceFeatures("omt", { sourceLayer: "poi" });
-    } catch {
-      features = [];
-    }
-    for (const f of features) {
-      const key = f.properties?.subclass || f.properties?.class;
-      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    // Aj vlastné body (prameň, jaskyňa, rozhľadňa): sú to tie isté kategórie
+    // s tou istou otázkou („akou značkou sa kreslia") a ich vrstva berie
+    // ikonu aj skryté triedy z toho istého zoznamu – keby tu neboli, dali by
+    // sa nastaviť len naslepo.
+    for (const [source, sourceLayer] of [["omt", "poi"], ["features", "feature_point"]]) {
+      let features = [];
+      try {
+        features = map2.querySourceFeatures(source, { sourceLayer });
+      } catch {
+        features = [];
+      }
+      for (const f of features) {
+        const key = f.properties?.subclass || f.properties?.class;
+        if (key) counts.set(key, (counts.get(key) || 0) + 1);
+      }
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }
@@ -3976,6 +3988,30 @@ export function initDevMode({
   /** Skryté POI triedy: spoločné aj tie pre práve zobrazený typ mapy. */
   const poiHiddenAll = () =>
     new Set([...overrides.poi.hidden, ...(mapBucket()?.poi?.hidden || [])]);
+
+  /**
+   * IKONA KATEGÓRIE. `undefined` = späť na ikonu podľa sady, `""` = žiadna –
+   * sú to tri odpovede a nedajú sa stlačiť do dvoch (tá istá úvaha ako pri
+   * značke druhu trasy).
+   *
+   * Je to spoločné pre všetky typy máp, na rozdiel od skrývania: akou značkou
+   * sa kreslí studnička, je vlastnosť kategórie, nie mapy.
+   */
+  function setPoiIcon(cls, name) {
+    overrides.poi.icons = { ...(overrides.poi.icons || {}) };
+    if (name === undefined) delete overrides.poi.icons[cls];
+    else overrides.poi.icons[cls] = name;
+  }
+
+  /** Ktorá ikona je pre kategóriu naozaj v mape (to isté, čo počíta štýl). */
+  function poiIconNow(cls) {
+    const set = currentSet();
+    return poiIconName(cls, {
+      classes: iconClassesOf(set?.icons || [], set?.suffix || ""),
+      suffix: set?.suffix || "",
+      overrides
+    });
+  }
 
   function setPoiHidden(cls, hide) {
     const bucket = editScope === "all" ? overrides.poi : mapBucket(true).poi;
@@ -3993,7 +4029,12 @@ export function initDevMode({
     for (const h of hidden) if (!known.has(h)) known.set(h, 0);
     const list = [...known.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
-    const rows = list.map(([cls, count]) => {
+    const set = currentSet();
+    const image = spriteImageFor(set);
+    const farba = mergedPalette(getTheme(), overrides).poiIcon || "#444444";
+    const vlastne = overrides.poi.icons || {};
+
+    const rows = list.flatMap(([cls, count]) => {
       const check = el("input", { type: "checkbox", class: "dev-check" });
       check.checked = !hidden.has(cls);
       check.addEventListener("change", () => {
@@ -4003,27 +4044,75 @@ export function initDevMode({
       // Trieda skrytá spoločne sa v rozsahu „len táto mapa" vrátiť nedá –
       // nech je jasné, prečo odškrtnutie nič neurobí.
       const stuck = editScope === "map" && inBase.has(cls);
-      return el("label", { class: `dev-prow${hidden.has(cls) ? " off" : ""}` }, [
+      const ikona = poiIconNow(cls);
+      const zmenena = vlastne[cls] !== undefined;
+      const otvorene = poiOpen.has(cls);
+      const riadok = el("div", { class: `dev-prow${hidden.has(cls) ? " off" : ""}${zmenena ? " changed" : ""}` }, [
         check,
-        el("span", { class: "dev-name" }, [
-          el("span", { text: cls }),
+        // NÁHĽAD JE PRIAMO V RIADKU, nie až po rozkliknutí: otázka „akú má
+        // táto kategória ikonu" je práve tá, kvôli ktorej sem človek ide,
+        // a meno (`restaurant_11`) na ňu neodpovedá.
+        iconPreview({ name: ikona, set, image, custom: overrides.customIcons || [], color: farba }),
+        el("button", {
+          type: "button",
+          class: "dev-name",
+          title: `${cls} – klikni pre výber ikony`,
+          onclick: () => {
+            if (otvorene) poiOpen.delete(cls);
+            else poiOpen.add(cls);
+            renderBody();
+          }
+        }, [
+          el("span", { text: `${otvorene ? "▾ " : "▸ "}${cls}` }),
           el("small", {
-            text: stuck
-              ? "skryté pre všetky mapy – prepni rozsah"
-              : count
-              ? `${count} v zobrazenom výreze`
-              : "skryté"
+            text:
+              (stuck
+                ? "skryté pre všetky mapy – prepni rozsah"
+                : count
+                ? `${count} v zobrazenom výreze`
+                : "skryté") +
+              ` · ${ikona || "bez ikony"}${zmenena ? " (vlastná)" : ""}`
+          })
+        ]),
+        zmenena
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na ikonu podľa sady",
+              onclick: () => {
+                setPoiIcon(cls, undefined);
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]);
+      if (!otvorene) return [riadok];
+      return [
+        riadok,
+        el("div", { class: "dev-details" }, [
+          iconGrid({
+            kluc: `poi:${cls}`,
+            value: ikona,
+            names: iconNames(ikona),
+            noneLabel: "žiadna",
+            onPick: (name) => {
+              setPoiIcon(cls, name);
+              apply({ immediate: true });
+            }
           })
         ])
-      ]);
+      ];
     });
 
     return el("div", {}, [
       el("p", {
         class: "dev-hint",
         text:
-          "Ktoré body sa zobrazujú. Zoznam sa načíta z dlaždíc v aktuálnom výreze – " +
-          "prejdi mapu tam, kde POI chceš, a načítaj znova."
+          "Ktoré body sa zobrazujú a akou ikonou. Zoznam sa načíta z dlaždíc " +
+          "v aktuálnom výreze – prejdi mapu tam, kde tie body sú, a načítaj znova. " +
+          "Klikni na kategóriu a vyber jej ikonu; voľba „žiadna“ nechá len popisok. " +
+          "Ikona platí pre všetky typy máp, skrývanie sa riadi rozsahom nižšie."
       }),
       scopeBar(),
       el("div", { class: "dev-bulk on" }, [
@@ -4046,7 +4135,19 @@ export function initDevMode({
             pruneMaps();
             apply();
           }
-        })
+        }),
+        Object.keys(overrides.poi.icons || {}).length
+          ? el("button", {
+              type: "button",
+              class: "dev-btn danger",
+              text: "Späť na pôvodné ikony",
+              title: "Zahodí vybrané ikony všetkých kategórií (skrývanie ostane)",
+              onclick: () => {
+                overrides.poi.icons = {};
+                apply();
+              }
+            })
+          : null
       ]),
       rows.length
         ? el("div", { class: "dev-list" }, rows)
