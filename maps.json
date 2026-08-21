@@ -1,6 +1,6 @@
 {
   "_comment": "Katalóg hotových máp na Google Drive – ktoré sú a kde. Hlavný kľúč je krajina, pod ňou `regions` (kraj) a `subregions` (výsek); kľúče na `_` sú metadáta katalógu, nie krajiny. Dopisuje ho na konci buildu workers/deploy/publish-map.py (krok „Zapíš mapu do maps.json“); ručne sa needituje. Odkazy otvorí ten, kto má prístup k priečinku s mapami.",
-  "_updated_at": "2026-08-21T23:02:39Z",
+  "_updated_at": "2026-08-21T23:03:28Z",
   "slovensko": {
     "name": "Slovensko",
     "regions": {
@@ -198,6 +198,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1Cm8lnHZinI3L5uSIdXvUVnAgaNx0onRz",
             "file": "presovsky.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1LD31w8rcNLjf7UQTIaLzTB7USPVJoVSr",
+                "file": "presovsky.aar",
+                "link": "https://drive.google.com/file/d/1LD31w8rcNLjf7UQTIaLzTB7USPVJoVSr/view",
+                "run": "159",
+                "size": 225382296,
+                "updated_at": "2026-08-21T23:03:28Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1Cm8lnHZinI3L5uSIdXvUVnAgaNx0onRz",
                 "file": "presovsky.zip",
@@ -216,6 +224,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1k57be3pxUpE3y6SEI1DYydZ0lMV4NbxL",
             "file": "presovsky-search.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1Ueo89RK1OLBSRzruWtOImZ6ovOPi09KW",
+                "file": "presovsky-search.aar",
+                "link": "https://drive.google.com/file/d/1Ueo89RK1OLBSRzruWtOImZ6ovOPi09KW/view",
+                "run": "159",
+                "size": 5759777,
+                "updated_at": "2026-08-21T23:03:28Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1k57be3pxUpE3y6SEI1DYydZ0lMV4NbxL",
                 "file": "presovsky-search.zip",
@@ -234,6 +250,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1XzbFRmRLYjM5raseZXml6SJeKQdsmIi2",
             "file": "presovsky-tienovanie.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1zj-fTUMtrZ4RPt3qywSb2DOQmLaUw_bN",
+                "file": "presovsky-tienovanie.aar",
+                "link": "https://drive.google.com/file/d/1zj-fTUMtrZ4RPt3qywSb2DOQmLaUw_bN/view",
+                "run": "159",
+                "size": 118441582,
+                "updated_at": "2026-08-21T23:03:28Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1XzbFRmRLYjM5raseZXml6SJeKQdsmIi2",
                 "file": "presovsky-tienovanie.zip",
@@ -252,6 +276,14 @@
             "download": "https://drive.google.com/uc?export=download&id=1MzuCjK64TAi025UexMSE5X_mTetnN2CC",
             "file": "presovsky-vrstevnice-skaly.zip",
             "formats": {
+              "aar": {
+                "download": "https://drive.google.com/uc?export=download&id=1DWLq-E_UqEBHjNpk1hnw_7CEdMg3ST2O",
+                "file": "presovsky-vrstevnice-skaly.aar",
+                "link": "https://drive.google.com/file/d/1DWLq-E_UqEBHjNpk1hnw_7CEdMg3ST2O/view",
+                "run": "159",
+                "size": 147295059,
+                "updated_at": "2026-08-21T23:03:28Z"
+              },
               "zip": {
                 "download": "https://drive.google.com/uc?export=download&id=1MzuCjK64TAi025UexMSE5X_mTetnN2CC",
                 "file": "presovsky-vrstevnice-skaly.zip",
@@ -476,7 +508,7 @@
           "trails": "tiles/presovsky-trails.pmtiles"
         },
         "trails_maxzoom": 14,
-        "updated_at": "2026-08-21T23:02:39Z"
+        "updated_at": "2026-08-21T23:03:28Z"
       },
       "trnavsky": {
         "bbox": [
