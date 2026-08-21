@@ -47,6 +47,7 @@ import {
   MAX_DISPLAY_Z,
   MAX_PAINT_STOPS,
   NO_FILL,
+  builtinDash,
   sortStops,
   sortBands,
   isBandList,
@@ -76,7 +77,7 @@ import {
   mapTypeHidden,
   normalizeMapType
 } from "./themes.js";
-import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
+import { PATTERNS, DASH_PRESETS, dashPreview, dashLabel } from "./patterns.js";
 import { CUSTOM_SET_PREFIX } from "./icon-sources.js";
 import { MARK_SHAPES } from "./marks.js";
 import { SHIELD_SHAPES } from "./shields.js";
@@ -1538,11 +1539,17 @@ export function initDevMode({
   /**
    * Výber prerušovania čiary s náhľadom. Samotný názov („Čiarkovaná") o čiare
    * veľa nepovie – vedľa výberu sa preto rovno kreslí, ako bude vyzerať.
+   *
+   * `builtin` je to, čo má vrstva zo štýlu (`frico:dash` – predvoľba alebo
+   * rovno pole čísel). Keď je zadané, pribudne prvá položka „zo štýlu": to je
+   * odpoveď na „nechaj, ako to bolo", ktorú sa menom predvoľby povedať nedá –
+   * železnica má `rail`, brod vlastné `[1, 1]` a zúbky brala `[0.35, 2.2]`,
+   * ktoré medzi predvoľbami vôbec nie sú.
    */
-  function dashField({ label, value, onChange }) {
+  function dashField({ label, value, onChange, builtin }) {
     const preview = el("span", { class: "dev-dash" });
     const draw = (id) => {
-      const d = dashPreview(id, 2);
+      const d = dashPreview(id === "" ? builtin : id, 2);
       preview.innerHTML =
         `<svg width="54" height="10" viewBox="0 0 54 10" aria-hidden="true">` +
         `<line x1="1" y1="5" x2="53" y2="5" stroke="currentColor" stroke-width="2"` +
@@ -1553,7 +1560,10 @@ export function initDevMode({
     const field = selectField({
       label,
       value,
-      options: DASH_PRESETS.map((d) => [d.id, d.label]),
+      options: [
+        ...(builtin !== undefined ? [["", `— zo štýlu (${dashLabel(builtin)}) —`]] : []),
+        ...DASH_PRESETS.map((d) => [d.id, d.label])
+      ],
       onChange: (v) => {
         draw(v);
         onChange(v);
@@ -2237,13 +2247,21 @@ export function initDevMode({
     // Toto je to, čím sa náučný chodník odlíši od zvyšku: druh čiary
     // (`line-dasharray`) plus jej hrúbka a krytie.
     if (isLine) {
+      // ČO JE V TOM VÝBERE VIDIEŤ, MUSÍ BYŤ TO, ČO JE V MAPE. Kým tu stálo
+      // `o.dash || "solid"`, ukazoval výber pri železnici „Plná" (a pritom
+      // je čiarkovaná), voľba „Plná" sa zahodila ako predvolená a čiarkovanie
+      // sa nedalo ani zmeniť, ani vypnúť. Teraz je prvou položkou to, čo má
+      // vrstva zo štýlu, a „Plná" je plnohodnotná úprava (rozpis v `add`
+      // a v `cleanLayers`).
+      const vlastny = builtinDash(layer);
       parts.push(
         el("div", { class: `dev-sub${o.dash ? " changed" : ""}` }, [
           dashField({
             label: "Čiara",
-            value: o.dash || "solid",
+            value: o.dash || "",
+            builtin: vlastny,
             onChange: (v) => {
-              setLayerOverride(layer.id, { dash: v === "solid" ? undefined : v });
+              setLayerOverride(layer.id, { dash: v || undefined });
               apply({ immediate: true });
             }
           }),

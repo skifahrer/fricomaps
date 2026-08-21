@@ -661,6 +661,35 @@ v `layout` je pre MapLibre tvrdá chyba – neodmietne vrstvu, ale CELÝ štýl,
 takže by sa mapa nenačítala vôbec (v `paint` neznáme len ignoruje). Stráži to
 `workers/lint/icons.mjs`.
 
+### Prerušovanie čiary: „zo štýlu“ je odpoveď, „Plná“ je úprava
+
+Výber „Čiara“ v developer móde si predvoľbu čítal z ÚPRAVY, a tá je prázdna,
+kým sa niečo nezmení – takže pri **železnici ukazoval „Plná“**, hoci je
+čiarkovaná (`rail-hatch` má `line-dasharray` zabudované v štýle). A „Plná“ sa
+pri ukladaní zahadzovala ako „veď to je predvolené“, takže sa čiarkovanie
+železnice nedalo ani vrátiť, ani vypnúť: panel voľbu prijal a v mape sa
+nestalo nič. Tichý omyl v čistej podobe.
+
+Držia to tri kusy a treba všetky tri:
+
+| kus | čo robí | kde |
+|---|---|---|
+| `frico:dash` v metadátach | čo má vrstva zo štýlu (predvoľba, alebo rovno pole čísel) | `add()` v `themes.js` |
+| položka „— zo štýlu (…) —“ | prvá vo výbere = „nechaj, ako to bolo“ | `dashField` v `devmode.js` |
+| „Plná“ ako plnohodnotná úprava | `normalizeOverrides` ju nezahodí a `applyLayerOverrides` vlastnosť ZMAŽE | `themes.js` |
+
+**Prečo metadáta a nie `paint`.** Panel dostáva štýl, na ktorom už úpravy
+sedia – v `paint` je teda to, čo platí TERAZ, nie to, na čo sa dá vrátiť.
+**A prečo aj holé pole čísel:** brod má `[1, 1]`, zúbky brala `[0.35, 2.2]` –
+prerušovanie, ktoré medzi predvoľbami vôbec nie je, a pomenovať ho niektorou
+z nich by ho pri prvom uložení prepísalo na inú čiaru.
+
+**„Plná“ znamená vlastnosť ZMAZAŤ**, nie nastaviť na `null` – `dashArray("solid")`
+je práve `null` a taký štýl by MapLibre neprijal. Stráži to
+`workers/lint/overrides.mjs` (metadáta každej čiary s prerušovaním, prežitie
+„solid“ cez normalizáciu aj to, že v hotovom štýle po nej `line-dasharray`
+naozaj nie je).
+
 ### Trasy sa v developer móde ladia po vrstvách
 
 Jeden druh značenej trasy je v štýle ŠTYRI vrstvy a každá odpovedá na inú
@@ -973,6 +1002,7 @@ node    workers/lint/hillshade.mjs     # tieňovanie neprekryje mapu pod sebou
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
 node    workers/lint/icons.mjs         # vlastné ikony a sady sa dostanú do mapy
+node    workers/lint/overrides.mjs     # úprava z developer módu prejde normalizáciou celá
 python3 workers/trails/tags.py --osmc=red:white:red_bar --route=hiking  # akú značku z toho
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi

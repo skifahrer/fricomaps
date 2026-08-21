@@ -214,15 +214,42 @@ const DASH_BY_ID = Object.fromEntries(DASH_PRESETS.map((d) => [d.id, d]));
 export const dashArray = (id) => DASH_BY_ID[id]?.dash ?? null;
 
 /**
+ * Opak `dashArray`: predvoľba podľa `line-dasharray` zo štýlu.
+ *
+ * Je to tu, a nie pri čítaní štýlu, lebo sa na to pýtajú TRI miesta – štýl
+ * (aby vedel do metadát zapísať, akú čiaru vrstva zabudovanú má), developer
+ * mode (aby vo výbere ukázal TO, čo je v mape) a kopírovanie štýlu medzi
+ * vrstvami. Vlastné prerušovanie, ktoré nie je ani jedna z predvolieb, vráti
+ * `null` – a to je poctivá odpoveď, nie „plná".
+ */
+export function dashIdOf(dasharray) {
+  if (!Array.isArray(dasharray)) return null;
+  const found = DASH_PRESETS.find(
+    (d) => d.dash && d.dash.length === dasharray.length &&
+      d.dash.every((n, i) => Math.abs(n - dasharray[i]) < 0.001)
+  );
+  return found ? found.id : null;
+}
+
+/** Popis prerušovania do panela: meno predvoľby, inak samotné čísla. */
+export function dashLabel(dash) {
+  if (Array.isArray(dash)) {
+    const id = dashIdOf(dash);
+    return id ? DASH_BY_ID[id].label : `vlastné [${dash.join(", ")}]`;
+  }
+  return DASH_BY_ID[dash]?.label || "Plná";
+}
+
+/**
  * Náhľad prerušovania ako `stroke-dasharray` do SVG. Kým je výber čiary len
  * text v rozbaľovačke, nie je z neho vidieť, ako čiara naozaj vyzerá –
  * developer mode preto kreslí vedľa neho ukážku.
  *
- * @param {string} id     predvoľba
+ * @param {string|number[]} dash  predvoľba alebo rovno `line-dasharray`
  * @param {number} scale  hrúbka čiary v ukážke (dasharray je v jej násobkoch)
  */
-export function dashPreview(id, scale = 2) {
-  const d = dashArray(id);
+export function dashPreview(dash, scale = 2) {
+  const d = Array.isArray(dash) ? dash : dashArray(dash);
   return d ? d.map((n) => Math.max(0.1, n * scale)).join(" ") : "";
 }
 

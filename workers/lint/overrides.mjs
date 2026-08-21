@@ -2,7 +2,7 @@
 /**
  * Kontrola úprav z developer módu. Volá ju `Kontrola · lint workflowov`.
  *
- * DVE TICHÉ VECI, OBE ZAPLATENÉ:
+ * TRI TICHÉ VECI, VŠETKY ZAPLATENÉ:
  *
  * 1. **Nulová hrúbka čiary.** Políčko „hrúbka" v developer móde ukazuje pri
  *    krivke podľa zoomu prázdne „auto" a prázdne `input[type=number]` skočí
@@ -24,17 +24,27 @@
  *    a trvá na tom, že `normalizeOverrides` nemá ani jednu výhradu a nič
  *    nezahodí.
  *
+ * 3. **Prerušovanie čiary, ktoré vrstva má zo štýlu.** Výber „Čiara" si
+ *    predvoľbu čítal z ÚPRAVY, a tá je prázdna, kým sa niečo nezmení – takže
+ *    pri železnici ukazoval „Plná", hoci je čiarkovaná. A voľba „Plná" sa
+ *    zahadzovala ako „veď to je predvolené", čiže sa zabudované prerušovanie
+ *    nedalo ani zmeniť späť, ani vypnúť. Kontrola drží všetky tri kusy, ktoré
+ *    to opravili: metadáta `frico:dash`, „solid" cez `normalizeOverrides`
+ *    a to, že `applyLayerOverrides` vlastnosť naozaj ZMAŽE.
+ *
  * Použitie:
  *   node workers/lint/overrides.mjs
  */
 import {
   THEMES,
   buildStyle,
+  builtinDash,
   emptyOverrides,
   normalizeOverrides,
   paintValue,
   MAX_DISPLAY_Z
 } from "../../poc/web/themes.js";
+import { dashArray, dashIdOf } from "../../poc/web/patterns.js";
 import { MAP_TYPE_IDS } from "../../poc/web/map-types.js";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -338,6 +348,99 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------- 6. prerušovanie čiary sa dá aj VRÁTIŤ ----------
+// TRETIA TICHÁ VEC: developer mode ukazoval pri každej čiare „Plná" – aj pri
+// železnici, ktorá má `rail` – lebo si predvoľbu čítal z úpravy, a tá je
+// prázdna, kým sa niečo nezmení. Voľba „Plná" sa navyše zahadzovala ako
+// „veď to je predvolené", takže sa čiarkovanie železnice nedalo ani zmeniť,
+// ani vypnúť: panel voľbu prijal, uložil z nej prázdno a v mape ostalo
+// pôvodné prerušovanie. Nespadlo nič.
+//
+// Držia to tri veci naraz a kontrola je na všetky tri: metadáta
+// (`frico:dash` – čo má vrstva zo štýlu), `normalizeOverrides` (nezahodí
+// „solid") a `applyLayerOverrides` („solid" vlastnosť ZMAŽE, nie nastaví
+// na `null`, ktoré by MapLibre neprijal).
+{
+  let sChiarkou = 0;
+  for (const { kde, style } of styles) {
+    for (const layer of style.layers) {
+      if (layer.type !== "line") continue;
+      if ((layer.metadata || {})["frico:derived"]) continue;
+      const arr = (layer.paint || {})["line-dasharray"];
+      const meta = (layer.metadata || {})["frico:dash"];
+      if (!Array.isArray(arr)) {
+        if (meta !== undefined) {
+          chyba("poc/web/themes.js",
+            `vrstva \`${layer.id}\` (${kde}) nesie \`frico:dash\`, hoci plnú čiaru ` +
+            `– panel by ponúkal návrat na prerušovanie, ktoré v štýle nie je.`);
+        }
+        continue;
+      }
+      sChiarkou += 1;
+      const rovnake = typeof meta === "string"
+        ? JSON.stringify(dashArray(meta)) === JSON.stringify(arr)
+        : JSON.stringify(meta) === JSON.stringify(arr);
+      if (!rovnake) {
+        chyba("poc/web/themes.js",
+          `vrstva \`${layer.id}\` (${kde}) má v štýle \`line-dasharray: ` +
+          `${JSON.stringify(arr)}\`, ale v metadátach \`${JSON.stringify(meta)}\`. ` +
+          `Developer mode číta prerušovanie odtiaľ – ukazoval by inú čiaru, ` +
+          `než je v mape, a „späť na pôvodnú" by ju nevrátilo.`);
+      }
+    }
+  }
+  if (!sChiarkou) {
+    chyba("workers/lint/overrides.mjs",
+      "v štýle nie je ani jedna čiara s prerušovaním – kontrola nemá čo strážiť.");
+  }
+
+  // „solid" musí prežiť normalizáciu…
+  const { overrides: soVolbou } = normalizeOverrides({
+    layers: { "rail-hatch": { dash: "solid" } }
+  });
+  if (soVolbou.layers["rail-hatch"]?.dash !== "solid") {
+    chyba("poc/web/themes.js",
+      "`dash: \"solid\"` normalizeOverrides zahodil. Vrstva, ktorá má " +
+      "prerušovanie zo štýlu (železnica, brod), sa potom nedá vrátiť na plnú " +
+      "čiaru – voľba sa prijme a v mape sa nestane nič.");
+  }
+
+  // …a v hotovom štýle to prerušovanie naozaj zmazať.
+  const spolu = (o) => buildStyle({
+    theme: "svetla",
+    tilesUrl: "pmtiles://x/t.pmtiles",
+    spriteUrl: "https://x/sprite",
+    glyphsUrl: "https://x/{fontstack}/{range}.pbf",
+    overrides: o
+  });
+  const zaklad = spolu(null).layers.find((l) => l.id === "rail-hatch");
+  if (!zaklad || builtinDash(zaklad) !== "rail") {
+    chyba("poc/web/themes.js",
+      "`rail-hatch` nemá zabudované prerušovanie `rail` – čiarkovanie železnice " +
+      "je práve tá vrstva, na ktorej sa to celé ukázalo.");
+  }
+  const plna = spolu(soVolbou).layers.find((l) => l.id === "rail-hatch");
+  if (plna && (plna.paint || {})["line-dasharray"] !== undefined) {
+    chyba("poc/web/themes.js",
+      `\`dash: "solid"\` nechalo na \`rail-hatch\` \`line-dasharray: ` +
+      `${JSON.stringify(plna.paint["line-dasharray"])}\`. Plná čiara znamená ` +
+      `vlastnosť ZMAZAŤ – \`null\` by MapLibre neprijal.`);
+  }
+  const ine = spolu(normalizeOverrides({ layers: { "rail-hatch": { dash: "ties" } } }).overrides)
+    .layers.find((l) => l.id === "rail-hatch");
+  if (JSON.stringify((ine.paint || {})["line-dasharray"]) !== JSON.stringify(dashArray("ties"))) {
+    chyba("poc/web/themes.js",
+      "zmena prerušovania na `ties` sa na `rail-hatch` neprejavila.");
+  }
+  // A poistka proti opačnému omylu: `dashIdOf` nesmie tvrdiť, že vlastné
+  // prerušovanie je niektorá z predvolieb.
+  if (dashIdOf([0.35, 2.2]) !== null) {
+    chyba("poc/web/patterns.js",
+      "`dashIdOf` pomenovalo vlastné prerušovanie predvoľbou – panel by ho " +
+      "pri prvom uložení prepísal na inú čiaru.");
   }
 }
 
