@@ -48,6 +48,7 @@ import {
   MAX_PAINT_STOPS,
   NO_FILL,
   builtinDash,
+  REGION_MASK_LAYERS,
   sortStops,
   sortBands,
   isBandList,
@@ -773,10 +774,47 @@ export function initDevMode({
    * Farby z palety sa NEMAŽÚ – tie sú vlastnosťou témy, nie vrstvy (jednu
    * farbu zdieľa aj desať vrstiev) a majú vlastné `⟲` priamo pri sebe.
    */
+  /**
+   * PORADIE KRESLENIA. Ukladá sa ako presun „túto vrstvu kresli tesne pod
+   * tamtú" (`overrides.order`, rozpis pri `applyLayerOrder`), a to JEDEN NA
+   * VRSTVU: pri každom ďalšom ťuknutí sa ten predošlý zahodí, takže sa
+   * zoznam nenafukuje a je z neho vidieť, kde vrstva skončí.
+   *
+   * Poradie je SPOLOČNÉ pre všetky typy máp, aj keď sa práve zapisuje do
+   * priečinka jednej mapy: čo je nad čím, je stavba mapy, nie jej téma –
+   * a keby si každá mapa niesla vlastné poradie, ten istý presun by sa musel
+   * naklikať štyrikrát.
+   */
+  function setLayerOrder(id, before) {
+    overrides.order = (overrides.order || []).filter((m) => m.id !== id);
+    if (before !== undefined) overrides.order.push({ id, before });
+  }
+
+  /** Vrstvy, ktoré sa dajú presúvať – v poradí, v akom sa kreslia. */
+  function drawOrder() {
+    return (getStyle()?.layers || []).filter((l) => {
+      const meta = l.metadata || {};
+      // Odvodené vrstvy (vzor, okraj) aj druhá polovica dvojice (zúbky,
+      // čiarkovanie železnice) sa presúvajú so svojou predlohou.
+      if (meta["frico:derived"] || meta["frico:with"]) return false;
+      // Maska regiónu ostáva navrchu vždy – rozpis pri `applyLayerOrder`.
+      return !REGION_MASK_LAYERS.includes(l.id);
+    });
+  }
+
+  /** Ktorá vrstva sa pri presune naozaj hýbe (polovica dvojice ťahá predlohu). */
+  const orderHead = (layer) =>
+    (layer.metadata || {})["frico:with"] ||
+    (layer.metadata || {})["frico:derived"] ||
+    layer.id;
+
   function resetLayer(id) {
     if (editScope === "all") {
       delete overrides.layers[id];
       for (const m of Object.values(overrides.maps)) delete m.layers?.[id];
+      // Aj presun v poradí kreslenia: ten je spoločný pre všetky mapy, takže
+      // v rozsahu „len táto mapa" ho zrušiť nemožno – tak ako spoločnú úpravu.
+      setLayerOrder(id, undefined);
     } else {
       delete mapBucket()?.layers?.[id];
     }
@@ -1959,7 +1997,9 @@ export function initDevMode({
           disabled: mozeReset ? null : true,
           title: mozeReset
             ? `Zahodí VŠETKY úpravy tejto vrstvy v ${kam} – viditeľnosť, `
-              + `zoomy, farby, hrúbky, ikonu, vzor aj okraj.${resetLeftovers(layer.id)} `
+              + `zoomy, farby, hrúbky, ikonu, vzor, okraj`
+              + `${editScope === "all" ? " aj poradie kreslenia" : ""}.`
+              + `${resetLeftovers(layer.id)} `
               + `Farby z palety ostávajú, tie patria téme.`
             : "Úprava tejto vrstvy je spoločná pre všetky mapy – zrušiť sa dá "
               + `len v rozsahu „všetky mapy" (prepínač hore).`,
@@ -2038,6 +2078,9 @@ export function initDevMode({
           : null
       ])
     );
+
+    // ---- poradie kreslenia ----
+    parts.push(orderSection(layer));
 
     // ---- farby ----
     if (colorProps(layer).length) parts.push(sectionTitle("Farby"));
@@ -2465,6 +2508,122 @@ export function initDevMode({
   }
 
   // ---------- tab: prvky ----------
+  /**
+   * PORADIE KRESLENIA jednej vrstvy.
+   *
+   * MapLibre kreslí vrstvy tak, ako idú v štýle za sebou – navrchu je tá
+   * POSLEDNÁ. Dovtedy sa to dalo zmeniť len v zdrojáku, takže „násyp má byť
+   * pod cestou" znamenalo commit a build. Tu je to presun a uloží sa do
+   * `style-overrides.json` ako všetko ostatné.
+   *
+   * Susedov treba VYPÍSAŤ: zoznam vrstiev je zoradený po skupinách, nie
+   * podľa kreslenia, takže z neho nie je vidieť, čo je nad čím – a po
+   * ťuknutí na „vyššie" by sa nedalo povedať, či sa niečo stalo.
+   */
+  function orderSection(layer) {
+    const head = orderHead(layer);
+    const poradie = drawOrder();
+    const i = poradie.findIndex((l) => l.id === head);
+    const menoV = (l) => (l?.metadata || {})["frico:label"] || l?.id || "";
+    const presun = (overrides.order || []).find((m) => m.id === head);
+
+    if (i < 0) {
+      return el("div", { class: "dev-sub" }, [
+        el("span", {
+          class: "dev-note",
+          text: REGION_MASK_LAYERS.includes(layer.id)
+            ? "Maska regiónu sa kreslí vždy úplne navrchu – vrstva za ňou by kreslila aj mimo stiahnutého regiónu."
+            : "Túto vrstvu presúvať netreba – kreslí sa so svojou predlohou."
+        })
+      ]);
+    }
+
+    const pod = poradie[i - 1];
+    const nad = poradie[i + 1];
+    const parts = [
+      sectionTitle(
+        "Poradie kreslenia",
+        `${i + 1}. z ${poradie.length} · navrchu je posledná · platí pre všetky typy máp`
+      ),
+      el("div", { class: "dev-sub" }, [
+        el("span", {
+          class: "dev-note",
+          text:
+            (nad ? `nad ňou: ${menoV(nad)}` : "je úplne navrchu") +
+            " · " +
+            (pod ? `pod ňou: ${menoV(pod)}` : "je úplne naspodku") +
+            (head === layer.id ? "" : ` · presúva sa s vrstvou „${menoV(poradie[i])}"`)
+        })
+      ]),
+      el("div", { class: `dev-fields${presun ? " changed" : ""}` }, [
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "▲ vyššie",
+          disabled: nad ? null : true,
+          title: nad ? `Kresliť nad vrstvu „${menoV(nad)}"` : "Vyššie to už nejde",
+          onclick: () => {
+            setLayerOrder(head, poradie[i + 2] ? poradie[i + 2].id : null);
+            apply({ immediate: true });
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "▼ nižšie",
+          disabled: pod ? null : true,
+          title: pod ? `Kresliť pod vrstvu „${menoV(pod)}"` : "Nižšie to už nejde",
+          onclick: () => {
+            setLayerOrder(head, pod.id);
+            apply({ immediate: true });
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "navrch",
+          title: "Kresliť nad všetko ostatné (maska regiónu ostáva navrchu vždy)",
+          onclick: () => {
+            setLayerOrder(head, null);
+            apply({ immediate: true });
+          }
+        }),
+        presun
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na poradie zo štýlu",
+              onclick: () => {
+                setLayerOrder(head, undefined);
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]),
+      // Skok cez celý zoznam. „O jednu vyššie" je pri dvoch stovkách vrstiev
+      // na presun násypu pod cesty nepoužiteľné – toto je tá istá otázka
+      // položená naraz.
+      el("div", { class: `dev-sub${presun ? " changed" : ""}` }, [
+        selectField({
+          label: "kresliť tesne pod",
+          value: presun ? presun.before ?? "" : "",
+          options: [
+            ["", presun ? "— úplne navrch —" : "— poradie zo štýlu —"],
+            ...poradie
+              .filter((l) => l.id !== head)
+              .map((l) => [l.id, `${menoV(l)} (${l.id})`])
+          ],
+          onChange: (v) => {
+            setLayerOrder(head, v || null);
+            apply({ immediate: true });
+          }
+        })
+      ])
+    ];
+    return el("div", {}, parts);
+  }
+
   /** Hodnota atribútu do tabuľky – prázdne a dlhé sa musia dať rozoznať. */
   const attrText = (v) => {
     if (v === null || v === undefined) return "—";

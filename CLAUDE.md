@@ -661,6 +661,44 @@ v `layout` je pre MapLibre tvrdá chyba – neodmietne vrstvu, ale CELÝ štýl,
 takže by sa mapa nenačítala vôbec (v `paint` neznáme len ignoruje). Stráži to
 `workers/lint/icons.mjs`.
 
+### Poradie kreslenia sa dá zmeniť bez commitu
+
+MapLibre kreslí vrstvy tak, ako idú v štýle za sebou – **navrchu je tá
+posledná**. Čo je nad čím, je teda rozhodnutie štýlu, lenže vidieť ho je až
+v mape (násyp nad cestou, plot cez chodník), a kým sa to dalo zmeniť len
+v zdrojáku, znamenala každá taká otázka commit a build. V developer móde je
+teraz pri každej vrstve **Poradie kreslenia**: „vyššie / nižšie / navrch"
+a výber „kresliť tesne pod <vrstvu>“.
+
+**Ukladá sa ZOZNAM PRESUNOV, nie celé poradie** (`overrides.order`, položka
+`{"id": "feature-embankment", "before": "road-minor"}`). Uložiť všetkých ~250
+id by znamenalo, že sa úpravy rozsypú pri prvej vrstve, ktorá v štýle pribudne
+alebo zmizne (iná téma, iný typ mapy, chýbajúci `featuresUrl`) – a rozsypú sa
+TICHO. Presun je oproti tomu odpoveď na jednu otázku, dá sa prečítať a vrstvu,
+ktorú ten štýl nepozná, jednoducho preskočí. **Jeden presun na vrstvu**
+a vyhráva posledný: presuny sa vyhodnocujú v rade za sebou, takže by ich pri
+klikaní pribúdali stovky a nedalo by sa z nich prečítať, kde vrstva skončí.
+
+**Presúva sa celá rodina.** Niektoré prvky sú v štýle DVE vrstvy, lebo inak sa
+povedať nedajú: hrana so zúbkami (druhá čiara odsunutá nabok) a železnica
+(tmavá čiara a na nej svetlé čiarkovanie), k tomu vzor a okraj z developer
+módu. Farbu a hrúbku majú vlastnú – to sú naozaj dve otázky –, ale poradie je
+pri nich jedna, inak by ostali zúbky nad cestou a hrana pod ňou. Drží to
+`frico:with` v metadátach (`frico:derived` pri vzore a okraji).
+
+**Maska regiónu ostáva posledná, nech sa presúva čokoľvek.** Vrstva za ňou by
+kreslila aj mimo stiahnutého regiónu – presne tá tichá chyba, kvôli ktorej
+maska existuje. Panel ju preto neponúka presúvať a `applyLayerOrder` ju na
+koniec vráti aj tak.
+
+Stráži to `workers/lint/overrides.mjs`: presun nesmie zmeniť počet vrstiev
+(stratená vrstva v mape nie je a štýl je pritom platný), musí vziať so sebou
+druhú polovicu dvojice a maska musí ostať navrchu.
+
+**Poradie je spoločné pre všetky typy máp**, aj keď sa práve zapisuje do
+priečinka jednej mapy: čo je nad čím, je stavba mapy, nie jej téma – a keby si
+každá mapa niesla vlastné, ten istý presun by sa musel naklikať štyrikrát.
+
 ### Prerušovanie čiary: „zo štýlu“ je odpoveď, „Plná“ je úprava
 
 Výber „Čiara“ v developer móde si predvoľbu čítal z ÚPRAVY, a tá je prázdna,
