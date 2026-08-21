@@ -817,6 +817,13 @@ len rovná časť hrán (`stretchX`/`stretchY`), rohy nie, inak by z obdĺžnika
 pri dlhom čísle kapsula; na bežnom rastri to funguje, na vzdialenostnom poli
 nie (rozpis v hlavičke `poc/web/shields.js`).
 
+**Zoom, veľkosť čísla a rozostup po ceste sa ladia pri každej triede** (tá istá
+záložka, ten istý `layerBlock` ako pri značkách trás – je to jedna vrstva
+`road-shield-<trieda>`, takže to ide do `overrides.layers`, nie do
+`overrides.shields`). Veľkosť štítka JE veľkosť písma: podklad má
+`icon-text-fit`, teda je natiahnutý presne na číslo, a vlastnú `icon-size`
+naschvál nemá – keby ju dostal, prestal by číslu sedieť.
+
 **Čo sa v developer móde prepnúť DÁ, je TVAR** (záložka „Štítky",
 `overrides.shields[<trieda>].shape`): v sprite sú všetky tvary naraz, takže je
 to zmena mena obrázka, nie prebuildovanie. Preto sa pečie tvar × trieda × téma
@@ -869,18 +876,32 @@ tabuľky – červená je červená aj na tmavej mape. Pásik trasy pod ňou nao
 témou ide (`trailRed` a spol.), lebo to je prvok mapy. Témovať aj značky by
 znamenalo štvornásobok obrázkov v sprite.
 
-**Značky dvoch trás na jednej ceste sa stavajú NAD SEBA.** Trasy majú
+**Značky dvoch trás na jednej ceste sa stavajú NAD SEBA, tesne.** Trasy majú
 v dlaždiciach tú istú geometriu (pásiky vedľa seba robí až `line-offset`, ktorý
 na symboly neplatí), takže bez posunu padnú všetky značky na jedno miesto
 a kolízia nechá jednu – vždy tú istú, lebo poradie vrstiev je pevné. Posúva sa
 `icon-offset`-om podľa `side` a `off` (pešie nahor, kolesové nadol), a to je
 v PIXELOCH násobených `icon-size`, nie vo výškach značky: kým tu boli „výšky",
-bol posun pod jeden pixel a z troch trás bola v mape vidieť jedna. Krok stĺpika
-musí byť väčší než značka **plus dvakrát `icon-padding`**, lebo padding sa
-so zoomom neškáluje.
+bol posun pod jeden pixel a z troch trás bola v mape vidieť jedna.
 
-**Čo sa dá v developer móde** (záložka „Trasy"): rozostup značiek a ich
-veľkosť (`overrides.trails.marks`), a pri každom druhu trasy tvar značky –
+**Krok stĺpika je `MARK_BOX`, čiže presne strana štvorca – bez medzery.**
+Obrázok je o `MARK_PAD` (1 px) na každej strane väčší než tá strana, takže sa
+priehľadné okraje prekryjú a VIDITEĽNÉ tabuľky sedia na sebe tak, ako sedia na
+strome. Cena je **`icon-allow-overlap`, a bez nej to nejde**: kolízny obdĺžnik
+je celý obrázok (`MARK_IMAGE`) plus `icon-padding`, takže sa dve susedné
+priečky o dva pixely prekrývajú a MapLibre by druhú značku ZAHODILA – presne to
+sa dialo predtým z opačnej strany (pri kroku 16 bola z červenej a modrej vidieť
+len červená) a riešilo sa to medzerou 12 px. `icon-padding` je preto nula:
+neškáluje sa s `icon-size`, takže by pri malej značke vážil dvojnásobne. To
+isté platí pre **ikonku druhu trasy** – stojí v tom istom stĺpiku (`off` a
+`side` sa číslujú raz na cestu, nie raz na značku), takže sa ikonky viacerých
+trás na jednej ceste už neprekrývajú. Stráži to `workers/lint/marks.mjs`:
+keď je krok menší než kolízny obdĺžnik, `icon-allow-overlap` musí byť zapnuté.
+
+**Čo sa dá v developer móde** (záložka „Trasy"): rozostup značiek po trase,
+ich veľkosť a krok stĺpika nad sebou (`overrides.trails.marks` –
+`spacing`, `size`, `step`; medze na jednom mieste v `TRAIL_MARK_RANGES`),
+a pri každom druhu trasy tvar značky –
 `podľa OSM` (predvolené), konkrétny tvar, alebo `žiadna`
 (`overrides.trails.types[<druh>].mark`). Tie tri odpovede sa nedajú stlačiť do
 dvoch: „taká, aká je v OSM" nie je meno tvaru.

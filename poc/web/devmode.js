@@ -66,6 +66,7 @@ import {
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
   TRAIL_MARK_DEFAULTS,
+  TRAIL_MARK_RANGES,
   TRAIL_MARK_ZOOM,
   SHIELD_DEFS,
   trailGapPx,
@@ -2884,12 +2885,22 @@ export function initDevMode({
     "text-opacity": { min: 0, max: 1, step: 0.05, label: "krytie písma" }
   };
 
+  /** Jedna vrstva trasy – `layerBlock` nad jej id. */
+  const trailLayerBlock = (role, typeId) =>
+    layerBlock(`trail-${typeId}${role.suffix}`, role);
+
   /**
-   * Jedna vrstva trasy: rozsah zoomu a k tomu jej čísla – každé s krivkou
-   * alebo pásmami, teda „na týchto zoomoch takto, na týchto inak".
+   * JEDNA VRSTVA S ČÍSLAMI, KTORÉ K NEJ PATRIA: rozsah zoomu a k tomu každé
+   * číslo s krivkou alebo pásmami, teda „na týchto zoomoch takto, na týchto
+   * inak".
+   *
+   * Je to tá istá úprava (`overrides.layers[<id>]`), akú robí záložka Vrstvy –
+   * rozdiel je len v tom, že tu je pokope to, čo patrí k jednej veci: štyri
+   * vrstvy jednej trasy, alebo štítok jednej triedy cesty. V zozname vrstiev
+   * ležia na štyroch rôznych miestach a bez farby a značky vedľa nich sa nedá
+   * povedať, ktorá je ktorá.
    */
-  function trailLayerBlock(role, typeId) {
-    const id = `trail-${typeId}${role.suffix}`;
+  function layerBlock(id, role) {
     const layer = getStyle().layers.find((l) => l.id === id);
     // Vrstva nemusí existovať: ikona sa nekreslí, keď ju sada ikoniek nemá,
     // a značka vtedy, keď ju developer mode vypol. Mlčky sa preskočiť nesmie
@@ -3109,11 +3120,15 @@ export function initDevMode({
     // menší = značka je vidieť častejšie, ale trasa sa zaplní štvorcami.
     const marks = trailMarkPx(overrides);
     const markFields = [
-      ["spacing", "Rozostup značiek", 20, 2000, 5,
-        "vzdialenosť dvoch značiek na obrazovke; každý druh trasy ho má " +
-        "o kúsok iný, aby si značky dvoch trás na tej istej ceste nesadli na seba"],
-      ["size", "Veľkosť značky", 0.2, 4, 0.05,
-        "násobok predvolenej veľkosti štvorca"]
+      ["spacing", "Rozostup po trase", ...TRAIL_MARK_RANGES.spacing, 5,
+        "vzdialenosť dvoch značiek NA TRASE, v pixeloch obrazovky – teda ako " +
+        "často sa značka po ceste opakuje"],
+      ["size", "Veľkosť značky", ...TRAIL_MARK_RANGES.size, 0.05,
+        "násobok predvolenej veľkosti štvorca"],
+      ["step", "Odstup značiek nad sebou", ...TRAIL_MARK_RANGES.step, 1,
+        "keď vedie po jednej ceste viac trás, stavajú sa ich značky nad seba – " +
+        "toto je krok toho stĺpika. Predvolené je presne strana štvorca, čiže " +
+        "značky sedia tesne na sebe bez medzery; 0 ich položí na seba"]
     ].map(([key, label, min, max, step, note]) =>
       el("div", { class: `dev-sub${overrides.trails.marks[key] != null ? " changed" : ""}` }, [
         numberField({
@@ -3377,6 +3392,23 @@ export function initDevMode({
   // prepnúť TVAR – všetky tvary sú v sprite naraz, takže je to zmena mena
   // obrázka; farba štítka sa mení v palete a prejaví sa až po builde.
 
+  /**
+   * ČO SA NA ŠTÍTKU S ČÍSLOM CESTY DÁ LADIŤ PODĽA ZOOMU.
+   *
+   * Tá istá otázka ako pri značke trasy („od akého zoomu, ako veľký, ako
+   * často"), takže tá istá odpoveď: je to jedna vrstva (`road-shield-<trieda>`)
+   * a nastavuje sa `layerBlock`-om, nie druhou pákou vedľa.
+   *
+   * VEĽKOSŤ ŠTÍTKA JE VEĽKOSŤ PÍSMA, a nie je to zjednodušenie: podklad je
+   * obrázok s `icon-text-fit`, teda natiahnutý presne na číslo. Vlastnú
+   * `icon-size` nemá – keby ju dostal, prestal by číslu sedieť.
+   */
+  const SHIELD_LAYER_ROLE = {
+    label: "Štítok v mape",
+    note: "od akého zoomu, aké veľké číslo a ako často po ceste",
+    layout: ["text-size", "symbol-spacing"]
+  };
+
   /** Tvar štítka jednej triedy cesty; `undefined` = späť na predvolený. */
   function setShieldShape(id, shape) {
     if (shape === undefined) delete overrides.shields[id];
@@ -3444,7 +3476,12 @@ export function initDevMode({
                 }
               : null
           })
-        ])
+        ]),
+        // Zoom, veľkosť čísla a rozostup po ceste – to isté, čo sa pri
+        // značkách trás ladí v záložke „Trasy". Dovtedy sa to dalo nastaviť
+        // len v zozname vrstiev, kde sa `road-shield-primary` musel najprv
+        // nájsť medzi dvoma stovkami iných.
+        layerBlock(`road-shield-${id}`, SHIELD_LAYER_ROLE)
       ]);
     });
 
@@ -3455,7 +3492,8 @@ export function initDevMode({
           "Číslo cesty je značka, nie text – má podklad, stojí narovno a opakuje " +
           "sa po celej ceste. Podklad je obrázok upečený do spritu, takže sa tu " +
           "prepína jeho TVAR; farba sa v mape prejaví až po prebuildovaní spritu " +
-          "(v prehliadači je vidieť len na náhľade vľavo)."
+          "(v prehliadači je vidieť len na náhľade vľavo). Zoom, veľkosť čísla " +
+          "a rozostup po ceste sú pod každou triedou – tie platia hneď."
       }),
       el("div", { class: "dev-list" }, rows),
       el("div", { class: "dev-bulk on" }, [
@@ -3465,8 +3503,12 @@ export function initDevMode({
           text: "Späť na pôvodné štítky",
           onclick: () => {
             overrides.shields = {};
-            for (const [, , , colorKey, , , textKey, borderKey] of SHIELD_DEFS) {
+            for (const [id, , , colorKey, , , textKey, borderKey] of SHIELD_DEFS) {
               for (const key of [colorKey, textKey, borderKey]) setPaletteColor(key, undefined);
+              // Aj zoom, veľkosť a rozostup – tie sedia v `layers`, nie
+              // v `shields`, takže by ich vyprázdnenie `shields` nechalo tak
+              // a tlačidlo by nesplnilo, čo sľubuje.
+              resetLayer(`road-shield-${id}`);
             }
             apply();
           }
