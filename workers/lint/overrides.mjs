@@ -524,6 +524,35 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
   skus("pokus prekryť masku", [{ id: "background", before: null }], () => {});
 }
 
+// ---------- 8. každá záložka panela sa aj kreslí ----------
+// TICHÁ VEC, KTORÁ SA PONÚKA SAMA: zoznam záložiek (`TABS`) a prepínač
+// v `renderBody` sú dve miesta. Keď v prepínači nejaká chýba, nespadne nič –
+// ťuknutie na ňu prepadne do POSLEDNEJ vetvy (`renderFile`), takže sa
+// otvorí záložka „Súbor" s JSON-om a vyzerá to, že panel „nefunguje".
+{
+  const zdroj = readFileSync(join(ROOT, "poc", "web", "devmode.js"), "utf8");
+  const blok = zdroj.match(/const TABS = \[([\s\S]*?)\];/);
+  if (!blok) {
+    chyba("poc/web/devmode.js", "zoznam záložiek `TABS` sa nenašiel – kontrola nemá čo strážiť.");
+  } else {
+    const ids = [...blok[1].matchAll(/\["([a-z]+)",/g)].map((m) => m[1]);
+    if (ids.length < 2) {
+      chyba("poc/web/devmode.js", "zo zoznamu `TABS` sa nedali prečítať id záložiek.");
+    }
+    // Posledná záložka je zámerne bez podmienky – je to koncová vetva
+    // prepínača (`: renderFile()`), teda tá, do ktorej všetko prepadne.
+    for (const id of ids.slice(0, -1)) {
+      if (!zdroj.includes(`tab === "${id}"`)) {
+        chyba(
+          "poc/web/devmode.js",
+          `záložka "${id}" je v zozname, ale \`renderBody\` ju nekreslí – ` +
+          `ťuknutie na ňu otvorí poslednú vetvu prepínača (záložku „Súbor").`
+        );
+      }
+    }
+  }
+}
+
 console.log(
   `úpravy: ${bad} chýb (${odfotenych} odfotených vrstiev, ${skusok} vložení, ` +
   `7 tvarov zoomových pásiem, ` +

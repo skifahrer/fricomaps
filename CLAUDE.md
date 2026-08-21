@@ -670,6 +670,14 @@ v zdrojáku, znamenala každá taká otázka commit a build. V developer móde j
 teraz pri každej vrstve **Poradie kreslenia**: „vyššie / nižšie / navrch"
 a výber „kresliť tesne pod <vrstvu>“.
 
+**Celý stoh je v záložke „Poradie".** Zoznam v záložke „Vrstvy" je zoradený
+PO SKUPINÁCH (cesty, vodstvo, popisky), lebo tam sa hľadá „kde sa nastaví
+hrúbka chodníka" – a v takom zozname sa na „čo je nad čím" odpovedať nedá:
+násyp a cesta sú v ňom na dvoch rôznych miestach. „Poradie" je preto jeden
+dlhý zoznam v poradí kreslenia, **prvý riadok navrchu**, s ťahaním (`⠿`) aj
+šípkami. Kým je v ňom zadané hľadanie, ťahanie sa vypína – v prefiltrovanom
+zozname nie je vidieť, medzi ktoré dve vrstvy by vrstva padla.
+
 **Ukladá sa ZOZNAM PRESUNOV, nie celé poradie** (`overrides.order`, položka
 `{"id": "feature-embankment", "before": "road-minor"}`). Uložiť všetkých ~250
 id by znamenalo, že sa úpravy rozsypú pri prvej vrstve, ktorá v štýle pribudne
@@ -690,6 +698,12 @@ pri nich jedna, inak by ostali zúbky nad cestou a hrana pod ňou. Drží to
 kreslila aj mimo stiahnutého regiónu – presne tá tichá chyba, kvôli ktorej
 maska existuje. Panel ju preto neponúka presúvať a `applyLayerOrder` ju na
 koniec vráti aj tak.
+
+A ešte jedna tichá vec, ktorú tá záložka priniesla: **zoznam záložiek
+(`TABS`) a prepínač v `renderBody` sú dve miesta**. Keď v prepínači niektorá
+chýba, nespadne nič – ťuknutie prepadne do poslednej vetvy a otvorí sa
+„Súbor" s JSON-om, čo vyzerá ako pokazený panel. Stráži to
+`workers/lint/overrides.mjs`.
 
 Stráži to `workers/lint/overrides.mjs`: presun nesmie zmeniť počet vrstiev
 (stratená vrstva v mape nie je a štýl je pritom platný), musí vziať so sebou
