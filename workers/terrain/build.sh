@@ -6,15 +6,17 @@
 # regiónom, modelom a maxzoomom ich už len stiahne. (Do GitHub releasov sa
 # nepublikuje nič – rozpis je vo `workers/drive/store.py`.)
 #
-# MENO ASSETU NESIE ZDROJ (`terrain-<kľúč>-<model>-z<maxzoom>-v4.pmtiles`):
+# MENO ASSETU NESIE ZDROJ (`terrain-<kľúč>-<model>-z<maxzoom>-v<verzia>.pmtiles`):
 # tieňovanie zo Sonnyho a z DMR 3.5 nie je to isté a jedno sa nesmie vydávať
 # za druhé – preto sa meno pri ústupe na Sonnyho prepočíta.
 #
-# A NESIE AJ PODOBU KÓDOVANIA (`-v4`). Meno je sľub, a pri sklade je to sľub
-# aj o tom, čo v tých dlaždiciach je: `v4` priemeruje až od dvojnásobku bunky
-# modelu (rozpis vo `workers/lib/cell.py`), `v3` mal zvislý krok podľa zoomu,
-# ale tesne nad bunkou ešte `average` – a s ním mriežku; staršie majú navyše
-# výšku zaokrúhlenú na celé metre.
+# A NESIE AJ PODOBU KÓDOVANIA (`-v5`). Meno je sľub, a pri sklade je to sľub
+# aj o tom, čo v tých dlaždiciach je: `v5` má mimo kraja rovinu (tieňovanie
+# teda končí na hranici regiónu, nie až na hranici dlaždice, ktorá sa ho
+# dotkla), `v4` priemeruje až od dvojnásobku bunky modelu (rozpis vo
+# `workers/lib/cell.py`), `v3` mal zvislý krok podľa zoomu, ale tesne nad
+# bunkou ešte `average` – a s ním mriežku; staršie majú navyše výšku
+# zaokrúhlenú na celé metre.
 # Bez tej prípony by sa oprava na už spočítanom regióne neprejavila – sklad
 # by vrátil staré dlaždice a build by bol zelený. To isté číslo je v kľúči
 # cache (`workers/plan/cache-keys.sh`), lebo je to tá istá otázka.
@@ -56,7 +58,7 @@ REBUILD="${TERRAIN_REBUILD:-false}"
 # každom behu počítalo odznova (a keď v sklade ostala stará `-v3`, vytiahol sa
 # z nej zoom a stiahnuť sa skúsil súbor, ktorý neexistuje). Nič nespadlo, len
 # to trvalo – pravidlo 8 v čistej podobe.
-ENC_VER=v4
+ENC_VER=v5
 asset_name() { echo "terrain-${REGION_KEY}-${TDEM}-z${1}-${ENC_VER}.pmtiles"; }
 
 # Hotové = leží tu hotový archív. Kým to bol strom PNG, stačilo „priečinok
@@ -130,7 +132,11 @@ if ! have_tiles; then
     exit "$TRC"
   fi
   echo "::group::Výškové dlaždice do z$TZ z modelu $TDEM (strop ${TBUDGET_MB} MB)"
-  # `--poly`: dlaždice mimo kraja sa nekreslia (smie prečnievať pol dlaždice).
+  # `--poly`: dlaždice mimo kraja sa nekreslia (smie prečnievať pol dlaždice)
+  # a v tých, čo cez hranicu prečnievajú, je mimo kraja rovina – hillshade
+  # kreslí podľa sklonu, takže tieňovanie sa zastaví na hranici regiónu a nie
+  # až na okraji dlaždice. Bez toho presahovalo na z10 na dvojnásobok plochy
+  # kraja (namerané v hlavičke `tiles.py`).
   # Keď súbor nie je (polygón sa nestiahol), `tiles.py` to povie a kreslí celý
   # bbox ako predtým – vrstva teda nikdy nezmizne, len je väčšia.
   python3 workers/terrain/tiles.py --dem="dem/$TDEM/all.vrt" --bbox="$BBOX" \

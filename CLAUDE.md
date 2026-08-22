@@ -552,12 +552,25 @@ a Planetiler do nich okrem OSM dát kreslí aj vodstvo, pobrežia a Natural Eart
 ktoré sú celosvetové. Za hranicou teda ostalo podfarbené prázdno bez ciest
 a sídel – čo vyzerá ako mapa, ktorá sa nedonačítala, nie ako koniec mapy.
 
-Sú na to **dva kusy a oba treba**:
+Sú na to **tri kusy a všetky treba**:
 
 | kus | čo robí | kde |
 |---|---|---|
 | dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
+| tieňovanie má mimo regiónu rovinu | pixely mimo kraja dostanú výšku 0, takže hillshade z nich nekreslí nič | `workers/lib/region-mask.py` (`pixel_mask`) → `workers/terrain/tiles.py` |
 | presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
+
+**Tieňovanie je tretí kus, lebo dlaždica je nedeliteľná.** Ktorá sa kraja
+dotkne, vyrobí sa celá – a na nízkych zoomoch je obrovská, takže tieňovaný
+reliéf pokračoval ďaleko za hranicu stiahnutého regiónu: namerané na Prešovskom
+kraji **z10 2,2× jeho plochy, z8 6,2×**. Bola to tichá chyba – v mape to
+zakrývala plocha `mimo` zo štýlu, takže to bolo vidieť, len keď sa nekreslila
+(alebo v 3D pod iným uhlom). Odpoveď je jemnejšia otázka („ktoré PIXELY ležia
+v kraji?") a rovina mimo nich; hillshade kreslí krytím podľa sklonu, takže
+z roviny nenakreslí nič. Stena medzi terénom a rovinou pritom **nesmie stáť
+presne na hranici** – bol by z nej prstenec po jej vnútornej strane, teda
+v mape –, tak je posunutá o `--edge` (2 px) za ňu. Stráži to
+`workers/lint/terrain.py`.
 
 **PBF kraja sa REŽE Z RODIČA (`osmfr.parent`), hotový export kraja sa
 nepoužíva.** osm.fr má pre každý kraj vlastný `{kraj}-latest.osm.pbf` (36 MB)
@@ -1203,7 +1216,9 @@ odpoveď podpíše** (`workers/lint/dem-empty.py`), že **tieňovanie nestratí
 zvislú presnosť, ktorou stojí a padá** (`workers/lint/terrain.py` – výška
 zaokrúhlená na celé metre a `-r average` pri zväčšovaní DEM spravili
 z hillshadu, ktorý je derivácia výšky, pravidelnú tkaninu cez celú mapu; nič
-nespadlo), že **si resampling výškového modelu nikto nevyberá sám**
+nespadlo – a k tomu, že **tieňovanie končí na hranici regiónu**: dlaždicový
+orez hrubší než dlaždica byť nemôže, takže reliéf presahoval na z10 na
+dvojnásobok plochy kraja), že **si resampling výškového modelu nikto nevyberá sám**
 (`workers/lint/dem-resampling.py` – tá istá mriežka o krok skôr, rovno
 v modeli: `-r average` pri pomere 4 m → 5 m, kde GDAL každú štvrtú zdrojovú
 bunku preskočí, takže vrstevnice aj tieňovanie ju majú zapečenú v dátach;

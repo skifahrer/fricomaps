@@ -1593,6 +1593,30 @@ končila presne na hranici a v mape by bola rovná hrana tam, kde ešte má byť
 terén. Namerané na Prešovskom kraji: z11 sa vynechá 7 % dlaždíc, z13 27 %,
 **z14 31 %**.
 
+**Lenže dlaždica je nedeliteľná, tak sa tieňovanie orezáva aj PO PIXELOCH.**
+Ktorá sa kraja dotkne, tá sa vyrobí CELÁ – a na nízkych zoomoch je obrovská,
+takže tieňovaný reliéf pokračoval ďaleko za hranicu stiahnutého regiónu.
+Namerané na Prešovskom kraji ako plocha vyrobených dlaždíc proti ploche kraja:
+
+| zoom | z8 | z9 | z10 | z11 | z12 | z13 | z14 |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pred | 6,2× | 3,8× | **2,2×** | 1,7× | 1,4× | 1,2× | 1,11× |
+| po | 1,07× | 1,04× | **1,02×** | 1,00× | 1,00× | 1,00× | 1,00× |
+
+Čo v dlaždici padne mimo kraj, dostane **rovinu** (výška 0, `pixel_mask`
+v tom istom súbore). Hillshade kreslí krytím podľa SKLONU, takže z roviny
+nenakreslí nič – tieňovanie tým končí na hranici regiónu aj vnútri dlaždice,
+ktorá cez ňu prečnieva. V mape to dovtedy zakrývala až plocha `mimo` zo štýlu,
+čiže to bola tichá chyba: vrstva bola dvakrát väčšia než región a bolo to
+vidieť, len keď sa maska nekreslila (a v 3D pod iným uhlom).
+
+Hrana medzi terénom a rovinou je pre hillshade **zvislá stena**, takže nesmie
+stáť presne na hranici: `--edge` (2 px) ju posunie za ňu, kde ju plocha `mimo`
+prekrýva. Dlaždíc je pri tom menej, nie viac – tie celé mimo kraja sú po
+vynulovaní rovina a `je_rovina` ich vynechá. Podoba kódovania preto ide
+z `v4` na **`v5`** (meno assetu v sklade aj kľúč cache), inak by build vrátil
+staré dlaždice a oprava by sa na už spočítanom regióne neprejavila.
+
 Maska je rastrová a **bez shapely** – tá istá úvaha ako v `dem/coverage.py`: pri
 mriežke 2048 buniek je bunka ~100 m, kým dlaždica na z14 má ~1,5 km. Vrstevnice
 a skaly dostanú polygón ako `-cutline` do gdalwarpu (bez `-crop_to_cutline` –

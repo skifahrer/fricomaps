@@ -54,13 +54,17 @@ TS="$OPT_SHADING_SOURCE"
   # skaly z druhého) – kľúč preto nesie obe mená.
   echo "demtiles_contours=demtiles-v2-c$CS$DC-r$RS$DR-$B"
   echo "demtiles_terrain=demtiles-v2-t$TS$DT-$B"
+  # `v5`: mimo kraja je v dlaždici rovina, takže tieňovanie končí na hranici
+  # regiónu a nie až na okraji dlaždice, ktorá sa ho dotkla (na z10 to bol
+  # dvojnásobok plochy kraja). Tvar dlaždíc sa nezmenil, len ich obsah –
+  # a bez novej verzie by ich cache vrátila po starom.
   # `v4`: priemeruje sa až od dvojnásobku bunky modelu (`lib/cell.py`).
   # `v3` opravilo zväčšovanie, ale v pásme tesne nad bunkou (Sonny na z12)
   # ostal `average` – a s ním mriežka, ktorú bolo na mape stále vidieť.
   # Staré dlaždice by sa z cache vrátili ako hotové a oprava by sa na už
   # spočítanom regióne neprejavila. To isté číslo nesie meno assetu v sklade
   # (`workers/terrain/build.sh`).
-  echo "terrain=terrain-v4-$TS-$DT-$B-z${OPT_TERRAIN_MAXZOOM}"
+  echo "terrain=terrain-v5-$TS-$DT-$B-z${OPT_TERRAIN_MAXZOOM}"
   # Sklad častí sklonu. V kľúči je VÝREZ, MODEL a MRIEŽKA – teda
   # presne to, čo mení obsah častí. Prah sklonu v ňom zámerne NIE
   # JE: uplatňuje sa až pri vektorizácii, takže po jeho zmene sa

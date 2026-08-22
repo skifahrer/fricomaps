@@ -76,6 +76,35 @@ Namerané na tom istom teréne (bunka 20 m, mriežka ×10⁻³):
 Prvá oprava riešila len zväčšovanie (z13 a vyššie), takže na z12 ostal
 `average` – a mriežku bolo na mape stále vidieť.
 
+TIEŇOVANIE KONČÍ NA HRANICI REGIÓNU, NIE NA HRANICI DLAŽDICE. Dlaždice sa
+robia na OBDĹŽNIKU bboxu a `--poly` z nich vyhodí tie, čo sa kraja ani
+nedotknú – lenže hrubšie než dlaždica sa to orezať nedá a dlaždica je na
+nízkych zoomoch obrovská. Namerané na Prešovskom kraji (10 184 km²) ako plocha
+vyrobených dlaždíc proti ploche kraja:
+
+    zoom      z8     z9    z10    z11    z12    z13    z14
+    pokrytie 6,2×   3,8×   2,2×   1,7×   1,4×   1,2×   1,11×
+
+Tieňovaný reliéf teda pokračoval ďaleko za hranicu stiahnutého regiónu – na
+z10 na dvojnásobku jeho plochy. V mape to zakrývala až plocha `mimo` zo štýlu
+(`workers/deploy/region-mask.py`), takže stačilo pozrieť sa na vrstvu bez nej
+a mapa „pokračovala" tam, kde už žiadna nie je.
+
+Preto sa orezáva aj PO PIXELOCH: čo v dlaždici padne mimo kraj, dostane rovinu
+(`region-mask.pixel_mask`). Hillshade kreslí krytím podľa SKLONU, takže
+z roviny nenakreslí nič, a 3D terén z nej spraví rovnú plochu – mapa tak končí
+tam, kde končí región. Po zmene je pokrytie na každom zoome 1,0–1,07× plochy
+kraja (zvyšok je rezerva `--edge`). Dlaždíc je pri tom MENEJ, nie viac: tie
+celé mimo kraja sú po vynulovaní rovina a `je_rovina` ich vynechá – na skúšobnom
+behu nad bboxom Prešovského kraja (umelý DEM s reliéfom všade, do z11) ich bolo
+144 namiesto 172 a 3,5 MB namiesto 4,8 MB.
+
+Rovina je výška 0, teda to isté, čo dáva `-dstnodata 0` za okrajom modelu.
+Hrana medzi terénom a rovinou je pritom pre hillshade zvislá stena, takže
+NESMIE stáť presne na hranici kraja – bol by z nej svetlý či tmavý prstenec po
+jej vnútornej strane, čiže v mape. `--edge` ju posunie pár pixelov ZA hranicu,
+kde ju prekrýva plocha `mimo`.
+
 Použitie:
     python3 workers/terrain/tiles.py --dem=dem/all.vrt \\
         --bbox=16.8,47.7,22.6,49.6 --maxzoom=12 --out=terrain-out
@@ -240,6 +269,11 @@ def warp_level(dem, path, minx, miny, maxx, maxy, width, height, resample):
 def load_mask(poly, bbox):
     """Maska kraja z `workers/lib/region-mask.py`, alebo `None` bez polygónu.
 
+    Vracia TRI veci, lebo kraj sa pýta dvakrát a na dve rôzne otázky:
+    `mask` je hrubá dlaždicová („má sa táto dlaždica vôbec zapísať?")
+    a `rings` sú prstence kraja vo Web Mercatore pre `pixel_mask`
+    („ktoré pixely v nej ležia v kraji?"). Obe sú z TOHO ISTÉHO polygónu.
+
     Modul má v mene pomlčku, takže `import` naň nefunguje – naťahuje sa cez
     `importlib` presne tak, ako to robí zvyšok pipeline (`load("rock_plan", …)`).
     """
@@ -251,7 +285,13 @@ def load_mask(poly, bbox):
     spec = importlib.util.spec_from_file_location("region_mask", lib)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod, mod.mask_from_file(poly, bbox)
+    # Prevod do Mercatoru je TU a nie v `region-mask.py`: vzorec projekcie je
+    # v pipeline na jednom mieste (`merc_x`/`merc_y` o kus vyššie, tie isté,
+    # ktorými sa počítajú okná dlaždíc). Druhá kópia by bola druhá pravda
+    # o jednej projekcii – a rozišla by sa ticho, o pár metrov.
+    rings = [([(merc_x(x), merc_y(y)) for x, y in ring], hole)
+             for ring, hole in mod.rings_from_geojson(poly)]
+    return mod, mod.mask_from_file(poly, bbox), rings
 
 
 def main():
@@ -259,9 +299,12 @@ def main():
     ap.add_argument("--dem", required=True, help="vstupný DEM (.vrt/.tif)")
     ap.add_argument("--bbox", required=True, help="west,south,east,north")
     ap.add_argument("--poly", default="",
-                    help="GeoJSON kraja – dlaždice mimo neho sa nekreslia")
+                    help="GeoJSON kraja – dlaždice mimo neho sa nekreslia "
+                         "a v tých, čo prečnievajú, je mimo kraja rovina")
     ap.add_argument("--grow", type=float, default=0.5,
                     help="o koľko svojej strany smie dlaždica prečnievať za kraj")
+    ap.add_argument("--edge", type=int, default=2,
+                    help="o koľko pixelov presahuje rovina za hranicu kraja")
     ap.add_argument("--maxzoom", type=int, default=12)
     ap.add_argument("--minzoom", type=int, default=0)
     ap.add_argument("--out", required=True, help="adresár s dlaždicami {z}/{x}/{y}.png")
@@ -274,16 +317,28 @@ def main():
 
     w, s, e, n = (float(v) for v in args.bbox.split(","))
     lat = (s + n) / 2
-    # ORIENTAČNÝ OREZ NA KRAJ. Bbox kraja je oveľa väčší než kraj sám (pri
+    # OREZ NA KRAJ, A JE DVOJDIELNY. Bbox kraja je oveľa väčší než kraj sám (pri
     # Prešovskom 16 107 km² proti 10 184 km², teda 37 % mimo), takže bez tohto
     # sa tretina dlaždíc kreslila do susedných krajov a za hranicu – a práve
     # tam je DMR 5.0 prázdne, takže z nich boli biele dlaždice s rovnou hranou.
+    #
+    # 1. DLAŽDICOVÝ (`mask`): dlaždica, ktorá sa kraja ani nedotkne, nevznikne.
+    # 2. PIXELOVÝ (`rings`): v tých, čo vzniknú, dostane všetko mimo kraja
+    #    rovinu. Sám dlaždicový orez totiž hrubší byť nemôže, než je dlaždica –
+    #    a tá je na nízkych zoomoch obrovská, takže tieňovanie za kraj
+    #    PRESAHOVALO. Namerané na Prešovskom kraji, plocha vyrobených dlaždíc
+    #    proti ploche kraja: z8 6,2×, z10 2,2×, z12 1,4×, z14 1,11×. To je ten
+    #    „dvakrát väčší tieň než kraj", ktorý bolo v mape vidieť: mimo
+    #    stiahnutého regiónu ho zakrýva až plocha `mimo` zo štýlu, takže
+    #    stačilo, aby si vrstvu niekto pozrel bez nej (alebo v 3D pod iným
+    #    uhlom), a reliéf pokračoval ďaleko za hranicu.
     maska = load_mask(args.poly, (w, s, e, n))
-    rm, mask = maska if maska else (None, None)
+    rm, mask, rings = maska if maska else (None, None, None)
     if mask:
         print(f"Orez na kraj: v kraji je {mask.pct:.0f} % bboxu "
               f"(maska {mask.nx}×{mask.ny}); dlaždica smie prečnievať "
-              f"{args.grow:g} svojej strany.", flush=True)
+              f"{args.grow:g} svojej strany a mimo kraja "
+              f"(+{args.edge} px) je rovina.", flush=True)
     else:
         print("::warning::Polygón kraja nie je – kreslí sa celý bbox regiónu, "
               "teda aj mimo kraj. (`--poly` nedostal súbor.)", flush=True)
@@ -305,6 +360,8 @@ def main():
     total_tiles = 0
     skipped = 0
     rovin = 0
+    cut_px = 0          # pixelov mimo kraja, ktoré dostali rovinu
+    all_px = 0
     made = args.minzoom - 1
     # Koľko z naplánovaných dlaždíc naozaj vzniklo. Rovina ostáva rovinou aj
     # o zoom vyššie, takže je to jediný podložený odhad toho, koľko ich
@@ -382,6 +439,24 @@ def main():
             warp_level(args.dem, "/tmp/level.raw", minx, miny, maxx, maxy,
                        width, height, resample)
             grid = np.fromfile("/tmp/level.raw", dtype="<f4").reshape(height, width)
+            # MIMO KRAJA JE ROVINA. Hillshade kreslí krytím podľa SKLONU,
+            # takže z roviny nenakreslí nič – tým sa tieňovanie zastaví na
+            # hranici kraja aj vnútri dlaždice, ktorá cez ňu prečnieva.
+            # Rovina je výška 0, teda to isté, čo dáva `-dstnodata 0` za
+            # okrajom modelu (za štátnou hranicou je DMR 5.0 prázdne už dnes)
+            # – jedna hodnota, nie druhá konvencia.
+            #
+            # `--edge` PIXELOV ZA HRANICU. Hrana medzi terénom a rovinou je pre
+            # hillshade zvislá stena, čiže najsilnejší sklon v dlaždici; keby
+            # stála presne na hranici kraja, bol by z nej svetlý či tmavý
+            # prstenec po jej vnútornej strane. S rezervou padne za hranicu,
+            # kde ju v štýle prekrýva plocha `mimo` (`deploy/region-mask.py`).
+            if rings is not None:
+                keep = rm.pixel_mask(rings, (minx, miny, maxx, maxy),
+                                     width, height, grow=args.edge)
+                cut_px += int(keep.size - keep.sum())
+                all_px += keep.size
+                grid[~keep] = 0.0
 
             for ty in range(ry, ry_end + 1):
                 for tx in range(x0, x1 + 1):
@@ -435,8 +510,18 @@ def main():
               + (f", bez reliéfu {rovin - rovin_before}"
                  if rovin > rovin_before else ""), flush=True)
 
-    if made < args.minzoom:
-        print("::error::Nevznikla ani jedna dlaždica tieňovania.",
+    # PRÁZDNA VRSTVA MUSÍ SPADNÚŤ, NIE ZAZELENAŤ. Odkedy je mimo kraja rovina,
+    # sa dá vyrobiť nula dlaždíc aj z behu, ktorý prebehol celý: keď výrez
+    # (`crop_bbox`, štvorec rýchleho testu – ten sa berie zo STREDU bboxu,
+    # takže pri členitom kraji môže padnúť mimo neho) neleží v kraji, je celý
+    # rovina a `je_rovina` ju vynechá. Bez tejto vetvy by z toho bol prázdny
+    # `.pmtiles`, zelený beh a mapa bez tieňovania (pravidlo 8).
+    if made < args.minzoom or not total_tiles:
+        print("::error::Nevznikla ani jedna dlaždica tieňovania."
+              + (" Výrez behu neleží v kraji, takže je celý rovina – posuň ho "
+                 "dovnútra (`test_at`, `crop_bbox`), alebo skontroluj, či je "
+                 f"`{args.poly}` naozaj polygónom tohto regiónu."
+                 if rings is not None else ""),
               file=sys.stderr)
         return 1
     # Skutočne vyrobený maxzoom, nie ten želaný. Píše ho ten, kto dlaždice
@@ -444,6 +529,9 @@ def main():
     # sa nemá ako stať, že mapa pýta z15 a na Pages je z13.
     with open(os.path.join(args.out, "maxzoom.txt"), "w") as f:
         f.write(f"{made}\n")
+    if all_px:
+        print(f"Mimo kraja dostalo rovinu {100 * cut_px / all_px:.0f} % "
+              f"pixelov – práve tam tieňovanie presahovalo za hranicu.")
     print(f"Spolu: {total_tiles} dlaždíc, {total_bytes / 1048576:.1f} MB, "
           f"maxzoom z{made}"
           + (f"; mimo kraja vynechaných {skipped} dlaždíc "
