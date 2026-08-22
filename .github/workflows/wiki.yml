@@ -244,7 +244,7 @@ jobs:
       - name: Commitni maps.json
         if: ${{ inputs.publish && steps.publish.outcome == 'success' }}
         env:
-          MAPS_JSON: maps.json
+          MAPS_JSON: ${{ steps.publish.outputs.maps_file || 'maps.json' }}
           BRANCH: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: workers/deploy/catalog.sh
@@ -341,7 +341,7 @@ jobs:
       - name: Commitni maps.json
         if: ${{ steps.publish.outcome == 'success' }}
         env:
-          MAPS_JSON: maps.json
+          MAPS_JSON: ${{ steps.publish.outputs.maps_file || 'maps.json' }}
           BRANCH: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: workers/deploy/catalog.sh

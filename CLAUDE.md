@@ -491,7 +491,18 @@ a navyše by tú celú prepísala. Publikuje sa len mapa, ktorá prešla kontrol
 pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
 **Ktoré mapy vôbec existujú, hovorí `maps.json` v koreni repozitára** – na Drive
-sa to bez tokenu a bez klikania nezistí. Dopisuje ho build hneď po nahratí
+sa to bez tokenu a bez klikania nezistí. **Rýchle testy majú vedľa neho vlastný
+`maps-test.json`** s tým istým tvarom: mapa, v ktorej je terén na 4 km², nemá
+čo robiť v zozname hotových máp, ale zapísať sa musí (balík `…-test4km2.zip`
+leží na Drive a inak sa o ňom bez tokenu nikto nedozvie). Ktorý z tých dvoch
+súborov beh zapisuje, hovorí JEDNO miesto – `katalog_subor()` v
+`workers/deploy/catalog.py` –, lebo sa naň pýtajú traja (zápis, doplnenie
+`.aar` a commit); meno preto chodí do `deploy/catalog.sh` výstupom kroku
+(`steps.publish.outputs.maps_file`), nie natvrdo. **A každá položka hovorí,
+kedy vznikla, dvakrát**: `updated_at` (ISO 8601 v UTC – na čítanie okom
+a zoradenie ako text) a `updated_ts` (sekundy od epochy – vek mapy je jedno
+odčítanie). Sú to dva zápisy jedného okamihu, nie dve merania; to isté nesie
+každý balík zvlášť a koreň katalógu ako `_updated_at` / `_updated_ts`. Dopisuje ho build hneď po nahratí
 (`publish-map.py --maps=`, pozná id súborov) a commitne `deploy/catalog.sh`; je
 to JEDINÉ miesto, kde beh zapisuje do repozitára, a preto má job `deploy`
 `contents: write`. Štruktúra je tá istá ako cesta na Drive – **hlavný kľúč je
@@ -503,11 +514,13 @@ balíkov, o ktorých beh ROZHODUJE** (`spravuje=`, ten istý zoznam ako pri maza
 starého balíka na Drive): `wikipedia` robí vlastná pipeline, takže „nevyrobil
 som ju" neznamená „v mape nie je" a v položke ostane. Kým to tam nebolo, mazal
 ju z katalógu každý build mapy, hoci ZIP na Drive ležal ďalej. **Rýchly test sa
-zapisuje tiež, ale do VLASTNÉHO uzla** (`vysoke_tatry_test4km2` – tá istá
-prípona, akú nesú jeho balíky): na Drive leží v priečinku ostrej mapy, takže
-bez katalógu sa o ňom bez tokenu nedá dozvedieť, ale na jej položku sadnúť
-nesmie – terén je v ňom na pár km² a kto si ho podľa zoznamu stiahne, dostane
-mapu s dierou. Že je to test, hovorí kľúč, meno („– rýchly test 4 km²") aj
+zapisuje tiež, ale do VLASTNÉHO SÚBORU a v ňom do vlastného uzla**
+(`maps-test.json`, uzol `vysoke_tatry_test4km2` – tá istá prípona, akú nesú
+jeho balíky): na Drive leží v priečinku ostrej mapy, takže bez katalógu sa
+o ňom bez tokenu nedá dozvedieť, ale medzi hotové mapy nepatrí – terén je
+v ňom na pár km² a kto si ho podľa zoznamu stiahne, dostane mapu s dierou.
+Vlastný uzol na to nestačil: v `maps.json` stál vedľa ostrých máp a vyzeral
+ako ďalší výsek. Že je to test, hovorí kľúč, meno („– rýchly test 4 km²") aj
 `test_km2` a `area_bbox` v položke.
 
 **Z kľúča uzla sa NEDÁ odvodiť meno súboru** a položka je preto písaná tak, aby
@@ -526,7 +539,8 @@ tieňovanie – tri polia preto, že sa každá z nich smie prepnúť na náhrad
 model sama (pravidlo 8). Na načítanie mapy aj na atribúciu tak stačí
 `maps.json`; `obsah.json` v balíku je jeho vlastný podpis pre toho, kto má ZIP
 bez katalógu, nie druhé miesto, kam sa treba pozerať. Stráži to
-`workers/lint/catalog.py`.
+`workers/lint/catalog.py` – vrátane toho, že testovací uzol je v
+`maps-test.json` a nie v `maps.json`, a že časové pečiatky sedia navzájom.
 
 Po neúspešnom nahratí sa nezapíše nič –
 zoznam, ktorý ukazuje na neexistujúce súbory, je horší než žiadny. Čo sa do
@@ -964,6 +978,8 @@ PY
 python3 workers/plan/area.py --region-bbox=18.7,48.8,20.6,49.6 --area=vysoke_tatry
 python3 workers/dem/target.py --source=dmr5 --area-key=vysoke_tatry --bbox=20.1,49.1,20.2,49.2
 python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
+python3 workers/lint/catalog.py        # katalóg drží tvar; test je v maps-test.json
+python3 workers/lint/rebuild.py        # `rebuild` prepočíta to, čo sľubuje
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 python3 workers/lint/dem-resampling.py # kernel DEM vyberá lib/cell.py, nie autor riadku
@@ -1053,7 +1069,13 @@ nie je vôbec; vypnúť sa to dá poradím krokov a beh je pri tom zelený), že
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do
 `workers/lib/planetiler.sh` presunúť nedá, takže je to jedna veta na šiestich
-miestach a šiesty na ňu zabudol), že sa
+miestach a šiesty na ňu zabudol), že **výber `rebuild` naozaj prepočíta to, čo sľubuje**
+(`workers/lint/rebuild.py` – hodnota vo formulári, ktorú `plan/options.py`
+nepozná; príznak, ktorý `plan` nevydá ako výstup, takže sa k jobu nedostane
+a pregenerovanie ticho nespraví nič; a `rebuild: skaly` pri
+`rock_source: tienovanie`, kde sklon nepočíta nikto a obrysy robí
+podpipeline – tá bez `fresh=1` nadviaže na svoje rozrobené kusy a vráti
+výsledok predošlého behu, so zeleným behom), že sa
 ten istý sklad nevolá v dvoch workflowoch rôzne a že **worker leží
 v priečinku podľa jobu** (`workers/lint/layout.py` – plochý `workers/`
 by ticho vypol kontroly, ktoré cesty hľadajú vzorom). **Keď

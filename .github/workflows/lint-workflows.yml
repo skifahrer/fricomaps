@@ -542,6 +542,16 @@ jobs:
       - name: Katalóg máp drží tvar a nikto ho neobchádza
         run: python3 workers/lint/catalog.py
 
+      # `rebuild` je jediná páka, ktorou sa dá povedať „cache nepoužívaj". Keď
+      # sľúbi vrstvu a tá sa aj tak vráti z cache, beh je ZELENÝ a výsledok
+      # starý. Rozísť sa to vie ticho troma spôsobmi: hodnota vo formulári,
+      # ktorú `plan/options.py` nepozná (alebo naopak), príznak, ktorý `plan`
+      # nevydá ako výstup, a `rebuild: skaly` pri `rock_source: tienovanie`,
+      # kde obrysy robí podpipeline a bez `fresh=1` nadviaže na tie rozrobené.
+      # Rozpis: `workers/lint/rebuild.py`.
+      - name: Výber `rebuild` prepočíta to, čo sľubuje
+        run: python3 workers/lint/rebuild.py
+
       # Job `features` číta PBF dvakrát: hrubým sitom (`filter.txt`) a potom
       # schémou (`features.yml`). To isté rozhodnutie je tým na dvoch miestach
       # a keď sa rozídu, je to tiché – Planetiler dostane PBF bez tých objektov

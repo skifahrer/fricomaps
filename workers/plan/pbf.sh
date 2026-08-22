@@ -216,7 +216,7 @@ if [ -n "$CROP" ]; then
   NAME="$NAME (výrez)"
 fi
 
-# RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) zmenšuje to,
+# RÝCHLY TEST (switch `test`, predvolene odškrtnutý, 4 km²) zmenšuje to,
 # čo je naozaj drahé: vrstevnice, skaly a tieňovanie z výškového
 # modelu – na kraji desiatky minút, na 4 km² jednotky minút.
 #
