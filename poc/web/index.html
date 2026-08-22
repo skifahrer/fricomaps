@@ -228,6 +228,31 @@
 
     /* Náhľad prerušovania vedľa výberu druhu čiary. */
     .dev-dashrow { display: flex; align-items: center; gap: 5px; }
+
+    /* Vzor: náhľad je kreslený tým istým rasterizérom ako obrázok pre mapu,
+       a kreslí sa NAD FARBOU PODKLADU – vzor sám o sebe nepovie, ako bude
+       nad tou plochou vyzerať. */
+    .dev-pat {
+      display: block; border-radius: 4px; border: 1px solid rgba(0, 0, 0, .18);
+      background: repeating-conic-gradient(#f0f0f2 0% 25%, #fff 0% 50%) 0 0 / 10px 10px;
+    }
+    .dev-patbtn { border: none; background: none; padding: 0; cursor: pointer; }
+    .dev-patgrid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 1fr));
+      gap: 5px; max-height: 260px; overflow-y: auto; margin: 4px 0 6px;
+      padding: 5px; border: 1px solid #e2e2e8; border-radius: 6px; background: #fafafc;
+    }
+    .dev-pattile {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      border: 1px solid transparent; border-radius: 6px; background: none;
+      padding: 3px 1px; cursor: pointer; overflow: hidden;
+    }
+    .dev-pattile:hover { background: #eceef4; }
+    .dev-pattile.on { border-color: #3a6ea5; background: #e3ecf7; }
+    .dev-pattile small {
+      font-size: 9px; color: #666; max-width: 100%;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
     .dev-dash { color: #444; display: inline-flex; align-items: center; }
     .dev-h5 {
       display: flex; align-items: baseline; gap: 6px;
@@ -361,6 +386,25 @@
     }
     .dev-icon { display: block; }
     .dev-iconnone { display: block; width: 22px; height: 22px; line-height: 22px; color: #999; }
+    /* Stoh vrstiev (záložka „Poradie"): jeden dlhý zoznam v poradí kreslenia,
+       prvý riadok navrchu. Čiara pri hrane riadka ukazuje, kam ťahaná vrstva
+       padne – bez nej sa „nad" a „pod" nedá rozoznať. */
+    .dev-stack { display: flex; flex-direction: column; }
+    .dev-stackrow {
+      display: flex; align-items: center; gap: 5px; padding: 3px 2px;
+      border-bottom: 1px solid #f0f0f3; border-top: 2px solid transparent;
+      background: #fff;
+    }
+    .dev-stackrow:hover { background: #f6f7fa; }
+    .dev-stackrow.off .dev-name { opacity: .45; text-decoration: line-through; }
+    .dev-stackrow.inactive .dev-name > span:first-child { opacity: .5; }
+    .dev-stackrow.changed .dev-name > span:first-child { color: #b06000; font-weight: 600; }
+    .dev-stackrow.dragging { opacity: .4; }
+    .dev-stackrow.drop-above { border-top-color: #3a6ea5; }
+    .dev-stackrow.drop-below { box-shadow: inset 0 -2px 0 #3a6ea5; }
+    .dev-grip { cursor: grab; color: #aaa; font-size: 12px; user-select: none; }
+    .dev-stackrow.dragging .dev-grip { cursor: grabbing; }
+
     .dev-text {
       box-sizing: border-box; padding: 4px 6px; font-size: 11px; min-width: 90px;
       border: 1px solid #ccc; border-radius: 5px;
@@ -409,6 +453,14 @@
     body.dark .dev-icontile:hover { background: #2c2c40; }
     body.dark .dev-icontile.on { background: #26364e; border-color: #4a7ab5; }
     body.dark .dev-icontile small { color: #9a9aa8; }
+    body.dark .dev-patgrid { background: #1e1e2c; border-color: #33334a; }
+    body.dark .dev-pattile:hover { background: #2c2c40; }
+    body.dark .dev-pattile.on { background: #26364e; border-color: #4a7ab5; }
+    body.dark .dev-pattile small { color: #9a9aa8; }
+    body.dark .dev-pat {
+      border-color: rgba(255, 255, 255, .22);
+      background: repeating-conic-gradient(#26263a 0% 25%, #1a1a28 0% 50%) 0 0 / 10px 10px;
+    }
     body.dark .dev-text { background: #222; color: #ddd; border-color: #444; }
     body.dark .dev-search, body.dark .dev-hex, body.dark .dev-num, body.dark .dev-json {
       background: #1e1e2c; color: #ddd; border-color: #3a3a52;
@@ -418,6 +470,10 @@
     body.dark .dev-group { border-color: #33334a; }
     body.dark .dev-tools { border-bottom-color: #33334a; }
     body.dark .dev-item { border-color: #2a2a3c; }
+    body.dark .dev-stackrow { background: #1a1a28; border-bottom-color: #2a2a3c; }
+    body.dark .dev-stackrow:hover { background: #23233a; }
+    body.dark .dev-stackrow.changed .dev-name > span:first-child { color: #e0a850; }
+    body.dark .dev-grip { color: #666; }
     body.dark .dev-hint code { background: #2b2b40; }
     body.dark .dev-row.changed > .dev-name > span:first-child,
     body.dark .dev-prow.changed .dev-name > span:first-child,

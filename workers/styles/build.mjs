@@ -213,7 +213,8 @@ if (existsSync(overridesPath)) {
 console.log(
   overrides
     ? `Úpravy štýlu z developer módu: ${Object.keys(overrides.layers).length} vrstiev, ` +
-        `${Object.values(overrides.palette).reduce((n, c) => n + Object.keys(c).length, 0)} farieb`
+        `${Object.values(overrides.palette).reduce((n, c) => n + Object.keys(c).length, 0)} farieb` +
+        `${overrides.order.length ? `, ${overrides.order.length}× zmenené poradie kreslenia` : ""}`
     : "Úpravy štýlu z developer módu: žiadne"
 );
 

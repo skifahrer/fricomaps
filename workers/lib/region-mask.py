@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 """
-Maska kraja: „patrí toto miesto (alebo táto dlaždica) do kraja?"
+Maska kraja: „patrí toto miesto (alebo táto dlaždica, alebo tento pixel) do
+kraja?"
 
 Pýtajú sa jej vrstvy z výškového modelu – tieňovanie sa podľa nej rozhoduje,
-ktoré dlaždice vôbec kresliť, a vrstevnice so skalami ju dostanú ako `-cutline`
-do gdalwarpu. Polygón vyrába `workers/plan/region-poly.py`.
+ktoré dlaždice vôbec kresliť (`tile_touches`) a čo v tých, čo cez hranicu
+prečnievajú, zrovnať na rovinu (`pixel_mask`), a vrstevnice so skalami ju
+dostanú ako `-cutline` do gdalwarpu. Polygón vyrába
+`workers/plan/region-poly.py`.
+
+SÚ TO DVE HRUBOSTI JEDNEJ ODPOVEDE a obe treba: dlaždicová sa nedá spraviť
+jemnejšie než dlaždica (a tá je na z8 široká 156 km), pixelová zase nemá zmysel
+púšťať na dlaždicu, ktorá je celá mimo. Rozpis, ktorá kedy, je v hlavičke
+`workers/terrain/tiles.py`.
 
 BEZ SHAPELY, a je to zámer – tá istá úvaha ako vo `workers/dem/coverage.py`:
 na otázku „je táto dlaždica v kraji?" stačí hrubá rastrová maska. Pri kraji
@@ -117,6 +125,98 @@ class Mask:
 
 def mask_from_file(path, bbox, cells=2048):
     return Mask(rings_from_geojson(path), bbox, cells)
+
+
+# ---------- maska po PIXELOCH ----------
+# Dlaždicová maska hore odpovedá na „patrí táto dlaždica do kraja?" a hrubšia
+# byť nemôže – dlaždica je nedeliteľná. Lenže práve preto tieňovanie za kraj
+# PRESAHUJE: na z10 sa vyrobia dlaždice, ktoré sa kraja len dotýkajú, a kreslia
+# sa celé. Namerané na Prešovskom kraji (10 184 km²), pokrytie vyrobených
+# dlaždíc proti ploche kraja:
+#
+#     z8  6,2×    z10  2,2×    z12  1,4×    z14  1,11×
+#
+# Teda dvojnásobok kraja aj viac – presne to, čo je na mape vidieť ako
+# tieňovaný reliéf za jeho hranicou. Odpoveď na to je jemnejšia otázka: „ktoré
+# PIXELY rastra ležia v kraji?" Pixely mimo dostanú v `terrain/tiles.py` rovinu
+# (výšku 0), a hillshade z roviny nekreslí nič – jeho krytie ide so sklonom.
+
+
+def _edges(rings):
+    """Prstence → štyri polia hrán (`x1`, `y1`, `x2`, `y2`) pre scanline."""
+    x1, y1, x2, y2 = [], [], [], []
+    for ring, _hole in rings:
+        for i, (ax, ay) in enumerate(ring):
+            bx, by = ring[(i + 1) % len(ring)]
+            if ay != by:                      # vodorovná hrana nekríži riadok
+                x1.append(ax)
+                y1.append(ay)
+                x2.append(bx)
+                y2.append(by)
+    return x1, y1, x2, y2
+
+
+def _dilate(mask, r, np):
+    """Maska rozšírená o `r` pixelov (štvorcové okolie, separabilne).
+
+    PREČO SA VÔBEC ROZŠIRUJE. Hranica dát a roviny je pre hillshade zvislá
+    stena, teda najsilnejší sklon, aký v dlaždici môže byť – a keby stála
+    presne na hranici kraja, bol by z nej svetlý či tmavý prstenec po jej
+    VNÚTORNEJ strane, čiže v mape. S rezervou pár pixelov padne stena tesne
+    ZA hranicu, kde ju v štýle prekrýva plocha `mimo` (`deploy/region-mask.py`).
+    """
+    if r <= 0:
+        return mask
+    out = mask.copy()
+    for k in range(1, r + 1):
+        out[:, k:] |= mask[:, :-k]
+        out[:, :-k] |= mask[:, k:]
+    mask = out.copy()
+    for k in range(1, r + 1):
+        out[k:, :] |= mask[:-k, :]
+        out[:-k, :] |= mask[k:, :]
+    return out
+
+
+def pixel_mask(rings, box, width, height, grow=0):
+    """Bool pole `height × width`: leží stred pixela v kraji (+ `grow` px)?
+
+    `rings` aj `box` sú V TÝCH ISTÝCH SÚRADNICIACH – `terrain/tiles.py` ich
+    podáva vo Web Mercatore, lebo v ňom je aj raster z `gdalwarp`. Prevod si
+    robí volajúci: mercator je v pipeline na jednom mieste (`terrain/tiles.py`)
+    a druhá kópia toho vzorca by bola druhá pravda o jednej projekcii.
+
+    Riadok 0 je HORE, tak ako v rastri (`maxy`), a rozhoduje STRED pixela.
+    Vypĺňa sa pravidlom párnosti, takže diery netreba riešiť zvlášť: prstenec
+    v prstenci prevráti párnosť a vyjde z toho diera.
+    """
+    import numpy as np
+    minx, miny, maxx, maxy = box
+    dx, dy = (maxx - minx) / width, (maxy - miny) / height
+    ex1, ey1, ex2, ey2 = (np.asarray(a, dtype=np.float64) for a in _edges(rings))
+    mask = np.zeros((height, width), dtype=bool)
+    if not len(ex1):
+        return mask
+    lo, hi = min(ey1.min(), ey2.min()), max(ey1.max(), ey2.max())
+    for j in range(height):
+        y = maxy - (j + 0.5) * dy
+        if y < lo or y > hi:
+            continue
+        cross = (ey1 > y) != (ey2 > y)
+        if not cross.any():
+            continue
+        xs = ex1[cross] + (y - ey1[cross]) * ((ex2 - ex1)[cross]
+                                              / (ey2 - ey1)[cross])
+        xs.sort()
+        # Dvojice pretnutí sú vnútro. Stred pixela `i` je `minx + (i+0.5)*dx`,
+        # takže z `x` vyjde index `x/dx - 0.5` a hranice sa zaokrúhľujú dnu.
+        i0 = np.ceil((xs[0::2] - minx) / dx - 0.5).astype(np.int64)
+        i1 = np.floor((xs[1::2] - minx) / dx - 0.5).astype(np.int64)
+        row = mask[j]
+        for a, b in zip(np.clip(i0, 0, width), np.clip(i1 + 1, 0, width)):
+            if b > a:
+                row[a:b] = True
+    return _dilate(mask, int(grow), np)
 
 
 def tile_box(z, x, y):

@@ -80,6 +80,17 @@ for (const [theme, colors] of Object.entries(overrides.palette)) {
     .join(", ");
   summary.push(`  téma ${THEMES[theme].label}: ${Object.keys(colors).length} farieb (${names})`);
 }
+// PORADIE KRESLENIA. Nie je to úprava vrstvy (tá o svojich susedoch nevie),
+// ale zoznam presunov – v súhrne preto vlastný riadok, nech je vidieť, že sa
+// mapa nemení len farbou, ale aj tým, čo je nad čím.
+if (overrides.order.length) {
+  summary.push(
+    `  poradie kreslenia: ` +
+      overrides.order
+        .map((m) => `${m.id} → ${m.before ? `pod ${m.before}` : "navrch"}`)
+        .join(", ")
+  );
+}
 const hidden = Object.entries(overrides.layers).filter(([, o]) => o.visible === false);
 const recolored = Object.entries(overrides.layers).filter(([, o]) => o.paint);
 const rezoomed = Object.entries(overrides.layers).filter(
@@ -94,7 +105,12 @@ if (recolored.length) summary.push(`  prefarbené vrstvy: ${recolored.length}`);
 if (rezoomed.length) summary.push(`  zmenený rozsah zoomu: ${rezoomed.length}`);
 if (patterned.length) {
   summary.push(
-    `  vzory: ${patterned.map(([id, o]) => `${id} → ${o.pattern.id}`).join(", ")}`
+    // Vzor môže byť KRESLENÝ (`id`) alebo VLASTNÝ OBRÁZOK (`image`) – bez
+    // toho druhého by v súhrne stálo „→ undefined" práve pri tom, čo build
+    // musí dopiecť do spritu.
+    `  vzory: ${patterned
+      .map(([id, o]) => `${id} → ${o.pattern.image || o.pattern.id}`)
+      .join(", ")}`
   );
 }
 if (outlined.length) summary.push(`  okraje: ${outlined.map(([id]) => id).join(", ")}`);
@@ -106,6 +122,16 @@ if (reiconed.length) {
 }
 if (overrides.poi.hidden.length) {
   summary.push(`  skryté POI triedy: ${overrides.poi.hidden.join(", ")}`);
+}
+// Ikony kategórií. Sú v `poi` vedľa skrytých tried, ale je to iná otázka –
+// a keby v súhrne chýbali, nebolo by z behu vidieť, že sa mapa kreslí inými
+// značkami (vrátane vlastných obrázkov, ktoré sa musia dopiecť do spritu).
+const poiIcons = Object.entries(overrides.poi.icons || {});
+if (poiIcons.length) {
+  summary.push(
+    `  ikony POI kategórií: ` +
+      poiIcons.map(([cls, name]) => `${cls} → ${name || "žiadna"}`).join(", ")
+  );
 }
 
 // Značené trasy. Nie sú to úpravy jednej vrstvy (jeden druh trasy má v štýle
@@ -205,6 +231,7 @@ const payload = {
   hillshade: overrides.hillshade,
   palette: overrides.palette,
   layers: overrides.layers,
+  order: overrides.order,
   poi: overrides.poi,
   // ZNAČENÉ TRASY A ŠTÍTKY CIEST. Kým tu neboli, developer mode ich vedel
   // nastaviť aj uložiť, ale do repozitára z nich nedošlo NIČ – `payload` ich

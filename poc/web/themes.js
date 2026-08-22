@@ -33,6 +33,7 @@ import {
   PATTERN_IDS,
   DASH_IDS,
   dashArray,
+  dashIdOf,
   patternDef,
   patternImageName
 } from "./patterns.js";
@@ -1006,6 +1007,48 @@ const FALLBACK_ICONS = [
  * Ako ikona POI nič nehovoria – mapa s nimi vyzerá ako pole bodiek, preto
  * sa z výberu vylučujú a POI bez vlastnej ikony zostane len s popiskom.
  */
+/**
+ * Triedy, pre ktoré má sada ikonu `<trieda><prípona>`.
+ *
+ * Je to funkcia, a nie riadok v `buildStyle`, lebo tú istú otázku si kladie
+ * aj developer mode: bez nej by v paneli pri každej kategórii svietilo
+ * „bez ikony" alebo naopak ikona, ktorú sada nemá – teda niečo iné, než je
+ * v mape. Čisto geometrické tvary (kruh, štvorec…) sa vynechávajú: POI bez
+ * vlastnej ikony nemá dostať kruh, ale zostať len s popiskom.
+ */
+export function iconClassesOf(icons, suffix) {
+  return (
+    icons && icons.length
+      ? [
+          ...new Set(
+            icons
+              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
+              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
+          )
+        ]
+      : FALLBACK_ICONS
+  ).filter((n) => !SHAPE_ICONS.has(n));
+}
+
+/**
+ * IKONA JEDNEJ KATEGÓRIE – jedna otázka, jedna odpoveď.
+ *
+ * Poradie je to isté, aké má výraz v štýle: najprv to, čo si vybral developer
+ * mode (`overrides.poi.icons`, prázdny reťazec = „žiadna"), potom
+ * `<trieda><prípona>` zo sady, a keď ju sada nemá, nič – žiadne náhradné
+ * koliesko. Pýta sa na to štýl (aby vedel, čo nakresliť) aj panel (aby vedel,
+ * čo ukázať), a keby si to počítali zvlášť, panel by raz ukazoval inú ikonu,
+ * než je v mape.
+ *
+ * @param {string} cls  `subclass` alebo `class` z dlaždíc
+ * @param {{classes: string[], suffix: string, overrides?: object}} opts
+ */
+export function poiIconName(cls, { classes, suffix, overrides }) {
+  const own = overrides?.poi?.icons?.[cls];
+  if (own !== undefined) return own;
+  return classes.includes(cls) ? `${cls}${suffix || ""}` : "";
+}
+
 const SHAPE_ICONS = new Set([
   "circle", "circle_stroked", "square", "square_stroked",
   "triangle", "triangle_stroked", "star", "star_stroked",
@@ -1317,30 +1360,65 @@ export const TRAIL_MARK_ZOOM = 16;
  * na chodníku s červenou, modrou a cyklotrasou.)
  *
  * `base` je odstup prvej značky od čiary (nech nezakrýva pásiky pod sebou),
- * `step` rozostup v stĺpiku. A ten sa NEDÁ zadať ako výška značky:
- * kolízny obdĺžnik je značka PLUS `icon-padding`, a padding je v pixeloch
- * obrazovky, kým odstup sa škáluje s `icon-size`. Pri najmenšej veľkosti
- * (0,5 na z12) tak padding váži dvojnásobne:
+ * `step` rozostup v stĺpiku.
  *
- *     step ≥ (MARK_BOX + 2 okraj) + 2 × icon-padding / icon-size
- *          ≥ 16 + 2 × 2 / 0,5 = 24
+ * ZNAČKY STOJA TESNE NA SEBE, BEZ MEDZERY – tak, ako sú na strome. Obrázok
+ * značky je `MARK_BOX` plus jeden priehľadný pixel na každej strane
+ * (`MARK_PAD` – v atlase drží hranu od susedného obrázka), takže krok
+ * `MARK_BOX` položí VIDITEĽNÉ štvorce presne na seba: priehľadné okraje sa
+ * prekryjú a medzi tabuľkami nie je nič. Krok `MARK_IMAGE` by nechal medzeru
+ * dvoch pixelov, krok 26 (ten tu bol) medzeru dvanástich.
  *
- * 26 je to s dvojpixelovou medzerou, nech je vidieť, že sú to dve tabuľky.
- * S menším číslom vypadne druhá značka cez kolíziu – overené v prehliadači:
- * pri kroku 16 bola z červenej a modrej vidieť len červená.
+ * CENA JE `icon-allow-overlap`, A BEZ NEJ TO NEJDE. Kolízny obdĺžnik je celý
+ * obrázok VRÁTANE priehľadného okraja plus `icon-padding`, takže sa dve
+ * susedné priečky o dva pixely prekrývajú – a MapLibre by druhú značku
+ * zahodila. Presne to sa dialo predtým z opačnej strany (pri kroku 16 bola
+ * z červenej a modrej vidieť len červená) a riešilo sa to medzerou; odteraz
+ * sa to rieši tým, že sa stĺpik kreslí bez ohľadu na kolízie. Je to bezpečné
+ * práve pri ňom: rad je krátky (`TRAIL_MARK_STACK_MAX`), stojí kolmo na
+ * trasu a čo si prekrýva, je jeho vlastná priečka. Stráži to
+ * `workers/lint/marks.mjs`.
  */
-export const TRAIL_MARK_STACK = { base: MARK_BOX + 4, step: 26 };
+export const TRAIL_MARK_STACK = { base: MARK_BOX + 4, step: MARK_BOX };
 
-/** Miesto okolo značky, ktoré si drží voľné (v pixeloch obrazovky). */
-export const TRAIL_MARK_PADDING = 2;
+/**
+ * Miesto okolo značky, ktoré si drží voľné (v pixeloch obrazovky).
+ *
+ * NULA, lebo stĺpik má stáť na sebe (viď `TRAIL_MARK_STACK`) a padding sa
+ * na rozdiel od odstupu NEŠKÁLUJE s `icon-size` – pri malej značke by preto
+ * vážil dvojnásobne a rad by rozhodil práve tam, kde je najtesnejší.
+ */
+export const TRAIL_MARK_PADDING = 0;
 
 /** Koľko priečok stĺpika sa vymenuje (pozri `icon-offset` v štýle). */
 export const TRAIL_MARK_STACK_MAX = 4;
 
-/** Predvolené hodnoty pri `TRAIL_MARK_ZOOM` – to, čo prepisuje developer mode. */
+/**
+ * Predvolené hodnoty pri `TRAIL_MARK_ZOOM` – to, čo prepisuje developer mode.
+ *
+ * `step` medzi nimi nie je od zoomu: je to odstup v stĺpiku a MapLibre ho
+ * násobí `icon-size`, takže sa so značkami škáluje sám.
+ */
 export const TRAIL_MARK_DEFAULTS = {
   spacing: atZoom(TRAIL_MARK_SPACING, TRAIL_MARK_ZOOM),
-  size: atZoom(TRAIL_MARK_SIZE, TRAIL_MARK_ZOOM)
+  size: atZoom(TRAIL_MARK_SIZE, TRAIL_MARK_ZOOM),
+  step: TRAIL_MARK_STACK.step
+};
+
+/**
+ * Medze tých troch čísel – JEDNO miesto pre normalizáciu, štýl aj políčka
+ * v paneli. Kým boli napísané pri každom z nich zvlášť, mohli sa rozísť:
+ * panel by pustil hodnotu, ktorú zápis do repozitára potom odmietne.
+ *
+ * Rozostup NESMIE byť nula (to nie je „žiadne značky", ale nekonečne veľa na
+ * čiare – vypínajú sa tvarom „žiadna" pri druhu trasy), odstup v stĺpiku
+ * nulu SMIE: vtedy sedia značky presne na sebe, čo je platná odpoveď na
+ * „nechcem stĺpik".
+ */
+export const TRAIL_MARK_RANGES = {
+  spacing: [20, 2000],
+  size: [0.2, 4],
+  step: [0, 80]
 };
 
 /**
@@ -1352,14 +1430,10 @@ export const TRAIL_MARK_DEFAULTS = {
 export function trailMarkPx(overrides) {
   const raw = overrides?.trails?.marks || {};
   const out = { ...TRAIL_MARK_DEFAULTS };
-  const spacing = Number(raw.spacing);
-  // Nula by znamenala nekonečne veľa značiek na čiare, nie „žiadne";
-  // vypnúť sa dajú tvarom „žiadna" pri druhu trasy.
-  if (Number.isFinite(spacing) && spacing >= 20 && spacing <= 2000) {
-    out.spacing = spacing;
+  for (const [key, [min, max]] of Object.entries(TRAIL_MARK_RANGES)) {
+    const n = Number(raw[key]);
+    if (Number.isFinite(n) && n >= min && n <= max) out[key] = n;
   }
-  const size = Number(raw.size);
-  if (Number.isFinite(size) && size >= 0.2 && size <= 4) out.size = size;
   return out;
 }
 
@@ -1510,6 +1584,10 @@ export function emptyOverrides() {
     hillshade: false,
     palette: {},
     layers: {},
+    // PORADIE KRESLENIA. Nie je to vlastnosť vrstvy (tá o svojich susedoch
+    // nevie), ale zoznam presunov „túto kresli tesne pod tamtú" – rozpis pri
+    // `applyLayerOrder`.
+    order: [],
     // Značené trasy majú vlastnú položku, lebo to nie sú nastavenia JEDNEJ
     // vrstvy: jeden druh trasy má v štýle tri vrstvy (pásik, ikona, názov)
     // a odstup od cesty je vlastnosť všetkých naraz.
@@ -1524,12 +1602,15 @@ export function emptyOverrides() {
     // jednu vec inak" – a preto sa nedajú stlačiť do jednej položky.
     iconSets: [],
     customIcons: [],
-    poi: { hidden: [] },
+    poi: { hidden: [], icons: {} },
     maps: {}
   };
 }
 
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/** Tvar id vrstvy – to isté, čo pripúšťa MapLibre aj naše `__pattern`. */
+const LAYER_ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 
 const isColor = (v) => typeof v === "string" && HEX.test(v.trim());
 
@@ -2067,7 +2148,7 @@ export function normalizeOverrides(raw) {
     const value = (rawTrails.marks || {})[key];
     if (value == null) continue;
     const n = Number(value);
-    const medze = key === "spacing" ? [20, 2000] : [0.2, 4];
+    const medze = TRAIL_MARK_RANGES[key];
     if (!Number.isFinite(n) || n < medze[0] || n > medze[1]) {
       problems.push(
         `Značky trás "${key}" musia byť číslo od ${medze[0]} do ${medze[1]} (${value}).`
@@ -2077,6 +2158,32 @@ export function normalizeOverrides(raw) {
     const round = Math.round(n * 100) / 100;
     if (round !== def) out.trails.marks[key] = round;
   }
+
+  // ---- poradie kreslenia ----
+  // JEDEN PRESUN NA VRSTVU a vyhráva ten POSLEDNÝ: presuny sa vyhodnocujú
+  // v rade za sebou, takže by ich pri opakovanom klikaní pribúdali stovky
+  // a nedalo by sa z nich prečítať, kde vrstva vlastne skončí. Posledný
+  // presun tej istej vrstvy je zároveň to, čo si človek naposledy vybral.
+  const presuny = new Map();
+  for (const item of Array.isArray(raw.order) ? raw.order : []) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      problems.push(`Presun vrstvy nie je objekt {id, before} – preskakujem.`);
+      continue;
+    }
+    const id = String(item.id ?? "").trim();
+    const before = item.before == null ? null : String(item.before).trim();
+    if (!LAYER_ID.test(id) || (before !== null && !LAYER_ID.test(before))) {
+      problems.push(`Presun vrstvy: neplatné id ("${item.id}" → "${item.before}").`);
+      continue;
+    }
+    if (before === id) {
+      problems.push(`Vrstva "${id}" sa má kresliť pod seba – to nie je poradie.`);
+      continue;
+    }
+    presuny.delete(id);
+    presuny.set(id, { id, before });
+  }
+  out.order = [...presuny.values()];
 
   // ---- tvar štítka s číslom cesty ----
   for (const [id, def] of Object.entries(raw.shields || {})) {
@@ -2104,7 +2211,10 @@ export function normalizeOverrides(raw) {
   }
 
   // ---- vrstvy ----
-  cleanLayers(raw.layers, out.layers, problems, "");
+  // Vlastné ikony sú prečistené vyššie, takže je už známe, ktoré obrázky sa
+  // smú použiť ako vzor (a ktoré by v sprite nikdy neskončili).
+  const vlastneObrazky = out.customIcons.map((i) => i.name);
+  cleanLayers(raw.layers, out.layers, problems, "", vlastneObrazky);
 
   // ---- vrstvy pre jednotlivé typy máp ----
   // Tu je nadstavba nad tým, čo je vyššie: to isté id vrstvy môže mať iné
@@ -2119,7 +2229,7 @@ export function normalizeOverrides(raw) {
       continue;
     }
     const layers = {};
-    cleanLayers(def.layers, layers, problems, `${typeId}: `);
+    cleanLayers(def.layers, layers, problems, `${typeId}: `, vlastneObrazky);
     const hidden = Array.isArray(def.poi?.hidden) ? def.poi.hidden : [];
     const poiHidden = [
       ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
@@ -2135,6 +2245,30 @@ export function normalizeOverrides(raw) {
     ...new Set(hidden.filter((v) => typeof v === "string" && v && v.length < 64))
   ].sort();
 
+  // ---- ikona POI kategórie ----
+  // PRÁZDNY REŤAZEC JE PLATNÁ HODNOTA („táto kategória bez ikony"), takže sa
+  // rozhoduje podľa toho, či kľúč existuje – nie podľa toho, či je hodnota
+  // pravdivá. Chýbajúci kľúč znamená „ikona podľa sady", a to je iná odpoveď
+  // než „žiadna".
+  //
+  // Ikony sú SPOLOČNÉ pre všetky typy máp (na rozdiel od skrytých tried):
+  // akou značkou sa kreslí studnička, je vlastnosť tej kategórie, nie tej
+  // mapy – a keby si ju každá mapa niesla vlastnú, ten istý výber by sa
+  // musel naklikať štyrikrát.
+  out.poi.icons = {};
+  for (const [cls, name] of Object.entries(raw.poi?.icons || {})) {
+    if (!LAYER_ID.test(cls)) {
+      problems.push(`Ikona POI: neplatná kategória "${cls}" – preskakujem.`);
+      continue;
+    }
+    const icon = String(name ?? "").trim();
+    if (icon !== "" && !/^[A-Za-z0-9_.:-]{1,64}$/.test(icon)) {
+      problems.push(`Ikona POI "${cls}": neplatné meno ikony "${name}".`);
+      continue;
+    }
+    out.poi.icons[cls] = icon;
+  }
+
   return { overrides: out, problems };
 }
 
@@ -2142,7 +2276,7 @@ export function normalizeOverrides(raw) {
  * Prečistí sadu úprav vrstiev (spoločnú aj tú pre jeden typ mapy) do `target`.
  * `where` je predpona do hlásení, aby bolo vidieť, ktorej mapy sa problém týka.
  */
-function cleanLayers(rawLayers, target, problems, where) {
+function cleanLayers(rawLayers, target, problems, where, images = []) {
   for (const [id, def] of Object.entries(rawLayers || {})) {
     if (!def || typeof def !== "object") {
       problems.push(`${where}Úprava vrstvy "${id}" nie je objekt – preskakujem.`);
@@ -2201,10 +2335,16 @@ function cleanLayers(rawLayers, target, problems, where) {
     }
 
     // ---- prerušovanie čiary ----
+    // AJ „solid" JE ÚPRAVA. Kým sa zahadzovala ako „veď to je predvolené",
+    // nedalo sa vypnúť prerušovanie tam, kde ho vrstva má zo štýlu
+    // (`rail-hatch`, `road-ford`, `road-construction`): panel voľbu prijal,
+    // uložil z nej prázdno a v mape ostala pôvodná čiarkovaná čiara. Tichý
+    // omyl – nespadlo nič, len sa nič nestalo. Developer mode ju zapíše len
+    // vtedy, keď vrstva zabudované prerušovanie naozaj má (`frico:dash`).
     if (def.dash != null) {
       if (!DASH_IDS.includes(def.dash)) {
         problems.push(`${where}Vrstva "${id}": neznámy vzor čiary "${def.dash}".`);
-      } else if (def.dash !== "solid") {
+      } else {
         clean.dash = def.dash;
       }
     }
@@ -2215,6 +2355,21 @@ function cleanLayers(rawLayers, target, problems, where) {
     // výslovne vypnúť. Chýbajúci kľúč znamená „nechaj, čo je v štýle".
     if (def.pattern === null) {
       clean.pattern = null;
+    } else if (def.pattern?.image) {
+      // VLASTNÝ OBRÁZOK AKO VZOR. Musí to byť vlastná ikona z týchto úprav –
+      // teda obrázok, ktorý sa nesie SPOLU s nimi a ktorý pipeline dopečie do
+      // spritu (`workers/assets/custom-icons.mjs`). Hocijaké iné meno by sa
+      // do štýlu dostalo, ale do spritu nie: MapLibre neznámy `fill-pattern`
+      // ticho preskočí a plocha ostane bez vzoru.
+      const image = String(def.pattern.image).trim();
+      if (!images.includes(image)) {
+        problems.push(
+          `${where}Vrstva "${id}": obrázok vzoru "${image}" nie je medzi vlastnými ` +
+          `ikonami úprav – nemal by ho kto dopiecť do spritu.`
+        );
+      } else {
+        clean.pattern = patternDef({ image, opacity: def.pattern.opacity });
+      }
     } else if (def.pattern) {
       if (!PATTERN_IDS.includes(def.pattern.id)) {
         problems.push(`${where}Vrstva "${id}": neznámy vzor "${def.pattern.id}".`);
@@ -2258,6 +2413,7 @@ export function hasOverrides(o) {
     (o.icons || DEFAULT_ICON_SOURCE) !== DEFAULT_ICON_SOURCE ||
     Object.keys(o.palette || {}).length > 0 ||
     Object.keys(o.layers || {}).length > 0 ||
+    (o.order || []).length > 0 ||
     Object.keys(o.trails?.gap || {}).length > 0 ||
     Object.keys(o.trails?.types || {}).length > 0 ||
     Object.keys(o.trails?.marks || {}).length > 0 ||
@@ -2265,6 +2421,7 @@ export function hasOverrides(o) {
     (o.iconSets || []).length > 0 ||
     (o.customIcons || []).length > 0 ||
     (o.poi?.hidden || []).length > 0 ||
+    Object.keys(o.poi?.icons || {}).length > 0 ||
     Object.values(o.maps || {}).some(
       (m) => Object.keys(m.layers || {}).length > 0 || (m.poi?.hidden || []).length > 0
     )
@@ -2308,7 +2465,10 @@ export function resolveOverrides(overrides, mapType) {
     ...overrides,
     layers,
     poi: {
-      hidden: [...new Set([...(overrides.poi?.hidden || []), ...(own.poi?.hidden || [])])].sort()
+      hidden: [...new Set([...(overrides.poi?.hidden || []), ...(own.poi?.hidden || [])])].sort(),
+      // Ikony kategórií sú spoločné pre všetky mapy (rozpis v normalizácii),
+      // takže sa nezlievajú – len sa nesmú stratiť.
+      icons: { ...(overrides.poi?.icons || {}) }
     }
   };
 }
@@ -2386,6 +2546,9 @@ function derived(layer, suffix, label) {
       "frico:derived": layer.id
     }
   };
+  // Prerušovanie si odvodená vrstva nesie vlastné (okraj má svoje, vzor
+  // žiadne), takže zdedené `frico:dash` predlohy by o nej klamalo.
+  delete out.metadata["frico:dash"];
   for (const key of ["source-layer", "filter", "minzoom", "maxzoom"]) {
     if (layer[key] !== undefined) out[key] = layer[key];
   }
@@ -2401,6 +2564,20 @@ function derived(layer, suffix, label) {
 export function patternLayerFor(layer) {
   const parent = (layer?.metadata || {})["frico:derived"];
   return parent && layer.id === `${parent}__pattern` ? parent : null;
+}
+
+/**
+ * Prerušovanie, ktoré má vrstva ZABUDOVANÉ V ŠTÝLE – teda to, na čo sa
+ * v developer móde dá vrátiť. Vracia predvoľbu (`"rail"`), rovno pole čísel
+ * (keď to žiadna predvoľba nie je) alebo `"solid"` pri plnej čiare.
+ *
+ * Číta sa z metadát, NIE z `paint`: panel dostáva štýl, na ktorom už úprava
+ * sedí, takže v `paint` je to, čo je nastavené TERAZ. Bez tohto ukazoval
+ * výber pri každej čiare „Plná“ (rozpis v `add`).
+ */
+export function builtinDash(layer) {
+  const d = (layer?.metadata || {})["frico:dash"];
+  return d === undefined ? "solid" : d;
 }
 
 /** Vrstva s opakujúcim sa vzorom nad plochou / pozdĺž čiary. */
@@ -2489,9 +2666,14 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     const builtin = (layer.metadata || {})["frico:pattern"] || null;
     const pat = o && "pattern" in o ? o.pattern : builtin;
 
+    // Vzor z vlastného obrázka sa nasadí len vtedy, keď ten obrázok naozaj
+    // je (v sprite alebo aspoň v úpravách) – neznámy `fill-pattern` MapLibre
+    // ticho preskočí a plocha ostane bez vzoru.
+    const patOk = (p) => !p || !p.image || hasIcon(p.image);
+
     if (!o) {
       out.push(layer);
-      if (pat) out.push(patternLayer(layer, pat));
+      if (pat && patOk(pat)) out.push(patternLayer(layer, pat));
       continue;
     }
 
@@ -2531,8 +2713,15 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
         layer.layout[prop] = paintValue(value);
       }
     }
+    // „Plná" NIE JE „nič": vrstva, ktorá má prerušovanie zabudované v štýle
+    // (železnica, brod, cesta vo výstavbe), sa musí dať vrátiť na plnú čiaru
+    // – a to znamená vlastnosť ZMAZAŤ. `line-dasharray: null` by MapLibre
+    // neprijal a `dashArray("solid")` je práve `null`.
     if (o.dash && layer.type === "line") {
-      layer.paint = { ...(layer.paint || {}), "line-dasharray": dashArray(o.dash) };
+      layer.paint = { ...(layer.paint || {}) };
+      const arr = dashArray(o.dash);
+      if (arr) layer.paint["line-dasharray"] = arr;
+      else delete layer.paint["line-dasharray"];
     }
 
     // Okraj čiary ide pod ňu, okraj plochy a vzor nad ňu.
@@ -2540,7 +2729,7 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
     if (outline && layer.type === "line") out.push(outline);
     out.push(layer);
     if (outline && layer.type !== "line") out.push(outline);
-    const pattern = pat ? patternLayer(layer, pat) : null;
+    const pattern = pat && patOk(pat) ? patternLayer(layer, pat) : null;
     if (pattern) out.push(pattern);
   }
 
@@ -2553,6 +2742,73 @@ function applyLayerOverrides(style, layerOverrides, hasIcon = () => true) {
   });
   return style;
 }
+
+/**
+ * PORADIE KRESLENIA: presuny „túto vrstvu kresli tesne pod tamtú".
+ *
+ * MapLibre kreslí vrstvy v tom poradí, v akom sú v štýle – posledná je
+ * navrchu. Čo je nad čím, je teda rozhodnutie štýlu, lenže vidieť ho je až
+ * v mape: násyp nad cestou, popisok pod tieňovaním, plot cez chodník. Kým sa
+ * to dalo zmeniť len v zdrojáku, znamenala každá taká otázka commit a build.
+ *
+ * FORMÁT JE ZOZNAM PRESUNOV, NIE CELÉ PORADIE. Uložiť všetkých ~250 id by
+ * znamenalo, že sa úpravy rozsypú pri prvej vrstve, ktorá v štýle pribudne
+ * alebo zmizne (iná téma, iný typ mapy, chýbajúci `featuresUrl`) – a rozsypú
+ * sa TICHO. Presun je oproti tomu odpoveď na jednu otázku, dá sa prečítať
+ * (`{"id": "feature-embankment", "before": "road-motorway"}`) a vrstvu, ktorú
+ * v tomto štýle nikto nepozná, jednoducho preskočí.
+ *
+ * PRESÚVA SA CELÁ RODINA. Vzor aj okraj sú vlastné vrstvy odvodené od
+ * predlohy (`frico:derived`) a musia ostať pri nej – inak by šrafovanie
+ * ostalo kresliť tam, kde plocha už nie je.
+ *
+ * MASKA REGIÓNU OSTÁVA POSLEDNÁ, nech si ju nikto nechtiac neprekryje:
+ * vrstva za ňou by kreslila aj mimo stiahnutého regiónu a bola by to presne
+ * tá tichá chyba, kvôli ktorej maska existuje (rozpis v CLAUDE.md, stráži to
+ * `workers/lint/style.mjs`).
+ *
+ * @param {object} style   hotový štýl (už s úpravami vrstiev)
+ * @param {{id: string, before: string|null}[]} order  presuny v poradí,
+ *        v akom sa naklikali; `before: null` znamená „úplne navrch"
+ */
+export function applyLayerOrder(style, order) {
+  if (!order?.length) return style;
+  let layers = style.layers;
+  const rodina = (id) => (l) => {
+    const meta = l.metadata || {};
+    return l.id === id || meta["frico:derived"] === id || meta["frico:with"] === id;
+  };
+
+  for (const { id, before } of order) {
+    const blok = layers.filter(rodina(id));
+    // Vrstva, ktorú tento štýl nemá (iná téma, iný typ mapy, vypnuté trasy),
+    // nie je chyba – presun sa jednoducho netýka ničoho.
+    if (!blok.length) continue;
+    const zvysok = layers.filter((l) => !blok.includes(l));
+    if (before == null) {
+      layers = [...zvysok, ...blok];
+      continue;
+    }
+    const kam = zvysok.findIndex((l) => l.id === before);
+    if (kam < 0) continue;
+    layers = [...zvysok.slice(0, kam), ...blok, ...zvysok.slice(kam)];
+  }
+
+  // Maska regiónu späť navrch – rozpis vyššie.
+  const maska = layers.filter((l) => REGION_MASK_LAYERS.includes(l.id));
+  if (maska.length) {
+    layers = [...layers.filter((l) => !maska.includes(l)), ...maska];
+  }
+  style.layers = layers;
+  return style;
+}
+
+/**
+ * Vrstvy masky regiónu – tie, ktoré musia ostať úplne navrchu. Sú tu, a nie
+ * ako reťazec v `applyLayerOrder`, lebo sa na ne pýta aj developer mode
+ * (neponúka ich presúvať) a `workers/lint/style.mjs`.
+ */
+export const REGION_MASK_LAYERS = ["region-outside", "region-border"];
 
 /**
  * Cesty: jeden riadok na triedu, ZORADENÉ OD NAJDÔLEŽITEJŠEJ.
@@ -2770,21 +3026,7 @@ export function buildStyle({
   const BOLD = [f.bold];
   const ITAL = [f.italic];
 
-  // Z mien v sprite spravíme zoznam tried, pre ktoré existuje ikona
-  // `<trieda><prípona>`. Čisto geometrické tvary (kruh, štvorec…) sa
-  // vynechávajú – POI bez vlastnej ikony nemá dostať kruh, ale zostať
-  // len s popiskom.
-  const iconClasses = (
-    icons && icons.length
-      ? [
-          ...new Set(
-            icons
-              .filter((n) => (suffix ? n.endsWith(suffix) : !/_\d+$/.test(n)))
-              .map((n) => (suffix ? n.slice(0, -suffix.length) : n))
-          )
-        ]
-      : FALLBACK_ICONS
-  ).filter((n) => !SHAPE_ICONS.has(n));
+  const iconClasses = iconClassesOf(icons, suffix);
   // VLASTNÁ IKONA JE „V SPRITE" AJ VTEDY, KEĎ V ŇOM EŠTE NIE JE. Zoznam mien
   // sa berie z hotového spritu, takže práve pridaná ikona by v ňom nebola
   // a štýl by ju ticho vynechal – hoci v prehliadači ju mapa má hneď
@@ -2974,6 +3216,16 @@ export function buildStyle({
     const l = { ...layer };
     if (l.type !== "background" && !l.source) l.source = "omt";
     const pat = pattern ? patternDef(pattern) : null;
+    // ZABUDOVANÉ PRERUŠOVANIE do metadát – inak sa v developer móde nedá
+    // ukázať ani vrátiť. Panel dostáva štýl, na ktorom už úpravy sedia,
+    // takže z `paint` sa „aké to bolo pôvodne" prečítať nedá: kým tu tento
+    // riadok nebol, ukazoval výber pri KAŽDEJ čiare „Plná" – aj pri
+    // železnici, ktorá má `rail` – a voľba „Plná" sa navyše zahodila ako
+    // „veď to je predvolené", takže čiarkovanie železnice sa nedalo ani
+    // zmeniť, ani vypnúť. Ukladá sa PREDVOĽBA, a keď žiadna nesedí, rovno
+    // to pole čísel – aby aj vlastné prerušovanie zo štýlu vedel panel
+    // pomenovať a vrátiť.
+    const dashBuiltin = (l.paint || {})["line-dasharray"];
     l.metadata = {
       "frico:group": group,
       "frico:label": label,
@@ -2982,13 +3234,31 @@ export function buildStyle({
       ...(paletteExtra && paletteExtra.length
         ? { "frico:palette-extra": paletteExtra }
         : {}),
-      ...(pat ? { "frico:pattern": pat } : {})
+      ...(pat ? { "frico:pattern": pat } : {}),
+      ...(Array.isArray(dashBuiltin)
+        ? { "frico:dash": dashIdOf(dashBuiltin) || dashBuiltin }
+        : {})
     };
     L.push(l);
     if (pat) {
       const p = patternLayer(l, pat);
       if (p) L.push(p);
     }
+  };
+
+  /**
+   * „Táto vrstva patrí k tamtej a presúva sa s ňou."
+   *
+   * Niektoré prvky sú v štýle DVE vrstvy, lebo MapLibre inak nevie, čo od
+   * nich chceme: hrana so zúbkami (druhá čiara odsunutá nabok) a železnica
+   * (tmavá čiara a na nej svetlé čiarkovanie). Pri farbe a hrúbke sa ladia
+   * zvlášť – to je v poriadku, sú to naozaj dve otázky –, ale PORADIE
+   * KRESLENIA je pri nich jedna: keby sa dala presunúť len polovica, ostali
+   * by zúbky nad cestou a hrana pod ňou. Zapisuje sa preto, ku ktorej vrstve
+   * tá druhá patrí, a `applyLayerOrder` ich presúva spolu.
+   */
+  const spolu = (parent) => {
+    L[L.length - 1].metadata["frico:with"] = parent;
   };
 
   add(
@@ -3499,6 +3769,7 @@ export function buildStyle({
       },
       [group, `${label} – zúbky`, "line", { "line-color": paletteKey }]
     );
+    spolu(id);
   };
 
   // ================= bralné hrany a hrebene z OSM =================
@@ -3872,6 +4143,7 @@ export function buildStyle({
     },
     ["doprava", "Železnica – čiarkovanie", "line", { "line-color": "railHatch" }]
   );
+  spolu("rail-bg");
 
   // --- mosty (nad všetkým ostatným) ---
   roadPass("-bridge", " (most)", isBridge, { cap: "butt" });
@@ -4326,16 +4598,22 @@ export function buildStyle({
     // dvojice `(side, off)`, ktoré sa v dátach reálne vyskytujú; nad
     // `TRAIL_MARK_STACK_MAX` je v rade toľko trás, že by stĺpik aj tak
     // prerástol obrazovku, a ďalšie sa preto kreslia na poslednú priečku.
-    const markOffset = ["case"];
-    for (const side of [1, -1]) {
-      for (let off = 0; off <= TRAIL_MARK_STACK_MAX; off += 1) {
-        markOffset.push(
-          ["all", ["==", num("side", 1), side], ["==", num("off", 0), off]],
-          ["literal", [0, -side * (TRAIL_MARK_STACK.base + TRAIL_MARK_STACK.step * off)]]
-        );
+    const stackOffset = (base, step) => {
+      const expr = ["case"];
+      for (const side of [1, -1]) {
+        for (let off = 0; off <= TRAIL_MARK_STACK_MAX; off += 1) {
+          expr.push(
+            ["all", ["==", num("side", 1), side], ["==", num("off", 0), off]],
+            ["literal", [0, -side * (base + step * off)]]
+          );
+        }
       }
-    }
-    markOffset.push(["literal", [0, -TRAIL_MARK_STACK.base]]);
+      expr.push(["literal", [0, -base]]);
+      return expr;
+    };
+    // Krok stĺpika je z developer módu (`overrides.trails.marks.step`), takže
+    // sa dá doladiť tak isto ako rozostup po trase a veľkosť značky.
+    const markOffset = stackOffset(TRAIL_MARK_STACK.base, markPx.step);
     for (const t of trailTypes) {
       if (!drawsMark(t)) continue;
       const { id, label, markPick } = t;
@@ -4373,7 +4651,14 @@ export function buildStyle({
             "icon-rotation-alignment": "viewport",
             "icon-pitch-alignment": "viewport",
             "icon-padding": TRAIL_MARK_PADDING,
-            // Keď sa nezmestia všetky, nech ostane značka dôležitejšej trasy.
+            // STĹPIK SA KRESLÍ CELÝ. Značky v ňom stoja tesne na sebe, takže
+            // sa im kolízne obdĺžniky o priehľadný okraj prekrývajú – bez
+            // tohto by MapLibre všetky okrem prvej zahodila a z troch trás na
+            // chodníku by bola v mape jedna (rozpis pri `TRAIL_MARK_STACK`).
+            "icon-allow-overlap": true,
+            // Poradie v rade rozhodujú dáta (`off`), nie to, kto sa zmestí
+            // prvý; sort-key ostáva pre značky dvoch RÔZNYCH ciest, ktoré si
+            // sadnú na to isté miesto.
             "symbol-sort-key": trailSort
           }
         },
@@ -4407,7 +4692,15 @@ export function buildStyle({
             "icon-image": icon,
             "icon-size": zl([[13, 0.5], [16, 0.75], [20, 1]]),
             "icon-rotation-alignment": "viewport",
-            "icon-padding": 6
+            // TEN ISTÝ STĹPIK AKO PRI ZNAČKÁCH, a z toho istého dôvodu: trasy
+            // majú v dlaždiciach tú istú geometriu, takže bez posunu padnú
+            // ikonky všetkých trás na jedno miesto a kolízia nechá jednu.
+            // `off` a `side` sú pri tom spoločné pre značky aj ikonky (číslujú
+            // sa raz na cestu, `workers/trails/routes.py`), takže trasa so
+            // značkou a trasa bez nej si navzájom priečku neberú.
+            "icon-offset": markOffset,
+            "icon-allow-overlap": true,
+            "icon-padding": 0
           },
           paint: {
             "icon-opacity": 0.85,
@@ -4795,14 +5088,34 @@ export function buildStyle({
   // ---- POI ----
   // Ikona sa vyberá podľa `subclass`, potom `class`. Ak pre ne sprite ikonu
   // nemá, nekreslí sa nič (prázdny reťazec) – žiadne náhradné kolieska.
-  const iconExpr = [
+  // IKONA VYBRANÁ V DEVELOPER MÓDE IDE PRVÁ. Je to jediná odpoveď na „tejto
+  // kategórii chcem inú značku": `class`/`subclass` z dlaždíc sú stovky
+  // hodnôt a sada ikoniek ich pokrýva menami, ktoré si nikto nevyberá –
+  // dostane sa `restaurant_11`, aj keď by tam patrila vlastná ikona chaty.
+  // Prázdny reťazec je platná voľba („tu žiadnu ikonu"), preto sa rozhoduje
+  // podľa TOHO, ČI KĽÚČ EXISTUJE, nie podľa toho, či je hodnota pravdivá.
+  //
+  // Ikona, ktorú sprite nemá, sa nenasadí (`hasIcon`) – MapLibre by symbol
+  // ticho nevykreslil a v mape by kategória zmizla aj s popiskom.
+  const poiIconPicks = Object.entries(overrides?.poi?.icons || {})
+    .filter(([, name]) => name === "" || hasIcon(name));
+  const withPoiIcons = (base) => [
+    "case",
+    ...poiIconPicks.flatMap(([cls, name]) => [
+      ["any", ["==", str("subclass"), cls], ["==", str("class"), cls]],
+      name
+    ]),
+    ...base.slice(1)
+  ];
+
+  const iconExpr = withPoiIcons([
     "case",
     ["in", str("subclass"), ["literal", iconClasses]],
     ["concat", str("subclass"), suffix],
     ["in", str("class"), ["literal", iconClasses]],
     ["concat", str("class"), suffix],
     ""
-  ];
+  ]);
 
   // SDF sprite obsahuje samotný symbol bez kolieska, ktoré predtým vypĺňalo
   // celý štvorec ikony – aby ikony opticky nezmenšeli, sú o kúsok väčšie.
@@ -4892,14 +5205,17 @@ export function buildStyle({
   // Ikona sa hľadá rovnako ako pri POI: podľa `class`, a keď ju sada nemá,
   // ostane len popisok – žiadne náhradné kolieska.
   if (featuresUrl) {
-    const featureIcon = [
+    // Tá istá voľba ikony ako pri POI (`withPoiIcons`): triedy sú iné
+    // (prameň, jaskyňa, rozhľadňa), ale otázka je jedna – „akú značku má
+    // táto kategória" – a dve odpovede by sa raz rozišli.
+    const featureIcon = withPoiIcons([
       "case",
       ["in", str("class"), ["literal", iconClasses]],
       ["concat", str("class"), suffix],
       ["in", str("subclass"), ["literal", iconClasses]],
       ["concat", str("subclass"), suffix],
       ""
-    ];
+    ]);
     add(
       {
         id: "feature-point",
@@ -4907,6 +5223,10 @@ export function buildStyle({
         source: "features",
         "source-layer": "feature_point",
         minzoom: 12,
+        // Skryté kategórie platia aj tu. Zoznam v paneli je jeden pre POI aj
+        // pre vlastné body, takže by odškrtnutie prameňa neurobilo nič –
+        // a nikto by nepovedal prečo.
+        ...(poiFilter(null) ? { filter: poiFilter(null) } : {}),
         layout: {
           ...poiLayout,
           "icon-image": featureIcon,
@@ -5212,7 +5532,12 @@ export function buildStyle({
   // Najprv profil typu mapy (čo táto mapa vôbec ukazuje), až potom úpravy
   // z developer módu – tie musia vedieť profil prebiť.
   applyMapType(style, mapTypeId);
-  return applyLayerOverrides(style, overrides?.layers, hasIcon);
+  // Poradie kreslenia sa mení až NAD hotovým štýlom: presúva sa aj vzor
+  // a okraj, ktoré vznikli práve v `applyLayerOverrides`.
+  return applyLayerOrder(
+    applyLayerOverrides(style, overrides?.layers, hasIcon),
+    overrides?.order
+  );
 }
 
 export {

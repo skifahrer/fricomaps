@@ -490,6 +490,16 @@ Kopíruje sa to z `manifest.json`, ktorý tie fakty už nesie.
 a navyše by tú celú prepísala. Publikuje sa len mapa, ktorá prešla kontrolou
 pred nasadením; rozbitý ZIP v priečinku vyzerá presne ako dobrý.
 
+**A tie 4 km² sú odteraz CELÝ beh, nie len terén.** Rýchly test (switch `test`)
+oreže aj samotné PBF, takže dlaždice, trasy, prvky a ZIP sú z toho štvorca –
+`bbox` behu sa rovná `dem_bbox`. Kým sa mapa nechávala celá, bol test polovičný:
+kraj sa aj tak stiahol, prehnal Planetilerom, zabalil a nahral, takže sa okolo
+štvorca s pár km² terénu viezol celý kraj. Dôvod, prečo to tak bolo – „nech sa
+ten štvorec dá pozerať v mape, do ktorej patrí" – nesie obrázok „kde to je"
+(`workers/plan/test-map.py`), na ktorý celý kraj netreba. Celý kraj s terénom
+len v jednom pohorí sa dá stále postaviť: switch `test` odškrtnúť a `area`
+prepnúť na pohorie.
+
 **Ktoré mapy vôbec existujú, hovorí `maps.json` v koreni repozitára** – na Drive
 sa to bez tokenu a bez klikania nezistí. **Rýchle testy majú vedľa neho vlastný
 `maps-test.json`** s tým istým tvarom: mapa, v ktorej je terén na 4 km², nemá
@@ -526,7 +536,7 @@ ako ďalší výsek. Že je to test, hovorí kľúč, meno („– rýchly test 
 **Z kľúča uzla sa NEDÁ odvodiť meno súboru** a položka je preto písaná tak, aby
 to nikto nemusel skúšať: uzol je `bratislavsky_test4km2`, balík
 `bratislavsky-test4km2.zip` a dlaždice v ňom `tiles/bratislavsky_test4-…`
-(pri výreze sa volajú dokonca podľa KRAJA, lebo mapa je celý kraj). Tri zápisy,
+(prípona `_test4` je z voľby `test_km2`, nie z mena kraja). Tri zápisy,
 lebo každý odpovedá na inú otázku. Cesty preto nesie `tiles` v položke –
 prepísané z `manifest.json`, ktorý ich pozná, lebo podľa neho číta dlaždice aj
 viewer. **A strop zoomu musí byť pri každej vrstve, ktorá ho má vlastný**
@@ -560,42 +570,73 @@ Sú na to **tri kusy a všetky treba**:
 
 | kus | čo robí | kde |
 |---|---|---|
-| do PBF sa dostanú CELÉ objekty | kraj sa vyreže z rodičovského extraktu (`osmium extract -s smart`) | `workers/plan/pbf.sh` |
 | dlaždice sa mimo regiónu nevyrobia | `--polygon` Planetileru v jobe `tiles`, `trails` a `features` | `workers/lib/region-clip.sh` |
+| tieňovanie má mimo regiónu rovinu | pixely mimo kraja dostanú výšku 0, takže hillshade z nich nekreslí nič | `workers/lib/region-mask.py` (`pixel_mask`) → `workers/terrain/tiles.py` |
 | presnú hranicu dokreslí štýl | plocha `mimo` (farba podkladu) a obrys `hranica` úplne navrchu | `workers/deploy/region-mask.py` → `_site/region.geojson` |
 
-**Ten prvý je opačný problém než zvyšok kapitoly: nie „mapa presahuje", ale
-„v mape CHÝBA".** Hotový `presovsky-latest.osm.pbf` z osm.fr je orezaný NA
-TVRDO – ceste, rieke či lesu, ktorý pokračuje do vedľajšieho kraja, v ňom
-chýbajú uzly za hranicou a viacpolygónovej ploche (`type=multipolygon`) celé
-členské cesty. Planetiler z takého objektu geometriu nepostaví a **zahodí ho
-celý**, takže v stiahnutom kraji nebol vôbec – nie orezaný, ale žiadny.
-Namerané na Bratislavskom kraji (maxzoom 12, schéma na `highway`/`waterway`/
-`landuse`/`natural`):
+**Tieňovanie je tretí kus, lebo dlaždica je nedeliteľná.** Ktorá sa kraja
+dotkne, vyrobí sa celá – a na nízkych zoomoch je obrovská, takže tieňovaný
+reliéf pokračoval ďaleko za hranicu stiahnutého regiónu: namerané na Prešovskom
+kraji **z10 2,2× jeho plochy, z8 6,2×**. Bola to tichá chyba – v mape to
+zakrývala plocha `mimo` zo štýlu, takže to bolo vidieť, len keď sa nekreslila
+(alebo v 3D pod iným uhlom). Odpoveď je jemnejšia otázka („ktoré PIXELY ležia
+v kraji?") a rovina mimo nich; hillshade kreslí krytím podľa sklonu, takže
+z roviny nenakreslí nič. Stena medzi terénom a rovinou pritom **nesmie stáť
+presne na hranici** – bol by z nej prstenec po jej vnútornej strane, teda
+v mape –, tak je posunutá o `--edge` (2 px) za ňu. Stráži to
+`workers/lint/terrain.py`.
 
-| | hotový extrakt kraja | z rodiča `-s smart` |
-|---|--:|--:|
-| zahodené čiary (way) | 97 | 5 |
-| zahodené plochy (way) | 66 | 6 |
-| zahodené plochy (multipolygon) | 19 | 1 |
-| prvkov v dlaždiciach | 260 486 | 262 377 |
+**PBF kraja sa REŽE Z RODIČA (`osmfr.parent`), hotový export kraja sa
+nepoužíva.** osm.fr má pre každý kraj vlastný `{kraj}-latest.osm.pbf` (36 MB)
+rezaný po jeho administratívnej hranici a chvíľu sa sťahoval priamo – bolo to
+o krok kratšie a o 337 MB lacnejšie. Lenže **ten súbor nie je referenčne
+úplný**: viacpolygónovej ploche, ktorá pokračuje do susedného kraja, v ňom
+chýbajú členské cesty, a Planetiler taký objekt **zahodí CELÝ** – aj tú
+polovicu, čo v kraji leží. Preto sa sťahuje `slovakia-latest.osm.pbf` (373 MB)
+a kraj sa z neho reže `osmium extract -s smart -S types=multipolygon,boundary
+--polygon` na jeho `.poly` (`workers/plan/pbf.sh`, ~30 s).
 
-Preto má kraj vo `workers/data/regions.json` **`osmfr.parent`** a PBF sa reže
-z neho (Slovensko, 373 MB, `osmium extract -s smart --polygon`; ~1 minúta, raz
-za deň – kľúč cache nesie dátum). Objekt cez hranicu je tým celý, takže
-presahuje – a schová ho maska. **To, čo vyčnieva, sa má schovať, nie zahodiť.**
-Zvyšok (252 uzlov) je na ŠTÁTNEJ hranici, kde je rodičom orezané Slovensko;
-na to by bola treba Európa (28 GB) a mapa tam aj tak končí.
+**Nie je to kozmetika na hranici a raz sme sa na tom pomýlili.** Prvé meranie
+počítalo objekty (97 čiar, 66 plôch, 19 viacpolygónových plôch, dokopy 0,7 %
+prvkov v dlaždiciach) a uzavrelo to „sú to objekty na hranici, tie maska aj tak
+schová". Lenže objekt sa nezmenší, zmizne CELÝ – a tie veľké sú vidieť najviac.
+Namerané na `bratislavsky-latest.osm.pbf`: z 3075 plošných relácií malo 250
+chýbajúceho člena, z toho 49 krajinnej pokrývky a ochrany prírody. Chýbala
+**CHKO Malé Karpaty, CHKO Záhorie, CHKO Dunajské luhy, NPR Aluvium Moravy**,
+les Záhoria (relácia s 1011 členmi) aj Zdrž Hrušov – teda plochy z vnútra
+kraja, ktoré maska neschová, lebo ich niet. Po reze z rodiča ostane z tých 49
+päť a všetky sú na rakúskej hranici pozdĺž Dunaja a Moravy (ich členovia nie sú
+ani v slovenskom extrakte, doplnil by ich až extrakt Európy).
 
-Reže sa to len pre PBF, z ktorého sa **kreslí** (`PBF_NEEDS_GEOMETRY: true`);
-`Build wiki` z neho číta iba tagy, takže mu hotový extrakt kraja stačí a 373 MB
-rodiča by sťahoval pre nič (pravidlo 7). Vypnúť sa to dá poradím krokov – bez
-`data/region.poly` sa kraj nemá čím vyrezať a beh je pri tom zelený –, tak to
-stráži `workers/lint/pbf-parent.py`.
+**`-S types=multipolygon,boundary` nie je ozdoba.** Predvolene `smart` dopĺňa
+členov len reláciám `type=multipolygon`, kým CHKO je `type=boundary` – bez toho
+prepínača ostali všetky tri CHKO rozbité aj po reze z rodiča (9 zvyšných plôch
+namiesto 5). Platí to pri KAŽDOM reze v `pbf.sh`, aj pri `crop_bbox` a pri
+štvorci rýchleho testu; zo 4 km² vytŕča skoro každá plocha, takže sa tam ten
+prepínač prejaví najskôr.
+
+Koľko plôch beh naozaj stratil, počíta `workers/plan/pbf-areas.py` (dve volania
+`osmium`, ~1 s) a píše to do logu aj do súhrnu behu – inak by sa tento druh
+chyby zase neohlásil. Statickú stranu stráži `workers/lint/pbf-source.py`:
+rodiča v číselníku, oba prepínače rezu a to, že sa pri chýbajúcom `.poly`
+**spadne** namiesto návratu k priamemu sťahovaniu (na tom padla prvá verzia
+tohto kroku – beh bol zelený a CHKO zase chýbali).
+
+**Orez je DOČASNE VYPNUTÝ** (`region_clip=false` vo voľbách). Merané na
+Bratislavskom kraji (maxzoom 14, kraj je 57 % svojho bboxu): `--polygon` dá
+1271 dlaždíc a 19 330 130 B, `--bounds` 1607 dlaždíc a 19 467 060 B – teda
+**+26 % dlaždíc za +0,7 % bajtov** a rovnaký čas. Vidieť to nie je, lebo maska
+je „celý svet mínus región" a všetko za hranicou prekryje. Nie je to ale nič:
+v tých 336 dlaždiciach navyše bolo na z12 228 popisov sídel, 55 chránených
+území, 19 hraníc, cesty aj vodstvo – vrátane rakúskych a maďarských mien.
+**Rezaný PBF to nerieši**: vodstvo, pobrežia a Natural Earth kreslí Planetiler
+zo svojich celosvetových podkladov, ktoré v našom PBF nie sú vôbec, takže orez
+a rez PBF sú dve rôzne veci. Kým je vypínač v `false`, hlási to `::warning::`
+v každom behu (pravidlo 8); späť sa zapína `region_clip=true`.
 
 `--polygon` je HRUBÝ OREZ – Planetiler vynechá celé dlaždice, ktoré sa tvaru
 nedotknú, takže na z14 môže presahovať ešte zhruba kilometer a pol. Presne
-preto je aj ten tretí kus; a preto je maska v štýle **posledná vrstva**
+preto je aj ten druhý kus; a preto je maska v štýle **posledná vrstva**
 (prekrýva aj popisky a tieňovanie). Vrstva pridaná za ňu by mimo regiónu opäť
 kreslila a nikto by to nepovedal – stráži to `workers/lint/style.mjs`.
 
@@ -675,6 +716,87 @@ v `layout` je pre MapLibre tvrdá chyba – neodmietne vrstvu, ale CELÝ štýl,
 takže by sa mapa nenačítala vôbec (v `paint` neznáme len ignoruje). Stráži to
 `workers/lint/icons.mjs`.
 
+### Poradie kreslenia sa dá zmeniť bez commitu
+
+MapLibre kreslí vrstvy tak, ako idú v štýle za sebou – **navrchu je tá
+posledná**. Čo je nad čím, je teda rozhodnutie štýlu, lenže vidieť ho je až
+v mape (násyp nad cestou, plot cez chodník), a kým sa to dalo zmeniť len
+v zdrojáku, znamenala každá taká otázka commit a build. V developer móde je
+teraz pri každej vrstve **Poradie kreslenia**: „vyššie / nižšie / navrch"
+a výber „kresliť tesne pod <vrstvu>“.
+
+**Celý stoh je v záložke „Poradie".** Zoznam v záložke „Vrstvy" je zoradený
+PO SKUPINÁCH (cesty, vodstvo, popisky), lebo tam sa hľadá „kde sa nastaví
+hrúbka chodníka" – a v takom zozname sa na „čo je nad čím" odpovedať nedá:
+násyp a cesta sú v ňom na dvoch rôznych miestach. „Poradie" je preto jeden
+dlhý zoznam v poradí kreslenia, **prvý riadok navrchu**, s ťahaním (`⠿`) aj
+šípkami. Kým je v ňom zadané hľadanie, ťahanie sa vypína – v prefiltrovanom
+zozname nie je vidieť, medzi ktoré dve vrstvy by vrstva padla.
+
+**Ukladá sa ZOZNAM PRESUNOV, nie celé poradie** (`overrides.order`, položka
+`{"id": "feature-embankment", "before": "road-minor"}`). Uložiť všetkých ~250
+id by znamenalo, že sa úpravy rozsypú pri prvej vrstve, ktorá v štýle pribudne
+alebo zmizne (iná téma, iný typ mapy, chýbajúci `featuresUrl`) – a rozsypú sa
+TICHO. Presun je oproti tomu odpoveď na jednu otázku, dá sa prečítať a vrstvu,
+ktorú ten štýl nepozná, jednoducho preskočí. **Jeden presun na vrstvu**
+a vyhráva posledný: presuny sa vyhodnocujú v rade za sebou, takže by ich pri
+klikaní pribúdali stovky a nedalo by sa z nich prečítať, kde vrstva skončí.
+
+**Presúva sa celá rodina.** Niektoré prvky sú v štýle DVE vrstvy, lebo inak sa
+povedať nedajú: hrana so zúbkami (druhá čiara odsunutá nabok) a železnica
+(tmavá čiara a na nej svetlé čiarkovanie), k tomu vzor a okraj z developer
+módu. Farbu a hrúbku majú vlastnú – to sú naozaj dve otázky –, ale poradie je
+pri nich jedna, inak by ostali zúbky nad cestou a hrana pod ňou. Drží to
+`frico:with` v metadátach (`frico:derived` pri vzore a okraji).
+
+**Maska regiónu ostáva posledná, nech sa presúva čokoľvek.** Vrstva za ňou by
+kreslila aj mimo stiahnutého regiónu – presne tá tichá chyba, kvôli ktorej
+maska existuje. Panel ju preto neponúka presúvať a `applyLayerOrder` ju na
+koniec vráti aj tak.
+
+A ešte jedna tichá vec, ktorú tá záložka priniesla: **zoznam záložiek
+(`TABS`) a prepínač v `renderBody` sú dve miesta**. Keď v prepínači niektorá
+chýba, nespadne nič – ťuknutie prepadne do poslednej vetvy a otvorí sa
+„Súbor" s JSON-om, čo vyzerá ako pokazený panel. Stráži to
+`workers/lint/overrides.mjs`.
+
+Stráži to `workers/lint/overrides.mjs`: presun nesmie zmeniť počet vrstiev
+(stratená vrstva v mape nie je a štýl je pritom platný), musí vziať so sebou
+druhú polovicu dvojice a maska musí ostať navrchu.
+
+**Poradie je spoločné pre všetky typy máp**, aj keď sa práve zapisuje do
+priečinka jednej mapy: čo je nad čím, je stavba mapy, nie jej téma – a keby si
+každá mapa niesla vlastné, ten istý presun by sa musel naklikať štyrikrát.
+
+### Prerušovanie čiary: „zo štýlu“ je odpoveď, „Plná“ je úprava
+
+Výber „Čiara“ v developer móde si predvoľbu čítal z ÚPRAVY, a tá je prázdna,
+kým sa niečo nezmení – takže pri **železnici ukazoval „Plná“**, hoci je
+čiarkovaná (`rail-hatch` má `line-dasharray` zabudované v štýle). A „Plná“ sa
+pri ukladaní zahadzovala ako „veď to je predvolené“, takže sa čiarkovanie
+železnice nedalo ani vrátiť, ani vypnúť: panel voľbu prijal a v mape sa
+nestalo nič. Tichý omyl v čistej podobe.
+
+Držia to tri kusy a treba všetky tri:
+
+| kus | čo robí | kde |
+|---|---|---|
+| `frico:dash` v metadátach | čo má vrstva zo štýlu (predvoľba, alebo rovno pole čísel) | `add()` v `themes.js` |
+| položka „— zo štýlu (…) —“ | prvá vo výbere = „nechaj, ako to bolo“ | `dashField` v `devmode.js` |
+| „Plná“ ako plnohodnotná úprava | `normalizeOverrides` ju nezahodí a `applyLayerOverrides` vlastnosť ZMAŽE | `themes.js` |
+
+**Prečo metadáta a nie `paint`.** Panel dostáva štýl, na ktorom už úpravy
+sedia – v `paint` je teda to, čo platí TERAZ, nie to, na čo sa dá vrátiť.
+**A prečo aj holé pole čísel:** brod má `[1, 1]`, zúbky brala `[0.35, 2.2]` –
+prerušovanie, ktoré medzi predvoľbami vôbec nie je, a pomenovať ho niektorou
+z nich by ho pri prvom uložení prepísalo na inú čiaru.
+
+**„Plná“ znamená vlastnosť ZMAZAŤ**, nie nastaviť na `null` – `dashArray("solid")`
+je práve `null` a taký štýl by MapLibre neprijal. Stráži to
+`workers/lint/overrides.mjs` (metadáta každej čiary s prerušovaním, prežitie
+„solid“ cez normalizáciu aj to, že v hotovom štýle po nej `line-dasharray`
+naozaj nie je).
+
 ### Trasy sa v developer móde ladia po vrstvách
 
 Jeden druh značenej trasy je v štýle ŠTYRI vrstvy a každá odpovedá na inú
@@ -696,6 +818,69 @@ teda presne tam, kam píše záložka Vrstiev. Rozdiel je len v tom, že je tu
 pokope to, čo patrí k jednej trase – v zozname vrstiev sú tie štyri na štyroch
 rôznych miestach a bez farby a značky vedľa nich sa nedá povedať, ktorá je
 ktorá.
+
+### Vzor: vidieť ho ako obrázok, aj nad čím leží – a dá sa nahrať vlastný
+
+Vzor sa vyberal z rozbaľovačky s menami („Šrafovanie /", „Šupiny (skaly)")
+a to je horšie než pri ikone: meno nepovie ani ako je hustý, ani ako je hrubý,
+ani ako vyzerá nad farbou, ktorú tá plocha má. Teraz je z toho **mriežka
+s náhľadmi**, kreslená tým istým rasterizérom (`renderPattern`), aký vyrobí
+obrázok pre mapu aj pre sprite.
+
+**Náhľad sa kreslí NAD FARBOU PODKLADU** a tá je hneď vedľa neho na zmenu
+(vrátane „bez výplne"). Vzor je totiž vždy DRUHÁ vrstva nad plochou
+(`fill-pattern` sa nedá kresliť do tej istej vrstvy ako výplň), takže sám
+o sebe nehovorí nič – to isté šrafovanie vyzerá inak nad tmavozeleným lesom
+a inak nad svetlou lúkou.
+
+**Vlastný obrázok ako vzor je uložený ako VLASTNÁ IKONA** (`own:…`, PNG
+v `data:` adrese) – a to nie je obchádzka, ale celá pointa: taký obrázok sa
+nesie priamo v úpravách (funguje offline aj v balíku pre mobil), prehliadač ho
+dokreslí cez `styleimagemissing` a do každého spritu ho dopečie
+`workers/assets/custom-icons.mjs`. Druhá pečiaca cesta pre „obrázky, ktoré sú
+vzory" by bola druhé miesto, ktoré sa raz rozíde s prvým. Preto sa aj
+**kontroluje, že to meno je naozaj medzi vlastnými ikonami úprav**: hocijaké
+iné by sa do štýlu dostalo, do spritu nie, a MapLibre neznámy `fill-pattern`
+ticho preskočí.
+
+**Veľkosť dlaždice sa vyberá pri nahratí** a obrázok sa na ňu rovno
+prevzorkuje. `fill-pattern` sa v MapLibre neškáluje – dlaždicuje sa tak, ako
+je obrázok veľký –, takže „veľkosť až pri kreslení" by musel rovnako spraviť
+aj sprite; čo je uložené, je to, čo mapa kreslí. Farba, veľkosť a hrúbka
+zostávajú len pri KRESLENOM vzore: obrázok ich má v sebe, takže by to pri ňom
+boli tri políčka, ktoré nič nerobia.
+
+| kde | čo |
+|---|---|
+| `poc/web/dev-patterns.js` | náhľad nad podkladom, mriežka vzorov |
+| `poc/web/patterns.js` | `patternSpec`/`patternImageName` – obrázok je iný druh odpovede, nie ďalšie pole |
+| `workers/lint/icons.mjs` | obrázok vzoru musí byť medzi vlastnými ikonami a nesmie sa dostať medzi kreslené vzory (rasterizér by ho v atlase prepísal) |
+
+### Ikona kategórie: vidieť tú terajšiu a vymeniť ju
+
+Záložka „POI" vedela kategórie len skrývať – aká ikona je pri ktorej, sa
+z nej nedalo zistiť ani zmeniť. Teraz je pri každom riadku **náhľad tej
+ikony, ktorá je naozaj v mape**, a po rozkliknutí mriežka na výber
+(`overrides.poi.icons[<kategória>]`).
+
+**Tri odpovede, nie dve** – tá istá úvaha ako pri značke druhu trasy:
+chýbajúci kľúč je „ikona podľa sady", prázdny reťazec je „žiadna" (ostane len
+popisok) a meno je „táto". Preto sa rozhoduje podľa toho, či kľúč EXISTUJE,
+nie podľa toho, či je hodnota pravdivá.
+
+**Ktorá ikona kategórii patrí, hovorí `poiIconName`** – jedna funkcia pre štýl
+(čo nakresliť) aj pre panel (čo ukázať). Kým to boli dva výpočty, ukazoval by
+panel raz niečo iné, než je v mape; `iconClassesOf` je z toho istého dôvodu
+funkcia, a nie riadok v `buildStyle`.
+
+**Ikona je nasadená ako HOLÉ MENO obrázka** (`case` nad `class`/`subclass`),
+nie `concat` z dát – a meno, ktoré sprite nemá, MapLibre ticho preskočí, takže
+prejde len to, čo `hasIcon` pozná (vlastná ikona sa pritom za dostupnú pokladá
+aj pred dopečením). Zoznam kategórií aj samotný výber platia rovnako pre POI
+z OpenMapTiles aj pre **vlastné body** (prameň, jaskyňa, rozhľadňa) – je to tá
+istá otázka a jeden zoznam, takže od tejto zmeny na `feature-point` platia aj
+skryté kategórie. Ikony sú spoločné pre všetky typy máp (skrývanie ostáva
+podľa rozsahu). Stráži to `workers/lint/icons.mjs`.
 
 ### Ikony: vidieť, čo si vyberám – a vlastné obrázky
 
@@ -802,6 +987,13 @@ len rovná časť hrán (`stretchX`/`stretchY`), rohy nie, inak by z obdĺžnika
 pri dlhom čísle kapsula; na bežnom rastri to funguje, na vzdialenostnom poli
 nie (rozpis v hlavičke `poc/web/shields.js`).
 
+**Zoom, veľkosť čísla a rozostup po ceste sa ladia pri každej triede** (tá istá
+záložka, ten istý `layerBlock` ako pri značkách trás – je to jedna vrstva
+`road-shield-<trieda>`, takže to ide do `overrides.layers`, nie do
+`overrides.shields`). Veľkosť štítka JE veľkosť písma: podklad má
+`icon-text-fit`, teda je natiahnutý presne na číslo, a vlastnú `icon-size`
+naschvál nemá – keby ju dostal, prestal by číslu sedieť.
+
 **Čo sa v developer móde prepnúť DÁ, je TVAR** (záložka „Štítky",
 `overrides.shields[<trieda>].shape`): v sprite sú všetky tvary naraz, takže je
 to zmena mena obrázka, nie prebuildovanie. Preto sa pečie tvar × trieda × téma
@@ -854,18 +1046,32 @@ tabuľky – červená je červená aj na tmavej mape. Pásik trasy pod ňou nao
 témou ide (`trailRed` a spol.), lebo to je prvok mapy. Témovať aj značky by
 znamenalo štvornásobok obrázkov v sprite.
 
-**Značky dvoch trás na jednej ceste sa stavajú NAD SEBA.** Trasy majú
+**Značky dvoch trás na jednej ceste sa stavajú NAD SEBA, tesne.** Trasy majú
 v dlaždiciach tú istú geometriu (pásiky vedľa seba robí až `line-offset`, ktorý
 na symboly neplatí), takže bez posunu padnú všetky značky na jedno miesto
 a kolízia nechá jednu – vždy tú istú, lebo poradie vrstiev je pevné. Posúva sa
 `icon-offset`-om podľa `side` a `off` (pešie nahor, kolesové nadol), a to je
 v PIXELOCH násobených `icon-size`, nie vo výškach značky: kým tu boli „výšky",
-bol posun pod jeden pixel a z troch trás bola v mape vidieť jedna. Krok stĺpika
-musí byť väčší než značka **plus dvakrát `icon-padding`**, lebo padding sa
-so zoomom neškáluje.
+bol posun pod jeden pixel a z troch trás bola v mape vidieť jedna.
 
-**Čo sa dá v developer móde** (záložka „Trasy"): rozostup značiek a ich
-veľkosť (`overrides.trails.marks`), a pri každom druhu trasy tvar značky –
+**Krok stĺpika je `MARK_BOX`, čiže presne strana štvorca – bez medzery.**
+Obrázok je o `MARK_PAD` (1 px) na každej strane väčší než tá strana, takže sa
+priehľadné okraje prekryjú a VIDITEĽNÉ tabuľky sedia na sebe tak, ako sedia na
+strome. Cena je **`icon-allow-overlap`, a bez nej to nejde**: kolízny obdĺžnik
+je celý obrázok (`MARK_IMAGE`) plus `icon-padding`, takže sa dve susedné
+priečky o dva pixely prekrývajú a MapLibre by druhú značku ZAHODILA – presne to
+sa dialo predtým z opačnej strany (pri kroku 16 bola z červenej a modrej vidieť
+len červená) a riešilo sa to medzerou 12 px. `icon-padding` je preto nula:
+neškáluje sa s `icon-size`, takže by pri malej značke vážil dvojnásobne. To
+isté platí pre **ikonku druhu trasy** – stojí v tom istom stĺpiku (`off` a
+`side` sa číslujú raz na cestu, nie raz na značku), takže sa ikonky viacerých
+trás na jednej ceste už neprekrývajú. Stráži to `workers/lint/marks.mjs`:
+keď je krok menší než kolízny obdĺžnik, `icon-allow-overlap` musí byť zapnuté.
+
+**Čo sa dá v developer móde** (záložka „Trasy"): rozostup značiek po trase,
+ich veľkosť a krok stĺpika nad sebou (`overrides.trails.marks` –
+`spacing`, `size`, `step`; medze na jednom mieste v `TRAIL_MARK_RANGES`),
+a pri každom druhu trasy tvar značky –
 `podľa OSM` (predvolené), konkrétny tvar, alebo `žiadna`
 (`overrides.trails.types[<druh>].mark`). Tie tri odpovede sa nedajú stlačiť do
 dvoch: „taká, aká je v OSM" nie je meno tvaru.
@@ -990,12 +1196,14 @@ node    workers/lint/hillshade.mjs     # tieňovanie neprekryje mapu pod sebou
 node    workers/lint/shields.mjs       # štítky ciest: obrázok, rozťahovanie, poradie
 node    workers/lint/marks.mjs         # značky trás: tvar, dvojica farieb, meno obrázka
 node    workers/lint/icons.mjs         # vlastné ikony a sady sa dostanú do mapy
+node    workers/lint/overrides.mjs     # úprava z developer módu prejde normalizáciou celá
 python3 workers/trails/tags.py --osmc=red:white:red_bar --route=hiking  # akú značku z toho
 python3 workers/lint/features.py       # predfilter pustí, čo schéma prvkov chce
 node    workers/lint/trails.mjs        # strana a odstup trás držia naprieč súbormi
 python3 workers/lint/world.py          # štýl sveta kreslí to, čo schéma vyrába
 python3 workers/lint/planetiler.py     # kto púšťa Planetiler, má aj Javu 21
-python3 workers/lint/pbf-parent.py     # kraj sa reže z rodiča, nie z dieravého extraktu
+python3 workers/lint/pbf-source.py     # kraj sa reže z rodiča a dopĺňa členov plôch
+python3 workers/plan/pbf-areas.py data/region.osm.pbf  # ktoré plochy Planetiler zahodí celé
 python3 workers/world/variant.py --list        # podoby mapy sveta
 python3 workers/world/sources.py --out=data/world --only=boundaries  # podklad sveta
 python3 workers/plan/region-poly.py --region=presovsky --out=/dev/null  # polygón kraja
@@ -1025,7 +1233,9 @@ odpoveď podpíše** (`workers/lint/dem-empty.py`), že **tieňovanie nestratí
 zvislú presnosť, ktorou stojí a padá** (`workers/lint/terrain.py` – výška
 zaokrúhlená na celé metre a `-r average` pri zväčšovaní DEM spravili
 z hillshadu, ktorý je derivácia výšky, pravidelnú tkaninu cez celú mapu; nič
-nespadlo), že **si resampling výškového modelu nikto nevyberá sám**
+nespadlo – a k tomu, že **tieňovanie končí na hranici regiónu**: dlaždicový
+orez hrubší než dlaždica byť nemôže, takže reliéf presahoval na z10 na
+dvojnásobok plochy kraja), že **si resampling výškového modelu nikto nevyberá sám**
 (`workers/lint/dem-resampling.py` – tá istá mriežka o krok skôr, rovno
 v modeli: `-r average` pri pomere 4 m → 5 m, kde GDAL každú štvrtú zdrojovú
 bunku preskočí, takže vrstevnice aj tieňovanie ju majú zapečenú v dátach;
@@ -1060,11 +1270,12 @@ pruhu si značky dvoch trás sadnú na jedno miesto a kolízia nechá jednu),
 módu prejde normalizáciou celá** (`workers/lint/overrides.mjs` – nulová hrúbka
 čiary je zmiznutá vrstva, nie vypnutá, a kopírovanie štýlu z vrstvy do vrstvy
 nesmie vyrobiť polovicu, ktorú `normalizeOverrides` pri zápise do repozitára
-zahodí), že **PBF kraja vzniká rezom
-z rodičovského extraktu, a nie z toho hotového, dieravého**
-(`workers/lint/pbf-parent.py` – v hotovom extrakte z osm.fr chýbajú objektu cez
-hranicu uzly aj členské cesty, Planetiler ho zahodí celý a v stiahnutom kraji
-nie je vôbec; vypnúť sa to dá poradím krokov a beh je pri tom zelený), že
+zahodí), že **PBF kraja sa reže z rodičovského extraktu a dopĺňa členov
+plôch** (`workers/lint/pbf-source.py` – hotový `{kraj}-latest.osm.pbf` z osm.fr
+nie je referenčne úplný, takže CHKO Malé Karpaty, Záhorie aj Dunajské luhy
+Planetiler zahodil CELÉ a build bol pri tom zelený; kontrola stráži rodiča
+v číselníku, `-s smart -S types=multipolygon,boundary` pri každom reze aj to,
+že sa pri chýbajúcom `.poly` spadne a nesiahne po hotovom exporte), že
 **každý job, ktorý
 púšťa Planetiler, má aj `setup-java` s tou istou verziou**
 (`workers/lint/planetiler.py` – `setup-java` je akcia, tá sa do

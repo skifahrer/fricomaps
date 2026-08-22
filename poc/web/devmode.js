@@ -47,6 +47,8 @@ import {
   MAX_DISPLAY_Z,
   MAX_PAINT_STOPS,
   NO_FILL,
+  builtinDash,
+  REGION_MASK_LAYERS,
   sortStops,
   sortBands,
   isBandList,
@@ -55,6 +57,8 @@ import {
   hasOverrides,
   mergedPalette,
   selectedIconSource,
+  iconClassesOf,
+  poiIconName,
   TRAIL_TYPES,
   TRAIL_MARK_COLOURS,
   LAYOUT_PROPS,
@@ -65,6 +69,7 @@ import {
   TRAIL_GAP_DEFAULTS,
   TRAIL_GAP_ZOOM,
   TRAIL_MARK_DEFAULTS,
+  TRAIL_MARK_RANGES,
   TRAIL_MARK_ZOOM,
   SHIELD_DEFS,
   trailGapPx,
@@ -76,7 +81,13 @@ import {
   mapTypeHidden,
   normalizeMapType
 } from "./themes.js";
-import { PATTERNS, DASH_PRESETS, dashPreview } from "./patterns.js";
+import { PATTERNS, DASH_PRESETS, dashPreview, dashLabel } from "./patterns.js";
+import {
+  patternPreview,
+  patternPicker,
+  IMAGE_PATTERN_SIZES,
+  IMAGE_PATTERN_SIZE
+} from "./dev-patterns.js";
 import { CUSTOM_SET_PREFIX } from "./icon-sources.js";
 import { MARK_SHAPES } from "./marks.js";
 import { SHIELD_SHAPES } from "./shields.js";
@@ -84,6 +95,7 @@ import { snapshotStyle, pasteStyle, valueAtZoom } from "./layer-style.js";
 import { el } from "./dom.js";
 import {
   iconPicker,
+  iconPreview,
   drawSpriteIcon,
   fileToIconPng,
   iconNameFromFile,
@@ -335,6 +347,12 @@ export function initDevMode({
   const selectedPaletteKeys = new Set();
   const collapsed = new Set();
   const expanded = new Set();
+  /** Pri ktorých vrstvách je rozbalená mriežka vzorov. */
+  const patternOpen = new Set();
+  const setPatternPickerOpen = (id, open) => {
+    if (open) patternOpen.add(id);
+    else patternOpen.delete(id);
+  };
   let poiClasses = [];
   let applyTimer = null;
   let zoomTimer = null;
@@ -362,6 +380,14 @@ export function initDevMode({
   /** Ktoré druhy trás majú v záložke „Trasy" rozbalené zoomy a pásma. */
   const trailOpen = new Set();
 
+  /** Ktoré kategórie majú v záložke „POI" rozbalený výber ikony. */
+  const poiOpen = new Set();
+
+  /** Ktorú vrstvu práve ťaháme v stohu (záložka „Poradie"). */
+  let dragId = null;
+  /** Hľadanie v stohu – kým je zadané, ťahanie nedáva zmysel (rozpis v `renderStack`). */
+  let stackSearch = "";
+
   /** Čo sa pri poslednom vložení nedalo preniesť – vypíše to stavový riadok. */
   let clipNote = "";
 
@@ -372,6 +398,7 @@ export function initDevMode({
 
   const TABS = [
     ["layers", "Vrstvy"],
+    ["stack", "Poradie"],
     ["pick", "Prvky"],
     ["palette", "Paleta"],
     ["trails", "Trasy"],
@@ -771,10 +798,47 @@ export function initDevMode({
    * Farby z palety sa NEMAŽÚ – tie sú vlastnosťou témy, nie vrstvy (jednu
    * farbu zdieľa aj desať vrstiev) a majú vlastné `⟲` priamo pri sebe.
    */
+  /**
+   * PORADIE KRESLENIA. Ukladá sa ako presun „túto vrstvu kresli tesne pod
+   * tamtú" (`overrides.order`, rozpis pri `applyLayerOrder`), a to JEDEN NA
+   * VRSTVU: pri každom ďalšom ťuknutí sa ten predošlý zahodí, takže sa
+   * zoznam nenafukuje a je z neho vidieť, kde vrstva skončí.
+   *
+   * Poradie je SPOLOČNÉ pre všetky typy máp, aj keď sa práve zapisuje do
+   * priečinka jednej mapy: čo je nad čím, je stavba mapy, nie jej téma –
+   * a keby si každá mapa niesla vlastné poradie, ten istý presun by sa musel
+   * naklikať štyrikrát.
+   */
+  function setLayerOrder(id, before) {
+    overrides.order = (overrides.order || []).filter((m) => m.id !== id);
+    if (before !== undefined) overrides.order.push({ id, before });
+  }
+
+  /** Vrstvy, ktoré sa dajú presúvať – v poradí, v akom sa kreslia. */
+  function drawOrder() {
+    return (getStyle()?.layers || []).filter((l) => {
+      const meta = l.metadata || {};
+      // Odvodené vrstvy (vzor, okraj) aj druhá polovica dvojice (zúbky,
+      // čiarkovanie železnice) sa presúvajú so svojou predlohou.
+      if (meta["frico:derived"] || meta["frico:with"]) return false;
+      // Maska regiónu ostáva navrchu vždy – rozpis pri `applyLayerOrder`.
+      return !REGION_MASK_LAYERS.includes(l.id);
+    });
+  }
+
+  /** Ktorá vrstva sa pri presune naozaj hýbe (polovica dvojice ťahá predlohu). */
+  const orderHead = (layer) =>
+    (layer.metadata || {})["frico:with"] ||
+    (layer.metadata || {})["frico:derived"] ||
+    layer.id;
+
   function resetLayer(id) {
     if (editScope === "all") {
       delete overrides.layers[id];
       for (const m of Object.values(overrides.maps)) delete m.layers?.[id];
+      // Aj presun v poradí kreslenia: ten je spoločný pre všetky mapy, takže
+      // v rozsahu „len táto mapa" ho zrušiť nemožno – tak ako spoločnú úpravu.
+      setLayerOrder(id, undefined);
     } else {
       delete mapBucket()?.layers?.[id];
     }
@@ -1458,6 +1522,236 @@ export function initDevMode({
     ]);
   }
 
+  // ---------- tab: poradie (stoh vrstiev) ----------
+  /**
+   * CELÝ STOH VRSTIEV NARAZ – odhora nadol tak, ako sa kreslia.
+   *
+   * Záložka „Vrstvy" ich radí PO SKUPINÁCH (cesty, vodstvo, popisky), lebo
+   * tam sa hľadá „kde sa nastaví hrúbka chodníka". Poradie kreslenia je ale
+   * iná otázka – „čo je nad čím" – a v zozname po skupinách sa odpovedať
+   * nedá: násyp a cesta sú v ňom na dvoch rôznych miestach a z ničoho nie je
+   * vidieť, že násyp je vyššie. Tu je preto jeden dlhý zoznam v tom poradí,
+   * v akom MapLibre kreslí: PRVÝ RIADOK JE NAVRCHU.
+   *
+   * Presúva sa ťahaním (myšou aj prstom cez `draggable`) alebo šípkami; oboje
+   * zapisuje to isté, čo sekcia „Poradie kreslenia" v detaile vrstvy –
+   * `overrides.order`, teda presun „kresli tesne pod tamtú" (rozpis pri
+   * `applyLayerOrder`).
+   */
+  function renderStack() {
+    const poradie = drawOrder();
+    // Odhora nadol: prvý riadok je posledná vrstva štýlu, teda tá navrchu.
+    const zhora = [...poradie].reverse();
+    const q = stackSearch.trim().toLowerCase();
+    const presuny = new Set((overrides.order || []).map((m) => m.id));
+
+    const hladanie = el("input", {
+      type: "search",
+      class: "dev-search",
+      placeholder: "Hľadať vrstvu v stohu (napr. násyp, road-motorway…)",
+      value: stackSearch
+    });
+    hladanie.addEventListener("input", () => {
+      stackSearch = hladanie.value;
+      renderBody();
+      const next = body.querySelector(".dev-search");
+      if (next) {
+        next.focus();
+        next.setSelectionRange(next.value.length, next.value.length);
+      }
+    });
+
+    /** Kam presun zapíše `before`, keď má vrstva skončiť tesne NAD `cielom`. */
+    const nadCiel = (cielIndex) => {
+      // „Nad" v zozname zhora nadol znamená „kreslí sa neskôr", teda tesne
+      // pred vrstvu, ktorá je nad cieľom. Nad prvým riadkom už nič nie je –
+      // vtedy je to „úplne navrch" (`null`).
+      const vyssie = zhora[cielIndex - 1];
+      return vyssie ? vyssie.id : null;
+    };
+
+    const presun = (id, before) => {
+      setLayerOrder(id, before);
+      apply({ immediate: true });
+    };
+
+    const riadok = (layer, i) => {
+      const meta = layer.metadata || {};
+      const kind = meta["frico:kind"] || "line";
+      const hidden = isHidden(layer);
+      const inactive = !activeAt(layer, zoomView);
+      const zmeneny = presuny.has(layer.id);
+      // Vzor, okraj a druhá polovica dvojice sa presúvajú s ňou – nech je
+      // vidieť, že sa nehýbe jedna vrstva, ale prvok.
+      const rodina = (getStyle()?.layers || []).filter(
+        (l) => (l.metadata || {})["frico:derived"] === layer.id ||
+               (l.metadata || {})["frico:with"] === layer.id
+      ).length;
+
+      const row = el("div", {
+        class:
+          `dev-stackrow${zmeneny ? " changed" : ""}${hidden ? " off" : ""}` +
+          `${inactive && !hidden ? " inactive" : ""}`,
+        // Reťazec, nie `true`: `draggable` je vymenovaný atribút a prázdna
+        // hodnota znamená „auto", teda NEŤAHATEĽNÉ – riadok by sa chytiť
+        // nedal a nikde by to nezasvietilo.
+        draggable: q ? null : "true",
+        title: `${layer.id} · ${zhora.length - i}. odspodku`
+      }, [
+        el("span", { class: "dev-grip", text: q ? "·" : "⠿" }),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          title: hidden ? "Zobraziť vrstvu" : "Skryť vrstvu",
+          text: hidden ? "🚫" : "👁",
+          onclick: () => {
+            setVisible([layer.id], hidden);
+            apply();
+          }
+        }),
+        el("span", { class: `dev-kind k-${kind}`, text: KIND_LABELS[kind] || kind }),
+        el("span", { class: "dev-swatch", style: `background:${primaryColor(layer)}` }),
+        el("button", {
+          type: "button",
+          class: "dev-name",
+          title: "Otvoriť túto vrstvu v záložke Vrstvy",
+          onclick: () => {
+            tab = "layers";
+            search = layer.id;
+            expanded.add(layer.id);
+            collapsed.delete(meta["frico:group"]);
+            render();
+          }
+        }, [
+          el("span", { text: meta["frico:label"] || layer.id }),
+          el("small", {
+            text:
+              `${layer.id}` +
+              `${rodina ? ` +${rodina}` : ""}` +
+              ` · ${GROUP_LABELS[meta["frico:group"]] || meta["frico:group"] || ""}`
+          })
+        ]),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          text: "▲",
+          disabled: i === 0 ? true : null,
+          title: i === 0 ? "Vyššie to už nejde" : `Kresliť nad „${zhora[i - 1].metadata["frico:label"] || zhora[i - 1].id}"`,
+          onclick: () => presun(layer.id, nadCiel(i - 1))
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-mini",
+          text: "▼",
+          disabled: i === zhora.length - 1 ? true : null,
+          title:
+            i === zhora.length - 1
+              ? "Nižšie to už nejde"
+              : `Kresliť pod „${zhora[i + 1].metadata["frico:label"] || zhora[i + 1].id}"`,
+          onclick: () => presun(layer.id, zhora[i + 1].id)
+        }),
+        zmeneny
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na poradie zo štýlu",
+              onclick: () => presun(layer.id, undefined)
+            })
+          : null
+      ]);
+
+      // ŤAHANIE. Kam vrstva padne, hovorí polovica riadka, nad ktorou kurzor
+      // je: horná = nad tento riadok, dolná = pod neho. Bez toho by sa nedalo
+      // povedať, či ide o „pred" alebo „za" – a jedna z tých dvoch odpovedí
+      // by vždy chýbala (napr. úplne navrch).
+      row.addEventListener("dragstart", (ev) => {
+        dragId = layer.id;
+        ev.dataTransfer.effectAllowed = "move";
+        // Bez `setData` Firefox ťahanie vôbec nespustí.
+        ev.dataTransfer.setData("text/plain", layer.id);
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => {
+        dragId = null;
+        row.classList.remove("dragging");
+      });
+      row.addEventListener("dragover", (ev) => {
+        if (!dragId || dragId === layer.id) return;
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "move";
+        const r = row.getBoundingClientRect();
+        const hore = ev.clientY < r.top + r.height / 2;
+        row.classList.toggle("drop-above", hore);
+        row.classList.toggle("drop-below", !hore);
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drop-above", "drop-below");
+      });
+      row.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        row.classList.remove("drop-above", "drop-below");
+        if (!dragId || dragId === layer.id) return;
+        const r = row.getBoundingClientRect();
+        const hore = ev.clientY < r.top + r.height / 2;
+        presun(dragId, hore ? nadCiel(i) : layer.id);
+        dragId = null;
+      });
+      return row;
+    };
+
+    const rows = zhora
+      .map((layer, i) => [layer, i])
+      .filter(([layer]) =>
+        !q ||
+        layer.id.toLowerCase().includes(q) ||
+        String((layer.metadata || {})["frico:label"] || "").toLowerCase().includes(q))
+      .map(([layer, i]) => riadok(layer, i));
+
+    return el("div", {}, [
+      el("p", {
+        class: "dev-hint",
+        html:
+          "Celý stoh vrstiev tak, ako sa kreslia: <b>prvý riadok je navrchu</b>. " +
+          "Presuň vrstvu ťahaním za <b>⠿</b> alebo šípkami – napríklad násyp " +
+          "(<code>feature-embankment</code>) pod cesty. Vzor, okraj aj druhá " +
+          "polovica dvojice (zúbky hrany, čiarkovanie železnice) idú s ňou; " +
+          "maska regiónu ostáva navrchu vždy. Poradie platí pre všetky typy máp " +
+          "a ukladá sa do <code>style-overrides.json</code>."
+      }),
+      zoomBar(),
+      hladanie,
+      q
+        ? el("p", {
+            class: "dev-hint",
+            text:
+              "Kým je zadané hľadanie, ťahať sa nedá – v prefiltrovanom zozname " +
+              "nie je vidieť, medzi ktoré dve vrstvy by vrstva padla. Šípky " +
+              "fungujú ďalej a posúvajú po skutočnom poradí."
+          })
+        : null,
+      el("div", { class: "dev-bulk on" }, [
+        el("span", {
+          class: "dev-bulklabel",
+          text: `${zhora.length} vrstiev · ${presuny.size} presunutých`
+        }),
+        presuny.size
+          ? el("button", {
+              type: "button",
+              class: "dev-btn danger",
+              text: "Späť na pôvodné poradie",
+              title: "Zahodí všetky presuny; farby, zoomy a ostatné úpravy ostanú",
+              onclick: () => {
+                overrides.order = [];
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]),
+      el("div", { class: "dev-stack" }, rows)
+    ]);
+  }
+
   function layerRow(layer) {
     const meta = layer.metadata || {};
     const kind = meta["frico:kind"] || "line";
@@ -1538,11 +1832,17 @@ export function initDevMode({
   /**
    * Výber prerušovania čiary s náhľadom. Samotný názov („Čiarkovaná") o čiare
    * veľa nepovie – vedľa výberu sa preto rovno kreslí, ako bude vyzerať.
+   *
+   * `builtin` je to, čo má vrstva zo štýlu (`frico:dash` – predvoľba alebo
+   * rovno pole čísel). Keď je zadané, pribudne prvá položka „zo štýlu": to je
+   * odpoveď na „nechaj, ako to bolo", ktorú sa menom predvoľby povedať nedá –
+   * železnica má `rail`, brod vlastné `[1, 1]` a zúbky brala `[0.35, 2.2]`,
+   * ktoré medzi predvoľbami vôbec nie sú.
    */
-  function dashField({ label, value, onChange }) {
+  function dashField({ label, value, onChange, builtin }) {
     const preview = el("span", { class: "dev-dash" });
     const draw = (id) => {
-      const d = dashPreview(id, 2);
+      const d = dashPreview(id === "" ? builtin : id, 2);
       preview.innerHTML =
         `<svg width="54" height="10" viewBox="0 0 54 10" aria-hidden="true">` +
         `<line x1="1" y1="5" x2="53" y2="5" stroke="currentColor" stroke-width="2"` +
@@ -1553,7 +1853,10 @@ export function initDevMode({
     const field = selectField({
       label,
       value,
-      options: DASH_PRESETS.map((d) => [d.id, d.label]),
+      options: [
+        ...(builtin !== undefined ? [["", `— zo štýlu (${dashLabel(builtin)}) —`]] : []),
+        ...DASH_PRESETS.map((d) => [d.id, d.label])
+      ],
       onChange: (v) => {
         draw(v);
         onChange(v);
@@ -1948,7 +2251,9 @@ export function initDevMode({
           disabled: mozeReset ? null : true,
           title: mozeReset
             ? `Zahodí VŠETKY úpravy tejto vrstvy v ${kam} – viditeľnosť, `
-              + `zoomy, farby, hrúbky, ikonu, vzor aj okraj.${resetLeftovers(layer.id)} `
+              + `zoomy, farby, hrúbky, ikonu, vzor, okraj`
+              + `${editScope === "all" ? " aj poradie kreslenia" : ""}.`
+              + `${resetLeftovers(layer.id)} `
               + `Farby z palety ostávajú, tie patria téme.`
             : "Úprava tejto vrstvy je spoločná pre všetky mapy – zrušiť sa dá "
               + `len v rozsahu „všetky mapy" (prepínač hore).`,
@@ -2027,6 +2332,9 @@ export function initDevMode({
           : null
       ])
     );
+
+    // ---- poradie kreslenia ----
+    parts.push(orderSection(layer));
 
     // ---- farby ----
     if (colorProps(layer).length) parts.push(sectionTitle("Farby"));
@@ -2237,13 +2545,21 @@ export function initDevMode({
     // Toto je to, čím sa náučný chodník odlíši od zvyšku: druh čiary
     // (`line-dasharray`) plus jej hrúbka a krytie.
     if (isLine) {
+      // ČO JE V TOM VÝBERE VIDIEŤ, MUSÍ BYŤ TO, ČO JE V MAPE. Kým tu stálo
+      // `o.dash || "solid"`, ukazoval výber pri železnici „Plná" (a pritom
+      // je čiarkovaná), voľba „Plná" sa zahodila ako predvolená a čiarkovanie
+      // sa nedalo ani zmeniť, ani vypnúť. Teraz je prvou položkou to, čo má
+      // vrstva zo štýlu, a „Plná" je plnohodnotná úprava (rozpis v `add`
+      // a v `cleanLayers`).
+      const vlastny = builtinDash(layer);
       parts.push(
         el("div", { class: `dev-sub${o.dash ? " changed" : ""}` }, [
           dashField({
             label: "Čiara",
-            value: o.dash || "solid",
+            value: o.dash || "",
+            builtin: vlastny,
             onChange: (v) => {
-              setLayerOverride(layer.id, { dash: v === "solid" ? undefined : v });
+              setLayerOverride(layer.id, { dash: v || undefined });
               apply({ immediate: true });
             }
           }),
@@ -2310,22 +2626,62 @@ export function initDevMode({
     const builtinPattern = (layer.metadata || {})["frico:pattern"] || null;
     const patChanged = "pattern" in o;
     const pat = patChanged ? o.pattern : builtinPattern;
+    // ČO JE POD VZOROM. Vzor je vždy DRUHÁ vrstva nad plochou, takže sám
+    // o sebe nehovorí nič: šrafovanie nad tmavozeleným lesom vyzerá inak než
+    // nad svetlou lúkou. Farba podkladu je preto priamo tu – aj v náhľade,
+    // aj ako ovládanie.
+    const podkladProp = primaryColorProp(layer);
+    const podklad =
+      o.paint && o.paint[podkladProp] === NO_FILL ? "none" : primaryColor(layer);
+    const nastavenyPodklad = !!(o.paint && o.paint[podkladProp] !== undefined);
+
+    const vyber = () => {
+      setPatternPickerOpen(layer.id, !patternOpen.has(layer.id));
+      renderBody();
+    };
     const patternRow = [
-      selectField({
-        label: "Vzor",
-        value: pat ? pat.id : "",
-        options: [["", "žiadny"], ...PATTERNS.map((p) => [p.id, p.label])],
-        onChange: (v) => {
-          setLayerOverride(layer.id, {
-            pattern: v
-              ? { ...(pat || { size: 16, weight: 1, opacity: 1, color: darken(primaryColor(layer)) }), id: v }
-              // „Žiadny" nad vrstvou so vzorom zo štýlu musí vzor vypnúť,
-              // nie len zahodiť úpravu – tá by ho vrátila späť.
-              : builtinPattern ? null : undefined
-          });
-          apply({ immediate: true });
-        }
-      })
+      // NÁHĽAD, NIE MENO. „Šupiny (skaly)" nepovie ani ako hustý ten vzor je,
+      // ani ako vyzerá nad farbou tejto plochy – a práve to sú tie dve veci,
+      // kvôli ktorým sa vzor prepína.
+      el("button", {
+        type: "button",
+        class: "dev-patbtn",
+        title: "Vybrať vzor (kreslený alebo vlastný obrázok)",
+        onclick: vyber
+      }, [
+        patternPreview({ spec: pat, background: podklad, custom: overrides.customIcons || [] })
+      ]),
+      el("button", {
+        type: "button",
+        class: "dev-name",
+        title: "Vybrať vzor",
+        onclick: vyber
+      }, [
+        el("span", { text: `${patternOpen.has(layer.id) ? "▾ " : "▸ "}Vzor` }),
+        el("small", {
+          text: pat
+            ? pat.image
+              ? `vlastný obrázok ${pat.image}`
+              : (PATTERNS.find((p) => p.id === pat.id) || {}).label || pat.id
+            : "žiadny"
+        })
+      ]),
+      pat
+        ? el("button", {
+            type: "button",
+            class: "dev-mini",
+            text: "×",
+            title: builtinPattern && !patChanged
+              ? "Vypnúť vzor, ktorý má vrstva zo štýlu"
+              : "Bez vzoru",
+            onclick: () => {
+              // „Žiadny" nad vrstvou so vzorom zo štýlu musí vzor VYPNÚŤ
+              // (`null`), nie len zahodiť úpravu – tá by ho vrátila späť.
+              setLayerOverride(layer.id, { pattern: builtinPattern ? null : undefined });
+              apply({ immediate: true });
+            }
+          })
+        : null
     ];
     if (pat) {
       // Doladenie vychádza z ÚČINNÉHO vzoru (`pat`), nie z prázdna – inak by
@@ -2334,31 +2690,38 @@ export function initDevMode({
         patchSub(layer.id, "pattern", p, pat);
         apply({ immediate: true });
       };
+      // FARBA, VEĽKOSŤ A HRÚBKA PLATIA LEN NA KRESLENÝ VZOR. Vlastný obrázok
+      // ich má zapečené v sebe (prevzorkoval sa pri nahratí), takže ponúkať
+      // ich pri ňom by boli tri políčka, ktoré nič nerobia.
+      if (!pat.image) {
+        patternRow.push(
+          colorControl({
+            value: pat.color,
+            changed: patChanged,
+            onInput: (v) => {
+              patchSub(layer.id, "pattern", { color: v }, pat);
+              apply({ rerender: false });
+            }
+          }),
+          numberField({
+            label: "veľkosť",
+            value: pat.size,
+            min: 4,
+            max: 64,
+            step: 1,
+            onChange: (v) => patch({ size: v ?? 16 })
+          }),
+          numberField({
+            label: "hrúbka",
+            value: pat.weight,
+            min: 0.5,
+            max: 8,
+            step: 0.5,
+            onChange: (v) => patch({ weight: v ?? 1 })
+          })
+        );
+      }
       patternRow.push(
-        colorControl({
-          value: pat.color,
-          changed: patChanged,
-          onInput: (v) => {
-            patchSub(layer.id, "pattern", { color: v }, pat);
-            apply({ rerender: false });
-          }
-        }),
-        numberField({
-          label: "veľkosť",
-          value: pat.size,
-          min: 4,
-          max: 64,
-          step: 1,
-          onChange: (v) => patch({ size: v ?? 16 })
-        }),
-        numberField({
-          label: "hrúbka",
-          value: pat.weight,
-          min: 0.5,
-          max: 8,
-          step: 0.5,
-          onChange: (v) => patch({ weight: v ?? 1 })
-        }),
         numberField({
           label: "krytie",
           value: pat.opacity,
@@ -2372,6 +2735,77 @@ export function initDevMode({
     // „Zmenené" je úprava vzoru, nie vzor samotný: kamienky zo štýlu sú
     // predvolený stav mapy, nie niečo, čo v tejto relácii niekto naklikal.
     parts.push(el("div", { class: `dev-sub${patChanged ? " changed" : ""}` }, patternRow));
+
+    // ---- podklad pod vzorom ----
+    if (podkladProp) {
+      parts.push(
+        el("div", { class: `dev-sub${nastavenyPodklad ? " changed" : ""}` }, [
+          el("span", { class: "dev-note", text: "Podklad" }),
+          podklad === "none"
+            ? el("span", { class: "dev-note", text: "bez výplne – vidno mapu pod vrstvou" })
+            : colorControl({
+                value: podklad,
+                changed: nastavenyPodklad,
+                onInput: (v) => {
+                  setLayerPaint(layer.id, podkladProp, v);
+                  apply({ rerender: false });
+                },
+                onReset: nastavenyPodklad
+                  ? () => {
+                      setLayerPaint(layer.id, podkladProp, undefined);
+                      apply({ immediate: true });
+                    }
+                  : null
+              }),
+          layer.type === "fill" || layer.type === "fill-extrusion"
+            ? el("button", {
+                type: "button",
+                class: "dev-btn",
+                text: podklad === "none" ? "vrátiť výplň" : "bez výplne",
+                title:
+                  "Plocha bez farby pozadia – vzor a okraj na nej ostanú " +
+                  "(nie je to krytie 0 ani vypnutá vrstva)",
+                onclick: () => {
+                  setLayerPaint(layer.id, podkladProp, podklad === "none" ? undefined : NO_FILL);
+                  apply({ immediate: true });
+                }
+              })
+            : null
+        ])
+      );
+    }
+
+    // ---- mriežka vzorov + vlastný obrázok ----
+    if (patternOpen.has(layer.id)) {
+      parts.push(
+        patternPicker({
+          spec: pat,
+          background: podklad,
+          custom: overrides.customIcons || [],
+          onPick: (next) => {
+            setLayerOverride(layer.id, {
+              pattern: next
+                ? {
+                    // Kreslený vzor si nesie farbu, veľkosť a hrúbku – keď ich
+                    // vrstva ešte nemá, začne sa tmavším odtieňom vlastnej
+                    // výplne, nie čiernou: vzor má plochu kresliť, nie prebiť.
+                    ...(next.image
+                      ? {}
+                      : { size: 16, weight: 1, color: darken(primaryColor(layer)) }),
+                    opacity: pat?.opacity ?? 1,
+                    ...(pat && !pat.image && !next.image ? pat : {}),
+                    ...next
+                  }
+                : builtinPattern
+                ? null
+                : undefined
+            });
+            apply({ immediate: true });
+          }
+        })
+      );
+      parts.push(patternUpload(layer));
+    }
 
     // ---- okraj ----
     const out = o.outline;
@@ -2446,6 +2880,122 @@ export function initDevMode({
   }
 
   // ---------- tab: prvky ----------
+  /**
+   * PORADIE KRESLENIA jednej vrstvy.
+   *
+   * MapLibre kreslí vrstvy tak, ako idú v štýle za sebou – navrchu je tá
+   * POSLEDNÁ. Dovtedy sa to dalo zmeniť len v zdrojáku, takže „násyp má byť
+   * pod cestou" znamenalo commit a build. Tu je to presun a uloží sa do
+   * `style-overrides.json` ako všetko ostatné.
+   *
+   * Susedov treba VYPÍSAŤ: zoznam vrstiev je zoradený po skupinách, nie
+   * podľa kreslenia, takže z neho nie je vidieť, čo je nad čím – a po
+   * ťuknutí na „vyššie" by sa nedalo povedať, či sa niečo stalo.
+   */
+  function orderSection(layer) {
+    const head = orderHead(layer);
+    const poradie = drawOrder();
+    const i = poradie.findIndex((l) => l.id === head);
+    const menoV = (l) => (l?.metadata || {})["frico:label"] || l?.id || "";
+    const presun = (overrides.order || []).find((m) => m.id === head);
+
+    if (i < 0) {
+      return el("div", { class: "dev-sub" }, [
+        el("span", {
+          class: "dev-note",
+          text: REGION_MASK_LAYERS.includes(layer.id)
+            ? "Maska regiónu sa kreslí vždy úplne navrchu – vrstva za ňou by kreslila aj mimo stiahnutého regiónu."
+            : "Túto vrstvu presúvať netreba – kreslí sa so svojou predlohou."
+        })
+      ]);
+    }
+
+    const pod = poradie[i - 1];
+    const nad = poradie[i + 1];
+    const parts = [
+      sectionTitle(
+        "Poradie kreslenia",
+        `${i + 1}. z ${poradie.length} · navrchu je posledná · platí pre všetky typy máp`
+      ),
+      el("div", { class: "dev-sub" }, [
+        el("span", {
+          class: "dev-note",
+          text:
+            (nad ? `nad ňou: ${menoV(nad)}` : "je úplne navrchu") +
+            " · " +
+            (pod ? `pod ňou: ${menoV(pod)}` : "je úplne naspodku") +
+            (head === layer.id ? "" : ` · presúva sa s vrstvou „${menoV(poradie[i])}"`)
+        })
+      ]),
+      el("div", { class: `dev-fields${presun ? " changed" : ""}` }, [
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "▲ vyššie",
+          disabled: nad ? null : true,
+          title: nad ? `Kresliť nad vrstvu „${menoV(nad)}"` : "Vyššie to už nejde",
+          onclick: () => {
+            setLayerOrder(head, poradie[i + 2] ? poradie[i + 2].id : null);
+            apply({ immediate: true });
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "▼ nižšie",
+          disabled: pod ? null : true,
+          title: pod ? `Kresliť pod vrstvu „${menoV(pod)}"` : "Nižšie to už nejde",
+          onclick: () => {
+            setLayerOrder(head, pod.id);
+            apply({ immediate: true });
+          }
+        }),
+        el("button", {
+          type: "button",
+          class: "dev-btn",
+          text: "navrch",
+          title: "Kresliť nad všetko ostatné (maska regiónu ostáva navrchu vždy)",
+          onclick: () => {
+            setLayerOrder(head, null);
+            apply({ immediate: true });
+          }
+        }),
+        presun
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na poradie zo štýlu",
+              onclick: () => {
+                setLayerOrder(head, undefined);
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]),
+      // Skok cez celý zoznam. „O jednu vyššie" je pri dvoch stovkách vrstiev
+      // na presun násypu pod cesty nepoužiteľné – toto je tá istá otázka
+      // položená naraz.
+      el("div", { class: `dev-sub${presun ? " changed" : ""}` }, [
+        selectField({
+          label: "kresliť tesne pod",
+          value: presun ? presun.before ?? "" : "",
+          options: [
+            ["", presun ? "— úplne navrch —" : "— poradie zo štýlu —"],
+            ...poradie
+              .filter((l) => l.id !== head)
+              .map((l) => [l.id, `${menoV(l)} (${l.id})`])
+          ],
+          onChange: (v) => {
+            setLayerOrder(head, v || null);
+            apply({ immediate: true });
+          }
+        })
+      ])
+    ];
+    return el("div", {}, parts);
+  }
+
   /** Hodnota atribútu do tabuľky – prázdne a dlhé sa musia dať rozoznať. */
   const attrText = (v) => {
     if (v === null || v === undefined) return "—";
@@ -2866,12 +3416,22 @@ export function initDevMode({
     "text-opacity": { min: 0, max: 1, step: 0.05, label: "krytie písma" }
   };
 
+  /** Jedna vrstva trasy – `layerBlock` nad jej id. */
+  const trailLayerBlock = (role, typeId) =>
+    layerBlock(`trail-${typeId}${role.suffix}`, role);
+
   /**
-   * Jedna vrstva trasy: rozsah zoomu a k tomu jej čísla – každé s krivkou
-   * alebo pásmami, teda „na týchto zoomoch takto, na týchto inak".
+   * JEDNA VRSTVA S ČÍSLAMI, KTORÉ K NEJ PATRIA: rozsah zoomu a k tomu každé
+   * číslo s krivkou alebo pásmami, teda „na týchto zoomoch takto, na týchto
+   * inak".
+   *
+   * Je to tá istá úprava (`overrides.layers[<id>]`), akú robí záložka Vrstvy –
+   * rozdiel je len v tom, že tu je pokope to, čo patrí k jednej veci: štyri
+   * vrstvy jednej trasy, alebo štítok jednej triedy cesty. V zozname vrstiev
+   * ležia na štyroch rôznych miestach a bez farby a značky vedľa nich sa nedá
+   * povedať, ktorá je ktorá.
    */
-  function trailLayerBlock(role, typeId) {
-    const id = `trail-${typeId}${role.suffix}`;
+  function layerBlock(id, role) {
     const layer = getStyle().layers.find((l) => l.id === id);
     // Vrstva nemusí existovať: ikona sa nekreslí, keď ju sada ikoniek nemá,
     // a značka vtedy, keď ju developer mode vypol. Mlčky sa preskočiť nesmie
@@ -3091,11 +3651,15 @@ export function initDevMode({
     // menší = značka je vidieť častejšie, ale trasa sa zaplní štvorcami.
     const marks = trailMarkPx(overrides);
     const markFields = [
-      ["spacing", "Rozostup značiek", 20, 2000, 5,
-        "vzdialenosť dvoch značiek na obrazovke; každý druh trasy ho má " +
-        "o kúsok iný, aby si značky dvoch trás na tej istej ceste nesadli na seba"],
-      ["size", "Veľkosť značky", 0.2, 4, 0.05,
-        "násobok predvolenej veľkosti štvorca"]
+      ["spacing", "Rozostup po trase", ...TRAIL_MARK_RANGES.spacing, 5,
+        "vzdialenosť dvoch značiek NA TRASE, v pixeloch obrazovky – teda ako " +
+        "často sa značka po ceste opakuje"],
+      ["size", "Veľkosť značky", ...TRAIL_MARK_RANGES.size, 0.05,
+        "násobok predvolenej veľkosti štvorca"],
+      ["step", "Odstup značiek nad sebou", ...TRAIL_MARK_RANGES.step, 1,
+        "keď vedie po jednej ceste viac trás, stavajú sa ich značky nad seba – " +
+        "toto je krok toho stĺpika. Predvolené je presne strana štvorca, čiže " +
+        "značky sedia tesne na sebe bez medzery; 0 ich položí na seba"]
     ].map(([key, label, min, max, step, note]) =>
       el("div", { class: `dev-sub${overrides.trails.marks[key] != null ? " changed" : ""}` }, [
         numberField({
@@ -3359,6 +3923,23 @@ export function initDevMode({
   // prepnúť TVAR – všetky tvary sú v sprite naraz, takže je to zmena mena
   // obrázka; farba štítka sa mení v palete a prejaví sa až po builde.
 
+  /**
+   * ČO SA NA ŠTÍTKU S ČÍSLOM CESTY DÁ LADIŤ PODĽA ZOOMU.
+   *
+   * Tá istá otázka ako pri značke trasy („od akého zoomu, ako veľký, ako
+   * často"), takže tá istá odpoveď: je to jedna vrstva (`road-shield-<trieda>`)
+   * a nastavuje sa `layerBlock`-om, nie druhou pákou vedľa.
+   *
+   * VEĽKOSŤ ŠTÍTKA JE VEĽKOSŤ PÍSMA, a nie je to zjednodušenie: podklad je
+   * obrázok s `icon-text-fit`, teda natiahnutý presne na číslo. Vlastnú
+   * `icon-size` nemá – keby ju dostal, prestal by číslu sedieť.
+   */
+  const SHIELD_LAYER_ROLE = {
+    label: "Štítok v mape",
+    note: "od akého zoomu, aké veľké číslo a ako často po ceste",
+    layout: ["text-size", "symbol-spacing"]
+  };
+
   /** Tvar štítka jednej triedy cesty; `undefined` = späť na predvolený. */
   function setShieldShape(id, shape) {
     if (shape === undefined) delete overrides.shields[id];
@@ -3426,7 +4007,12 @@ export function initDevMode({
                 }
               : null
           })
-        ])
+        ]),
+        // Zoom, veľkosť čísla a rozostup po ceste – to isté, čo sa pri
+        // značkách trás ladí v záložke „Trasy". Dovtedy sa to dalo nastaviť
+        // len v zozname vrstiev, kde sa `road-shield-primary` musel najprv
+        // nájsť medzi dvoma stovkami iných.
+        layerBlock(`road-shield-${id}`, SHIELD_LAYER_ROLE)
       ]);
     });
 
@@ -3437,7 +4023,8 @@ export function initDevMode({
           "Číslo cesty je značka, nie text – má podklad, stojí narovno a opakuje " +
           "sa po celej ceste. Podklad je obrázok upečený do spritu, takže sa tu " +
           "prepína jeho TVAR; farba sa v mape prejaví až po prebuildovaní spritu " +
-          "(v prehliadači je vidieť len na náhľade vľavo)."
+          "(v prehliadači je vidieť len na náhľade vľavo). Zoom, veľkosť čísla " +
+          "a rozostup po ceste sú pod každou triedou – tie platia hneď."
       }),
       el("div", { class: "dev-list" }, rows),
       el("div", { class: "dev-bulk on" }, [
@@ -3447,8 +4034,12 @@ export function initDevMode({
           text: "Späť na pôvodné štítky",
           onclick: () => {
             overrides.shields = {};
-            for (const [, , , colorKey, , , textKey, borderKey] of SHIELD_DEFS) {
+            for (const [id, , , colorKey, , , textKey, borderKey] of SHIELD_DEFS) {
               for (const key of [colorKey, textKey, borderKey]) setPaletteColor(key, undefined);
+              // Aj zoom, veľkosť a rozostup – tie sedia v `layers`, nie
+              // v `shields`, takže by ich vyprázdnenie `shields` nechalo tak
+              // a tlačidlo by nesplnilo, čo sľubuje.
+              resetLayer(`road-shield-${id}`);
             }
             apply();
           }
@@ -3658,6 +4249,89 @@ export function initDevMode({
   // Jedna konkrétna vec inak: značka, POI, čokoľvek symbolové. Obrázok sa
   // prevedie na PNG a leží PRIAMO v úpravách, takže ho má aj mapa v mobile
   // (rozpis v hlavičke `poc/web/dev-icons.js`).
+  /**
+   * NAHRATIE VLASTNÉHO OBRÁZKA AKO VZORU.
+   *
+   * Obrázok sa uloží ako VLASTNÁ IKONA úprav (`own:…`) – to nie je obchádzka,
+   * ale celá pointa: taký obrázok sa nesie priamo v úpravách (funguje offline
+   * aj v balíku pre mobil), prehliadač ho dokreslí hneď a do každého spritu
+   * ho dopečie `workers/assets/custom-icons.mjs`. Druhá cesta pre „obrázky,
+   * ktoré sú vzory" by bola druhé miesto, ktoré sa raz rozíde s prvým.
+   *
+   * VEĽKOSŤ DLAŽDICE SA VYBERÁ TU, pri nahratí, a obrázok sa na ňu rovno
+   * prevzorkuje. `fill-pattern` sa v MapLibre neškáluje – dlaždicuje sa tak,
+   * ako je obrázok veľký –, takže „veľkosť až pri kreslení" by musel rovnako
+   * spraviť aj sprite. Čo je uložené, je to, čo mapa kreslí.
+   */
+  function patternUpload(layer) {
+    const velkost = el("select", { class: "dev-select", title: "Strana dlaždice" },
+      IMAGE_PATTERN_SIZES.map((px) =>
+        el("option", {
+          value: String(px),
+          text: `${px} px`,
+          ...(px === IMAGE_PATTERN_SIZE ? { selected: true } : {})
+        })
+      )
+    );
+
+    const subor = el("input", {
+      type: "file",
+      class: "dev-file",
+      accept: "image/png,image/jpeg,image/svg+xml"
+    });
+    subor.addEventListener("change", async () => {
+      const file = subor.files && subor.files[0];
+      if (!file) return;
+      try {
+        const px = Number(velkost.value) || IMAGE_PATTERN_SIZE;
+        const { png, pixelRatio } = await fileToIconPng(file, px);
+        const name = iconNameFromFile(file.name, CUSTOM_ICON_PREFIX);
+        const next = [
+          ...(overrides.customIcons || []).filter((x) => x.name !== name),
+          { name, png, pixelRatio }
+        ];
+        // Obrázok aj jeho použitie ako vzoru naraz: keby sa uložil len
+        // obrázok, musel by ho človek ešte nájsť v mriežke – a keby sa uložil
+        // len vzor, ukazoval by na obrázok, ktorý v úpravách nie je.
+        const skuska = {
+          ...overrides,
+          customIcons: next,
+          layers: {
+            ...overrides.layers,
+            [layer.id]: { ...(overrides.layers[layer.id] || {}), pattern: { image: name, opacity: 1 } }
+          }
+        };
+        const { overrides: clean, problems } = normalizeOverrides(skuska);
+        if (problems.length) {
+          poznamka(problems[0]);
+          return;
+        }
+        overrides = clean;
+        poznamka(`Vzor „${name}" (${px} px) nahratý a nasadený na ${layer.id}.`);
+        apply({ immediate: true });
+      } catch (err) {
+        poznamka(`Obrázok sa nepodarilo načítať: ${err.message}`);
+      } finally {
+        subor.value = "";
+      }
+    });
+
+    return el("div", { class: "dev-sub" }, [
+      el("span", { class: "dev-note", text: "Vlastný obrázok ako vzor" }),
+      velkost,
+      subor,
+      el("p", {
+        class: "dev-hint",
+        text:
+          "PNG, JPG alebo SVG. Obrázok sa prevzorkuje na zvolenú stranu dlaždice " +
+          "a uloží sa priamo do úprav – mapa ho má hneď a build ho dopečie do " +
+          "spritu (aj pre mobil). Dlaždicuje sa v tej veľkosti, v akej je " +
+          "uložený; inú veľkosť dostaneš nahratím znova. Nahraté obrázky sú " +
+          "vo výbere vzoru pri každej ploche aj čiare."
+      })
+    ]);
+  }
+
   function customIconSection() {
     const zoznam = overrides.customIcons || [];
     const rows = zoznam.map((ikona) => {
@@ -3741,15 +4415,21 @@ export function initDevMode({
     const map2 = getMap();
     if (!map2) return [];
     const counts = new Map();
-    let features = [];
-    try {
-      features = map2.querySourceFeatures("omt", { sourceLayer: "poi" });
-    } catch {
-      features = [];
-    }
-    for (const f of features) {
-      const key = f.properties?.subclass || f.properties?.class;
-      if (key) counts.set(key, (counts.get(key) || 0) + 1);
+    // Aj vlastné body (prameň, jaskyňa, rozhľadňa): sú to tie isté kategórie
+    // s tou istou otázkou („akou značkou sa kreslia") a ich vrstva berie
+    // ikonu aj skryté triedy z toho istého zoznamu – keby tu neboli, dali by
+    // sa nastaviť len naslepo.
+    for (const [source, sourceLayer] of [["omt", "poi"], ["features", "feature_point"]]) {
+      let features = [];
+      try {
+        features = map2.querySourceFeatures(source, { sourceLayer });
+      } catch {
+        features = [];
+      }
+      for (const f of features) {
+        const key = f.properties?.subclass || f.properties?.class;
+        if (key) counts.set(key, (counts.get(key) || 0) + 1);
+      }
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   }
@@ -3757,6 +4437,30 @@ export function initDevMode({
   /** Skryté POI triedy: spoločné aj tie pre práve zobrazený typ mapy. */
   const poiHiddenAll = () =>
     new Set([...overrides.poi.hidden, ...(mapBucket()?.poi?.hidden || [])]);
+
+  /**
+   * IKONA KATEGÓRIE. `undefined` = späť na ikonu podľa sady, `""` = žiadna –
+   * sú to tri odpovede a nedajú sa stlačiť do dvoch (tá istá úvaha ako pri
+   * značke druhu trasy).
+   *
+   * Je to spoločné pre všetky typy máp, na rozdiel od skrývania: akou značkou
+   * sa kreslí studnička, je vlastnosť kategórie, nie mapy.
+   */
+  function setPoiIcon(cls, name) {
+    overrides.poi.icons = { ...(overrides.poi.icons || {}) };
+    if (name === undefined) delete overrides.poi.icons[cls];
+    else overrides.poi.icons[cls] = name;
+  }
+
+  /** Ktorá ikona je pre kategóriu naozaj v mape (to isté, čo počíta štýl). */
+  function poiIconNow(cls) {
+    const set = currentSet();
+    return poiIconName(cls, {
+      classes: iconClassesOf(set?.icons || [], set?.suffix || ""),
+      suffix: set?.suffix || "",
+      overrides
+    });
+  }
 
   function setPoiHidden(cls, hide) {
     const bucket = editScope === "all" ? overrides.poi : mapBucket(true).poi;
@@ -3774,7 +4478,12 @@ export function initDevMode({
     for (const h of hidden) if (!known.has(h)) known.set(h, 0);
     const list = [...known.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 
-    const rows = list.map(([cls, count]) => {
+    const set = currentSet();
+    const image = spriteImageFor(set);
+    const farba = mergedPalette(getTheme(), overrides).poiIcon || "#444444";
+    const vlastne = overrides.poi.icons || {};
+
+    const rows = list.flatMap(([cls, count]) => {
       const check = el("input", { type: "checkbox", class: "dev-check" });
       check.checked = !hidden.has(cls);
       check.addEventListener("change", () => {
@@ -3784,27 +4493,75 @@ export function initDevMode({
       // Trieda skrytá spoločne sa v rozsahu „len táto mapa" vrátiť nedá –
       // nech je jasné, prečo odškrtnutie nič neurobí.
       const stuck = editScope === "map" && inBase.has(cls);
-      return el("label", { class: `dev-prow${hidden.has(cls) ? " off" : ""}` }, [
+      const ikona = poiIconNow(cls);
+      const zmenena = vlastne[cls] !== undefined;
+      const otvorene = poiOpen.has(cls);
+      const riadok = el("div", { class: `dev-prow${hidden.has(cls) ? " off" : ""}${zmenena ? " changed" : ""}` }, [
         check,
-        el("span", { class: "dev-name" }, [
-          el("span", { text: cls }),
+        // NÁHĽAD JE PRIAMO V RIADKU, nie až po rozkliknutí: otázka „akú má
+        // táto kategória ikonu" je práve tá, kvôli ktorej sem človek ide,
+        // a meno (`restaurant_11`) na ňu neodpovedá.
+        iconPreview({ name: ikona, set, image, custom: overrides.customIcons || [], color: farba }),
+        el("button", {
+          type: "button",
+          class: "dev-name",
+          title: `${cls} – klikni pre výber ikony`,
+          onclick: () => {
+            if (otvorene) poiOpen.delete(cls);
+            else poiOpen.add(cls);
+            renderBody();
+          }
+        }, [
+          el("span", { text: `${otvorene ? "▾ " : "▸ "}${cls}` }),
           el("small", {
-            text: stuck
-              ? "skryté pre všetky mapy – prepni rozsah"
-              : count
-              ? `${count} v zobrazenom výreze`
-              : "skryté"
+            text:
+              (stuck
+                ? "skryté pre všetky mapy – prepni rozsah"
+                : count
+                ? `${count} v zobrazenom výreze`
+                : "skryté") +
+              ` · ${ikona || "bez ikony"}${zmenena ? " (vlastná)" : ""}`
+          })
+        ]),
+        zmenena
+          ? el("button", {
+              type: "button",
+              class: "dev-mini",
+              text: "⟲",
+              title: "Späť na ikonu podľa sady",
+              onclick: () => {
+                setPoiIcon(cls, undefined);
+                apply({ immediate: true });
+              }
+            })
+          : null
+      ]);
+      if (!otvorene) return [riadok];
+      return [
+        riadok,
+        el("div", { class: "dev-details" }, [
+          iconGrid({
+            kluc: `poi:${cls}`,
+            value: ikona,
+            names: iconNames(ikona),
+            noneLabel: "žiadna",
+            onPick: (name) => {
+              setPoiIcon(cls, name);
+              apply({ immediate: true });
+            }
           })
         ])
-      ]);
+      ];
     });
 
     return el("div", {}, [
       el("p", {
         class: "dev-hint",
         text:
-          "Ktoré body sa zobrazujú. Zoznam sa načíta z dlaždíc v aktuálnom výreze – " +
-          "prejdi mapu tam, kde POI chceš, a načítaj znova."
+          "Ktoré body sa zobrazujú a akou ikonou. Zoznam sa načíta z dlaždíc " +
+          "v aktuálnom výreze – prejdi mapu tam, kde tie body sú, a načítaj znova. " +
+          "Klikni na kategóriu a vyber jej ikonu; voľba „žiadna“ nechá len popisok. " +
+          "Ikona platí pre všetky typy máp, skrývanie sa riadi rozsahom nižšie."
       }),
       scopeBar(),
       el("div", { class: "dev-bulk on" }, [
@@ -3827,7 +4584,19 @@ export function initDevMode({
             pruneMaps();
             apply();
           }
-        })
+        }),
+        Object.keys(overrides.poi.icons || {}).length
+          ? el("button", {
+              type: "button",
+              class: "dev-btn danger",
+              text: "Späť na pôvodné ikony",
+              title: "Zahodí vybrané ikony všetkých kategórií (skrývanie ostane)",
+              onclick: () => {
+                overrides.poi.icons = {};
+                apply();
+              }
+            })
+          : null
       ]),
       rows.length
         ? el("div", { class: "dev-list" }, rows)
@@ -3927,6 +4696,8 @@ export function initDevMode({
     const view =
       tab === "layers"
         ? renderLayers()
+        : tab === "stack"
+        ? renderStack()
         : tab === "pick"
         ? renderPick()
         : tab === "palette"

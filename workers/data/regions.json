@@ -22,7 +22,7 @@
     "admin_level": 2,
     "bbox": [16.815, 47.71, 22.585, 49.635],
     "osmfr": { "dir": "europe", "slugs": ["slovakia-latest"] },
-    "note": "RODIČ VŠETKÝCH KRAJOV (`osmfr.parent`). Hotový extrakt kraja z osm.fr je orezaný na tvrdo – ceste cez hranicu chýbajú uzly a viacpolygónovej ploche časť obrysu, takže ju Planetiler zahodí celú a v mape nie je vôbec. `workers/plan/pbf.sh` preto stiahne tento súbor a vyreže si kraj sám (`osmium extract -s smart`)."
+    "note": "Celé Slovensko ako jeden región – a zároveň RODIČ krajov: každý kraj má `osmfr.parent: slovensko` a `workers/plan/pbf.sh` si ho z tohto súboru vyreže (`osmium extract -s smart`). Hotový `{kraj}-latest.osm.pbf` na osm.fr sa NEPOUŽÍVA – nie je referenčne úplný, takže plocha presahujúca do susedného kraja (CHKO Malé Karpaty, CHKO Záhorie, lesy Záhoria) v ňom nemá všetkých členov a Planetiler ju zahodí CELÚ, aj tú časť, čo v kraji leží. Namerané aj s číslami v hlavičke pbf.sh."
   },
   "bratislavsky": {
     "name": "Bratislavský kraj",

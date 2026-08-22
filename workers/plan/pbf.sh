@@ -13,94 +13,74 @@
 # a spolieha sa, že neúspešná vetva len vráti nenulový kód.
 #
 # ČO ROBÍ, V PORADÍ:
-#   1. vezme PBF – z vlastnej URL, z rodičovského extraktu vyrezaného na
-#      polygón kraja (`osmfr.parent`, rozpis pri `extract_from_parent`), alebo
-#      z hotového osm.fr exportu kraja (keď súbor už leží z cache, nesťahuje
-#      sa a ani nereže)
+#   1. vezme PBF – z vlastnej URL, alebo si kraj VYREŽE z rodičovského
+#      extraktu (`osmfr.parent`); keď už leží z cache, nesťahuje sa
 #   2. voliteľne ho oreže – `crop_bbox`, alebo štvorec rýchleho testu
 #   3. vypíše `key`, `name`, `bbox`, `bboxkey` do $GITHUB_OUTPUT
 #
-# CHCE `data/region.poly` – bez neho sa kraj z rodiča vyrezať nedá a skript
-# spadne späť na hotový extrakt (nahlas). Sťahuje ho `workers/plan/region-poly.py`
-# v kroku, ktorý je PRED týmto; stráži to `workers/lint/pbf-parent.py`.
+# ═══ KRAJ SA REŽE Z RODIČA, HOTOVÝ EXPORT KRAJA SA NEPOUŽÍVA ═══
+#
+# osm.fr má pre každý kraj vlastný `{kraj}-latest.osm.pbf` (36 MB) a chvíľu sa
+# sťahoval priamo – bolo to o krok kratšie a o 337 MB lacnejšie než Slovensko.
+# Lenže ten súbor NIE JE REFERENČNE ÚPLNÝ: viacpolygónová plocha, ktorá
+# pokračuje do susedného kraja, v ňom nemá všetkých členov, a Planetiler taký
+# objekt ZAHODÍ CELÝ – teda aj tú polovicu, ktorá v kraji leží. Nie je to
+# kozmetika na hranici; v mape zmizli celé CHKO a celé lesy uprostred kraja.
+#
+# Namerané na `bratislavsky-latest.osm.pbf` (osmium check-refs: 92 953 ciest,
+# na ktoré sa relácie odkazujú, v súbore nie je). Z 3075 plošných relácií malo
+# 250 chýbajúceho člena, z toho 49 krajinnej pokrývky a ochrany prírody:
+#
+#     r4163631   CHKO Malé Karpaty        chýba  6/17 členov
+#     r7017139   CHKO Záhorie             chýba  7/38
+#     r4610709   CHKO Dunajské luhy       chýba  3/5
+#     r20142854  Aluvium Moravy (NPR)     chýba  4/18
+#     r1270451   les Záhoria (bez mena)   chýba 187/1011
+#     r3062407   Zdrž Hrušov (vodstvo)    chýba 10/68
+#
+# Po reze z rodiča (`slovakia-latest`, 373 MB) ostane z tých 49 päť – a všetky
+# sú na rakúskej hranici pozdĺž Dunaja a Moravy (Nationalpark Donau-Auen,
+# Dunaj), takže ich členovia nie sú v Slovensku vôbec a doplniť by ich vedel až
+# extrakt Európy. Tie masku naozaj nepresiahnu; tie hore áno.
+#
+# `-S types=multipolygon,boundary` NIE JE OZDOBA. Predvolene `smart` dopĺňa
+# členov len reláciám `type=multipolygon`, kým CHKO je `type=boundary` – bez
+# toho prepínača ostali všetky tri CHKO rozbité aj po reze z rodiča (namerané:
+# 9 zvyšných plôch namiesto 5).
+#
+# CENA (namerané, Bratislavský kraj): +337 MB sťahovania a 29 s rezania.
+# Výstup má 37 MB proti 36 MB hotového exportu, čas buildu sa nemení.
+# Pravidlo 7 („nesťahuj viac, než treba") tým porušené nie je – toto sťahovanie
+# TREBA, lebo bez neho v mape chýbajú plochy, ktoré v nej majú byť.
+#
+# PREČO RODIČ A NIE SUSEDNÉ KRAJE: CHKO Malé Karpaty leží v troch krajoch,
+# takže by k tomu musel byť číselník susedov – a keď v ňom raz jeden chýba,
+# plocha ticho zmizne presne ako teraz. Jeden rodič je jedna odpoveď (pravidlo 1).
 set -e
 
 T0=$(date +%s)
 mkdir -p data
 CUSTOM_URL="$OPT_CUSTOM_PBF_URL"
 
-# NA ČO TO PBF BUDE. `true` = kreslí sa z neho mapa, čiže Planetiler z neho
-# stavia GEOMETRIU – a vtedy musí byť na hranici kraja úplné, lebo objekt
-# s chýbajúcim uzlom alebo členskou cestou zahodí celý (rozpis pri
-# `extract_from_parent`). `false` = čítajú sa z neho len TAGY (Build wiki
-# hľadá odkazy na Wikipédiu), a tam je hotový extrakt kraja presne to správne:
-# 373 MB rodiča by sa sťahovalo pre nič (pravidlo 7).
-#
-# Je to `env:` kroku, nie odhad zo skriptu – kto si pýta PBF, vie, načo mu je.
-# Že hodnotu dostane každý volajúci a že pri `true` je krok s polygónom pred
-# ním, stráži `workers/lint/pbf-parent.py`.
-NEEDS_GEOMETRY="$PBF_NEEDS_GEOMETRY"
-
-# Cache: keď PBF (už aj orezané) leží z predošlého behu, sťahovať ani
-# rezať netreba – kľúč nesie región, orez aj dátum.
+# Cache: keď PBF (už aj orezané) leží z predošlého behu, sťahovať netreba –
+# kľúč nesie región, orez aj dátum.
 CACHED=""
 if [ -s data/region.osm.pbf ]; then
   CACHED=1
   echo "PBF z cache ✓ ($(du -h data/region.osm.pbf | cut -f1))"
 fi
 
-download() { # $1 = URL
+# `$2` je cieľový súbor (default samotné PBF regiónu): rodičovský extrakt sa
+# sťahuje bokom a až rez z neho je `data/region.osm.pbf`.
+download() { # $1 = URL, $2 = súbor
   [ -n "$CACHED" ] && return 0
   echo "Skúšam: $1"
-  curl -fL --retry 3 --retry-delay 5 -o data/region.osm.pbf "$1"
+  curl -fL --retry 3 --retry-delay 5 -o "${2:-data/region.osm.pbf}" "$1"
 }
 
-# Kraj vyrezaný z rodičovského PBF – prečo, hovorí rozpis nižšie pri volaní.
-# $1 = kľúč rodiča v `workers/data/regions.json` (napr. `slovensko`).
-# Vracia nenulový kód, keď to nevyšlo; volajúci vtedy siahne po hotovom
-# extrakte kraja a povie nahlas, čo tým mapa stratí.
-extract_from_parent() { # $1 = kľúč rodiča
-  PDIR=$(jq -r --arg p "$1" '.[$p].osmfr.dir // ""' workers/data/regions.json)
-  PSLUG=$(jq -r --arg p "$1" '.[$p].osmfr.slugs[0] // ""' workers/data/regions.json)
-  PNAME=$(jq -r --arg p "$1" '.[$p].name // ""' workers/data/regions.json)
-  if [ -z "$PDIR" ] || [ -z "$PSLUG" ]; then
-    echo "::error::Rodič '$1' nie je vo workers/data/regions.json, alebo nemá \`osmfr.dir\` a \`osmfr.slugs\`. Oprav \`osmfr.parent\` regiónu '$KEY'."
-    return 1
-  fi
-  # BEZ `.poly` SA REZAŤ NEDÁ a je to tá istá hranica, ktorou je orezaný
-  # hotový extrakt z osm.fr – druhá definícia by sa s ňou raz rozišla
-  # (pravidlo 1). Sťahuje ho krok `Polygón kraja`, ktorý je PRED týmto
-  # (stráži `workers/lint/pbf-parent.py`).
-  if [ ! -s data/region.poly ]; then
-    echo "::warning::Polygón kraja (data/region.poly) tu ešte nie je, takže sa kraj nemá čím vyrezať."
-    return 1
-  fi
-
-  # Rozpočet kroku: 373 MB Slovenska sa sťahovalo 15 s a `osmium extract
-  # -s smart` bežal 42 s (dve jadrá, Bratislavský kraj, 37 MB von). Na
-  # runneri počítaj do dvoch minút – a je to raz za deň, kľúč cache nesie
-  # dátum.
-  command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
-  echo "Kraj sa vyreže z rodiča $PNAME – tak bude celý aj to, čo prechádza cez jeho hranicu (~2 min)."
-  if ! curl -fL --retry 3 --retry-delay 5 \
-       -o data/parent.osm.pbf "$OSMFR_BASE/$PDIR/$PSLUG.osm.pbf"; then
-    rm -f data/parent.osm.pbf
-    return 1
-  fi
-  echo "  [1/2] rodič stiahnutý ($(du -h data/parent.osm.pbf | cut -f1)), režem na polygón kraja…"
-  if ! osmium extract --overwrite -s smart -S types=multipolygon,boundary \
-       --polygon data/region.poly \
-       -o data/region-full.osm.pbf data/parent.osm.pbf; then
-    rm -f data/parent.osm.pbf data/region-full.osm.pbf
-    return 1
-  fi
-  mv data/region-full.osm.pbf data/region.osm.pbf
-  rm -f data/parent.osm.pbf
-  echo "  [2/2] hotovo ($(du -h data/region.osm.pbf | cut -f1))"
-  # Čo z hranice ostalo neúplné, má byť VIDIEŤ – po tomto oreze to už nie sú
-  # hranice krajov, ale štátna hranica (rodič je Slovensko). Informatívne,
-  # preto `|| true`: mapa sa stavia aj tak.
-  osmium check-refs -r data/region.osm.pbf || true
+need_osmium() {
+  command -v osmium >/dev/null && return 0
+  sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
 }
 
 if [ -n "$CUSTOM_URL" ]; then
@@ -112,7 +92,7 @@ if [ -n "$CUSTOM_URL" ]; then
 
   BBOX="$OPT_CUSTOM_BBOX"
   if [ -z "$BBOX" ]; then
-    sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool
+    need_osmium
     # ŽIADNA RÚRA Z `osmium`: `head -1` (aj `sed …q`) zavrie rúru pod stále
     # píšucim producentom, ten dostane EPIPE a `pipefail` zhodí priradenie.
     # Výstup ide najprv do premennej, prvý riadok sa berie až z nej.
@@ -129,82 +109,92 @@ else
   NAME=$(jq -r --arg r "$KEY" '.[$r].name' workers/data/regions.json)
   BBOX=$(jq -r --arg r "$KEY" '.[$r].bbox | join(",")' workers/data/regions.json)
   DIR=$(jq -r --arg r "$KEY" '.[$r].osmfr.dir' workers/data/regions.json)
+  # Rodič je KĽÚČ INÉHO REGIÓNU v tom istom číselníku, nie druhá URL – adresa
+  # Slovenska je zapísaná raz, pri `slovensko` (pravidlo 1).
+  PARENT=$(jq -r --arg r "$KEY" '.[$r].osmfr.parent // ""' workers/data/regions.json)
   if [ "$NAME" = "null" ]; then echo "::error::Neznámy región: $KEY"; exit 1; fi
 
-  OK=""
-  # ÚPLNOSŤ NA HRANICI KRAJA – preto sa hotový extrakt kraja NEBERIE tak,
-  # ako je, ale reže sa z rodičovského (`osmfr.parent`, teda Slovenska).
-  #
-  # Hotový `presovsky-latest.osm.pbf` z osm.fr je orezaný NA TVRDO: cesta,
-  # rieka či les, ktorý pokračuje do vedľajšieho kraja, v ňom má uzly len po
-  # hranicu a viacpolygónová plocha (`type=multipolygon`) časť členských ciest
-  # vôbec. Planetiler z takého objektu geometriu nepostaví a ZAHODÍ HO CELÝ:
-  #
-  #     Error constructing line for OsmWay[…]: Missing location for node: …
-  #     Error constructing polygon for OsmRelation[…]: error building multipolygon
-  #
-  # Namerané na Bratislavskom kraji (planetiler.jar z releases, maxzoom 12,
-  # vlastná schéma na `highway`/`waterway`/`landuse`/`natural`):
-  #
-  #                                       osm.fr kraj    z rodiča `-s smart`
-  #     zahodené čiary (way)                      97                       5
-  #     zahodené plochy (way)                     66                       6
-  #     zahodené plochy (multipolygon)            19                       1
-  #     osmium check-refs: chýbajúce uzly      2 255                     252
-  #     prvkov v dlaždiciach                 260 486                 262 377
-  #
-  # Nie je to teda „mapa presahuje za kraj" (to rieši `--polygon` a maska
-  # v štýle), ale opak: v stiahnutom kraji CHÝBALO to, čo cez jeho hranicu
-  # prechádza – a nechýbal len presah, chýbal celý objekt. Zvyšok (252 uzlov)
-  # je na ŠTÁTNEJ hranici: rodič je Slovensko, takže les do Rakúska celý nikde
-  # nie je. Na to by bola treba Európa (28 GB) a mapa tam aj tak končí.
-  #
-  # `-s smart` je „complete_ways + celé členské cesty relácií daných typov";
-  # `types=multipolygon,boundary` je jeho predvolená hodnota, píše sa
-  # naplno, lebo práve o ňu tu ide. Trasy (`type=route`) v nej ZÁMERNE nie sú:
-  # ich značky si Planetiler prenáša na členské cesty, takže neúplná relácia
-  # trasy nič nezahodí – a doplniť celú Cestu hrdinov SNP do kraja by znamenalo
-  # ťahať cesty cez pol Slovenska.
-  #
-  # A robí sa to LEN pre PBF, z ktorého sa kreslí mapa (`PBF_NEEDS_GEOMETRY`,
-  # viď hore) – Build wiki z neho číta iba tagy a tam by to bolo 373 MB pre nič.
-  PARENT=$(jq -r --arg r "$KEY" '.[$r].osmfr.parent // ""' workers/data/regions.json)
-  if [ -z "$CACHED" ] && [ -n "$PARENT" ] && [ "$NEEDS_GEOMETRY" = 'true' ]; then
-    if extract_from_parent "$PARENT"; then
-      OK=1
-      FROM_PARENT=1
-    else
-      echo "::warning::Kraj sa nepodarilo vyrezať z rodičovského PBF ($PARENT) – beriem hotový extrakt kraja z osm.fr. Mapa sa postaví, ale objekty, ktoré prechádzajú cez hranicu kraja (cesty, rieky, veľké lesy a polia), v nej nebudú vôbec. Skús beh zopakovať."
-    fi
-  fi
+  # `slugs` je zoznam kandidátov, lebo osm.fr mená svojich súborov občas
+  # prehodí; berie sa prvý, ktorý existuje.
+  slugs() { jq -r --arg r "$1" '.[$r].osmfr.slugs[]' workers/data/regions.json; }
 
-  # Hotové osm.fr regionálne exporty (skúšaj kandidátske názvy súborov).
-  # Sem sa ide, keď kraj rodiča nemá, keď PBF leží z cache (`download` vtedy
-  # hneď vráti 0) a keď rez z rodiča nevyšiel – NIE po ňom: `curl -o` by
-  # hotový, úplný súbor prepísalo tým dieravým.
-  if [ -z "$OK" ]; then
-    for SLUG in $(jq -r --arg r "$KEY" '.[$r].osmfr.slugs[]' workers/data/regions.json); do
+  if [ -z "$PARENT" ]; then
+    # ----- región bez rodiča (Slovensko ako celok) – hotový export -----
+    OK=""
+    for SLUG in $(slugs "$KEY"); do
       if download "$OSMFR_BASE/$DIR/$SLUG.osm.pbf"; then OK=1; break; fi
     done
-  fi
-  if [ -z "$OK" ]; then
-    echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/data/regions.json):"
-    curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
-    echo "…alebo vyplň custom_pbf_url s priamou URL na .osm.pbf."
-    exit 1
+    if [ -z "$OK" ]; then
+      echo "::error::PBF pre '$KEY' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$DIR/ (uprav slugs vo workers/data/regions.json):"
+      curl -sL "$OSMFR_BASE/$DIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
+      echo "…alebo vyplň custom_pbf_url s priamou URL na .osm.pbf."
+      exit 1
+    fi
+  elif [ -z "$CACHED" ]; then
+    # ----- kraj: REZ Z RODIČA (prečo, hovorí hlavička súboru) -----
+    PDIR=$(jq -r --arg r "$PARENT" '.[$r].osmfr.dir' workers/data/regions.json)
+    PNAME=$(jq -r --arg r "$PARENT" '.[$r].name' workers/data/regions.json)
+    if [ "$PDIR" = "null" ]; then
+      echo "::error::Región '$KEY' má \`osmfr.parent: $PARENT\`, ale taký región v workers/data/regions.json nie je (alebo nemá \`osmfr.dir\`). Oprav číselník."
+      exit 1
+    fi
+
+    # HRANICA MUSÍ BYŤ, INAK SA NEREŽE NIČ. Predošlá podoba tohto kroku mala
+    # v tomto mieste NÁVRAT na priame sťahovanie kraja – a to je presne tichý
+    # omyl (pravidlo 8): keď sa `.poly` nestiahol, beh bol zelený a v mape
+    # zase chýbali CHKO. Radšej spadnúť tu, za pár sekúnd, s návodom.
+    POLY="${REGION_POLY:-data/region.poly}"
+    if [ ! -s "$POLY" ]; then
+      echo "::error::Hranica regiónu ($POLY) nie je, takže sa kraj nemá z čoho vyrezať – a hotový export kraja sa nepoužíva (chýbali by v ňom plochy presahujúce do susedného kraja). Robí ju krok „Polygón kraja“ (workers/plan/region-poly.py) a musí bežať PRED týmto; keď spadol on, zopakuj beh."
+      exit 1
+    fi
+
+    need_osmium
+    # PLÁN S ODHADOM pred drahou časťou (pravidlo 4) – hodina ticha v logu sa
+    # nedá odlíšiť od zaseknutého behu. Čísla sú namerané na Bratislavskom
+    # kraji, viď hlavičku.
+    echo "Kraj sa reže z rodiča – $PNAME (~373 MB, potom rez ~30 s)."
+    echo "  dôvod: hotový export kraja nemá členov plôch, čo presahujú do susedného kraja (CHKO, veľké lesy), a Planetiler ich zahodí celé"
+    OK=""
+    for SLUG in $(slugs "$PARENT"); do
+      if download "$OSMFR_BASE/$PDIR/$SLUG.osm.pbf" data/parent.osm.pbf; then OK=1; break; fi
+    done
+    if [ -z "$OK" ]; then
+      echo "::error::Rodičovský extrakt '$PARENT' sa nepodarilo stiahnuť. Obsah $OSMFR_BASE/$PDIR/ (uprav slugs vo workers/data/regions.json):"
+      curl -sL "$OSMFR_BASE/$PDIR/" | grep -oE 'href="[^"]+\.osm\.pbf"' | sort -u || true
+      exit 1
+    fi
+    echo "Rodič stiahnutý ($(du -h data/parent.osm.pbf | cut -f1)), režem $NAME podľa $POLY …"
+
+    # `-s smart` = celé cesty a DOPLNENÍ ČLENOVIA relácií, teda presne to,
+    # čo hotovému exportu chýba. `-S types=multipolygon,boundary` je nutné:
+    # bez neho `smart` dopĺňa len `type=multipolygon` a CHKO (`type=boundary`)
+    # ostanú rozbité – namerané, viď hlavičku.
+    TCUT=$(date +%s)
+    if ! osmium extract --overwrite -s smart -S types=multipolygon,boundary \
+         --polygon "$POLY" -o data/region.osm.pbf data/parent.osm.pbf; then
+      echo "::error::Rez kraja z rodičovského extraktu zlyhal. Skús beh zopakovať; keď padá stále, pozri sa, či je $POLY platný \`.poly\` (workers/plan/region-poly.py)."
+      exit 1
+    fi
+    # 373 MB preč hneď, nie na konci jobu: runner má ~60 GB voľných a PBF si
+    # o kus ďalej ešte pýta miesto na orez rýchleho testu.
+    rm -f data/parent.osm.pbf
+    echo "Vyrezané za $(( $(date +%s) - TCUT )) s → $(du -h data/region.osm.pbf | cut -f1)"
   fi
 fi
 
 # ----- voliteľné orezanie na menšie územie -----
 # Menšie územie = výrazne menší .pmtiles, takže sa dá ísť na maxzoom 16.
-# Toto orezáva PBF, čiže samotnú mapu – na rozdiel od rýchleho testu
-# o kus nižšie, ktorý mapu necháva celú.
+# Toto orezáva PBF, čiže samotnú mapu – rovnako ako rýchly test o kus nižšie,
+# len na zadaný obdĺžnik namiesto štvorca zo stredu výrezu. Dá sa použiť oboje
+# naraz: `crop_bbox` oreže mapu a test z nej potom vyberie ten štvorec.
 CROP="$OPT_CROP_BBOX"
 if [ -n "$CROP" ]; then
   if [ -z "$CACHED" ]; then
-    command -v osmium >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq osmium-tool; }
+    need_osmium
     echo "Orezávam na bbox $CROP …"
     if ! osmium extract --overwrite -b "$CROP" -s smart \
+         -S types=multipolygon,boundary \
          -o data/region-crop.osm.pbf data/region.osm.pbf; then
       echo "::error::Orezanie na bbox '$CROP' zlyhalo – očakávaný formát je west,south,east,north (napr. 18.98,49.18,19.20,49.28)."
       exit 1
@@ -216,15 +206,24 @@ if [ -n "$CROP" ]; then
   NAME="$NAME (výrez)"
 fi
 
-# RÝCHLY TEST (switch `test`, predvolene odškrtnutý, 4 km²) zmenšuje to,
-# čo je naozaj drahé: vrstevnice, skaly a tieňovanie z výškového
-# modelu – na kraji desiatky minút, na 4 km² jednotky minút.
+# RÝCHLY TEST (switch `test`, predvolene ODŠKRTNUTÝ, 4 km²) zmenšuje
+# CELÝ BEH na štvorec zo stredu výrezu: vrstevnice, skaly a tieňovanie
+# z výškového modelu (to naozaj drahé – na kraji desiatky minút, na
+# 4 km² jednotky minút) a od zmeny v #172 aj SAMOTNÚ MAPU.
 #
-# REGIÓN SA PRITOM NEOREZÁVA: mapa (cesty, vodstvo, trasy, prvky)
-# vyjde celá podľa nastavení, prešovský kraj ostane prešovským
-# krajom. Planetiler z PBF kraja je pár minút, takže sa tým nič
-# neladí pomalšie – zato sa štvorec so skalami pozerá v mape, do
-# ktorej patrí, a nie nad prázdnom.
+# Kým sa mapa nechávala celá, bol testovací beh polovičný: kraj sa
+# stiahol, prehnal Planetilerom, zabalil a nahral v plnej veľkosti,
+# takže sa okolo štvorca s pár km² terénu viezol celý kraj – dlaždice,
+# trasy, prvky aj ZIP. Chcelo to štvorec vidieť „v mape, do ktorej
+# patrí"; lenže na to je obrázok „kde to je" (workers/plan/test-map.py)
+# a mapa sveta pod výberom, a nie štyridsať minút a stovky MB na to,
+# aby sa dal pozrieť prah sklonu. Test má byť minimálny – teraz je.
+#
+# Orez je ten istý `osmium extract`, aký robí `crop_bbox` o kus vyššie,
+# takže sa mapa aj vrstvy z DEM režú JEDNÝM spôsobom; `bbox` behu sa
+# tým rovná `dem_bbox` a maska, dlaždice aj katalóg dostanú to isté
+# územie. Celý kraj s terénom len na štvorci sa dá stále dostať –
+# `crop_bbox` prázdny a switch `test` odškrtnutý plus `area` na pohorie.
 TEST_KM2="$OPT_TEST_KM2"
 DEM_BBOX="$BBOX"
 if [ "${TEST_KM2:-0}" != "0" ]; then
@@ -249,9 +248,41 @@ if [ "${TEST_KM2:-0}" != "0" ]; then
   printf '%s\n' "$RES" > /tmp/vyrez.txt
   # Kľúč ide do mien cache aj uložených výsledkov – testovací beh sa
   # nesmie tváriť ako ostrý a prepísať mu vrstevnice na celý kraj.
+  # A TERAZ AJ MAPA. Bez tohto orezu je „rýchly test" rýchly len v terénnych
+  # vrstvách, kým dlaždice, trasy, prvky a ZIP sa robia na celom kraji.
+  # `-s smart -S types=multipolygon,boundary` je tu z toho istého dôvodu ako
+  # pri reze z rodiča, len sa to prejaví oveľa skôr: zo štvorca s 4 km² vytŕča
+  # skoro každá plocha, takže bez dopĺňania členov by v testovacej mape nebol
+  # les ani chránené územie takmer nikde. Namerané na štvorci v Malých
+  # Karpatoch: bez `-S types=` zmizli „Záhorie (vojenský obvod)" a „Turecký
+  # vrch", s ním neostala ani jedna zahodená plocha.
+  if [ -z "$CACHED" ]; then
+    need_osmium
+    echo "Orezávam MAPU na testovací štvorec $DEM_BBOX …"
+    if ! osmium extract --overwrite -b "$DEM_BBOX" -s smart \
+         -S types=multipolygon,boundary \
+         -o data/region-test.osm.pbf data/region.osm.pbf; then
+      echo "::error::Orez mapy na testovací štvorec ($DEM_BBOX) zlyhal. Skús beh bez switchu \`test\`, alebo iný stred cez \`options: test_at=lon,lat\`."
+      exit 1
+    fi
+    mv data/region-test.osm.pbf data/region.osm.pbf
+  fi
+  # Mapa je odteraz ten štvorec, takže `bbox` behu je on – ide do dlaždíc,
+  # masky regiónu, rozpočtu stránky aj do katalógu. `full_bbox` vyššie ostáva
+  # celý výrez, lebo obrázok „kde to je" potrebuje okolie.
+  BBOX="$DEM_BBOX"
   KEY="${KEY}_test${TEST_KM2}"
   NAME="$NAME – test ${TEST_KM2} km²"
-  echo "Testovací režim: $TEST_KM2 km² → $DEM_BBOX (mapa ostáva celý región $BBOX)"
+  echo "Testovací režim: celý beh (mapa aj terén) na $TEST_KM2 km² → $DEM_BBOX"
+fi
+
+# ČO Z TOHO PBF VYPADNE, MUSÍ BYŤ VIDIEŤ. Plocha bez všetkých členov sa
+# nezmenší – Planetiler ju zahodí celú a build je pri tom zelený, takže je to
+# presne ten druh chyby, na ktorý je pravidlo 8. Stojí to ~1 s (dve volania
+# `osmium`), tak sa to počíta pri každom behu, nie na požiadanie.
+if command -v osmium >/dev/null; then
+  python3 workers/plan/pbf-areas.py data/region.osm.pbf \
+    --summary="${GITHUB_STEP_SUMMARY:-/dev/null}" || true
 fi
 
 echo "key=$KEY"   >> "$GITHUB_OUTPUT"
@@ -265,5 +296,5 @@ echo "dem_bboxkey=$(echo "$DEM_BBOX" | tr ',.-' '___')" >> "$GITHUB_OUTPUT"
 echo "Región: $NAME (key=$KEY, bbox=$BBOX)"
 ls -lh data/region.osm.pbf
 printf '%s\t%s\t%s\t%s\n' "10" "PBF regiónu" "$(( $(date +%s) - T0 ))" \
-  "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')$([ -n "${FROM_PARENT:-}" ] && echo ' (vyrezaný z rodiča)')" \
+  "$NAME, $(du -h data/region.osm.pbf | cut -f1)$([ -n "$CACHED" ] && echo ' (z cache)')" \
   >> steps-out/plan.tsv

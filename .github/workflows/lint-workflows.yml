@@ -594,7 +594,10 @@ jobs:
       # normalizácia prijme celú – nie polovicu. K tomu tretia: čo developer
       # mode nastaví, to sa musí aj ULOŽIŤ – `overrides.mjs` skladá súbor pre
       # repozitár po kľúčoch a na `trails` raz zabudol, takže z nastavení trás
-      # do neho neprišlo nič.
+      # do neho neprišlo nič. A štvrtá: prerušovanie, ktoré má vrstva ZO ŠTÝLU
+      # (železnica), musí byť vo výbere vidieť a „Plná" ho musí vedieť zrušiť –
+      # kým sa zahadzovala ako predvolená, čiarkovanie železnice sa nedalo ani
+      # zmeniť, ani vypnúť.
       - name: "Úpravy štýlu prejdú normalizáciou celé"
         run: node workers/lint/overrides.mjs
 
@@ -675,14 +678,13 @@ jobs:
       - name: "Mapa sveta: štýl kreslí to, čo schéma vyrába"
         run: python3 workers/lint/world.py
 
-      # Kraj sa reže z rodičovského extraktu (`osmfr.parent`), lebo hotový
-      # `presovsky-latest.osm.pbf` z osm.fr je orezaný na tvrdo: cesta ani
-      # viacpolygónová plocha cez hranicu v ňom nie je celá a Planetiler ju
-      # zahodí CELÚ – v stiahnutom kraji tak chýbala. Vypnúť sa to dá poradím
-      # krokov (bez `data/region.poly` sa rezať nemá čím) a beh je pri tom
-      # zelený. Rozpis a namerané čísla: `workers/lint/pbf-parent.py`.
-      - name: Kraj sa reže z rodiča, nie z dieravého extraktu
-        run: python3 workers/lint/pbf-parent.py
+      # Kraj má na osm.fr vlastný súbor rezaný po jeho administratívnej
+      # hranici, takže sa sťahuje priamo ten – nie 373 MB Slovenska, z ktorého
+      # by sa kraj ešte raz vyrezával (pravidlo 7). Kontrola stráži, že sa tá
+      # obchádzka nevráti a že v číselníku neostane mŕtvy `osmfr.parent`.
+      # Rozpis: `workers/lint/pbf-source.py`.
+      - name: PBF regiónu sa sťahuje priamo z osm.fr
+        run: python3 workers/lint/pbf-source.py
 
       # `actions/setup-java` je AKCIA, takže sa – na rozdiel od sťahovania
       # jaru – do `workers/lib/planetiler.sh` presunúť nedá a musí stáť pri

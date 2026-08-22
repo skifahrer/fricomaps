@@ -155,12 +155,23 @@ with tempfile.TemporaryDirectory() as tmp:
     poly = os.path.join(tmp, "region.poly")
     with open(poly, "w", encoding="utf-8") as f:
         f.write("test\n1\n  19.0 49.0\n  20.0 49.0\n  20.0 50.0\nEND\nEND\n")
-    for popis, args, musi, nesmie in (
-        ("s polygónom", [CLIP, "19,48,20,49", poly], "--polygon", "--bounds"),
+    # Tretí riadok je VYPÍNAČ `region_clip`. Vypnutý orez musí dať `--bounds`
+    # (bez neho by si Planetiler vzal bbox z hlavičky PBF, čo po `osmium
+    # extract` nemusí sedieť) a NESMIE pri tom vypísať `--polygon` – obe naraz
+    # znamenajú ticho vypnutý tvar, rozpis v hlavičke tejto kontroly. A štvrtý
+    # stráži, že vypnúť sa to dá len NAPÍSANÍM: keď premenná nepríde vôbec,
+    # orez je zapnutý.
+    for popis, args, env, musi, nesmie in (
+        ("s polygónom", [CLIP, "19,48,20,49", poly], {}, "--polygon", "--bounds"),
         ("bez polygónu", [CLIP, "19,48,20,49", os.path.join(tmp, "niet.poly")],
-         "--bounds", "--polygon"),
+         {}, "--bounds", "--polygon"),
+        ("s vypnutým orezom", [CLIP, "19,48,20,49", poly],
+         {"OPT_REGION_CLIP": "false"}, "--bounds", "--polygon"),
+        ("s prázdnym OPT_REGION_CLIP", [CLIP, "19,48,20,49", poly],
+         {"OPT_REGION_CLIP": ""}, "--polygon", "--bounds"),
     ):
-        r = subprocess.run(args, capture_output=True, text=True)
+        r = subprocess.run(args, capture_output=True, text=True,
+                           env={**os.environ, **env})
         if r.returncode != 0:
             bad.append(f"{CLIP} ({popis}) spadol: {r.stderr.strip()[:200]}")
             continue

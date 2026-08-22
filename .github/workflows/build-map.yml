@@ -39,6 +39,11 @@ on:
           - kosicky
       # Celý kraj trvá ~40 min, jedno pohorie ~2. Ešte rýchlejší je switch
       # `test` pod týmto. Vlastný bbox: `options: area_bbox=W,S,E,N`.
+      #
+      # PREDVOLENE `cely_region`. Kým tu stálo `vysoke_tatry`, dostal ten, kto
+      # si vybral iný kraj a tento riadok prehliadol, mapu bez vrstevníc a skál
+      # skoro všade – a v logu o tom bolo len `::warning::`. Zmenšovanie behu
+      # má JEDNU páku, switch `test` pod týmto; výrez ostáva na to, na čo je.
       area:
         description: "Pohorie, na ktorom sa počítajú vrstevnice a skaly"
         required: false
@@ -73,13 +78,14 @@ on:
       # Kľúč testu má príponu `_test4` (číslo je z voľby `test_km2`), takže si
       # nesadne do cache ani na uložené výsledky ostrého behu, a jeho položka
       # ide do `maps-test.json` (viď workers/deploy/catalog.py).
-      # Zmenší LEN to drahé – vrstevnice, skaly a tieňovanie sa spočítajú na
-      # štvorci zo stredu výrezu. Mapa (kraj, cesty, trasy, prvky) ostáva celá
-      # podľa nastavení regiónu, aby sa ten štvorec dal pozerať v mape, do
-      # ktorej patrí. Mapa sa otvorí rovno na ňom. Iná veľkosť:
-      # `options: test_km2=8`. Iné miesto: `options: test_at=lon,lat`.
+      # Zmenší CELÝ BEH na štvorec zo stredu výrezu – terén aj samotnú mapu:
+      # PBF sa oreže, takže dlaždice, trasy, prvky aj ZIP sú z tých 4 km².
+      # Kým sa mapa nechávala celá, bol test polovičný (kraj sa aj tak stiahol,
+      # prehnal Planetilerom, zabalil a nahral). Kde štvorec leží, ukáže
+      # obrázok „kde to je“; rozpis vo `workers/plan/pbf.sh`.
+      # Iná veľkosť: `options: test_km2=8`. Iné miesto: `options: test_at=lon,lat`.
       test:
-        description: "Rýchly test: terén (vrstevnice, skaly, tieňovanie) len na 4 km² zo stredu výrezu"
+        description: "Rýchly test: celý beh (mapa aj terén) len na 4 km² zo stredu výrezu"
         required: false
         default: false
         type: boolean
@@ -692,9 +698,11 @@ jobs:
     outputs:
       key: ${{ steps.region.outputs.key }}
       name: ${{ steps.region.outputs.name }}
-      # `bbox` je CELÝ región (mapa, cesty, trasy, prvky), `dem_bbox` je to,
-      # čo sa počíta z výškového modelu (vrstevnice, skaly, tieňovanie).
-      # Líšia sa len pri rýchlom teste: ten zmenšuje výpočet z DEM, nie mapu.
+      # `bbox` je územie MAPY (dlaždice, trasy, prvky, maska, rozpočet
+      # stránky), `dem_bbox` územie vrstiev z výškového modelu (vrstevnice,
+      # skaly, tieňovanie). Pri rýchlom teste sú to TIE ISTÉ 4 km² – odkedy
+      # test orezáva aj PBF, sa nelíšia; rozdielne ostávajú len vtedy, keď je
+      # výrez (`area`) menší než región.
       bbox: ${{ steps.region.outputs.bbox }}
       dem_bbox: ${{ steps.region.outputs.dem_bbox }}
       dem_bboxkey: ${{ steps.region.outputs.dem_bboxkey }}
@@ -734,6 +742,9 @@ jobs:
       opt_crop_bbox: ${{ steps.opts.outputs.opt_crop_bbox }}
       opt_size_limit_mb: ${{ steps.opts.outputs.opt_size_limit_mb }}
       opt_auto_shrink: ${{ steps.opts.outputs.opt_auto_shrink }}
+      # Orez dlaždíc na hranicu regiónu – potrebujú ho TRI joby (`tiles`,
+      # `trails`, `features`), lebo orez musí byť vo všetkých rovnaký.
+      opt_region_clip: ${{ steps.opts.outputs.opt_region_clip }}
       opt_ugkk_fallback: ${{ steps.opts.outputs.opt_ugkk_fallback }}
       opt_ugkk_urls: ${{ steps.opts.outputs.opt_ugkk_urls }}
       opt_contour_interval: ${{ steps.opts.outputs.opt_contour_interval }}
@@ -872,15 +883,17 @@ jobs:
           mkdir -p steps-out
           : > steps-out/plan.tsv
 
-      # POLYGÓN KRAJA: hranica, ktorou je orezaný náš PBF. Vyrába ho `plan`
-      # a ostatné joby ho dostanú ARTEFAKTOM, nie tým, že si ho stiahnu samy –
-      # keby jednému z nich zlyhalo sťahovanie, rezal by na bboxe, kým ostatní
-      # na kraji, čiže dve pravdy o jednej hranici.
+      # POLYGÓN KRAJA: hranica, po ktorej je náš PBF rezaný na osm.fr. Vyrába
+      # ho `plan` a ostatné joby ho dostanú ARTEFAKTOM, nie tým, že si ho
+      # stiahnu samy – keby jednému z nich zlyhalo sťahovanie, rezal by na
+      # bboxe, kým ostatní na kraji, čiže dve pravdy o jednej hranici.
       #
-      # A JE PRED PBF NASCHVÁL: `workers/plan/pbf.sh` si podľa neho vyreže kraj
-      # z rodičovského extraktu (rozpis v tom skripte). Za ním by PBF ticho
-      # vzniklo po starom – zelený beh s dierami na hranici. Stráži to
-      # `workers/lint/pbf-parent.py`.
+      # POTREBUJE HO UŽ SÁM PBF, preto tento krok stojí PRED ním: kraj sa
+      # podľa neho reže z rodičovského extraktu (workers/plan/pbf.sh). Keď
+      # `.poly` nie je, ten krok SPADNE – návrat k hotovému exportu kraja by
+      # znamenal mapu bez plôch, čo presahujú do susedného kraja.
+      # Tú istú hranicu chce aj `--polygon` Planetileru, `-cutline` vrstevníc,
+      # maska tieňovania a hranica pre viewer.
       - name: Polygón kraja (orez mapy aj vrstiev z DEM)
         run: |
           set -euo pipefail
@@ -899,16 +912,18 @@ jobs:
           path: data/region.osm.pbf
           # `v2`: kým rýchly test orezával región, ukladal orezané PBF pod
           # kľúč BEZ orezu (`crop_bbox` bol pri teste prázdny) – ostrý beh
-          # v ten istý deň potom postavil celú mapu z tých 2 km². Odteraz test
-          # neorezáva nič, ale staré záznamy by ešte deň strašili.
-          # `v3`: PBF kraja sa už neberie hotové z osm.fr, ale reže sa
-          # z rodičovského (`workers/plan/pbf.sh`), takže je na hranici úplné.
-          # Pod tým istým kľúčom by beh ešte deň ťahal starú, dieravú podobu.
-          key: pbf-v3-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-${{ steps.day.outputs.d }}
+          # v ten istý deň potom postavil celú mapu z tých 2 km².
+          # `v5`: kraj sa zase REŽE z rodiča (pod `v4` ležia hotové exporty
+          # z osm.fr, ktorým chýbajú členovia plôch – to sa práve opravuje,
+          # takže sa nesmú vrátiť z cache) a test zase orezáva aj mapu.
+          # A PRETO JE V KĽÚČI TESTOVACÍ ŠTVOREC – tá istá chyba ako pri `v2`,
+          # len naopak: uložené 4 km² by si ostrý beh v ten istý deň vzal ako
+          # celý kraj. Počíta sa až v `plan/area.py`, tu sú jeho vstupy.
+          key: pbf-v5-${{ inputs.region }}-${{ steps.opts.outputs.opt_custom_pbf_url }}-${{ steps.opts.outputs.opt_crop_bbox }}-t${{ steps.opts.outputs.opt_test_km2 }}-a${{ inputs.area }}${{ steps.opts.outputs.opt_area_bbox }}-at${{ steps.opts.outputs.opt_test_at }}-${{ steps.day.outputs.d }}
 
-      # Stotridsať riadkov bashu je vo `workers/plan/pbf.sh` – tento súbor
-      # má strop 128 kB a nad ním ho GitHub ticho neprijme (stráži Lint
-      # workflows). Sem chodia len hodnoty z formulára a z volieb.
+      # Bash je vo `workers/plan/pbf.sh` – tento súbor má strop 128 kB a nad
+      # ním ho GitHub ticho neprijme (stráži Lint workflows). Sem chodia len
+      # hodnoty z formulára a z volieb.
       - name: Stiahni PBF iba daného regiónu
         id: region
         env:
@@ -920,10 +935,6 @@ jobs:
           OPT_CUSTOM_PBF_URL: ${{ steps.opts.outputs.opt_custom_pbf_url }}
           OPT_TEST_AT: ${{ steps.opts.outputs.opt_test_at }}
           OPT_TEST_KM2: ${{ steps.opts.outputs.opt_test_km2 }}
-          # Z TOHTO PBF SA KRESLÍ MAPA, takže musí byť na hranici úplné a kraj
-          # sa vyreže z rodiča podľa `data/region.poly` (krok vyššie). Prečo
-          # a s akými číslami: `workers/plan/pbf.sh`.
-          PBF_NEEDS_GEOMETRY: 'true'
           REGION: ${{ inputs.region }}
         run: workers/plan/pbf.sh
 
@@ -1766,6 +1777,7 @@ jobs:
         id: trails
         env:
           OPT_TRAILS_MAXZOOM: ${{ needs.plan.outputs.opt_trails_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
@@ -1867,6 +1879,7 @@ jobs:
         id: features
         env:
           OPT_FEATURES_MAXZOOM: ${{ needs.plan.outputs.opt_features_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}
@@ -2026,6 +2039,7 @@ jobs:
         env:
           OPT_AUTO_SHRINK: ${{ needs.plan.outputs.opt_auto_shrink }}
           OPT_MAXZOOM: ${{ needs.plan.outputs.opt_maxzoom }}
+          OPT_REGION_CLIP: ${{ needs.plan.outputs.opt_region_clip }}
           REGION_BBOX: ${{ needs.plan.outputs.bbox }}
           REGION_KEY: ${{ needs.plan.outputs.key }}
           SIZE_LIMIT_MB: ${{ needs.plan.outputs.opt_size_limit_mb }}

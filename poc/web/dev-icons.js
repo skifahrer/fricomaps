@@ -98,6 +98,38 @@ function iconCanvas({ name, entry, image, color, png, size = 22 }) {
 }
 
 /**
+ * NÁHĽAD JEDNEJ IKONY – to, čo je pri kategórii naozaj v mape.
+ *
+ * Bez neho sa výber ikony nedá urobiť: „reštaurácia má `restaurant_11`" je
+ * meno, nie obrázok, a človek sa podľa mena nerozhodne (to je ten istý dôvod,
+ * pre ktorý je namiesto rozbaľovačky mriežka). Prázdne meno je platná
+ * odpoveď – „táto kategória nemá ikonu" – a kreslí sa ako ∅, nie ako prázdno:
+ * prázdne miesto vyzerá ako nenačítaný obrázok.
+ *
+ * @param {object} opts
+ * @param {string} opts.name    meno ikony (`""` = žiadna)
+ * @param {object} opts.set     nasadená sada (`index`)
+ * @param {HTMLImageElement} opts.image PNG spritu
+ * @param {object[]} [opts.custom] vlastné ikony (`{name, png}`)
+ * @param {string} opts.color   farba SDF náhľadu
+ * @param {number} [opts.size]
+ */
+export function iconPreview({ name, set, image, custom = [], color, size = 22 }) {
+  if (!name) {
+    return el("span", { class: "dev-iconnone", title: "bez ikony", text: "∅" });
+  }
+  const vlastna = custom.find((c) => c.name === name);
+  return iconCanvas({
+    name,
+    png: vlastna?.png,
+    entry: (set?.index || {})[name],
+    image,
+    color,
+    size
+  });
+}
+
+/**
  * MRIEŽKA IKON NA VÝBER.
  *
  * @param {object} opts

@@ -50,6 +50,7 @@ import {
   MARK_SHAPE_IDS,
   MARK_FACES,
   MARK_COLOURS,
+  MARK_IMAGE,
   markImage,
   markImages
 } from "../../poc/web/marks.js";
@@ -58,6 +59,7 @@ import {
   TRAIL_TYPES,
   TRAIL_MARK_STACK,
   TRAIL_MARK_STACK_MAX,
+  TRAIL_MARK_PADDING,
   buildStyle
 } from "../../poc/web/themes.js";
 
@@ -222,8 +224,35 @@ for (const t of TRAIL_TYPES) {
   }
   rozostupy.set(offset, t.id);
 
+  // STĹPIK STOJÍ TESNE, TAKŽE SA MUSÍ KRESLIŤ BEZ OHĽADU NA KOLÍZIE.
+  // Kolízny obdĺžnik je CELÝ obrázok (`MARK_IMAGE`, teda aj priehľadný okraj)
+  // plus `icon-padding` na každej strane. Keď je krok stĺpika menší, susedné
+  // značky si obdĺžniky prekryjú a MapLibre všetky okrem prvej ZAHODÍ – v mape
+  // by z troch trás na chodníku bola jedna a nikto by nepovedal nič.
+  const tesne = TRAIL_MARK_STACK.step < MARK_IMAGE + 2 * TRAIL_MARK_PADDING;
+  if (tesne && mark.layout["icon-allow-overlap"] !== true) {
+    chyba(
+      "poc/web/themes.js",
+      `\`trail-${t.id}-mark\` má krok stĺpika ${TRAIL_MARK_STACK.step} px, ale ` +
+        `kolízny obdĺžnik značky je ${MARK_IMAGE + 2 * TRAIL_MARK_PADDING} px ` +
+        `(obrázok ${MARK_IMAGE} + 2 × padding ${TRAIL_MARK_PADDING}) – bez ` +
+        `\`icon-allow-overlap\` by v stĺpiku ostala len prvá značka.`
+    );
+  }
+
   // Ikonka druhu trasy je NÁHRADA za značku, nie druhý symbol.
   const icon = style.layers.find((l) => l.id === `trail-${t.id}-icon`);
+  // A to isté pri ikonke druhu trasy: stojí v tom istom stĺpiku (`off`/`side`
+  // sa číslujú raz na cestu), takže bez `icon-allow-overlap` by z nej ostala
+  // tiež len prvá priečka.
+  if (icon && JSON.stringify(icon.layout["icon-offset"] || null).includes('"off"')
+      && icon.layout["icon-allow-overlap"] !== true) {
+    chyba(
+      "poc/web/themes.js",
+      `\`trail-${t.id}-icon\` sa posúva podľa pruhu, ale kreslí sa s ohľadom na ` +
+        `kolízie – z ikoniek viacerých trás na jednej ceste by ostala jedna.`
+    );
+  }
   if (icon && !JSON.stringify(icon.filter).includes('["!",["has","mark"]]')) {
     chyba(
       "poc/web/themes.js",

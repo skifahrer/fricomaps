@@ -137,6 +137,12 @@ DEFAULTS = {
     # a výrezu, so stálym menom, takže ďalší build tie isté súbory prepíše
     # (`workers/deploy/publish-map.py`). `publish=false` to vypne – napr. keď sa
     # ladí prah a hotová mapa v priečinku sa nemá prepisovať polotovarom.
+    # OREZ DLAŽDÍC NA HRANICU REGIÓNU (`--polygon` Planetileru,
+    # `workers/lib/region-clip.sh`). DOČASNE VYPNUTÝ – merania, prečo to
+    # mapu nezmení a čo to stojí, sú v hlavičke toho skriptu. Späť sa zapína
+    # `region_clip=true`; vypnutý sa hlási `::warning::` v každom behu, aby
+    # sa nezabudlo, že sa v mape vezie územie za hranicou.
+    "region_clip": ("false", "orezať dlaždice na hranicu regiónu (dočasne vypnuté)"),
     "publish": ("true", "nahrať hotovú mapu ako ZIPy na Google Drive"),
     # To isté ešte raz ako `.aar` (Apple Archive, LZFSE) – iOS a macOS ho
     # rozbalia systémovo, bez tretej knižnice v aplikácii. Robí to vlastný job

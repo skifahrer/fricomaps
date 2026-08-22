@@ -2,7 +2,7 @@
 /**
  * Kontrola úprav z developer módu. Volá ju `Kontrola · lint workflowov`.
  *
- * DVE TICHÉ VECI, OBE ZAPLATENÉ:
+ * TRI TICHÉ VECI, VŠETKY ZAPLATENÉ:
  *
  * 1. **Nulová hrúbka čiary.** Políčko „hrúbka" v developer móde ukazuje pri
  *    krivke podľa zoomu prázdne „auto" a prázdne `input[type=number]` skočí
@@ -24,17 +24,27 @@
  *    a trvá na tom, že `normalizeOverrides` nemá ani jednu výhradu a nič
  *    nezahodí.
  *
+ * 3. **Prerušovanie čiary, ktoré vrstva má zo štýlu.** Výber „Čiara" si
+ *    predvoľbu čítal z ÚPRAVY, a tá je prázdna, kým sa niečo nezmení – takže
+ *    pri železnici ukazoval „Plná", hoci je čiarkovaná. A voľba „Plná" sa
+ *    zahadzovala ako „veď to je predvolené", čiže sa zabudované prerušovanie
+ *    nedalo ani zmeniť späť, ani vypnúť. Kontrola drží všetky tri kusy, ktoré
+ *    to opravili: metadáta `frico:dash`, „solid" cez `normalizeOverrides`
+ *    a to, že `applyLayerOverrides` vlastnosť naozaj ZMAŽE.
+ *
  * Použitie:
  *   node workers/lint/overrides.mjs
  */
 import {
   THEMES,
   buildStyle,
+  builtinDash,
   emptyOverrides,
   normalizeOverrides,
   paintValue,
   MAX_DISPLAY_Z
 } from "../../poc/web/themes.js";
+import { dashArray, dashIdOf } from "../../poc/web/patterns.js";
 import { MAP_TYPE_IDS } from "../../poc/web/map-types.js";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -290,12 +300,23 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     ],
     customIcons: [{ name: "own:test", png: PNG_1PX, pixelRatio: 2 }],
     palette: {},
+    // Poradie kreslenia je v súbore vlastný kľúč (`order`), nie vlastnosť
+    // vrstvy – teda presne ten druh položky, na ktorý `overrides.mjs` už raz
+    // pri skladaní súboru zabudol.
+    order: [{ id: "feature-embankment", before: "road-minor" }],
+    // Ikony kategórií sedia v `poi` vedľa skrytých tried – ten kľúč sa
+    // zapisuje ako celok, takže sa pri ňom dá zabudnúť práve na polovicu.
+    poi: { hidden: ["fuel"], icons: { restaurant: "bar_11", spring: "" } },
     // `layout` je druhá polica vedľa `paint` – veľkosť ikony a rozostup po
     // čiare sa ňou ladia (značky trás), takže tá istá otázka: prežije zápis?
     layers: {
       "trail-hiking-mark": {
         layout: { "icon-size": 1.2, "symbol-spacing": [[12, 13, 120], [14, 20, 260]] }
-      }
+      },
+      // Vzor z vlastného obrázka: obrázok je vlastná ikona vyššie, takže sa
+      // do repozitára musia dostať OBE polovice – meno vo vrstve aj samotný
+      // PNG. Keby prežila len jedna, mapa by ostala bez vzoru.
+      "landcover-wood": { pattern: { image: "own:test", opacity: 0.8 } }
     }
   };
   const { overrides } = normalizeOverrides(ukazka);
@@ -323,6 +344,13 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
         }
       };
       chyba_ak("trails.gap", overrides.trails.gap, zapisane.trails.gap);
+      chyba_ak("order", overrides.order, zapisane.order);
+      chyba_ak("poi.icons", overrides.poi.icons, zapisane.poi.icons);
+      chyba_ak(
+        "layers[landcover-wood].pattern",
+        overrides.layers["landcover-wood"]?.pattern,
+        zapisane.layers["landcover-wood"]?.pattern
+      );
       chyba_ak("iconSets", overrides.iconSets, zapisane.iconSets);
       chyba_ak("customIcons", overrides.customIcons, zapisane.customIcons);
       chyba_ak(
@@ -338,6 +366,199 @@ for (const [z, cakane] of [[5, 2], [9, 2], [11.9, 2], [12, 4], [12.9, 4], [13, 6
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------- 6. prerušovanie čiary sa dá aj VRÁTIŤ ----------
+// TRETIA TICHÁ VEC: developer mode ukazoval pri každej čiare „Plná" – aj pri
+// železnici, ktorá má `rail` – lebo si predvoľbu čítal z úpravy, a tá je
+// prázdna, kým sa niečo nezmení. Voľba „Plná" sa navyše zahadzovala ako
+// „veď to je predvolené", takže sa čiarkovanie železnice nedalo ani zmeniť,
+// ani vypnúť: panel voľbu prijal, uložil z nej prázdno a v mape ostalo
+// pôvodné prerušovanie. Nespadlo nič.
+//
+// Držia to tri veci naraz a kontrola je na všetky tri: metadáta
+// (`frico:dash` – čo má vrstva zo štýlu), `normalizeOverrides` (nezahodí
+// „solid") a `applyLayerOverrides` („solid" vlastnosť ZMAŽE, nie nastaví
+// na `null`, ktoré by MapLibre neprijal).
+{
+  let sChiarkou = 0;
+  for (const { kde, style } of styles) {
+    for (const layer of style.layers) {
+      if (layer.type !== "line") continue;
+      if ((layer.metadata || {})["frico:derived"]) continue;
+      const arr = (layer.paint || {})["line-dasharray"];
+      const meta = (layer.metadata || {})["frico:dash"];
+      if (!Array.isArray(arr)) {
+        if (meta !== undefined) {
+          chyba("poc/web/themes.js",
+            `vrstva \`${layer.id}\` (${kde}) nesie \`frico:dash\`, hoci plnú čiaru ` +
+            `– panel by ponúkal návrat na prerušovanie, ktoré v štýle nie je.`);
+        }
+        continue;
+      }
+      sChiarkou += 1;
+      const rovnake = typeof meta === "string"
+        ? JSON.stringify(dashArray(meta)) === JSON.stringify(arr)
+        : JSON.stringify(meta) === JSON.stringify(arr);
+      if (!rovnake) {
+        chyba("poc/web/themes.js",
+          `vrstva \`${layer.id}\` (${kde}) má v štýle \`line-dasharray: ` +
+          `${JSON.stringify(arr)}\`, ale v metadátach \`${JSON.stringify(meta)}\`. ` +
+          `Developer mode číta prerušovanie odtiaľ – ukazoval by inú čiaru, ` +
+          `než je v mape, a „späť na pôvodnú" by ju nevrátilo.`);
+      }
+    }
+  }
+  if (!sChiarkou) {
+    chyba("workers/lint/overrides.mjs",
+      "v štýle nie je ani jedna čiara s prerušovaním – kontrola nemá čo strážiť.");
+  }
+
+  // „solid" musí prežiť normalizáciu…
+  const { overrides: soVolbou } = normalizeOverrides({
+    layers: { "rail-hatch": { dash: "solid" } }
+  });
+  if (soVolbou.layers["rail-hatch"]?.dash !== "solid") {
+    chyba("poc/web/themes.js",
+      "`dash: \"solid\"` normalizeOverrides zahodil. Vrstva, ktorá má " +
+      "prerušovanie zo štýlu (železnica, brod), sa potom nedá vrátiť na plnú " +
+      "čiaru – voľba sa prijme a v mape sa nestane nič.");
+  }
+
+  // …a v hotovom štýle to prerušovanie naozaj zmazať.
+  const spolu = (o) => buildStyle({
+    theme: "svetla",
+    tilesUrl: "pmtiles://x/t.pmtiles",
+    spriteUrl: "https://x/sprite",
+    glyphsUrl: "https://x/{fontstack}/{range}.pbf",
+    overrides: o
+  });
+  const zaklad = spolu(null).layers.find((l) => l.id === "rail-hatch");
+  if (!zaklad || builtinDash(zaklad) !== "rail") {
+    chyba("poc/web/themes.js",
+      "`rail-hatch` nemá zabudované prerušovanie `rail` – čiarkovanie železnice " +
+      "je práve tá vrstva, na ktorej sa to celé ukázalo.");
+  }
+  const plna = spolu(soVolbou).layers.find((l) => l.id === "rail-hatch");
+  if (plna && (plna.paint || {})["line-dasharray"] !== undefined) {
+    chyba("poc/web/themes.js",
+      `\`dash: "solid"\` nechalo na \`rail-hatch\` \`line-dasharray: ` +
+      `${JSON.stringify(plna.paint["line-dasharray"])}\`. Plná čiara znamená ` +
+      `vlastnosť ZMAZAŤ – \`null\` by MapLibre neprijal.`);
+  }
+  const ine = spolu(normalizeOverrides({ layers: { "rail-hatch": { dash: "ties" } } }).overrides)
+    .layers.find((l) => l.id === "rail-hatch");
+  if (JSON.stringify((ine.paint || {})["line-dasharray"]) !== JSON.stringify(dashArray("ties"))) {
+    chyba("poc/web/themes.js",
+      "zmena prerušovania na `ties` sa na `rail-hatch` neprejavila.");
+  }
+  // A poistka proti opačnému omylu: `dashIdOf` nesmie tvrdiť, že vlastné
+  // prerušovanie je niektorá z predvolieb.
+  if (dashIdOf([0.35, 2.2]) !== null) {
+    chyba("poc/web/patterns.js",
+      "`dashIdOf` pomenovalo vlastné prerušovanie predvoľbou – panel by ho " +
+      "pri prvom uložení prepísal na inú čiaru.");
+  }
+}
+
+// ---------- 7. poradie kreslenia ----------
+// Presun vrstvy je jediná úprava, ktorá mení ŠTRUKTÚRU štýlu, nie hodnoty
+// v ňom – a tri veci sa pri tom dajú pokaziť ticho:
+//
+//   * vrstva sa pri presune STRATÍ (alebo sa zdvojí) a v mape jednoducho nie
+//     je – štýl je pritom platný,
+//   * odvodená vrstva (vzor, okraj) alebo druhá polovica dvojice (zúbky
+//     hrany, čiarkovanie železnice) ostane, kde bola, takže sa prvok rozpadne
+//     na dve polovice na dvoch miestach,
+//   * niekto presunie vrstvu ZA masku regiónu a tá potom kreslí aj mimo
+//     stiahnutého regiónu – presne to, kvôli čomu maska existuje.
+{
+  const postav = (order) => buildStyle({
+    theme: "svetla",
+    tilesUrl: "pmtiles://x/t.pmtiles",
+    spriteUrl: "https://x/sprite",
+    glyphsUrl: "https://x/{fontstack}/{range}.pbf",
+    featuresUrl: "pmtiles://x/f.pmtiles",
+    regionOutline: { type: "FeatureCollection", features: [] },
+    overrides: normalizeOverrides({ order }).overrides
+  });
+
+  const bez = postav([]).layers.map((l) => l.id);
+  const skus = (popis, order, over) => {
+    const layers = postav(order).layers;
+    const ids = layers.map((l) => l.id);
+    if (ids.length !== bez.length || new Set(ids).size !== ids.length) {
+      chyba("poc/web/themes.js",
+        `presun vrstiev (${popis}) zmenil počet vrstiev: ${bez.length} → ${ids.length} ` +
+        `(z toho ${new Set(ids).size} rôznych). Vrstva, ktorá sa pri presune stratí, ` +
+        `nie je v mape a štýl je pritom platný.`);
+    }
+    const posledne = ids.slice(-2);
+    if (JSON.stringify(posledne) !== JSON.stringify(["region-outside", "region-border"])) {
+      chyba("poc/web/themes.js",
+        `presun vrstiev (${popis}) nechal navrchu ${posledne.join(", ")} namiesto masky ` +
+        `regiónu. Vrstva za maskou kreslí aj mimo stiahnutého regiónu.`);
+    }
+    over(ids);
+  };
+
+  skus("násyp pod cesty", [{ id: "feature-embankment", before: "road-minor" }], (ids) => {
+    if (!(ids.indexOf("feature-embankment") < ids.indexOf("road-minor"))) {
+      chyba("poc/web/themes.js", "presun `feature-embankment` pod `road-minor` sa neprejavil.");
+    }
+    // Zúbky sú druhá polovica tej istej hrany (`frico:with`) – musia ísť s ňou.
+    if (ids.indexOf("feature-embankment-teeth") - ids.indexOf("feature-embankment") !== 1) {
+      chyba("poc/web/themes.js",
+        "`feature-embankment-teeth` ostali pri presune na mieste – hrana by bola pod " +
+        "cestou a jej zúbky nad ňou.");
+    }
+  });
+
+  skus("železnica navrch", [{ id: "rail-bg", before: null }], (ids) => {
+    if (ids.indexOf("rail-hatch") - ids.indexOf("rail-bg") !== 1) {
+      chyba("poc/web/themes.js",
+        "`rail-hatch` sa nepresunul s `rail-bg` – z čiarkovanej železnice by bola " +
+        "tmavá čiara na jednom mieste a biele čiarky na druhom.");
+    }
+  });
+
+  skus("vrstva, ktorú tento štýl nemá", [
+    { id: "neexistuje", before: "water" },
+    { id: "water", before: "tiez-neexistuje" }
+  ], () => {});
+
+  // Presun ZA masku sa nesmie dať – kontroluje to `skus` vyššie pri každom
+  // volaní, tu je to napísané výslovne.
+  skus("pokus prekryť masku", [{ id: "background", before: null }], () => {});
+}
+
+// ---------- 8. každá záložka panela sa aj kreslí ----------
+// TICHÁ VEC, KTORÁ SA PONÚKA SAMA: zoznam záložiek (`TABS`) a prepínač
+// v `renderBody` sú dve miesta. Keď v prepínači nejaká chýba, nespadne nič –
+// ťuknutie na ňu prepadne do POSLEDNEJ vetvy (`renderFile`), takže sa
+// otvorí záložka „Súbor" s JSON-om a vyzerá to, že panel „nefunguje".
+{
+  const zdroj = readFileSync(join(ROOT, "poc", "web", "devmode.js"), "utf8");
+  const blok = zdroj.match(/const TABS = \[([\s\S]*?)\];/);
+  if (!blok) {
+    chyba("poc/web/devmode.js", "zoznam záložiek `TABS` sa nenašiel – kontrola nemá čo strážiť.");
+  } else {
+    const ids = [...blok[1].matchAll(/\["([a-z]+)",/g)].map((m) => m[1]);
+    if (ids.length < 2) {
+      chyba("poc/web/devmode.js", "zo zoznamu `TABS` sa nedali prečítať id záložiek.");
+    }
+    // Posledná záložka je zámerne bez podmienky – je to koncová vetva
+    // prepínača (`: renderFile()`), teda tá, do ktorej všetko prepadne.
+    for (const id of ids.slice(0, -1)) {
+      if (!zdroj.includes(`tab === "${id}"`)) {
+        chyba(
+          "poc/web/devmode.js",
+          `záložka "${id}" je v zozname, ale \`renderBody\` ju nekreslí – ` +
+          `ťuknutie na ňu otvorí poslednú vetvu prepínača (záložku „Súbor").`
+        );
+      }
+    }
   }
 }
 

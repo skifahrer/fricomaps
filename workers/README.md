@@ -81,16 +81,24 @@ Mapa · úpravy štýlu          style-overrides.json z developer módu
   [osm.fr](https://download.openstreetmap.fr/extracts/europe/slovakia/)
   (rezané po skutočných administratívnych hraniciach, denne aktualizované);
   mapovanie a presné bboxy z osm.fr rezacích polygónov sú vo
-  [workers/data/regions.json](data/regions.json). **Kraj sa ale nesťahuje
-  hotový, reže sa z rodičovského extraktu** (`osmfr.parent`, teda
-  `europe/slovakia-latest.osm.pbf`, ~373 MB) cez `osmium extract -s smart`
-  na `.poly` kraja: v hotovom `{kraj}-latest.osm.pbf` (36–63 MB) chýbajú
-  objektu, ktorý pokračuje do vedľajšieho kraja, uzly za hranicou a
-  viacpolygónovej ploche celé členské cesty – Planetiler taký objekt **zahodí
-  celý** a v stiahnutej mape nie je vôbec (rozpis
-  [workers/plan/pbf.sh](plan/pbf.sh)). Trvá to ~1 minútu a raz za deň (kľúč
-  cache nesie dátum). `Build wiki` z PBF číta len tagy, tak mu hotový extrakt
-  stačí (`PBF_NEEDS_GEOMETRY: false`).
+  [workers/data/regions.json](data/regions.json). **Kraj sa REŽE z rodiča** –
+  stiahne sa `slovakia-latest.osm.pbf` (373 MB) a `osmium extract -s smart
+  -S types=multipolygon,boundary --polygon` z neho vyreže kraj po jeho `.poly`
+  (~30 s; rozpis [workers/plan/pbf.sh](plan/pbf.sh), stráži
+  [workers/lint/pbf-source.py](lint/pbf-source.py)). Cache nesie dátum, takže
+  sa v rámci dňa sťahuje raz.
+
+  **Hotový `{kraj}-latest.osm.pbf` z osm.fr sa nepoužíva, hoci existuje**
+  (36 MB, rezaný po tej istej hranici): nie je referenčne úplný. Ploche, ktorá
+  pokračuje do susedného kraja, v ňom chýbajú členské cesty a Planetiler ju
+  zahodí **celú** – aj tú časť, čo v kraji leží. Namerané na Bratislavskom
+  kraji: z 3075 plošných relácií malo 250 chýbajúceho člena, z toho 49
+  krajinnej pokrývky a ochrany prírody – chýbala CHKO Malé Karpaty, CHKO
+  Záhorie, CHKO Dunajské luhy, NPR Aluvium Moravy, les Záhoria (relácia s 1011
+  členmi) aj Zdrž Hrušov. Po reze z rodiča ostane päť a všetky sú na rakúskej
+  hranici (ich členovia nie sú ani v slovenskom extrakte). Koľko ich v behu
+  naozaj je, počíta [workers/plan/pbf-areas.py](plan/pbf-areas.py) a píše to do
+  logu aj do súhrnu behu.
 - **Ľubovoľný región Európy/sveta:** pri spúšťaní workflowu vyplň
   `custom_pbf_url` (URL na `.osm.pbf` z osm.fr extracts stromu, napr.
   `https://download.openstreetmap.fr/extracts/europe/austria.osm.pbf`)
@@ -784,8 +792,8 @@ druhým (takže sa gigabajty JPEGov neukladajú dvakrát). Zvolený zoom ide
 z prvého jobu ďalej ako výstup, takže sa pri `auto` nehádá trikrát.
 
 **Testovací režim** (switch `test`) vyreže zo stredu výrezu štvorec so 4 km²
-a počíta na ňom terén — vrstevnice, skaly a tieňovanie; mapa okolo ostáva
-celá podľa nastavení regiónu. Ladenie prahov je potom minúty namiesto hodín
+a počíta na ňom celý beh — vrstevnice, skaly a tieňovanie aj samotnú mapu
+(orezáva sa aj PBF). Ladenie prahov je potom minúty namiesto hodín
 — a beh do súhrnu vypíše obrázok s okolím (červený štvorec = testované
 územie), súradnice a odkaz, ktorý otvorí hotovú mapu presne tam.
 
@@ -824,18 +832,26 @@ doladenie prahov.
 ### Rýchly test: pár km² namiesto celého pohoria
 
 Switch **`test`** vyreže **zo stredu zvoleného výrezu štvorec so 4 km²**
-a na ňom spočíta to drahé — vrstevnice, skaly a tieňovanie. Z desiatok minút
-sú minúty, čiže sa dá prah alebo interval overiť za jeden beh a nie za jeden
-obed.
+a na ňom spočíta CELÝ beh — vrstevnice, skaly a tieňovanie aj samotnú mapu.
+Z desiatok minút sú minúty, čiže sa dá prah alebo interval overiť za jeden beh
+a nie za jeden obed.
 
-**Mapa pritom ostáva celá podľa nastavení regiónu.** Zvolený kraj je zvolený
-kraj: cesty, vodstvo, značené trasy aj krajinné prvky vyjdú na celom
-prešovskom (alebo hocijakom inom zvolenom) území a orezáva sa len to, čo sa
-počíta z výškového modelu. Kedysi sa testom orezával celý región vrátane PBF
-a bolo to lacnejšie o pár minút Planetilera — ale výsledok sa nedal poriadne
-pozerať: dva kilometre štvorcové skál viseli nad prázdnom, bez ciest a bez
-okolia, na ktorom by bolo vidno, či sedia. Kto chce orezať aj mapu, má na to
-`options: crop_bbox=W,S,E,N` (dá sa aj spolu s testom).
+**Orezáva sa aj PBF, takže mapa je tiež len tie 4 km².** Dlaždice, značené
+trasy, krajinné prvky aj ZIP vyjdú zo štvorca; `bbox` behu sa rovná
+`dem_bbox` a orez robí ten istý `osmium extract`, aký robí `crop_bbox`
+(namerané na Bratislavskom kraji: 37 MB PBF → 237 kB). Kým sa mapa nechávala
+celá, bol test polovičný: kraj sa aj tak stiahol, prehnal Planetilerom, zabalil
+a nahral, takže sa okolo štvorca s pár km² terénu viezol celý kraj. Dôvod,
+prečo to tak bolo — „nech tie skaly nevisia nad prázdnom" — nesie obrázok
+„kde to je" ([workers/plan/test-map.py](plan/test-map.py)) a mapa sveta pod
+výberom; na to celý kraj netreba. **Celý kraj s terénom len v jednom pohorí sa
+dá stále postaviť:** switch `test` odškrtnúť a `area` prepnúť na pohorie.
+
+`-s smart -S types=multipolygon,boundary` je pri tom reze nutné: zo štvorca so
+4 km² vytŕča skoro každá plocha, takže bez dopĺňania členov by v testovacej
+mape nebol les ani chránené územie takmer nikde (namerané: bez `-S types=`
+zmizli „Záhorie (vojenský obvod)" a „Turecký vrch", s ním neostala ani jedna
+zahodená plocha).
 
 **Predvolene je zapnutý.** Ostrý build na celý výrez ho chce odškrtnúť.
 Opačné poradie znamenalo, že sa každé ladenie prahu platilo desiatkami minút,
@@ -846,9 +862,9 @@ zaplatila mriežka `rock_res`, ktorá sa prestavuje len s iným zdrojom výšok;
 je z nej tiež voľba (`options: rock_res=1`).
 
 **Mapa sa otvorí rovno na tom štvorci.** Manifest nesie pri regióne okrem
-`bbox` (celý kraj) aj `test_bbox` (štvorec) a viewer sa pri štarte nastaví na
-ten druhý — inak by sa tie štyri km² skál hľadali očami v štyroch tisícoch km².
-Posúvať sa dá kamkoľvek, mapa je celá. Polohu z adresy (`#map=…`) viewer
+`bbox` aj `test_bbox` a viewer sa pri štarte nastaví na ten druhý. Odkedy je
+mapa orezaná tiež, sú to tie isté súradnice — `test_bbox` ostáva, lebo z neho
+viewer aj súhrn behu vedia, že to JE test. Polohu z adresy (`#map=…`) viewer
 zahodí, len keď mieri mimo nasadeného regiónu, aby `F5` ani starý odkaz
 neotvorili mapu nad cudzím krajom. V paneli je napísané, že vrstevnice, skaly
 a tieňovanie sú len na tých 4 km² — nech kraj bez skál nevyzerá ako pokazený
@@ -1577,6 +1593,30 @@ končila presne na hranici a v mape by bola rovná hrana tam, kde ešte má byť
 terén. Namerané na Prešovskom kraji: z11 sa vynechá 7 % dlaždíc, z13 27 %,
 **z14 31 %**.
 
+**Lenže dlaždica je nedeliteľná, tak sa tieňovanie orezáva aj PO PIXELOCH.**
+Ktorá sa kraja dotkne, tá sa vyrobí CELÁ – a na nízkych zoomoch je obrovská,
+takže tieňovaný reliéf pokračoval ďaleko za hranicu stiahnutého regiónu.
+Namerané na Prešovskom kraji ako plocha vyrobených dlaždíc proti ploche kraja:
+
+| zoom | z8 | z9 | z10 | z11 | z12 | z13 | z14 |
+|---|--:|--:|--:|--:|--:|--:|--:|
+| pred | 6,2× | 3,8× | **2,2×** | 1,7× | 1,4× | 1,2× | 1,11× |
+| po | 1,07× | 1,04× | **1,02×** | 1,00× | 1,00× | 1,00× | 1,00× |
+
+Čo v dlaždici padne mimo kraj, dostane **rovinu** (výška 0, `pixel_mask`
+v tom istom súbore). Hillshade kreslí krytím podľa SKLONU, takže z roviny
+nenakreslí nič – tieňovanie tým končí na hranici regiónu aj vnútri dlaždice,
+ktorá cez ňu prečnieva. V mape to dovtedy zakrývala až plocha `mimo` zo štýlu,
+čiže to bola tichá chyba: vrstva bola dvakrát väčšia než región a bolo to
+vidieť, len keď sa maska nekreslila (a v 3D pod iným uhlom).
+
+Hrana medzi terénom a rovinou je pre hillshade **zvislá stena**, takže nesmie
+stáť presne na hranici: `--edge` (2 px) ju posunie za ňu, kde ju plocha `mimo`
+prekrýva. Dlaždíc je pri tom menej, nie viac – tie celé mimo kraja sú po
+vynulovaní rovina a `je_rovina` ich vynechá. Podoba kódovania preto ide
+z `v4` na **`v5`** (meno assetu v sklade aj kľúč cache), inak by build vrátil
+staré dlaždice a oprava by sa na už spočítanom regióne neprejavila.
+
 Maska je rastrová a **bez shapely** – tá istá úvaha ako v `dem/coverage.py`: pri
 mriežke 2048 buniek je bunka ~100 m, kým dlaždica na z14 má ~1,5 km. Vrstevnice
 a skaly dostanú polygón ako `-cutline` do gdalwarpu (bez `-crop_to_cutline` –
@@ -1772,7 +1812,9 @@ leží**. Zoznam vzniká z troch zdrojov a každý rieši inú vec:
 | tag objektu | `wikipedia=pl:Rysy` → `pl` | bod na poľskej strane hrebeňa dostane poľský článok bez toho, aby o Poľsku niekto musel vedieť vopred |
 
 **Krajina bodu sa berie z regiónu, nie z bodu.** Extrakt kraja je rezaný jeho
-hranicou, takže bod v ňom v tej krajine naozaj leží; presnejšie by to bolo len
+hranicou (`-s smart` k tomu pridá členov plôch, čo presahujú – tie sú ale
+plochy, nie body s wiki odkazom), takže bod v ňom v tej krajine naozaj leží;
+presnejšie by to bolo len
 reverzným geokódovaním hraníc – celá ďalšia pipeline kvôli pár bodom pri
 hranici, a tie sa aj tak chytia tretím riadkom tabuľky.
 
@@ -2950,7 +2992,7 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    |---|---|---|
    | `region` | výber | `slovensko` alebo kraj (default **`bratislavsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`cely_region`**) |
-   | `test` | **switch** | **rýchly test**: spraviť terén len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene **odškrtnutý** – predvolený beh je ostrý; zapisuje sa do `maps-test.json`) |
+   | `test` | **switch** | **rýchly test**: celý beh (mapa aj terén) len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene **odškrtnutý** – predvolený beh je ostrý; zapisuje sa do `maps-test.json`) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
@@ -2959,10 +3001,14 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `tienovanie` / `vsetko` (staré `teren` sa ešte prijme, ale už sa neponúka) |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
-   **Defaulty sú jedna dvojica, nie tri nezávislé voľby** – Bratislavský
+   **Defaulty sú jedno rozhodnutie, nie tri nezávislé voľby** – Bratislavský
    kraj (najmenší), `cely_region` a odškrtnutý test, čiže predvolené spustenie
-   je ostrý build celého kraja, ktorý sa dá zaplatiť. Formulár *Run workflow*
-   sa totiž po každom
+   je ostrý build celého kraja, ktorý sa dá zaplatiť. Výrez je predvolene
+   `cely_region`, teda „nezmenšuj mi mapu za mňa": kým tu stálo `vysoke_tatry`,
+   dostal ten, kto si vybral iný kraj a ten riadok prehliadol, mapu bez
+   vrstevníc a skál skoro všade — a v logu o tom bolo len `::warning::`.
+   Zmenšovanie behu má tým pádom jednu páku a je ňou switch `test`.
+   Formulár *Run workflow* sa totiž po každom
    otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
    pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
    prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než
@@ -3015,7 +3061,17 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
    `area_bbox`, `size_limit_mb`, `auto_shrink`, `ugkk_fallback`, `ugkk_urls`,
    `contour_maxzoom`, `contour_smoothing`, `trails`, `trails_maxzoom`,
    `terrain_maxzoom`, `maxzoom`, `rock_img_asset`, `rock_img_zoom`,
-   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`.
+   `rock_img_options`, `custom_pbf_url`, `custom_name`, `custom_bbox`,
+   `region_clip`.
+
+   **`region_clip` je DOČASNE `false`**, teda dlaždice sa nerežú na hranicu
+   regiónu (`--polygon` Planetileru) a vyrobia sa na celom obdĺžniku bboxu.
+   V mape to vidieť nie je – hranicu dokresľuje maska v štýle, ktorá je „celý
+   svet mínus región". Merané na Bratislavskom kraji (maxzoom 14): 1607
+   dlaždíc namiesto 1271 (+26 %) za +0,7 % bajtov a rovnaký čas, a v tých
+   navyše je územie za hranicou kraja vrátane cudzích sídel. Kým je vypnutý,
+   hlási to `::warning::` v každom behu; späť sa zapína `region_clip=true`.
+   Rozpis a merania: [workers/lib/region-clip.sh](lib/region-clip.sh).
 
    Zdroj skál sa vyberá **inputom `rock_source`**, nie tu – prepína celý
    pôvod vrstvy, takže patrí do formulára. Cez `options` sa dá nanajvýš
