@@ -427,8 +427,12 @@ def main():
                 n_utvarov = bloky_mod.zlej(d, seq)
                 print(f"  {n_blokov} blokov → {n_utvarov} útvarov", flush=True)
                 # Švy: plocha aj diera preseknutá hranicou bloku sa spoja späť.
+                # `srs` sa NEPODÁVA a ani sa podať nedá: GeoJSON ovládač by
+                # podľa neho metre prepočítal do stupňov (viď `zlep_svy`).
+                # Metrické ostávajú tak, ako ich nechali bloky, a SRS im
+                # o pár riadkov nižšie vráti až prepis do GPKG.
                 seq = bloky_mod.zlep_svy(seq, tmp, klucovy_atribut="smin",
-                                         srs=METRIC, heartbeat=args.heartbeat)
+                                         heartbeat=args.heartbeat)
                 # `-a_srs`, nie `-t_srs`: súradnice sú UŽ metrické (z okna
                 # bloku sa vyhodil `<SRS>`, inak by ich GeoJSON prepočítal do
                 # stupňov). Toto ich len PREZNAČÍ, neprepočíta – a bez toho

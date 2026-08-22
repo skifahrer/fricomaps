@@ -647,6 +647,18 @@ jobs:
       - name: "Zaoblenie obrysu: každé volanie vie svoju mriežku"
         run: python3 workers/lint/smoothing.py
 
+      # Ovládač GeoJSON prepočítava do WGS84 vždy, keď vrstva vie, v čom je –
+      # takže `-a_srs EPSG:3035` nad takým výstupom metre neoznačí, ale ich
+      # ZMENÍ NA STUPNE, a ogr2ogr pri tom skončí úspechom. Pipeline na to
+      # doplatila dvakrát: raz mala každá skala rádovo 1e-9 m² a filter ich
+      # vyhodil všetky (31245134321, 31426542010), raz vyšla únia švov
+      # v stupňoch, prepočítala sa ako 0,00 km² z 3570,56 a zahodila sa ako
+      # „stratená" – s varovaním, ktoré posielalo hľadať `TopologyException`
+      # v GEOSe, hoci v logu ani jedna nebola (32300347626). Rozpis:
+      # `workers/lint/geojson-srs.py`.
+      - name: "GeoJSON výstup nedostane SRS – metre by z neho boli stupne"
+        run: python3 workers/lint/geojson-srs.py
+
       # To isté o krok ďalej pri mape sveta: okrem dna zoomu sa tam dá pomýliť
       # aj v MENE vrstvy (`source-layer: downloads` proti vrstve `download`)
       # a MapLibre na to nepovie nič – regióny sťahovania v mape jednoducho

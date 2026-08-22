@@ -83,7 +83,23 @@ SLOPE_CELLS_PER_S = 5.1e6    # gdalwarp + gdaldem slope + gdal_translate
 # DVA BODY SÚ DVA BODY. Je to jedno územie a jeden typ terénu; presné číslo
 # príde vždy až z percent počas behu (`watch.py`) a keď sa s ním beh rozíde
 # viac než 3×, povie to na konci sám – a vtedy sa toto číslo má prepísať.
-CONTOUR_SRC_CELLS_PER_S = 1.2e5
+#
+# A PRÁVE TO SA STALO. Všetko nad týmto riadkom je o JEDNOM PRIECHODE
+# (`--block-px=0`) – o ceste, ktorá sa nad veľkým územím zadrháva a nikdy
+# nedobehla. Odkedy je predvolené počítanie PO BLOKOCH (`ROCK_BLOCK_PX: 4096`),
+# je to iná cesta a iná cena: blok je malý raster, prstencov v ňom nepribúda
+# donekonečna a spomalenie, kvôli ktorému tu stálo 120 tis./s, nenastane.
+#
+# PRVÉ ČÍSLO Z BEHU, KTORÝ DOBEHOL – 32300347626 (Bratislavský kraj, sklad aj
+# trasovanie 2 m, 80 blokov 4096×4096): 1,14 mld. buniek za 1:34, teda
+# 12,1 mil. buniek/s. Beh to sám ohlásil ako „100× vedľa".
+#
+# ČO TO ČÍSLO NIE JE: nie je to rýchlosť v horách. Cena `gdal_contour -p` ide
+# s počtom prstencov, a tých je na rovine málo – Bratislavský kraj má nad 50°
+# sklonu 0,63 km² z 3772. Na skalnatom výreze bude rýchlosť NIŽŠIA a odhad
+# teda optimistický; opraví sa tou istou cestou, akou vzniklo toto číslo –
+# behom, ktorý dobehne, a hláškou na jeho konci.
+CONTOUR_SRC_CELLS_PER_S = 1.2e7
 # Ten istý beh na OOM NEspadol, čiže pri 23,1 mld. buniek bol pod 16 GB.
 # Pamäť teda nie je to, o čo sa zadanie zabije – zabije sa o čas.
 CONTOUR_MB_PER_GCELL = 700   # špička pamäte gdal_contour na miliardu buniek
