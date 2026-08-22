@@ -967,6 +967,7 @@ python3 workers/lint/publishing.py     # nepublikuje sa do releasov/artefaktov
 python3 workers/lint/dem-empty.py      # prázdny stupeň sa overuje presne
 python3 workers/lint/terrain.py        # tieňovanie nestráca zvislú presnosť
 python3 workers/lint/dem-resampling.py # kernel DEM vyberá lib/cell.py, nie autor riadku
+python3 workers/lint/geojson-srs.py    # GeoJSON výstup bez SRS – inak sú z metrov stupne
 python3 workers/dem/measure-resampling.py  # čím prevzorkovať, aby v tieni nebola mriežka
 node    workers/lint/style.mjs         # výplne v štýle chcú len plochy
 node    workers/lint/hillshade.mjs     # tieňovanie neprekryje mapu pod sebou
@@ -1012,7 +1013,12 @@ nespadlo), že **si resampling výškového modelu nikto nevyberá sám**
 (`workers/lint/dem-resampling.py` – tá istá mriežka o krok skôr, rovno
 v modeli: `-r average` pri pomere 4 m → 5 m, kde GDAL každú štvrtú zdrojovú
 bunku preskočí, takže vrstevnice aj tieňovanie ju majú zapečenú v dátach;
-spoznať sa to dalo len okom na hotovej mape), že **predfilter PBF pustí
+spoznať sa to dalo len okom na hotovej mape), že **GeoJSON výstup nedostane
+SRS** (`workers/lint/geojson-srs.py` – ovládač podľa neho súradnice PREPOČÍTA
+do WGS84, takže `-a_srs EPSG:3035` z metrov spraví stupne a ogr2ogr pri tom
+skončí úspechom; raz z toho mala každá skala 1e-9 m² a filter ich vyhodil
+všetky, raz vyšla únia švov v stupňoch a zahodila sa ako „stratená plocha"),
+že **predfilter PBF pustí
 všetko, čo si schéma krajinných prvkov vyžiada** (`workers/lint/features.py` –
 to isté rozhodnutie je v `filter.txt` aj `features.yml` a keď sa rozídu,
 Planetiler vyrobí dlaždice bez tej triedy a nepovie nič), že **pásik značenej

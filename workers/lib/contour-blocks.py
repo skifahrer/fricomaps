@@ -339,7 +339,7 @@ def po_blokoch(vrt, out_dir, urovne, atributy, blok_px, geo, *, budget_s=0):
     return out_dir, len(bloky)
 
 
-def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
+def zlep_svy(seq, tmp, *, klucovy_atribut="smin", heartbeat=30,
              max_s=0, label="švy"):
     """Spojí plochy rozseknuté hranicou bloku. Vráti cestu k výsledku.
 
@@ -359,6 +359,24 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
       * výsledok sa PREPOČÍTA a keď je prázdny, únia sa zahodí,
       * pri zahodení sa vracajú PÔVODNÉ útvary. Rozseknutá skala je horšia
         mapa; žiadna skala je rozbitá mapa.
+
+    A VÝSTUPU SA NESMIE DAŤ SRS. Je to tá istá pasca, kvôli ktorej sa z okna
+    bloku vyhadzuje `<SRS>` (viď `po_blokoch`), len o krok neskôr: ovládač
+    GeoJSON prepočítava do WGS84 vždy, keď vrstva vie, v čom je – takže
+    `-a_srs EPSG:3035` nad GeoJSONSeq výstupom neoznačí metre, ale ich ZMENÍ
+    NA STUPNE. Únia pritom prebehne správne a ogr2ogr skončí úspechom.
+
+    Presne to sa stalo v behu 32300347626 (Bratislavský kraj, 80 blokov):
+    do únie išlo 3570,56 km², von vyšla tá istá plocha v stupňoch, kontrola
+    plochy ju prepočítala ako 0,00 km² a únia sa zahodila ako „stratená".
+    V logu pritom nebola ani jedna `TopologyException` – varovanie ukazovalo
+    na GEOS, kým chyba bola v jednotkách. Švy sa tak nezlepili ANI RAZ, odkedy
+    sa počíta po blokoch, a keby kontrola plochy nebola, ostatné kusy by ostali
+    v metroch a zlepené v stupňoch – jeden súbor v dvoch sústavách.
+
+    Overené lokálne (GDAL 3.8.4, dva dotýkajúce sa štvorce v EPSG:3035):
+    s `-a_srs` vyšli súradnice 16,68 / 49,92, bez neho 4800000 / 3000000
+    a únia v oboch prípadoch spojila štvorce do jedného polygónu.
     """
     svy = os.path.join(tmp, "svy.geojsonl")
     zvysok = os.path.join(tmp, "bez-svov.geojsonl")
@@ -380,13 +398,16 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
     print(f"  švy: {n_sev} plôch na hranici bloku, {n_ok} mimo – "
           f"zlepujem tie prvé", flush=True)
     zlep = os.path.join(tmp, "zlepene.geojsonl")
-    # `-a_srs`: súradnice sú metrické, ale GeoJSONSeq o tom nevie (z okna bloku
-    # sa `<SRS>` zámerne vyhodil). Bez tohto to GEOS počíta ako stupne a hlási
-    # `No SRS set on layer`.
-    srs_args = ["-a_srs", srs] if srs else []
+    # ŽIADNE `-a_srs` A ŽIADNE `-t_srs` (viď rozvahu v docstringu): GeoJSON
+    # ovládač by podľa neho prepočítal metre do stupňov. `ST_Union` je rovinná
+    # operácia a SRID ju nezaujíma – GDAL len vypíše `No SRS set on layer`,
+    # čo je tu, rovnako ako pri blokoch, OČAKÁVANÉ.
+    # `COORDINATE_PRECISION=2`: to isté, čo píšu bloky – centimeter stačí
+    # a súbor je o polovicu menší.
     chyba = None
     try:
-        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", zlep, svy, *srs_args,
+        run_watched(["ogr2ogr", "-f", "GeoJSONSeq", zlep, svy,
+                     "-lco", "COORDINATE_PRECISION=2",
                      "-dialect", "SQLITE", "-explodecollections",
                      "-sql", f"SELECT {klucovy_atribut}, "
                              f"ST_Union(ST_MakeValid(geometry)) AS geometry "
@@ -402,28 +423,39 @@ def zlep_svy(seq, tmp, *, klucovy_atribut="smin", srs=None, heartbeat=30,
     if not chyba and os.path.exists(zlep):
         with open(zlep) as f:
             n_zlep = sum(1 for line in f if line.strip())
+    # JEDNOTKY SA KONTROLUJÚ SKÔR NEŽ PLOCHA – inak by sa prepočet do stupňov
+    # ohlásil ako „stratená plocha" a poslal hľadať chybu do GEOSu (beh
+    # 32300347626). Sú to dva rôzne dôvody a každý chce inú opravu.
+    if n_zlep:
+        try:
+            skontroluj_metricke(zlep)
+        except RuntimeError as exc:
+            chyba = ("únia vyšla v STUPŇOCH, nie v metroch – výstup dostal "
+                     "SRS (`-a_srs`/`-t_srs`) a GeoJSON ovládač podľa neho "
+                     f"súradnice prepočítal do WGS84; {exc}")
     plocha_pred = plocha_suboru(svy)
-    plocha_po = plocha_suboru(zlep) if n_zlep else 0.0
+    plocha_po = plocha_suboru(zlep) if n_zlep and not chyba else 0.0
     stratene = (plocha_pred > 0 and plocha_po < plocha_pred * 0.5)
     if chyba or not n_zlep or stratene:
         preco = (f"({chyba})" if chyba else
                  "(únia skončila prázdna – hľadaj v logu `TopologyException`)"
                  if not n_zlep else
                  f"(z {plocha_pred/1e6:.2f} km² ostalo {plocha_po/1e6:.2f} km²)")
-        # POZOR NA DÔVOD V TEJ HLÁŠKE. Kým tu stálo „Chýba spatialite?", posielala
-        # každý beh hľadať chybu tam, kde nie je: `libsqlite3-mod-spatialite`
-        # inštaluje `contours-rocks/build.sh` a `ST_Union` sa volá úspešne. Čo
-        # padá, je GEOS nad obrysmi z `gdal_contour` – a padá na tých veľkých,
-        # teda na pásmach pod prahom, ktoré sa o dva kroky nižšie aj tak
-        # zahodia. Preto sa tu hovorí, čo hľadať a čo to znamená pre mapu, a nie
-        # čo to asi je.
-        print(f"::warning::Zlepenie švov stratilo plochu {preco}"
+        # POZOR NA DÔVOD V TEJ HLÁŠKE, UŽ DVAKRÁT UKAZOVAL VEDĽA. Kým tu stálo
+        # „Chýba spatialite?", posielala každý beh hľadať chybu tam, kde nie je:
+        # `libsqlite3-mod-spatialite` inštaluje `contours-rocks/build.sh`
+        # a `ST_Union` sa volá úspešne. Potom tu natvrdo stálo, že dôvod je
+        # `TopologyException` z GEOS – a v behu 32300347626 nebola v logu ani
+        # jedna, únia prebehla správne a chybný bol prepočet do stupňov
+        # (`-a_srs` nad GeoJSONSeq). Preto sa dôvod BERIE Z TOHO, čo sa naozaj
+        # zistilo, a nedopisuje sa k nemu domnienka.
+        print(f"::warning::Zlepenie švov sa nedá použiť {preco}"
               + f". Vraciam {n_sev} pôvodných plôch nezlepených: na hraniciach "
               f"blokov ({label}) budú rozseknuté a diery na nich otvorené, ale "
-              f"BUDÚ – v mape je to vidieť ako priamu hranu v obryse. Dôvod je "
-              f"v logu vyššie (`TopologyException` z GEOS nad obrysom "
-              f"z gdal_contour); spatialite v tom nie je, ten je nainštalovaný.",
-              flush=True)
+              f"BUDÚ – v mape je to vidieť ako priamu hranu v obryse. Keď je "
+              f"dôvodom prázdna únia, hľadaj v logu vyššie `TopologyException` "
+              f"z GEOS nad obrysom z gdal_contour; spatialite v tom nie je, "
+              f"ten je nainštalovaný.", flush=True)
         return seq
 
     print(f"  švy: {n_sev} plôch zlepených na {n_zlep} "
