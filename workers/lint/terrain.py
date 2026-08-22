@@ -49,6 +49,7 @@ _WORKERS = os.path.dirname(_HERE)
 TILES = os.path.join(_WORKERS, "terrain", "tiles.py")
 BUILD = os.path.join(_WORKERS, "terrain", "build.sh")
 KEYS = os.path.join(_WORKERS, "plan", "cache-keys.sh")
+MASK = os.path.join(_WORKERS, "lib", "region-mask.py")
 # Rozhodovanie („aký krok, ktorý resampling") sa SPÚŠŤA, nie číta zo zdrojáku –
 # a preto býva vo `lib/cell.py`, ktoré nemá numpy. Lintovací job má len
 # `checkout` a holý `python3`: `terrain/tiles.py` by sa tu naimportovať nedalo
@@ -204,12 +205,55 @@ def main():
     else:
         print(f"  ✓ podoba kódovania v{v_cache.pop()} v sklade aj v cache")
 
+    # ---------- 5. tieňovanie končí na hranici kraja ----------
+    # PREČO. Dlaždicový orez (`--poly`) hrubší byť nemôže, než je dlaždica:
+    # ktorá sa kraja dotkne, vyrobí sa CELÁ. Namerané na Prešovskom kraji
+    # (10 184 km²) ako plocha vyrobených dlaždíc proti ploche kraja: z8 6,2×,
+    # z10 2,2×, z12 1,4×. To je ten „dvakrát väčší tieň než kraj", ktorý bolo
+    # v mape vidieť – a v behu sa neohlásil ničím, lebo dlaždice vznikli a mapa
+    # sa nasadila. Zastaví ho až rovina po PIXELOCH (`pixel_mask`): hillshade
+    # kreslí krytím podľa sklonu, takže z roviny nenakreslí nič.
+    #
+    # Obe polovice sa dajú „zjednodušiť" preč bez toho, aby to čokoľvek
+    # povedalo (vrstva bude, len bude zase väčšia než región), tak sa strážia
+    # textom – `tiles.py` sa tu naimportovať nedá, numpy v lintovacom jobe nie
+    # je (viď hlavičku).
+    if "--poly=data/region.geojson" not in build:
+        bad.append("`workers/terrain/build.sh` nepodáva `tiles.py` polygón "
+                   "kraja (`--poly=data/region.geojson`) – dlaždice sa vyrobia "
+                   "na celom obdĺžniku bboxu a tieňovanie bude siahať ďaleko "
+                   "za región (pri Prešovskom kraji 37 % plochy navyše).")
+    strip = src[src.index("def main("):]
+    if "pixel_mask(" not in strip or "grid[~keep]" not in strip:
+        bad.append("`terrain/tiles.py` nedáva pixelom mimo kraja rovinu "
+                   "(`pixel_mask` + `grid[~keep] = 0`). Sám dlaždicový orez "
+                   "hrubší než dlaždica byť nemôže, takže tieňovanie zase "
+                   "presiahne za hranicu regiónu – na z10 na dvojnásobok jeho "
+                   "plochy, a build bude zelený.")
+    if "def pixel_mask" not in open(MASK).read():
+        bad.append("`workers/lib/region-mask.py` už nemá `pixel_mask` – "
+                   "na to, ktoré PIXELY ležia v kraji, je jedna odpoveď "
+                   "a býva vedľa tej dlaždicovej, nie druhýkrát v `tiles.py`.")
+    # A rezerva okolo hranice musí ostať. Hrana medzi terénom a rovinou je pre
+    # hillshade zvislá stena; s `--edge 0` by stála presne na hranici kraja
+    # a v mape by bol po jej vnútornej strane svetlý či tmavý prstenec.
+    edge = re.search(r'"--edge",\s*type=int,\s*default=(\d+)', src)
+    if not edge:
+        bad.append("`terrain/tiles.py` nemá prepínač `--edge` (o koľko pixelov "
+                   "presahuje rovina za hranicu kraja).")
+    elif int(edge.group(1)) < 1:
+        bad.append("`--edge` má predvolene 0 pixelov: stena medzi terénom "
+                   "a rovinou padne presne na hranicu kraja a hillshade z nej "
+                   "spraví prstenec po jej VNÚTORNEJ strane, teda v mape. "
+                   "Rezerva ju posunie za hranicu, kde ju prekryje plocha "
+                   "`mimo` zo štýlu.")
+
     if bad:
         for b in bad:
             print(f"::error::{b}")
         return 1
     print("Tieňovanie: zvislý krok ide za pixelom, priemeruje sa len nadol, "
-          "warp nesie zlomok ✓")
+          "warp nesie zlomok, mimo kraja je rovina ✓")
     return 0
 
 
