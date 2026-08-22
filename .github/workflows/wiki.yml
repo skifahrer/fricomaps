@@ -253,7 +253,7 @@ jobs:
       # dostať – v tom istom behu a bez druhého sťahovania z Wikipédie.
       - name: Odlož články pre Apple Archive
         if: ${{ inputs.publish && steps.publish.outcome == 'success' }}
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: wiki-aar
           path: wiki-out
