@@ -46,7 +46,14 @@ echo "Apple Archive: $(command -v aa)"
 # jedna otázka a dve kópie by sa raz rozišli – jedna by mala strážcu, druhá nie.
 ONLY="${ONLY:-}"
 WIKI="${WIKI:-}"
-ARGS=(--format=aar --maps=maps.json --summary="${GITHUB_STEP_SUMMARY:-/dev/null}")
+# KTORÝ KATALÓG. Rýchly test zapisuje do `maps-test.json` a ostrý beh do
+# `maps.json`; odpovedá na to jedno miesto (`workers/deploy/catalog.py`), lebo
+# ten istý súbor si o pár riadkov nižšie pýtame z vetvy a potom ho commituje
+# `catalog.sh`. Druhý výpočet toho istého by znamenal, že sa `.aar` doplní do
+# jedného súboru a z vetvy sa vypýta druhý.
+MAPS="$(python3 workers/deploy/catalog.py --subor)"
+echo "Katalóg tohto behu: $MAPS"
+ARGS=(--format=aar --maps="$MAPS" --summary="${GITHUB_STEP_SUMMARY:-/dev/null}")
 
 if [ -n "$ONLY" ]; then
   ARGS+=(--only="$ONLY")
@@ -109,10 +116,10 @@ fi
 # zakaždým (beh 31782846262).
 BRANCH="${BRANCH:-master}"
 if git fetch --depth=1 origin "$BRANCH" >/dev/null 2>&1 \
-   && git checkout FETCH_HEAD -- maps.json 2>/dev/null; then
-  echo "maps.json: čerstvý z vetvy $BRANCH (ten predošlý job doň práve zapísal)"
+   && git checkout FETCH_HEAD -- "$MAPS" 2>/dev/null; then
+  echo "$MAPS: čerstvý z vetvy $BRANCH (ten predošlý job doň práve zapísal)"
 else
-  echo "maps.json: vo vetve $BRANCH ho nemám – beriem ten z checkoutu."
+  echo "$MAPS: vo vetve $BRANCH ho nemám – beriem ten z checkoutu."
 fi
 
 python3 workers/deploy/publish-map.py "${ARGS[@]}"

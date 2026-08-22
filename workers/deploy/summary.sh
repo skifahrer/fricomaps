@@ -249,7 +249,8 @@ fi
 {
   echo "**Ako pregenerovať:** spusti workflow znova a vo výbere"
   echo "\`rebuild\` zvoľ \`vrstevnice\`, \`skaly\` (vrátane uloženej"
-  echo "verzie v release \`dem-rocks\`), \`teren\` alebo \`vsetko\`."
+  echo "verzie v sklade \`dem-rocks\` a rozrobených obrysov podpipeline"
+  echo "\`Dáta · tieňované skaly\`), \`tienovanie\` alebo \`vsetko\`."
   echo "Najprv sa zmaže príslušná cache – inak by sa stará verzia"
   echo "len vrátila späť."
   # Tabuľka „Nastavenia tohto behu" vyššie ukazuje `rebuild` tak, ako bol
@@ -265,11 +266,13 @@ fi
   echo
   echo "**Rýchly testovací beh:** \`area\` (napr. \`vysoke_tatry\`) počíta"
   echo "vrstevnice aj skaly len na výreze – z ~40 minút sa stane ~2."
-  echo "Ešte rýchlejší je switch \`test\` (predvolene zapnutý): vrstevnice,"
+  echo "Ešte rýchlejší je switch \`test\` (predvolene odškrtnutý): vrstevnice,"
   echo "skaly aj tieňovanie sa spočítajú len na štvorci so 4 km² zo stredu"
   echo "výrezu a mapa sa otvorí rovno tam. **Samotná mapa ostáva celá podľa"
-  echo "nastavení regiónu** – kraj, cesty, trasy aj prvky. Ostrý beh na celom"
-  echo "výreze switch odškrtne; iná veľkosť je \`options: test_km2=5\`."
+  echo "nastavení regiónu** – kraj, cesty, trasy aj prvky. Iná veľkosť je"
+  echo "\`options: test_km2=5\`. Testovací beh sa zapisuje do"
+  echo "\`maps-test.json\`, nie do \`maps.json\` – mapa s terénom na pár"
+  echo "km² nemá čo robiť v zozname hotových máp."
 } >> "$S"
 
 if [ "$PAGE_URL" != '' ]; then

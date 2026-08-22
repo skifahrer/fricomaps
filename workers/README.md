@@ -827,7 +827,7 @@ doladenie prahov.
 | aj najtenšie ryhy ako skalu (sivá deka pri z14) | `options: rock_img_options="open=0"` |
 | len výrazné steny | `options: rock_img_options="open=6"` |
 | presne ten asset, čo som si doladil ručne | `options: rock_img_asset=rockimg-…gpkg.zst` (vtedy sa nič nepočíta nanovo) |
-| len rýchlo overiť, či to vôbec niečo nájde | switch `test` (predvolene zapnutý, viď nižšie) |
+| len rýchlo overiť, či to vôbec niečo nájde | switch `test` (predvolene odškrtnutý, viď nižšie) |
 
 ### Rýchly test: pár km² namiesto celého pohoria
 
@@ -1530,8 +1530,8 @@ so zaškrtnutým inputom:
 | `rebuild` | čo pregeneruje |
 |---|---|
 | `vrstevnice` | vrstevnice **aj skaly** – zmaže cache `contours-…` a trasuje z DEM odznova |
-| `skaly` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) |
-| `teren` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
+| `skaly` | skaly – zmaže cache aj súbor v sklade `dem-rocks` (vrstevnice sa prepočítajú s nimi, sú lacné) a pri `rock_source: tienovanie` zahodí aj rozrobené obrysy podpipeline (`fresh=1`) |
+| `tienovanie` | tieňovanie a 3D terén – zmaže cache aj súbor v sklade `dem-terrain` |
 | `clanky` | články z Wikipédie – **obíde cache** `wiki-…` a stiahne ich odznova |
 | `vsetko` | všetko z tejto tabuľky |
 
@@ -1943,11 +1943,13 @@ Preto je v koreni repozitára [`maps.json`](../maps.json) – jediný zoznam toh
 ktoré mapy sú hotové a kde ležia. Dopisuje ho **build**, hneď po nahratí
 balíkov (`publish-map.py --maps=maps.json`, lebo len ten pozná id súborov),
 a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
-([`workers/deploy/catalog.sh`](deploy/catalog.sh)).
+([`workers/deploy/catalog.sh`](deploy/catalog.sh)). Rýchly test má vedľa neho
+vlastný [`maps-test.json`](../maps-test.json) s tým istým tvarom – rozpis
+o pár odstavcov nižšie.
 
 ```json
 {
-  "_comment": "…", "_updated_at": "2026-08-11T18:35:52Z",
+  "_comment": "…", "_updated_at": "2026-08-11T18:35:52Z", "_updated_ts": 1760207752,
 
   "slovensko": {
     "name": "Slovensko",
@@ -1959,7 +1961,8 @@ a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
         "bbox": [18.305, 48.72, 20.08, 49.635], "maxzoom": 16,
         "contours_maxzoom": 16, "contour_interval": 5, "rocks_maxzoom": 16,
         "rock_slope": 50, "dem_source": "dmr5", "layers": ["vrstevnice_dmr5_5m", "…"],
-        "drive": "slovensko/zilinsky", "run": "105", "updated_at": "…",
+        "drive": "slovensko/zilinsky", "run": "105",
+        "updated_at": "2026-08-11T18:35:52Z", "updated_ts": 1760207752,
         "subregions": {
           "sulovske_skaly": { "name": "Súľovské skaly",
                               "area_bbox": [18.53, 49.11, 18.72, 49.22], "maps": { … } }
@@ -1972,7 +1975,7 @@ a krok `Zapíš mapu do maps.json` ho commitne do vetvy, z ktorej beh vyšel
 
 **Hlavný kľúč je krajina** – rovno v koreni, bez obálky. Metadáta katalógu ležia
 vedľa nej a poznať ich je po čom: začínajú podčiarkovníkom (`_comment`,
-`_updated_at`). Je to tá istá konvencia ako vo
+`_updated_at`, `_updated_ts`). Je to tá istá konvencia ako vo
 [`workers/data/areas.json`](data/areas.json), kde sú kľúče pohorí tiež v koreni
 a `_comment` medzi nimi – kto katalóg číta, preskočí kľúče na `_`.
 
@@ -1999,13 +2002,44 @@ Drive ležal ďalej. Balík, o ktorom beh rozhoduje a nevyrobil ho (vypnuté ska
 vypnutý terén), naopak z položky zmizne – to je to isté mazanie ako na Drive,
 len z druhej strany.
 
-Dve veci, ktoré katalóg zámerne **nerobí**: nezapisuje rýchly test na miesto
-ostrej mapy (má vlastný uzol `…_test4km2` – zapisovať sa musí, inak sa o jeho
-balíkoch bez tokenu na Drive nikto nedozvie) a po neúspešnom nahratí sa
-nezapíše vôbec (`if: steps.publish.outcome == 'success'`) – zoznam, ktorý
-ukazuje na súbory, čo na Drive nie sú, je horší než žiadny. Že to tak ostane,
-stráži [`workers/lint/catalog.py`](lint/catalog.py) – vrátane prežitia cudzieho
-balíka, ktoré sa staticky prečítať nedá, a tak ho skúša naostro.
+**Rýchly test má vlastný SÚBOR, nie len vlastný uzol.** Zapisovať sa musí –
+balík `…-test4km2.zip` leží na Drive v priečinku ostrej mapy a bez katalógu sa
+o ňom bez tokenu nikto nedozvie –, ale do `maps.json` nepatrí: ten je jediná
+odpoveď na otázku „ktoré mapy sú hotové" a mapa, v ktorej je terén na 4 km²,
+medzi ne nepatrí. Vlastný uzol (`…_test4km2`) ju síce na položku ostrej mapy
+nepustil, lenže stál v tom istom zozname vedľa nej a vyzeral ako ďalší výsek;
+že je to test, bolo vidieť až na `test_km2` v položke, čiže na poli, o ktorom
+čitateľ nemusí vedieť. To je pravidlo 2 z druhej strany: **keď rozsah nie je
+celý, musí sa zmeniť meno** – a tu je tým menom meno súboru.
+
+```
+maps.json        hotové mapy       slovensko/regions/presovsky/subregions/vysoke_tatry
+maps-test.json   rýchle testy      slovensko/regions/presovsky/subregions/vysoke_tatry_test4km2
+```
+
+Oba súbory majú **rovnaký tvar** a píše ich ten istý kód; líšia sa len tým, čo
+je v nich. Ktorý z nich to je, hovorí **jedno miesto** –
+`katalog_subor()` v [`deploy/catalog.py`](deploy/catalog.py). Pýtajú sa naň
+traja (`publish-map.py`, ktorý zapisuje; `deploy/apple-archive.sh`, ktorý si ho
+pýta z vetvy a dopĺňa doň `.aar`; a cezeň krok, ktorý ho commituje), takže tri
+výpočty toho istého by sa raz rozišli – a rozísť sa tu znamená zapísať jeden
+súbor a commitnúť druhý, so zeleným behom. Meno súboru preto chodí do
+`catalog.sh` **výstupom kroku** (`steps.publish.outputs.maps_file`), nie
+natvrdo.
+
+**Kedy tá mapa vznikla, hovorí položka dvakrát:** `updated_at` je ISO 8601
+v UTC (dá sa prečítať okom a zoradiť ako text) a `updated_ts` sú sekundy od
+epochy (vek mapy je jedno odčítanie, bez parsovania dátumu). Sú to dva zápisy
+JEDNÉHO okamihu, nie dve merania – skladá ich `teraz()` v `catalog.py`. To isté
+nesie každý balík zvlášť, lebo balík z inej pipeline (`wikipedia`) je iný vek
+než mapa. V koreni katalógu je ten istý pár ako `_updated_at` / `_updated_ts`.
+
+A po **neúspešnom nahratí sa nezapíše vôbec**
+(`if: steps.publish.outcome == 'success'`) – zoznam, ktorý ukazuje na súbory,
+čo na Drive nie sú, je horší než žiadny. Že to tak ostane, stráži
+[`workers/lint/catalog.py`](lint/catalog.py) – vrátane prežitia cudzieho
+balíka, časových pečiatok a rozdelenia oboch katalógov, ktoré sa staticky
+prečítať nedajú, a tak ich skúša naostro.
 
 ### Základná mapa sveta (`Mapa · Build svet`)
 
@@ -2956,23 +2990,25 @@ pre celé Slovensko nechaj pipeline zvoliť najvyšší zoom, ktorý sa zmestí.
 
    | input | typ | čo robí |
    |---|---|---|
-   | `region` | výber | `slovensko` alebo kraj (default **`presovsky`**) |
+   | `region` | výber | `slovensko` alebo kraj (default **`bratislavsky`**) |
    | `area` | **výber** | pohorie, na ktorom sa počíta terén – `cely_region`, `tatry`, `slovensky_raj`, `mala_fatra`… (default **`cely_region`**) |
-   | `test` | **switch** | **rýchly test**: celý beh (mapa aj terén) len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene zapnutý; ostrý beh = odškrtnúť) |
+   | `test` | **switch** | **rýchly test**: celý beh (mapa aj terén) len na štvorci 4 km² zo stredu výrezu a mapu otvoriť rovno tam (predvolene **odškrtnutý** – predvolený beh je ostrý; zapisuje sa do `maps-test.json`) |
    | `contour_source` | **výber** | odkiaľ **vrstevnice**: `sonny` (20 m), `dmr35` (10 m), `dmr5` (LiDAR – s výrezom 1 m, inak 5 m), `ziadne` |
    | `rock_source` | **výber** | odkiaľ **skaly**: ten istý zoznam modelov (počíta sa sklon), alebo `tienovanie` (hotové polygóny z tieňovaných dlaždíc), alebo `ziadne` |
    | `shading_source` | **výber** | odkiaľ **tieňovanie a 3D terén**: `sonny`, `dmr35`, `dmr5`, `ziadne` |
    | `wikipedia` | **switch** | stiahnuť **články z Wikipédie** k objektom v regióne (vlastný ZIP na Drive; predvolene zapnuté) |
    | `rock_slope` | text | od akého sklonu (°) je terén skala |
-   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `teren` / `clanky` / `vsetko` |
+   | `rebuild` | výber | `nic` / `vrstevnice` / `skaly` / `tienovanie` / `vsetko` (staré `teren` sa ešte prijme, ale už sa neponúka) |
    | `options` | text | zriedka menené nastavenia ako `kľúč=hodnota` (napr. veľkosť testu `test_km2=5`, mriežka na obrys skál `rock_res=1`) |
 
-   **Defaulty sú to, na čom sa reálne pracuje** – Prešovský kraj, celý región
-   a rýchly test na 4 km². Výrez je predvolene `cely_region`, teda
-   „nezmenšuj mi mapu za mňa": kým tu stálo `vysoke_tatry`, dostal ten, kto si
-   vybral iný kraj a ten riadok prehliadol, mapu bez vrstevníc a skál skoro
-   všade — a v logu o tom bolo len `::warning::`. Zmenšovanie behu má tým pádom
-   jednu páku a je ňou switch `test`. Formulár *Run workflow* sa totiž po každom
+   **Defaulty sú jedno rozhodnutie, nie tri nezávislé voľby** – Bratislavský
+   kraj (najmenší), `cely_region` a odškrtnutý test, čiže predvolené spustenie
+   je ostrý build celého kraja, ktorý sa dá zaplatiť. Výrez je predvolene
+   `cely_region`, teda „nezmenšuj mi mapu za mňa": kým tu stálo `vysoke_tatry`,
+   dostal ten, kto si vybral iný kraj a ten riadok prehliadol, mapu bez
+   vrstevníc a skál skoro všade — a v logu o tom bolo len `::warning::`.
+   Zmenšovanie behu má tým pádom jednu páku a je ňou switch `test`.
+   Formulár *Run workflow* sa totiž po každom
    otvorení vracia na predvolené hodnoty: GitHub si nepamätá, s čím si beh
    pustil naposledy, a z API sa to ani nedá zistiť. Čím menej treba
    prekliknúť, tým menej sa toho zabudne. Čo bolo v konkrétnom behu iné než

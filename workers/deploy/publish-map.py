@@ -418,9 +418,33 @@ def main():
                     help="publikuj LEN tento balík (napr. `wikipedia`) a "
                          "katalóg dopĺň, nie prepisuj – na samostatné "
                          "pipeline, ktoré nerobia celú mapu")
-    ap.add_argument("--maps", default="maps.json",
-                    help="katalóg hotových máp v repozitári (prázdne = nezapisuj)")
+    ap.add_argument("--maps", default=catalog.KATALOG,
+                    help="katalóg hotových máp v repozitári (prázdne = "
+                         "nezapisuj). Pri rýchlom teste sa z neho stane "
+                         "`maps-test.json` – rozhoduje o tom `catalog.py`.")
     args = ap.parse_args()
+
+    # RÝCHLY TEST ZAPISUJE DO VLASTNÉHO SÚBORU. `maps.json` je jediná odpoveď
+    # na „ktoré mapy sú hotové" a mapa s terénom na 4 km² medzi ne nepatrí –
+    # vlastný uzol (`cesta_katalog`) ju síce na položku ostrej mapy nepustí,
+    # ale v zozname stála vedľa nej a vyzerala ako ďalší výsek. Ktorý súbor to
+    # je, hovorí JEDNO miesto (`catalog.katalog_subor`), lebo tú istú otázku si
+    # kladie aj `apple-archive.sh` a cezeň `catalog.sh` – dva výpočty by
+    # znamenali zápis do jedného súboru a commit druhého.
+    args.maps = catalog.katalog_subor(args.maps)
+    # A ten istý súbor musí commitnúť `workers/deploy/catalog.sh` – to je ĎALŠÍ
+    # KROK workflowu a kroky si prostredie nepodávajú. Ide to teda výstupom
+    # kroku (`steps.publish.outputs.maps_file`); keby si ho ten krok odvodil
+    # sám z `TEST_KM2`, bola by to druhá pravda o tom istom a rozišla by sa
+    # presne vtedy, keď na tom záleží – zápis do jedného súboru, commit
+    # druhého, a beh pri tom zelený.
+    gh_out = os.environ.get("GITHUB_OUTPUT")
+    if gh_out and args.maps:
+        with open(gh_out, "a") as f:
+            f.write(f"maps_file={args.maps}\n")
+    if args.maps != catalog.KATALOG:
+        log(f"Katalóg tohto behu: {args.maps} (rýchly test – hotové mapy sú "
+            f"v {catalog.KATALOG})")
 
     with open(os.path.join(_DATA, "regions.json")) as f:
         regions = json.load(f)

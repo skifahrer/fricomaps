@@ -206,10 +206,10 @@ if [ -n "$CROP" ]; then
   NAME="$NAME (výrez)"
 fi
 
-# RÝCHLY TEST (switch `test`, predvolene zapnutý, 4 km²) zmenšuje
+# RÝCHLY TEST (switch `test`, predvolene ODŠKRTNUTÝ, 4 km²) zmenšuje
 # CELÝ BEH na štvorec zo stredu výrezu: vrstevnice, skaly a tieňovanie
 # z výškového modelu (to naozaj drahé – na kraji desiatky minút, na
-# 4 km² jednotky minút) a OD TEJTO ZMENY AJ SAMOTNÚ MAPU.
+# 4 km² jednotky minút) a od zmeny v #172 aj SAMOTNÚ MAPU.
 #
 # Kým sa mapa nechávala celá, bol testovací beh polovičný: kraj sa
 # stiahol, prehnal Planetilerom, zabalil a nahral v plnej veľkosti,

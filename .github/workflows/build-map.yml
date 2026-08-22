@@ -19,11 +19,13 @@ on:
     inputs:
       # Predvolený je kraj, na ktorom sa reálne pracuje, nie celé Slovensko:
       # formulár sa po každom otvorení vracia na predvolené hodnoty, takže
-      # default je to, čo netreba prekliknúť.
+      # default je to, čo netreba prekliknúť. Bratislavský je najmenší kraj,
+      # takže ostrý beh na CELÝ región (`area: cely_region`, `test` odškrtnutý)
+      # je jedno kliknutie a nestojí hodiny – tie tri defaulty patria k sebe.
       region:
         description: "Región (ignoruje sa, ak je vyplnené custom_pbf_url)"
         required: true
-        default: presovsky
+        default: bratislavsky
         type: choice
         options:
           - slovensko
@@ -67,12 +69,15 @@ on:
       # Zaškrtávatko, nie číslo: veľkosť sa mení zriedka (4 km² sedia skoro
       # vždy), kým test sa zapína a vypína pri každom behu – a to je presne
       # rozdiel medzi switchom a textovým poľom. Veľkosť ostala ako voľba
-      # `test_km2=4`. Predvolene ZAPNUTÉ: ostrý build na celý výrez chce
-      # odškrtnúť – opačné poradie znamenalo, že sa každé ladenie prahu
-      # platilo desiatkami minút, kým si niekto spomenul dopísať voľbu.
-      # Kľúč testovacieho behu má príponu `_test4` (číslo je z tej voľby, nie
-      # natvrdo), takže si nesadne do cache
-      # ani na uložené výsledky ostrého behu.
+      # `test_km2=4`.
+      # PREDVOLENE VYPNUTÉ, hoci kedysi bolo zapnuté: zapnutý default dával
+      # zmysel, kým bol predvolený výrez pohorie vo veľkom kraji. Odkedy je
+      # default `bratislavsky` + `cely_region`, je predvolený beh ten, ktorý
+      # naozaj vyrobí mapu na nasadenie – a zapnutý test by z nej ticho spravil
+      # mapu s dierou (pravidlo 8). Kto ladí prah, si ho zaškrtne.
+      # Kľúč testu má príponu `_test4` (číslo je z voľby `test_km2`), takže si
+      # nesadne do cache ani na uložené výsledky ostrého behu, a jeho položka
+      # ide do `maps-test.json` (viď workers/deploy/catalog.py).
       # Zmenší CELÝ BEH na štvorec zo stredu výrezu – terén aj samotnú mapu:
       # PBF sa oreže, takže dlaždice, trasy, prvky aj ZIP sú z tých 4 km².
       # Kým sa mapa nechávala celá, bol test polovičný (kraj sa aj tak stiahol,
@@ -82,7 +87,7 @@ on:
       test:
         description: "Rýchly test: celý beh (mapa aj terén) len na 4 km² zo stredu výrezu"
         required: false
-        default: true
+        default: false
         type: boolean
       # Tri výbery zdroja, jeden na vrstvu. Kým bol `dem_source` jeden pre
       # všetko, nedalo sa povedať to, čo dáva zmysel najčastejšie: skaly
@@ -154,6 +159,11 @@ on:
       # Zmaže cache aj uloženú verziu v sklade. Pri zapnutom switchi `test`
       # sa pregenerúva vždy všetko, nech neladíš na výsledku z cache – toto
       # pole je vtedy jedno.
+      # `tienovanie` sa volalo `teren` – jediné miesto, kde sa tá vrstva volala
+      # inak než vo `shading_source`, v balíku `-tienovanie.zip` a v katalógu.
+      # Staré meno ostáva prijímané (`REBUILD_ALIAS` v plan/options.py), len sa
+      # už neponúka. `skaly` od tej istej zmeny zahodí aj rozrobené obrysy
+      # podpipeline tieňovania. Rozpis a strážca: `workers/lint/rebuild.py`.
       rebuild:
         description: "Čo pregenerovať nanovo, aj keď to už je v cache"
         required: false
@@ -163,7 +173,7 @@ on:
           - nic
           - vrstevnice
           - skaly
-          - teren
+          - tienovanie
           - vsetko
       # DESIATY A POSLEDNÝ INPUT. `workflow_dispatch` ich dovolí najviac 10
       # a nad tým GitHub workflow ticho neprijme (beh bez jobov, červený
@@ -666,7 +676,11 @@ jobs:
       # sa spracúvajú zľava doprava a posledná hodnota vyhráva.
       # Stiahnuté JPG dlaždice sa nezahadzujú: to sú vstupné dáta z cudzieho
       # (dobrovoľníckeho) servera, nie výsledok výpočtu.
-      options: ${{ needs.plan.outputs.test_km2 != '0' && format('fresh=1 {0}', needs.plan.outputs.opt_rock_img_options) || needs.plan.outputs.opt_rock_img_options }}
+      # TO ISTÉ PLATÍ PRI `rebuild: skaly`: pri `rock_source: tienovanie` sa
+      # sklon nepočíta vôbec, obrysy robí táto podpipeline – a bez `fresh=1`
+      # nadviazala na svoje rozrobené kusy, takže výber sľúbil prepočet
+      # a vrátil starý výsledok (`workers/lint/rebuild.py`).
+      options: ${{ (needs.plan.outputs.test_km2 != '0' || needs.plan.outputs.opt_rocks_rebuild == 'true') && format('fresh=1 {0}', needs.plan.outputs.opt_rock_img_options) || needs.plan.outputs.opt_rock_img_options }}
 
   # ---------- príprava: región, kľúče, PBF ----------
   # Krátky job, ktorý zistí všetko, čo ostatné potrebujú vedieť, a stiahne
@@ -2363,13 +2377,15 @@ jobs:
       # súborov – a tu sa to už len uloží do repozitára.
       #
       # Až za publikovaním a `if: success()` na ňom: katalóg nesmie ukazovať na
-      # súbory, ktoré sa nenahrali. Rýchly test doň nezapisuje vôbec (mapa je
-      # len na pár km²) – rozhoduje o tom `publish-map.py`, tu by to bola druhá
-      # pravda o tom istom.
+      # súbory, ktoré sa nenahrali.
+      # KTORÝ SÚBOR TO JE, POVIE KROK VYŠŠIE (`maps_file`), nie tento: rýchly
+      # test zapisuje do `maps-test.json`, ostrý beh do `maps.json`. Rozhoduje
+      # `workers/deploy/catalog.py` – odvodiť si to tu druhýkrát by znamenalo
+      # zapísať jeden súbor a commitnúť druhý.
       - name: Zapíš mapu do maps.json
         if: ${{ steps.publish.outcome == 'success' }}
         env:
-          MAPS_JSON: maps.json
+          MAPS_JSON: ${{ steps.publish.outputs.maps_file || 'maps.json' }}
           BRANCH: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: workers/deploy/catalog.sh
@@ -2498,7 +2514,7 @@ jobs:
       - name: Zapíš .aar do maps.json
         if: ${{ steps.publish.outcome == 'success' }}
         env:
-          MAPS_JSON: maps.json
+          MAPS_JSON: ${{ steps.publish.outputs.maps_file || 'maps.json' }}
           BRANCH: ${{ github.ref_name }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: workers/deploy/catalog.sh

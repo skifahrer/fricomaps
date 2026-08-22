@@ -211,15 +211,28 @@ ROCK_FROM_SHADING = "tienovanie"
 
 # `rebuild` je jeden výber namiesto troch zaškrtávatiek – tri booleany boli
 # tri inputy a limit je desať.
+#
+# `tienovanie` SA VOLALO `teren`. Bolo to jediné miesto v celom repozitári,
+# kde sa tá vrstva volala inak než všade inde: vyberá ju `shading_source`
+# („Tieňovanie a 3D terén“), balík je `-tienovanie.zip` a v katalógu je
+# `terrain_source`. Kto ju chcel prepočítať, hľadal vo výbere „tieňovanie“ –
+# a keď ho nenašiel, usúdil, že sa tá vrstva pregenerovať nedá. Príznak ostal
+# `terrain_rebuild`: identifikátory sú anglické, mená vo formulári slovenské.
 REBUILD = {
     "nic": (),
     "vrstevnice": ("contours_rebuild",),
     "skaly": ("rocks_rebuild",),
-    "teren": ("terrain_rebuild",),
+    "tienovanie": ("terrain_rebuild",),
     # `clanky` tu už nie je: pregenerovanie článkov je switch `rebuild`
     # vo workflowe „Build wiki“, ktorý ich jediný sťahuje.
     "vsetko": ("contours_rebuild", "rocks_rebuild", "terrain_rebuild"),
 }
+# Staré mená hodnoty → nové. Beh sa opakuje tlačidlom „Re-run", ktoré nesie
+# hodnoty pôvodného formulára, a odkazy na `rebuild: teren` sú v starších
+# súhrnoch behov aj v dokumentácii. Tvrdý pád na hodnote, ktorá pred hodinou
+# fungovala, by bol horší než tichý preklad – tak sa to prekladá NAHLAS
+# (vypíše sa, na čo sa to zmenilo).
+REBUILD_ALIAS = {"teren": "tienovanie"}
 # Príznaky, ktoré `rebuild` prepína. Zoznam je jeden, nech sa nedá pridať
 # hodnota do REBUILD a zabudnúť ju vypísať na výstup (príznak by ostal
 # prázdny a pregenerovanie by ticho nič neurobilo).
@@ -240,7 +253,8 @@ REBUILD_MIMO = [
      "zmení sa meno a `check-dem` si ho doplní sám"),
     ("články z Wikipédie",
      "vlastná pipeline `Mapa · Build wiki`, tam je na to `rebuild: clanky`"),
-    ("balíky na Drive (ZIP/AAR) a katalóg `maps.json`",
+    ("balíky na Drive (ZIP/AAR) a katalóg (`maps.json`, pri teste "
+     "`maps-test.json`)",
      "prepisujú sa pri KAŽDOM behu, ktorý ich vyrobí (nahraj a až potom zmaž "
      "starý); balík vrstvy, ktorú beh nevyrobil, sa zmaže"),
 ]
@@ -457,12 +471,19 @@ def main():
         return 1
     values["contour_interval"] = f"{interval:g}"
 
-    if args.rebuild not in REBUILD:
+    rebuild = (args.rebuild or "nic").strip()
+    if rebuild in REBUILD_ALIAS:
+        print(f"::notice::`rebuild: {rebuild}` sa dnes volá "
+              f"`{REBUILD_ALIAS[rebuild]}` – tá istá vrstva, to isté meno ako "
+              f"vo `shading_source` a v balíku `-tienovanie.zip`. Beriem to "
+              f"ako `{REBUILD_ALIAS[rebuild]}`.")
+        rebuild = REBUILD_ALIAS[rebuild]
+    if rebuild not in REBUILD:
         print(f"::error::Neznáme rebuild „{args.rebuild}“. Známe: "
               f"{', '.join(REBUILD)}", file=sys.stderr)
         return 1
     for flag in REBUILD_FLAGS:
-        values[flag] = "true" if flag in REBUILD[args.rebuild] else "false"
+        values[flag] = "true" if flag in REBUILD[rebuild] else "false"
 
     # RÝCHLY TEST PREGENERÚVA VŽDY VŠETKO, aj pri `rebuild: nic`.
     #
@@ -518,11 +539,11 @@ def main():
         print(f"\nZmenené oproti predvolenému: {', '.join(sorted(changed))}")
     if test_on:
         print("Pregenerovať: VŠETKO (rýchly test počíta vždy nanovo, nech "
-              f"neladíš na starom výsledku z cache; `rebuild: {args.rebuild}` "
+              f"neladíš na starom výsledku z cache; `rebuild: {rebuild}` "
               "sa tým prebíja)")
-    elif args.rebuild != "nic":
-        print(f"Pregenerovať: {args.rebuild}")
-    if test_on or args.rebuild != "nic":
+    elif rebuild != "nic":
+        print(f"Pregenerovať: {rebuild}")
+    if test_on or rebuild != "nic":
         # Rule 4: s čím beh ide, musí byť vidieť – vrátane toho, čo sa
         # NEPREPOČÍTA. Bez tohto riadku „vsetko" sľubuje viac, než robí.
         print("  prepočíta sa: "

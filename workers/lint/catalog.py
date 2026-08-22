@@ -18,6 +18,7 @@ Spustiť sa dá aj lokálne:
     python3 workers/lint/catalog.py
 """
 import json
+import os
 import re
 import sys
 
@@ -29,6 +30,14 @@ DRUHY = {"mapa", "vrstevnice-skaly", "tienovanie", "wikipedia", "search"}
 MENO = re.compile(r"^[a-z0-9_]+(-[a-z0-9_]+)*(-test[0-9.]+km2)?"
                   r"(-vrstevnice-skaly|-tienovanie|-wikipedia|-search)?\.zip$")
 CATALOG = "maps.json"
+# RÝCHLY TEST MÁ VLASTNÝ SÚBOR. `maps.json` je jediná odpoveď na „ktoré mapy sú
+# hotové" a mapa s terénom na 4 km² medzi ne nepatrí – uzol testu tam síce mal
+# vlastný kľúč (`…_test4km2`), ale v zozname stál vedľa ostrých máp a vyzeral
+# ako ďalší výsek. Zapisovať sa musí ďalej (balík `…-test4km2.zip` na Drive je
+# inak jediný, o ktorom sa bez tokenu nedá dozvedieť), tak sú z toho dva súbory
+# s tým istým tvarom.
+CATALOG_TEST = "maps-test.json"
+CATALOGS = (CATALOG, CATALOG_TEST)
 WORKFLOW = ".github/workflows/build-map.yml"
 # Samostatné pipeline, ktoré do TOHO ISTÉHO katalógu zapisujú tiež – tým istým
 # skriptom (`publish-map.py`, pri článkoch s `--only=wikipedia`). Platia na ne
@@ -75,38 +84,66 @@ def krajiny(data):
             if not k.startswith("_") and isinstance(v, dict)}
 
 
-try:
-    with open(CATALOG) as f:
-        data = json.load(f)
-except FileNotFoundError:
-    bad.append(f"{CATALOG} v repozitári nie je – build ho dopisuje, ale musí "
-               f"existovať aspoň prázdny (`{{\"countries\": {{}}}}`), inak sa "
-               f"prvý zápis nemá o čo oprieť.")
-    data = None
-except ValueError as exc:
-    bad.append(f"{CATALOG} nie je platný JSON ({exc}) – build ho číta a dopisuje, "
-               f"takže na rozbitom súbore prestane katalóg vznikať.")
-    data = None
+def je_test(kluc):
+    """Uzol rýchleho testu – `vysoke_tatry_test4km2`. Opak `rozdel_test`."""
+    cut = kluc.rfind("_test")
+    if cut < 0 or not kluc.endswith("km2"):
+        return False
+    return kluc[cut + 5:-3].replace(".", "").isdigit()
 
-if data is not None:
+
+for cesta in CATALOGS:
+    try:
+        with open(cesta) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        bad.append(f"{cesta} v repozitári nie je – build ho dopisuje, ale musí "
+                   f"existovať aspoň prázdny (`{{}}`), inak sa prvý zápis "
+                   f"nemá o čo oprieť.")
+        continue
+    except ValueError as exc:
+        bad.append(f"{cesta} nie je platný JSON ({exc}) – build ho číta "
+                   f"a dopisuje, takže na rozbitom súbore prestane katalóg "
+                   f"vznikať.")
+        continue
+
     if not isinstance(data, dict):
-        bad.append(f"{CATALOG} nie je objekt – hlavný kľúč je KRAJINA "
+        bad.append(f"{cesta} nie je objekt – hlavný kľúč je KRAJINA "
                    f"(`slovensko`), pod ňou `regions` a `subregions`.")
-        data = None
-    elif [k for k in data if not k.startswith("_") and not isinstance(data[k], dict)]:
-        bad.append(f"{CATALOG}: v koreni je kľúč, ktorý nie je ani krajina "
+        continue
+    if [k for k in data if not k.startswith("_") and not isinstance(data[k], dict)]:
+        bad.append(f"{cesta}: v koreni je kľúč, ktorý nie je ani krajina "
                    f"(objekt), ani metadáta (`_…`). Hlavný kľúč je krajina.")
-    for kde, p in polozky({"regions": krajiny(data or {})}, ""):
+    for kde, p in polozky({"regions": krajiny(data)}, ""):
+        # DVA SÚBORY, DVA OBSAHY. Testovací uzol v `maps.json` je presne to,
+        # čo sa touto zmenou riešilo: vyzerá ako ďalší výsek a to, že je v ňom
+        # terén na pár km², je vidieť až na `test_km2` v položke.
+        posledny = kde.rsplit("/", 1)[-1]
+        if je_test(posledny) and cesta != CATALOG_TEST:
+            bad.append(f"{cesta}: {kde} je uzol rýchleho testu a patrí do "
+                       f"{CATALOG_TEST}. V zozname hotových máp vyzerá ako "
+                       f"ďalší výsek, hoci terén je v ňom na pár km².")
+        if not je_test(posledny) and cesta == CATALOG_TEST:
+            bad.append(f"{cesta}: {kde} nie je rýchly test (kľúč nekončí na "
+                       f"`_test<N>km2`), takže patrí do {CATALOG}.")
+        # KEDY TÁ MAPA VZNIKLA – v oboch podobách. `updated_at` je ISO 8601
+        # v UTC na čítanie okom, `updated_ts` sekundy od epochy na počítanie
+        # veku bez parsovania dátumu; keď chýba jedno z nich, musí si ho
+        # čitateľ dopočítať sám a to je práca, ktorú má katalóg ušetriť.
+        for pole in ("updated_at", "updated_ts"):
+            if p.get(pole) in (None, ""):
+                bad.append(f"{cesta}: {kde} nemá `{pole}` – z katalógu sa "
+                           f"nedá zistiť, kedy tá mapa vznikla.")
         for druh, m in p["maps"].items():
             if druh not in DRUHY:
-                bad.append(f"{CATALOG}: {kde} má balík `{druh}`, ktorý "
+                bad.append(f"{cesta}: {kde} má balík `{druh}`, ktorý "
                            f"publikovanie nevyrába (pozná {sorted(DRUHY)}).")
             if not isinstance(m, dict) or not m.get("file") or not m.get("link"):
-                bad.append(f"{CATALOG}: {kde}/{druh} nemá `file` a `link` – "
+                bad.append(f"{cesta}: {kde}/{druh} nemá `file` a `link` – "
                            f"zoznam bez odkazu je na nič.")
                 continue
             if not MENO.match(m["file"]):
-                bad.append(f"{CATALOG}: {kde}/{druh} má meno `{m['file']}`, "
+                bad.append(f"{cesta}: {kde}/{druh} má meno `{m['file']}`, "
                            f"ktoré nesedí s tým, čo vyrába "
                            f"`workers/deploy/publish-map.py`.")
 
@@ -140,6 +177,26 @@ else:
 if "--maps=" not in text:
     bad.append(f"{WORKFLOW}: `publish-map.py` sa volá bez `--maps=`, takže "
                f"katalóg nikto nedopíše.")
+
+# ---- ktorý katalóg sa commitne, hovorí ten, kto doň zapísal ----
+# `catalog.sh` dostáva meno súboru v `MAPS_JSON`. Keby tam stálo natvrdo
+# `maps.json`, rýchly test by zapísal `maps-test.json` a commitol `maps.json`:
+# na Drive by balík ležal, v repozitári by po ňom nezostalo nič a beh by bol
+# zelený. Preto sa to podáva VÝSTUPOM kroku, ktorý publikoval.
+for wf_path in (WORKFLOW,) + PIPELINE:
+    try:
+        wtext = open(wf_path, encoding="utf-8").read()
+    except OSError:
+        continue                      # chýbajúci súbor hlási kontrola nižšie
+    if "MAPS_JSON: maps.json" in wtext:
+        bad.append(f"{wf_path}: `MAPS_JSON` je natvrdo `maps.json`. Ktorý "
+                   f"katalóg to je, vie iba krok, ktorý doň zapísal – podaj "
+                   f"mu `steps.publish.outputs.maps_file`, inak rýchly test "
+                   f"zapíše {CATALOG_TEST} a commitne {CATALOG}.")
+    if "MAPS_JSON:" in wtext and "steps.publish.outputs.maps_file" not in wtext:
+        bad.append(f"{wf_path}: krok s `catalog.sh` nedostáva "
+                   f"`steps.publish.outputs.maps_file` – commitol by iný súbor, "
+                   f"než ktorý `publish-map.py` práve zapísal.")
 
 # ---- samostatné pipeline zapisujú do toho istého katalógu ----
 for wf_path in PIPELINE:
@@ -213,6 +270,12 @@ for kluc, preco in (
         bad.append(f"{CATALOG_PY}: {preco}. Doplň to z `manifest.json` – "
                    f"pozná to, lebo podľa toho číta dlaždice aj viewer.")
 
+if kmap and "def katalog_subor(" not in kmap:
+    bad.append(f"{CATALOG_PY}: chýba `katalog_subor()` – nie je jedno miesto, "
+               f"ktoré povie, či beh zapisuje do {CATALOG}, alebo do "
+               f"{CATALOG_TEST}. Pýtajú sa naň traja (publish-map.py, "
+               f"apple-archive.sh a cezeň catalog.sh) a tri výpočty toho "
+               f"istého sa raz rozídu.")
 if kmap and "def zapis_katalog(path, parts, regions, baliky, man, iba=" not in kmap:
     bad.append(f"{CATALOG_PY}: `zapis_katalog` nepozná režim „doplň jeden "
                f"balík“ (parameter `iba`). Samostatná pipeline by položku "
@@ -232,11 +295,38 @@ if pmap:
     if "kat=kat" not in pmap:
         bad.append(f"{PUBLISH_MAP}: `zapis_katalog` sa volá bez `kat=`, takže "
                    f"uzol testu a uzol ostrej mapy sú ten istý.")
+    # RÝCHLY TEST ZAPISUJE INAM, NIE NIKAM. Bez tohto volania by `--maps=`
+    # z workflowu prešlo rovno do zápisu a testovacia mapa by sadla medzi
+    # hotové – vlastný uzol ju od nich odlíši, ale v zozname stojí vedľa nich.
+    if "catalog.katalog_subor(" not in pmap:
+        bad.append(f"{PUBLISH_MAP}: `--maps` neprechádza cez "
+                   f"`catalog.katalog_subor()`, takže rýchly test zapíše do "
+                   f"{CATALOG} namiesto {CATALOG_TEST}.")
+    if "maps_file=" not in pmap:
+        bad.append(f"{PUBLISH_MAP}: nezapisuje výstup kroku `maps_file`, "
+                   f"takže `catalog.sh` nemá ako vedieť, ktorý súbor "
+                   f"commitnúť – a odvodiť si to sám nesmie (bola by to druhá "
+                   f"pravda o tom istom).")
     if "nezapisujem" in pmap:
         bad.append(f"{PUBLISH_MAP}: katalóg sa pri niektorom behu preskakuje. "
                    f"Rýchly test má vlastný uzol (`cesta_katalog`), takže "
                    f"preskakovať ho netreba – a balík, ktorý v zozname nie je, "
                    f"nikto nenájde.")
+
+# `.aar` doplní do katalógu druhý job – ten si musí vypýtať z vetvy a doplniť
+# TEN ISTÝ súbor, do ktorého zapísal `deploy`. Bash si to nemá ako spočítať,
+# tak sa pýta `catalog.py --subor`.
+AAR_SH = "workers/deploy/apple-archive.sh"
+try:
+    aar = open(AAR_SH, encoding="utf-8").read()
+except OSError as exc:
+    bad.append(f"{AAR_SH} sa nedá prečítať: {exc}")
+    aar = ""
+if aar and "catalog.py --subor" not in aar:
+    bad.append(f"{AAR_SH}: nepýta sa `catalog.py --subor`, ktorý katalóg je "
+               f"ten správny. Pri rýchlom teste by si z vetvy vypýtal "
+               f"{CATALOG}, doplnil doň `.aar` k mape, ktorá tam nie je, "
+               f"a {CATALOG_TEST} by o `.aar` nevedel.")
 
 try:
     csh = open(CATALOG_SH, encoding="utf-8").read()
@@ -318,6 +408,63 @@ def _skuska_katalogu():
         chyby.append(f"{CATALOG_PY}: balík, o ktorom beh ROZHODUJE a "
                      f"nevyrobil ho, ostal v katalógu – odkazoval by na "
                      f"súbor, ktorý ten istý beh na Drive zmazal.")
+
+    # ---- kedy tá mapa vznikla: dva zápisy jedného okamihu ----
+    # Staticky sa to prečítať nedá – `updated_ts` môže v module byť a do
+    # položky sa nedostať (napr. keď ho prepíše `merge`). Preto sa to skúša
+    # naostro, tým istým volaním, aké robí `publish-map.py`.
+    import calendar
+    import time as _time
+    with tempfile.TemporaryDirectory() as tmp:
+        path = f"{tmp}/maps.json"
+        with contextlib.redirect_stdout(io.StringIO()):
+            mod.zapis_katalog(path, parts, regions, mapa_baliky, man,
+                              spravuje=mapove)
+        with open(path) as f:
+            uzol = json.load(f)["slovensko"]["regions"]["bratislavsky"]
+    for pole in ("updated_at", "updated_ts"):
+        if uzol.get(pole) in (None, ""):
+            chyby.append(f"{CATALOG_PY}: zapísaná položka nemá `{pole}` – "
+                         f"z katalógu sa nedá zistiť, kedy tá mapa vznikla.")
+    if uzol.get("updated_at") and uzol.get("updated_ts") is not None:
+        try:
+            zo_stringu = calendar.timegm(
+                _time.strptime(uzol["updated_at"], "%Y-%m-%dT%H:%M:%SZ"))
+        except ValueError:
+            zo_stringu = None
+            chyby.append(f"{CATALOG_PY}: `updated_at` nie je ISO 8601 v UTC "
+                         f"(`{uzol['updated_at']}`) – zoradiť sa to dá ako "
+                         f"text len vtedy, keď má každý zápis ten istý tvar.")
+        if zo_stringu is not None and zo_stringu != uzol["updated_ts"]:
+            chyby.append(f"{CATALOG_PY}: `updated_at` a `updated_ts` hovoria "
+                         f"o inom okamihu ({uzol['updated_at']} vs "
+                         f"{uzol['updated_ts']}). Sú to dva zápisy JEDNÉHO "
+                         f"času, nie dve merania.")
+    if not any(m.get("updated_ts") is not None
+               for m in (uzol.get("maps") or {}).values()):
+        chyby.append(f"{CATALOG_PY}: ani jeden balík v položke nemá "
+                     f"`updated_ts` – pri balíku z inej pipeline je to jediné, "
+                     f"čo povie, ako je starý.")
+
+    # ---- ktorý súbor: `maps.json` vs `maps-test.json` ----
+    stary = os.environ.get("TEST_KM2")
+    try:
+        os.environ["TEST_KM2"] = "0"
+        ostry = mod.katalog_subor(CATALOG)
+        os.environ["TEST_KM2"] = "4"
+        testovy = mod.katalog_subor(CATALOG)
+    finally:
+        if stary is None:
+            os.environ.pop("TEST_KM2", None)
+        else:
+            os.environ["TEST_KM2"] = stary
+    if ostry != CATALOG:
+        chyby.append(f"{CATALOG_PY}: ostrý beh by zapisoval do `{ostry}`, "
+                     f"nie do `{CATALOG}`.")
+    if testovy != CATALOG_TEST:
+        chyby.append(f"{CATALOG_PY}: rýchly test by zapisoval do `{testovy}`, "
+                     f"nie do `{CATALOG_TEST}` – mapa s terénom na pár km² by "
+                     f"skončila medzi hotovými mapami.")
     return chyby
 
 

@@ -9,7 +9,13 @@ stretli – rezalo sa teda tam, kde sa mení otázka. Vedľa leží `catalog.sh`
 ten ten istý súbor commitne, keď ho tento modul zapísal.
 
 Volá to `publish-map.py` (a cezeň aj pipeline článkov z Wikipédie
-s `--only=wikipedia`), samostatne to zmysel nemá.
+s `--only=wikipedia`). Samostatne sa dá spýtať jedinú vec – KTORÝ katalóg
+je ten správny, keď beh je rýchly test:
+
+    python3 workers/deploy/catalog.py --subor        # maps.json / maps-test.json
+
+Robí to `deploy/apple-archive.sh` (bash si to nemá ako vypočítať) – nech na tú
+otázku odpovedá to isté miesto ako pri zápise.
 """
 import importlib.util
 import json
@@ -57,6 +63,42 @@ def rozdel_test(key):
         return key, ""
     stred = key[cut + 5:-3]
     return (key[:cut], stred) if stred.replace(".", "").isdigit() else (key, "")
+
+
+# ---------- ktorý katalóg: ostrý, alebo testovací ----------
+# JEDNO MIESTO, KTORÉ NA TO ODPOVEDÁ. Pýtajú sa naň traja: `publish-map.py`
+# (kam zapísať), `deploy/apple-archive.sh` (ktorý súbor si vypýtať z vetvy
+# a doplniť o `.aar`) a cez neho aj `deploy/catalog.sh` (ktorý commitnúť).
+# Keby si to každý odvodil sám z `TEST_KM2`, raz sa rozídu – a rozísť sa tu
+# znamená, že sa test zapíše do jedného súboru a commitne druhý.
+KATALOG = "maps.json"
+KATALOG_TEST = "maps-test.json"
+
+
+def katalog_subor(base=KATALOG):
+    """`maps.json`, alebo `maps-test.json` pri rýchlom teste. Prázdne = nezapisuj.
+
+    PREČO VLASTNÝ SÚBOR A NIE LEN VLASTNÝ UZOL. Testovacia mapa má vlastný uzol
+    už dávno (`cesta_katalog` v `publish-map.py`), takže na položku ostrej mapy
+    sadnúť nemôže. Ležala ale v tom istom zozname – a `maps.json` je JEDINÁ
+    odpoveď na otázku „ktoré mapy sú hotové". Kto ho číta, prechádza `regions`
+    a `subregions`; uzol `vysoke_tatry_test4km2` v ňom vyzerá ako ďalší výsek
+    a to, že je v ňom terén na 4 km², je vidieť až na `test_km2` v položke –
+    teda na poli, o ktorom čitateľ nemusí vedieť. To je pravidlo 2 z druhej
+    strany: keď rozsah nie je celý, musí sa zmeniť MENO. Tu je tým menom meno
+    súboru.
+
+    Zapisovať sa testy musia ďalej – balík `…-test4km2.zip` leží na Drive
+    v priečinku ostrej mapy a bez katalógu sa o ňom bez tokenu nedá dozvedieť.
+    Preto sú to dva súbory s tým istým tvarom, nie jeden a zahodenie.
+    """
+    if not base:
+        return ""
+    test_km2 = env("TEST_KM2", "0")
+    if test_km2 in ("", "0"):
+        return base
+    koren, _, pripona = base.rpartition(".")
+    return f"{koren or base}-test" + (f".{pripona}" if koren else "")
 
 
 def region_entry(man):
@@ -145,7 +187,21 @@ def katalog_meno(regions, key, kind):
     return (r.get("name") or key) + chvost
 
 
-def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy=""):
+# ---------- kedy to vzniklo ----------
+# DVA ZÁPISY TOHO ISTÉHO OKAMIHU, a je to zámer. `…_at` je ISO 8601 v UTC –
+# to sa dá prečítať očami priamo v `maps.json` a zoradiť ako text. `…_ts` sú
+# sekundy od epochy – to sa dá odčítať bez parsovania dátumu, teda „ako stará
+# je táto mapa" je jedno mínus. Kým tu bol len reťazec, musel si ho každý
+# čitateľ (viewer, aplikácia, skript) parsovať sám, a to je presne ten druh
+# práce, ktorú katalóg má čitateľovi ušetriť – pozná ten okamih presne, tak ho
+# napíše v oboch podobách naraz a nemôžu sa rozísť.
+def teraz():
+    """(ISO 8601 UTC, sekundy od epochy) – jeden okamih v oboch podobách."""
+    t = time.time()
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t)), int(t)
+
+
+def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy="", kedy_ts=None):
     """Jeden balík v jednom formáte do `maps` položky katalógu.
 
     JEDNO MIESTO PRE OBE CESTY. Zapisujú sa tu dve vetvy – celý build
@@ -173,6 +229,8 @@ def zapis_balik(mapy, kind, name, velkost, fid, fmt, kedy=""):
     }
     if kedy:
         zaznam["updated_at"] = kedy
+    if kedy_ts is not None:
+        zaznam["updated_ts"] = kedy_ts
     polozka = mapy.setdefault(kind or "mapa", {})
     polozka.setdefault("formats", {})[fmt] = zaznam
     if fmt == "zip":
@@ -232,15 +290,22 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
             data = json.load(f)
     except (OSError, ValueError):
         data = {}
+    je_test = os.path.basename(path) == KATALOG_TEST
     data.setdefault("_comment",
-                    "Katalóg hotových máp na Google Drive – ktoré sú a kde. "
-                    "Hlavný kľúč je krajina, pod ňou `regions` (kraj) a "
+                    ("Rýchle TESTOVACIE behy" if je_test else
+                     "Katalóg hotových máp na Google Drive")
+                    + " – ktoré sú a kde. "
+                    + ("Terén (vrstevnice, skaly, tieňovanie) je v nich len na "
+                       "pár km² zo stredu výrezu, takže to NIE SÚ mapy na "
+                       "stiahnutie; hotové mapy sú v maps.json. " if je_test
+                       else "")
+                    + "Hlavný kľúč je krajina, pod ňou `regions` (kraj) a "
                     "`subregions` (výsek); kľúče na `_` sú metadáta katalógu, "
                     "nie krajiny. Dopisuje ho na konci buildu "
                     "workers/deploy/publish-map.py (krok „Zapíš mapu do "
                     "maps.json“); ručne sa needituje. Odkazy otvorí ten, kto "
                     "má prístup k priečinku s mapami.")
-    data["_updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    data["_updated_at"], data["_updated_ts"] = teraz()
 
     kat = kat or parts
     krajina = data.setdefault(kat[0], {})
@@ -268,17 +333,24 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
         # tu na prvý zápis, keď mapa v katalógu ešte nie je). Kedy pribudol
         # tento balík, nesie balík sám (viď `zapis_balik`).
         uzol.setdefault("updated_at", data["_updated_at"])
+        uzol.setdefault("updated_ts", data["_updated_ts"])
         uzol.setdefault("run", env("GITHUB_RUN_NUMBER"))
         mapy = uzol.setdefault("maps", {})
         for kind, name, velkost, fid, fmt in baliky:
             zapis_balik(mapy, kind, name, velkost, fid, fmt,
-                        kedy=data["_updated_at"])
+                        kedy=data["_updated_at"], kedy_ts=data["_updated_ts"])
         return zapis(path, data,
                      f"doplnený balík {iba} k {'/'.join(kat)}")
     polozka = {
         "name": uzol.get("name"),
         "drive": "/".join(parts),
+        # KEDY TÁ MAPA VZNIKLA – dvakrát ten istý okamih (rozpis pri `teraz()`):
+        # `updated_at` na čítanie okom, `updated_ts` na počítanie veku bez
+        # parsovania dátumu. Je to čas TOHTO behu, teda čas, kedy sa balíky
+        # nahrali na Drive: položka sa pri každom builde zapisuje celá, takže
+        # „vytvorená" a „naposledy prepísaná" je pri mape to isté.
         "updated_at": data["_updated_at"],
+        "updated_ts": data["_updated_ts"],
         "run": env("GITHUB_RUN_NUMBER"),
         "layers": list(layers or []),
         # Balík × formát. `formats` je to podstatné (ZIP otvorí čokoľvek,
@@ -367,7 +439,7 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
         polozka = zaklad
     for kind, name, velkost, fid, fmt in baliky:
         zapis_balik(polozka["maps"], kind, name, velkost, fid, fmt,
-                    kedy=data["_updated_at"])
+                    kedy=data["_updated_at"], kedy_ts=data["_updated_ts"])
 
     # `subregions` patria uzlu, nie tejto mape – nahradenie položky ich nesmie
     # zmazať (build Vysokých Tatier neruší mapu celého kraja a naopak).
@@ -385,3 +457,17 @@ def zapis_katalog(path, parts, regions, baliky, man, iba="", merge=False,
                              + (f"z toho {len(cudzie)} z inej pipeline "
                                 f"({', '.join(sorted(cudzie))}), " if cudzie else "")
                              + f"priečinok {'/'.join(parts)})")
+
+
+if __name__ == "__main__":
+    # Jediná otázka, na ktorú sa tento modul dá spýtať z príkazového riadka.
+    # Zápis katalógu sem nepatrí: ten potrebuje manifest, zoznam nahratých
+    # balíkov aj ich id na Drive, a to všetko vie iba `publish-map.py`.
+    if sys.argv[1:] == ["--subor"]:
+        print(katalog_subor())
+    else:
+        raise SystemExit(
+            "::error::workers/deploy/catalog.py sa samostatne pýta len na "
+            "`--subor` (ktorý katalóg zapisovať – maps.json, alebo pri "
+            "rýchlom teste maps-test.json). Katalóg zapisuje "
+            "workers/deploy/publish-map.py.")
